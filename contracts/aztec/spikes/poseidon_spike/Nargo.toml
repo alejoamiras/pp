@@ -1,0 +1,8 @@
+[package]
+name = "poseidon_spike"
+type = "contract"
+authors = [""]
+
+[dependencies]
+aztec = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", directory = "aztec" }
+poseidon = { git = "https://github.com/noir-lang/poseidon", tag = "v0.4.0" }

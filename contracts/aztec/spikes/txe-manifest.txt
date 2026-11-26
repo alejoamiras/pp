@@ -1,0 +1,2 @@
+# Every TXE test that must report ok in an unfiltered run.
+harness_deploys_and_calls_private

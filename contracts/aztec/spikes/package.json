@@ -1,0 +1,31 @@
+{
+	"name": "@pp/aztec-spikes",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"license": "Apache-2.0",
+	"packageManager": "bun@1.4.2",
+	"scripts": {
+		"compile": "sh scripts/tool.sh aztec compile",
+		"fmt:check": "sh scripts/tool.sh aztec-nargo fmt --check",
+		"typecheck": "tsc --noEmit",
+		"gates": "sh scripts/tool.sh aztec profile gates --json target",
+		"vectors": "bun vectors/gen.ts",
+		"vectors:check": "bun vectors/gen.ts --check",
+		"test:nr": "bun scripts/txe.ts",
+		"test:net": "bun --bun vitest run"
+	},
+	"dependencies": {
+		"@aztec-labs/accounts": "6.0.0",
+		"@aztec-labs/aztec.js": "6.0.0",
+		"@aztec-labs/foundation": "6.0.0",
+		"@aztec-labs/pxe": "6.0.0",
+		"@aztec-labs/stdlib": "6.0.0",
+		"@aztec-labs/wallets": "6.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "24.13.3",
+		"typescript": "6.0.3",
+		"vitest": "4.1.10"
+	}
+}

@@ -1,0 +1,4 @@
+[install]
+linker = "isolated"
+# Refuse packages published in the last 7 days: compromised releases are usually pulled within that window.
+minimumReleaseAge = 604800
