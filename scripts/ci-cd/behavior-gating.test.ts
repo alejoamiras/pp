@@ -180,14 +180,21 @@ describe("CI behavior-gating guard", () => {
     }
   })
 
-  test("pp-env covers its package, its graph, and every action its suites job calls", () => {
+  test("pp-env covers its package, its graph, the shared vitest config, and every action its suites job calls", () => {
     const ppEnv = filtersOf("pp-env.yml")["pp-env"]
     assertGraphCovered(ppEnv, "pp-env", "pp-env")
     const calls: string[] = workflow("pp-env.yml")
       .jobs.suites.steps.map((step: { uses?: string }) => step.uses)
       .filter((uses: string | undefined) => uses?.startsWith("./.github/actions/"))
     expect(calls.length).toBeGreaterThan(0)
-    for (const p of [...calls.map((c) => `${c.slice(2)}/**`), "package.json", "bun.lock", "bunfig.toml", "patches/**"]) {
+    for (const p of [
+      ...calls.map((c) => `${c.slice(2)}/**`),
+      "vitest.base.ts",
+      "package.json",
+      "bun.lock",
+      "bunfig.toml",
+      "patches/**",
+    ]) {
       expect(ppEnv, `pp-env must gate ${p}`).toContain(p)
     }
     expect(workflow("pp-env.yml").jobs.suites.if).toBe("needs.changes.outputs.pp-env == 'true'")

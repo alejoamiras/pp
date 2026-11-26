@@ -135,6 +135,7 @@
         "@types/bun": "1.4.4",
         "forge-std": "github:foundry-rs/forge-std#v1.14.0",
         "typescript": "6.0.3",
+        "vitest": "^4.1.9",
       },
     },
   },
