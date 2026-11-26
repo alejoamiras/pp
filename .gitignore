@@ -1,0 +1,7 @@
+# Plans, audit transcripts and decision logs are private and never committed.
+/implementations-plan
+
+node_modules/
+.env
+.env.*
+!.env.example
