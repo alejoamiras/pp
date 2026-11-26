@@ -57,7 +57,7 @@ without the guard), and a committed `.gas-snapshot` for `createPortal` on a fres
 
 | Layer | Suites |
 |---|---|
-| unit | `PortalFactory`, `ProcessorPortal` (the vault selector), `Keystone` (3-way vectors with Noir and TS), `MintableERC20`, `TestUsdc` |
+| unit | `PortalFactory`, `ProcessorPortal` (the vault selector), `Keystone` (3-way vectors with Noir and TS), `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `MintableERC20`, `TestUsdc` |
 | fuzz | `PortalFactoryFuzz` |
 | invariant | `PortalFactoryInvariant` |
 | symbolic | `FormalFactory`; see its header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |

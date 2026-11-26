@@ -54,6 +54,11 @@ lockfile and in the TXE server's. The hub's class ids depend on these inputs.
 - `bunfig.toml` `minimumReleaseAgeExcludes`: add every new-line name while `bun install` resolves the
   new line, then delete them in the same PR and prove the lockfile with
   `bun install --frozen-lockfile --force`.
+- The wire-format package: `packages/bridge-spec/package.json` pins the labs packages too, and
+  `contracts/bridge/aztec/pp_hash` pins `noir-lang/poseidon` by tag with its resolved commit in
+  `pp_hash/README.md` (CI compares the two). A bump that moves aztec-nr's poseidon pin, Aztec's
+  Poseidon2 or `sha256_to_field` shows up as a failure of `vectors:check`, the TS vector suite or
+  `vectors:nargo`; fix the implementation, never regenerate v1 (`packages/bridge-spec/README.md`).
 - CI resolves two toolchains separately: `.github/actions/setup-aztec` installs the toolchain at the
   `@aztec-labs/aztec.js` pin read from `packages/bridge-core/package.json`, and
   `_bridge-contracts.yml` installs the Noir toolchain from the crates' `Nargo.toml` tag.

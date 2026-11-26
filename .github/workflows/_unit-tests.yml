@@ -28,6 +28,14 @@ jobs:
       - name: Unit tests in every workspace
         run: bun run test:all
 
+      # The committed vectors and the keystone's generated Noir must equal a fresh generation, and
+      # the TS parity suite must fail on a flipped vector in every section.
+      - name: Wire-format vectors are current
+        run: bun run --cwd packages/bridge-spec vectors:check
+
+      - name: Wire-format vector mutation (TS)
+        run: bun run --cwd packages/bridge-spec vectors:mutate -- --suite ts
+
       # scripts/ci-cd/ is not a workspace, so `test:all` skips it. It holds the guards that pin
       # these workflows' filters and aggregators; without this step they would never run on a PR.
       - name: CI-gating tests
