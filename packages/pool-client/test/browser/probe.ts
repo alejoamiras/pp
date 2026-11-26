@@ -1,8 +1,8 @@
 import { expect, type Page, test } from "@playwright/test"
-import type { EnsureResult, ProveResult } from "./page/main.ts"
+import type { EnsureResult, ProveOn, ProveResult } from "./page/main.ts"
 
 export type Probe = {
-	prove(path: string): Promise<ProveResult>
+	prove(path: string, on?: ProveOn): Promise<ProveResult>
 	ensure(path: string): Promise<EnsureResult>
 	spend(input: string): Promise<string>
 }
@@ -34,7 +34,8 @@ export async function openProbe(page: Page, onRequest?: (url: URL) => void): Pro
 }
 
 export const probe = (page: Page) => ({
-	prove: (path: string) => page.evaluate((p) => (globalThis as unknown as { probe: Probe }).probe.prove(p), path),
+	prove: (path: string, on: ProveOn = "main") =>
+		page.evaluate(([p, o]) => (globalThis as unknown as { probe: Probe }).probe.prove(p, o), [path, on] as const),
 	ensure: (path: string) => page.evaluate((p) => (globalThis as unknown as { probe: Probe }).probe.ensure(p), path),
 	spend: (input: string) => page.evaluate((i) => (globalThis as unknown as { probe: Probe }).probe.spend(i), input),
 })

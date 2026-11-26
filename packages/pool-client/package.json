@@ -6,7 +6,8 @@
 	"description": "Read Privacy Pools v2 notes and prepare a one-input spend to a processor, in Node, Bun and the browser.",
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./prover-worker": "./src/prover-worker.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",

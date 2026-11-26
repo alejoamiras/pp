@@ -17,6 +17,7 @@ import {
 	EvmRelayBatchCodec,
 	HTTPClient,
 	HttpASPDataProvider,
+	type IGroth16Prover,
 	type IRelayerInteractor,
 	MerkleService,
 	NoteComputationService,
@@ -96,6 +97,7 @@ export async function createSession(d: {
 	pool: PoolConfig
 	owner: Address
 	keys: Keys
+	prover?: IGroth16Prover
 	artifacts: VerifiedArtifacts
 	publicClient: PublicClient
 	wallet?: LocalWallet
@@ -114,7 +116,7 @@ export async function createSession(d: {
 		cryptoService,
 		noteComputationService: notes,
 		witnessPreparationService: new WitnessPreparationService({ noteComputationService: notes, hashService, merkleService }),
-		proofService: new ProofService({ circuitArtifacts: d.artifacts, groth16Prover: createProver() }),
+		proofService: new ProofService({ circuitArtifacts: d.artifacts, groth16Prover: d.prover ?? createProver() }),
 	}
 	const session = createEvmPoolSession({
 		...shared,

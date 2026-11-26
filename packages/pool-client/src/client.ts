@@ -21,6 +21,7 @@ import {
 	EvmContextHashService,
 	EvmPreparedTxVerifier,
 	type Hex as SdkHex,
+	type IGroth16Prover,
 	type Note,
 	type NoteComputationService,
 	NoteStatus as SdkStatus,
@@ -240,6 +241,8 @@ export async function openPoolClient(a: {
 	l1Address: Address
 	signature: Hex
 	artifacts: ArtifactSource
+	/** Defaults to proving on the calling thread; pass `workerProver(...)` to keep a page responsive. */
+	prover?: IGroth16Prover
 }): Promise<PoolClient> {
 	const signature = normaliseSignature(a.signature)
 	const owner = getAddress(a.l1Address)
@@ -249,6 +252,6 @@ export async function openPoolClient(a: {
 	if (chainId !== a.pool.chainId)
 		throw new PoolClientError("CHAIN_MISMATCH", `RPC serves chain ${chainId}, the pool is on ${a.pool.chainId}`)
 	const artifacts = createArtifacts(a.artifacts)
-	const sdk = await createSession({ pool: a.pool, owner, keys: deriveKeys(owner, signature), artifacts, publicClient })
+	const sdk = await createSession({ pool: a.pool, owner, keys: deriveKeys(owner, signature), artifacts, publicClient, prover: a.prover })
 	return client(a.pool, owner, signature, sdk, publicClient, artifacts)
 }
