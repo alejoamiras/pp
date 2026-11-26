@@ -37,7 +37,10 @@
 			"parity": true,
 			"txe": {
 				"floor": 18,
-				"stage": ["contracts/bridge/aztec/bridge_stub/target/bridge_stub-BridgeStub.json"]
+				"stage": [
+					"contracts/bridge/aztec/bridge_stub/target/bridge_stub-BridgeStub.json",
+					"contracts/bridge/aztec/asp_registry/target/asp_registry-AspRootRegistry.json"
+				]
 			}
 		},
 		{ "name": "bridge_stub", "path": "contracts/bridge/aztec/bridge_stub", "kind": "contract", "parity": true },

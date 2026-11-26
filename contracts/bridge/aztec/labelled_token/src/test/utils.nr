@@ -1,4 +1,5 @@
 use crate::LabelledToken;
+use asp_registry::AspRootRegistry;
 use aztec::{protocol::address::AztecAddress, test::helpers::test_environment::TestEnvironment};
 use bridge_stub::BridgeStub;
 
@@ -12,24 +13,44 @@ pub global K: Field = 0x2abe1;
 pub struct Setup {
     pub env: TestEnvironment,
     pub admin: AztecAddress,
+    pub poster: AztecAddress,
     pub user: AztecAddress,
     pub stub: AztecAddress,
+    pub registry: AztecAddress,
     pub token: AztecAddress,
 }
 
-/// A stage-A generation: the stub is the minter and the token has no registry.
+/// The stub is the minter; the real registry is deployed with nothing posted, `admin` as its admin
+/// and birth intake, `poster` as its poster.
 pub unconstrained fn setup() -> Setup {
-    setup_with_registry(AztecAddress::zero())
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let poster = env.create_light_account();
+    let registry = env.deploy("@asp_registry/AspRootRegistry").with_public_initializer(
+        admin,
+        AspRootRegistry::interface().constructor(admin, poster, admin),
+    );
+    deploy_token(env, admin, poster, registry)
 }
 
+/// As `setup`, but the token points at `registry`, which may be no contract at all.
 pub unconstrained fn setup_with_registry(registry: AztecAddress) -> Setup {
     let mut env = TestEnvironment::new();
     let admin = env.create_light_account();
+    deploy_token(env, admin, AztecAddress::zero(), registry)
+}
+
+unconstrained fn deploy_token(
+    mut env: TestEnvironment,
+    admin: AztecAddress,
+    poster: AztecAddress,
+    registry: AztecAddress,
+) -> Setup {
     let user = env.create_light_account();
     let stub = env.deploy("@bridge_stub/BridgeStub").without_initializer();
     let init = LabelledToken::interface().constructor(NAME, SYMBOL, DECIMALS, stub, registry);
     let token = env.deploy("LabelledToken").with_public_initializer(admin, init);
-    Setup { env, admin, user, stub, token }
+    Setup { env, admin, poster, user, stub, registry, token }
 }
 
 pub unconstrained fn mint(s: Setup, to: AztecAddress, amount: u128, label: Field) {

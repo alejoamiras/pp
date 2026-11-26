@@ -12,6 +12,8 @@
 		"gates": "bun scripts/gates.ts",
 		"gates:check": "bun scripts/gates.ts --check",
 		"handoff": "bun scripts/handoff.ts",
+		"fixtures": "bun scripts/fixtures.ts",
+		"fixtures:check": "bun scripts/fixtures.ts --check",
 		"test:net": "TOKEN_NET=1 bun --bun vitest run --config vitest.net.config.ts"
 	},
 	"dependencies": {
@@ -26,6 +28,7 @@
 		"@aztec-labs/stdlib": "6.0.0",
 		"@nulo-sh/resolve-asset": "0.3.0",
 		"@pp/bridge-core": "workspace:*",
+		"@pp/bridge-spec": "workspace:*",
 		"@types/node": "^24.13.2",
 		"typescript": "^6.0.3",
 		"vitest": "^4.1.9"

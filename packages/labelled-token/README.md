@@ -28,6 +28,9 @@ already shares an interactive handshake (see below).
 - `scripts/handoff.ts`: `bun run handoff` writes `bench/handoff.json`, the class id and the address a
   hub derives for this token (`deployer = hub`, `salt = erc20`, the factory words as `str<31>`), for
   a zero and a non-zero registry. `test/handoff.test.ts` fails when it is stale.
+- `scripts/fixtures.ts`: `bun run fixtures` renders the TXE suite's LeanIMT trees (path depths 0, 1,
+  3 and 18, a promoted leaf, a pool label inside the birth tree) from `@pp/bridge-spec` into the
+  crate's `src/test/paths.nr`; `fixtures:check` fails when that file is stale.
 
 ## Tests
 
