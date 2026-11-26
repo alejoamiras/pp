@@ -29,26 +29,27 @@ repository.
 
 ## Fast loop
 
-Run from the repository root. Times are wall-clock on a 192-core Linux host, warm caches.
+Run from the repository root. Times are wall-clock on a fresh worktree of a 192-core Linux host,
+with warm package and toolchain caches.
 
 | Layer | Command | Time |
 |---|---|---|
-| Install | `bun install --frozen-lockfile` | — |
-| Lint (Biome + complexity) | `bun run lint` | — |
-| Typecheck | `bun run typecheck:all` | — |
-| Unit (every workspace) | `bun run test:all` | — |
-| CI-gating tests | `bun run test:ci-gating` | — |
-| Workflow lint | `bun run lint:actions` | — |
-| L1 build + hermetic tests | `forge build && forge test --no-match-contract Fork` in `contracts/bridge/evm` | — |
-| L1 gas snapshot | `bash contracts/bridge/evm/scripts/check-gas.sh` | — |
-| L1 symbolic proofs | `bash contracts/bridge/evm/scripts/check-halmos.sh` | — |
-| L2 artifact parity | `bash contracts/bridge/aztec/scripts/compile.sh --check` | — |
-| L2 TXE suite | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh` | — |
-| L2 hash vectors | `aztec-nargo test --force` in `contracts/bridge/aztec/keystone` | — |
-| Sole consumer | `bash contracts/bridge/aztec/scripts/check-sole-consumer.sh` | — |
-| Integration (local network) | `bun run --cwd packages/bridge-core test:integration` | — |
-| Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | — |
-| E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | — |
+| Install | `bun install --frozen-lockfile` | 4 s |
+| Lint (Biome + complexity) | `bun run lint` | < 1 s |
+| Typecheck | `bun run typecheck:all` | 23 s |
+| Unit (every workspace) | `bun run test:all` | 16 s |
+| CI-gating tests | `bun run test:ci-gating` | < 1 s |
+| Workflow lint | `bun run lint:actions` | < 1 s |
+| L1 build + hermetic tests | `forge build && forge test --no-match-contract Fork` in `contracts/bridge/evm` | 2 min |
+| L1 gas snapshot | `bash contracts/bridge/evm/scripts/check-gas.sh` | 1 s |
+| L1 symbolic proofs | `bash contracts/bridge/evm/scripts/check-halmos.sh` | 67 s |
+| L2 artifact parity | `bash contracts/bridge/aztec/scripts/compile.sh --check` | 76 s |
+| L2 TXE suite | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh` | 3.5 min |
+| L2 hash vectors | `aztec-nargo test --force` in `contracts/bridge/aztec/keystone` | 38 s |
+| Sole consumer | `bash contracts/bridge/aztec/scripts/check-sole-consumer.sh` | < 1 s |
+| Integration (local network) | `bun run --cwd packages/bridge-core test:integration` | 10 min |
+| Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | 7.5 min |
+| E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | 15 s |
 
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row
 the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml` and
