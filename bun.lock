@@ -10,6 +10,19 @@
         "@commitlint/config-conventional": "^21.0.2",
       },
     },
+    "packages/asp-bot": {
+      "name": "@pp/asp-bot",
+      "version": "0.1.0",
+      "dependencies": {
+        "@pp/bridge-spec": "workspace:*",
+        "@pp/label-paths": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.13.2",
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.9",
+      },
+    },
     "packages/bridge-core": {
       "name": "@pp/bridge-core",
       "version": "0.1.0",
@@ -459,6 +472,8 @@
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 
     "@playwright/test": ["@playwright/test@1.63.0", "", { "dependencies": { "playwright": "1.63.0" }, "bin": { "playwright": "cli.js" } }, "sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ=="],
+
+    "@pp/asp-bot": ["@pp/asp-bot@workspace:packages/asp-bot"],
 
     "@pp/bridge-core": ["@pp/bridge-core@workspace:packages/bridge-core"],
 

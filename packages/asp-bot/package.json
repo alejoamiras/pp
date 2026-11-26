@@ -1,0 +1,22 @@
+{
+	"name": "@pp/asp-bot",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "bun --bun vitest run"
+	},
+	"dependencies": {
+		"@pp/bridge-spec": "workspace:*",
+		"@pp/label-paths": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^24.13.2",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.9"
+	}
+}
