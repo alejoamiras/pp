@@ -9,8 +9,9 @@
 		".": "./src/index.ts",
 		"./prover-worker": "./src/prover-worker.ts",
 		"./testing": {
-			"browser": null,
-			"default": "./test/support/testing.ts"
+			"types": "./test/support/testing.ts",
+			"bun": "./test/support/testing.ts",
+			"node": "./test/support/testing.ts"
 		}
 	},
 	"scripts": {
