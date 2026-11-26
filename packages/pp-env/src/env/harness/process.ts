@@ -84,8 +84,6 @@ export async function rpc<T>(url: string, method: string, params: unknown[] = []
 	return body.result
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
-
 /** Polls `probe` until it holds; a probe still pending at the deadline counts as a failure. */
 export async function waitFor(
 	label: string,
@@ -93,16 +91,25 @@ export async function waitFor(
 	timeoutMs: number,
 	exitReason?: () => string | undefined,
 ): Promise<void> {
-	const deadline = Date.now() + timeoutMs
-	while (Date.now() < deadline) {
-		const reason = exitReason?.()
-		if (reason) throw new Error(`${label} ended before it became ready: ${reason}`)
-		const ready = await Promise.race([probe().catch(() => false), sleep(deadline - Date.now()).then(() => false)])
-		if (ready) return
-		await sleep(250)
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const expired = new Promise<"expired">((resolve) => {
+		timer = setTimeout(() => resolve("expired"), timeoutMs)
+	})
+	try {
+		for (;;) {
+			const reason = exitReason?.()
+			if (reason) throw new Error(`${label} ended before it became ready: ${reason}`)
+			const outcome = await Promise.race([probe().catch(() => false), expired])
+			if (outcome === true) return
+			if (outcome === "expired" || (await Promise.race([pause(250), expired])) === "expired") break
+		}
+	} finally {
+		clearTimeout(timer)
 	}
 	throw new Error(`${label} did not become ready within ${timeoutMs} ms`)
 }
+
+const pause = (ms: number) => new Promise<"paused">((r) => setTimeout(() => r("paused"), ms))
 
 const SIGNALS = ["SIGINT", "SIGTERM"] as const
 const live = new Set<CleanupStack>()

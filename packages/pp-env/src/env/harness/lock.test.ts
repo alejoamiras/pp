@@ -26,6 +26,21 @@ test("holders never overlap, and a held lock times out", async () => {
 	expect(await withFileLock(lock, { staleMs: 60_000, waitMs: 300 }, () => 1)).toBeUndefined()
 })
 
+test("a live holder that outlasts staleMs keeps its lock", async () => {
+	const lock = join(dir, "c.lock")
+	const o = { staleMs: 300, waitMs: 5_000 }
+	let inside = 0
+	let overlapped = false
+	const hold = (ms: number) =>
+		withFileLock(lock, o, async () => {
+			overlapped ||= ++inside > 1
+			await Bun.sleep(ms)
+			inside--
+		})
+	await Promise.all([hold(1_000), Bun.sleep(50).then(() => hold(10))])
+	expect(overlapped).toBe(false)
+})
+
 test("a lock older than staleMs is reclaimed", async () => {
 	const lock = join(dir, "b.lock")
 	writeFileSync(lock, "")

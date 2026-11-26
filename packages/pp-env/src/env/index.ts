@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { mkdir, rm, rmdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -60,8 +60,9 @@ const alive = (pid: number): boolean => {
 }
 
 /**
- * Two live environments sharing a run ID would tear down each other's ports and files, so the run
- * directory is created exclusively; one left behind by a dead process is taken over.
+ * Two environments sharing a run ID would tear down each other's ports and files, so the run
+ * directory is created exclusively and an existing one is never taken over: deciding that its
+ * owner is gone would race another process deciding the same.
  */
 function reserveRunDir(runId: string, runDir: string): void {
 	mkdirSync(RUNS_DIR, { recursive: true })
@@ -70,9 +71,8 @@ function reserveRunDir(runId: string, runDir: string): void {
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err
 		const owner = Number.parseInt(existsSync(join(runDir, "owner")) ? readFileSync(join(runDir, "owner"), "utf8") : "", 10)
-		if (Number.isInteger(owner) && alive(owner)) throw new Error(`runId ${runId} is in use by process ${owner}`)
-		rmSync(runDir, { recursive: true, force: true })
-		mkdirSync(runDir)
+		const by = Number.isInteger(owner) ? (alive(owner) ? `process ${owner}` : `process ${owner}, which has exited`) : "an earlier run"
+		throw new Error(`runId ${runId} is in use by ${by}: pick another, or remove ${runDir} if nothing uses it`)
 	}
 	writeFileSync(join(runDir, "owner"), String(process.pid))
 }
