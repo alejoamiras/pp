@@ -1,8 +1,3 @@
-/**
- * Stage A end to end on a local network, across separate devices: the bridge stand-in mints to a
- * holder whose own device finds the note with no registered sender, the holder claims to itself and
- * leaves in two burns, and a device restored from the keys alone finds the change.
- */
 import type { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import type { Contract } from "@aztec-labs/aztec.js/contracts"
 import type { Tx } from "@aztec-labs/aztec.js/tx"
@@ -47,32 +42,29 @@ const settledBalance = (token: Contract, owner: AztecAddress, want: bigint) =>
 		`balance ${want}`,
 	)
 
+// The fee payer's Fee Juice balance is the only public write a private mint may leave.
+async function expectNoPublicTrace(tx: Tx | undefined) {
+	if (!tx) throw new Error("the mint was not captured")
+	const token = deployed.token.address
+	expect(tx.getPublicCallRequestsWithCalldata().filter((c) => c.request.contractAddress.equals(token))).toEqual([])
+	const receipt = await node.getTxReceipt(tx.getTxHash(), { includeTxEffect: true })
+	const effect = receipt.txEffect
+	if (!effect) throw new Error(`the mint has no landed effects (status ${receipt.status})`)
+	expect(effect.publicLogs.filter((l) => l.contractAddress.equals(token))).toEqual([])
+	const feeLeaf = await computeFeePayerBalanceLeafSlot(tx.data.feePayer)
+	expect(effect.publicDataWrites.length).toBeGreaterThan(0)
+	expect(effect.publicDataWrites.every((w) => w.leafSlot.equals(feeLeaf))).toBe(true)
+}
+
 describe("stage A on a local network", () => {
-	test("the holder's own device finds a bridge mint with no registered sender", async () => {
+	test("a private bridge mint found with no registered sender, a partial and an exact burn, the change found by a restored device", async () => {
 		await bridge.stub.methods.mint(deployed.token.address, holder.from, 100n, L).send(sendOpts(minter) as never)
 		expect(await holder.wallet.getAddressBook()).toEqual([])
 		await settledBalance(mine.token, holder.from, 100n)
 		expect(await labels(mine.token, holder.from)).toEqual([[L, ORIGIN_POOL, 100n]])
 		expect(await values(mine.token, holder.from, L)).toEqual([100n])
-	})
+		await expectNoPublicTrace(minterSends.at(-1))
 
-	// The mint is private end to end: the token enqueues nothing public, logs nothing public, and
-	// the only public write is the fee payer's Fee Juice balance.
-	test("the bridge mint leaves no public trace of the token", async () => {
-		const tx = minterSends.at(-1)
-		if (!tx) throw new Error("the mint was not captured")
-		const token = deployed.token.address
-		expect(tx.getPublicCallRequestsWithCalldata().filter((c) => c.request.contractAddress.equals(token))).toEqual([])
-		const receipt = await node.getTxReceipt(tx.getTxHash(), { includeTxEffect: true })
-		const effect = receipt.txEffect
-		if (!effect) throw new Error(`the mint has no landed effects (status ${receipt.status})`)
-		expect(effect.publicLogs.filter((l) => l.contractAddress.equals(token))).toEqual([])
-		const feeLeaf = await computeFeePayerBalanceLeafSlot(tx.data.feePayer)
-		expect(effect.publicDataWrites.length).toBeGreaterThan(0)
-		expect(effect.publicDataWrites.every((w) => w.leafSlot.equals(feeLeaf))).toBe(true)
-	})
-
-	test("the holder claims to itself, leaves in a partial and an exact burn, and a restored device finds the change", async () => {
 		await mine.stub.methods.mint(deployed.token.address, holder.from, 50n, L).send(sendOpts(holder) as never)
 		await settledBalance(mine.token, holder.from, 150n)
 		// Largest first: 95 spends the 100 note and returns 5 as change.
