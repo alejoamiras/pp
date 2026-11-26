@@ -14,6 +14,7 @@
       "name": "@pp/asp-bot",
       "version": "0.1.0",
       "dependencies": {
+        "@pp/bridge-core": "workspace:*",
         "@pp/bridge-spec": "workspace:*",
         "@pp/label-paths": "workspace:*",
       },

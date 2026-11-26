@@ -11,6 +11,7 @@
 		"test": "bun --bun vitest run"
 	},
 	"dependencies": {
+		"@pp/bridge-core": "workspace:*",
 		"@pp/bridge-spec": "workspace:*",
 		"@pp/label-paths": "workspace:*"
 	},

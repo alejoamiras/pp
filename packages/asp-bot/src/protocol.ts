@@ -1,0 +1,33 @@
+import type { RootRecord } from "@pp/label-paths"
+
+/**
+ * The parent and the bot's child process speak JSON lines: the child writes events to stdout, the
+ * parent writes commands to stdin. Every bigint crosses as a decimal string.
+ */
+export type ReadyEvent = { event: "ready"; url: string; port: number; poster: string; birthIntake: string }
+export type PostNowReply = { event: "post-now"; id: number } & (
+	| { ok: true; record: Record<keyof RootRecord, string> }
+	| { ok: false; reason: string }
+)
+export type PostNowCommand = { cmd: "post-now"; id: number }
+
+/** One JSON line, bigints as decimal strings. */
+export const line = (value: object): string => `${JSON.stringify(value, (_, v) => (typeof v === "bigint" ? v.toString() : v))}\n`
+
+const FIELDS = ["sequence", "poolRoot", "birthRoot", "l1Block", "rootTime"] as const
+
+export const encodeRecord = (r: RootRecord): Record<keyof RootRecord, string> =>
+	Object.fromEntries(FIELDS.map((k) => [k, r[k].toString()])) as Record<keyof RootRecord, string>
+
+export const decodeRecord = (w: Record<keyof RootRecord, string>): RootRecord =>
+	Object.fromEntries(FIELDS.map((k) => [k, BigInt(w[k])])) as RootRecord
+
+/** A parsed line, or `null` for one that is not a JSON object (a stray print from a dependency). */
+export function parseLine(text: string): Record<string, unknown> | null {
+	try {
+		const v = JSON.parse(text)
+		return typeof v === "object" && v !== null && !Array.isArray(v) ? v : null
+	} catch {
+		return null
+	}
+}
