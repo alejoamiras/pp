@@ -103,7 +103,9 @@ export class CleanupStack {
 	private readonly steps: (() => Promise<void>)[] = []
 	private running: Promise<void> | undefined
 
-	constructor() {
+	/** With `signals: false` the owner tears down; nothing here reacts to SIGINT or SIGTERM. */
+	constructor(o: { signals?: boolean } = {}) {
+		if (o.signals === false) return
 		hookSignals()
 		live.add(this)
 	}

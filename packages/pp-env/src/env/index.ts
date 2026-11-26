@@ -24,6 +24,11 @@ export type StartPoolEnvOptions = {
 	deployerIndex?: number
 	/** Names the run's port rows, logs and run dir; defaults to a fresh id. */
 	runId?: string
+	/**
+	 * Default true: SIGINT and SIGTERM run stop() and then re-raise. Pass false when the caller
+	 * owns one ordered teardown and calls stop() itself.
+	 */
+	signals?: boolean
 }
 
 export interface PoolEnv {
@@ -48,7 +53,7 @@ export interface PoolEnv {
 	deployStub(): Promise<Address>
 	/** Submits a prepared spend through `stub` from anvil account `fromIndex`. */
 	submitViaStub(stub: Address, spend: PreparedSpend, fromIndex: number): Promise<Hex>
-	/** Idempotent; also runs on SIGINT and SIGTERM. */
+	/** Idempotent; also runs on SIGINT and SIGTERM unless started with `signals: false`. */
 	stop(): Promise<void>
 }
 
@@ -88,7 +93,7 @@ export async function startPoolEnv(o: StartPoolEnvOptions = {}): Promise<PoolEnv
 	if (!RUN_ID.test(runId)) throw new Error(`runId ${JSON.stringify(runId)} must match ${RUN_ID}`)
 	const runDir = join(RUNS_DIR, runId)
 	const forgeDir = join(runDir, "forge")
-	const cleanup = new CleanupStack()
+	const cleanup = new CleanupStack({ signals: o.signals })
 	cleanup.push(() => releasePorts(runId))
 	cleanup.push(async () => {
 		await rm(forgeDir, { recursive: true, force: true })

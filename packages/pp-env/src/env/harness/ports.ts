@@ -14,6 +14,8 @@ const FLOOR_GUARD = 512
 const MAX_STATIC_TRIES = 256
 /** A lock older than this belonged to a run that died holding it. */
 const LOCK_STALE_MS = 15_000
+/** Outlasts the stale threshold, so a dead holder's lock is always reclaimed before a caller gives up. */
+const LOCK_WAIT_MS = LOCK_STALE_MS + 5_000
 
 const REPO_ROOT = join(PACKAGE_DIR, "../..")
 
@@ -64,7 +66,7 @@ const REGISTRY_HEADER = [
 async function withRegistry(mutate: (lines: string[]) => string[]): Promise<boolean> {
 	const registry = registryPath()
 	mkdirSync(dirname(registry), { recursive: true })
-	const done = await withFileLock(`${registry}.lock`, { staleMs: LOCK_STALE_MS, waitMs: 6_000 }, () => {
+	const done = await withFileLock(`${registry}.lock`, { staleMs: LOCK_STALE_MS, waitMs: LOCK_WAIT_MS }, () => {
 		const current = existsSync(registry) ? readFileSync(registry, "utf8") : `${REGISTRY_HEADER.join("\n")}\n`
 		writeFileSync(registry, mutate(current.split("\n")).join("\n"))
 	})
@@ -101,10 +103,10 @@ export async function claimPort(runId: string, service: string): Promise<number>
 	throw new Error(`no free loopback port in [${STATIC_LO}, ${hi}) after ${MAX_STATIC_TRIES} probes`)
 }
 
-/** Drops every row `runId` owns. Never throws: a registry hiccup must not fail an otherwise clean teardown. */
+/** Drops every row `runId` owns; throws if a live holder kept the registry locked throughout. */
 export async function releasePorts(runId: string): Promise<void> {
 	if (await withRegistry((lines) => lines.filter((l) => !l.includes(`| ${runId} |`)))) return
-	console.warn(`[pp-env] ${registryPath()} stayed locked; remove the rows owned by ${runId} by hand`)
+	throw new Error(`${registryPath()} stayed locked; the rows owned by ${runId} are still there`)
 }
 
 export function rowsOwnedBy(runId: string): number {
