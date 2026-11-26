@@ -6,9 +6,10 @@ import {SafeERC20} from "@oz/token/ERC20/utils/SafeERC20.sol";
 
 import {IPrivacyPoolVault} from "../../src/interfaces/IPrivacyPoolVault.sol";
 
-/// The vault checks a processor relies on, reimplemented from Privacy Pools v2's `PoolVault.transact`
-/// without the proof: processor, context binding, nullifier replay, canonical token id, payout to the
-/// caller. A mode makes it misbehave so the portal's own checks can be shown to carry the weight.
+/// An ERC-20-only subset of Privacy Pools v2's `PoolVault.transact`: the processor, context-binding,
+/// nullifier-replay and token-id checks, and the payout to the caller. No proof, root or
+/// output-commitment checks and no native-asset branch, so a test that needs the vault itself to
+/// accept a spend uses the real one. A mode makes it misbehave so the portal's own checks carry the weight.
 contract MockPoolVault is IPrivacyPoolVault {
     using SafeERC20 for IERC20;
 

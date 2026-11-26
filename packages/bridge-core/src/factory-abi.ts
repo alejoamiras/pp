@@ -58,6 +58,7 @@ export const PORTAL_FACTORY_ABI = [
 		outputs: [],
 	},
 	{ type: "function", name: "IMPLEMENTATION", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
+	{ type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
 	{ type: "function", name: "L2_HUB", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bytes32" }] },
 	{
 		type: "event",

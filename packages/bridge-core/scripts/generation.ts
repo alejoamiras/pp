@@ -187,38 +187,33 @@ async function deployEvm(l1: L1Ctx, name: string, args: unknown[], nonce?: bigin
 interface FactoryBindings {
 	implementation: Address
 	hub: string
+	guardian: Address
 	pool: Address
 	lifetimeCap: bigint
 }
 
-/** The vault and cap are the implementation's immutables, which every clone delegates to. */
-async function readFactoryBindings(l1: L1Ctx, factory: Address): Promise<FactoryBindings> {
-	const fromFactory = (functionName: "IMPLEMENTATION" | "L2_HUB") =>
-		l1.pub.readContract({ address: factory, abi: PORTAL_FACTORY_ABI, functionName, args: [] })
-	const implementation = lc(String(await fromFactory("IMPLEMENTATION")))
-	const fromImplementation = (functionName: "POOL" | "LIFETIME_CAP") =>
-		l1.pub.readContract({ address: implementation, abi: PROCESSOR_PORTAL_ABI, functionName, args: [] })
-	return {
-		implementation,
-		hub: String(await fromFactory("L2_HUB")),
-		pool: lc(String(await fromImplementation("POOL"))),
-		lifetimeCap: BigInt(await fromImplementation("LIFETIME_CAP")),
-	}
-}
-
-/** A factory is this generation's only if all four bindings agree: one bound to another vault or cap
- *  would route every portal's funds by rules this generation never chose. */
+/**
+ * A factory is this generation's only if every binding agrees: one bound to another vault or cap
+ * would route every portal's funds by rules this generation never chose, and one owned by another
+ * key would leave the manifest naming a guardian that cannot pause. The vault and cap are read from
+ * the expected implementation only after the factory is shown to point at it.
+ */
 async function assertFactoryBindings(l1: L1Ctx, factory: Address, expected: FactoryBindings, label: string): Promise<void> {
-	const actual = await readFactoryBindings(l1, factory)
-	assertSame(actual.implementation, expected.implementation, `${label} IMPLEMENTATION`)
-	assertSame(actual.hub, expected.hub, `${label} L2_HUB`)
-	assertSame(actual.pool, expected.pool, `${label} POOL`)
-	assertSame(actual.lifetimeCap.toString(), expected.lifetimeCap.toString(), `${label} LIFETIME_CAP`)
+	const fromFactory = async (functionName: "IMPLEMENTATION" | "L2_HUB" | "owner") =>
+		String(await l1.pub.readContract({ address: factory, abi: PORTAL_FACTORY_ABI, functionName, args: [] }))
+	const fromImplementation = async (functionName: "POOL" | "LIFETIME_CAP") =>
+		String(await l1.pub.readContract({ address: expected.implementation, abi: PROCESSOR_PORTAL_ABI, functionName, args: [] }))
+	assertSame(await fromFactory("IMPLEMENTATION"), expected.implementation, `${label} IMPLEMENTATION`)
+	assertSame(await fromFactory("L2_HUB"), expected.hub, `${label} L2_HUB`)
+	assertSame(await fromFactory("owner"), expected.guardian, `${label} owner`)
+	assertSame(await fromImplementation("POOL"), expected.pool, `${label} POOL`)
+	assertSame(await fromImplementation("LIFETIME_CAP"), expected.lifetimeCap.toString(), `${label} LIFETIME_CAP`)
 }
 
 const expectedBindings = (implementation: Address, hub: string, inputs: GenerationInputs): FactoryBindings => ({
 	implementation,
 	hub,
+	guardian: lc(inputs.guardianL1),
 	pool: lc(inputs.pool),
 	lifetimeCap: inputs.lifetimeCap,
 })
@@ -251,14 +246,17 @@ async function deployFactory(
 ): Promise<FactoryPrediction> {
 	const done = findStep(journal, "factory-deployed")
 	if (done) {
-		const recorded = { factory: lc(done.factory), implementation: lc(done.implementation) }
+		// The hub was derived from the prediction, so a journal whose factory step disagrees with it is
+		// not one generation.
+		assertSame(done.factory, predicted.factory, "journalled factory address")
+		assertSame(done.implementation, predicted.implementation, "journalled implementation address")
 		await assertFactoryBindings(
 			l1,
-			recorded.factory,
-			expectedBindings(recorded.implementation, hubAddress, inputs),
+			predicted.factory,
+			expectedBindings(predicted.implementation, hubAddress, inputs),
 			"journalled factory",
 		)
-		return recorded
+		return predicted
 	}
 	const adopted = await adoptLandedFactory(l1, predicted, expectedBindings(predicted.implementation, hubAddress, inputs), journal)
 	if (adopted) return adopted

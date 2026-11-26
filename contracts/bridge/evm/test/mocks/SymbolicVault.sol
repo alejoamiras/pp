@@ -6,7 +6,7 @@ import {IERC20} from "@oz/token/ERC20/IERC20.sol";
 import {IPrivacyPoolVault} from "../../src/interfaces/IPrivacyPoolVault.sol";
 
 /// The halmos vault: pays `amountOut` of `tokenIdOut` to its caller, or misbehaves. No context or
-/// replay checks, which belong to the real vault and are exercised against MockPoolVault in forge.
+/// replay checks: those are the vault's, and MockPoolVault reimplements them for forge.
 /// `Trap` reverts with its own error, so a proof can tell "refused before the vault" from "refused by it":
 /// a call counter cannot, because the portal's revert rolls it back.
 contract SymbolicVault is IPrivacyPoolVault {

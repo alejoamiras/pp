@@ -1,7 +1,7 @@
-/** The smoke battery: every flow once, in the order its state requires, each timed. The integration
- *  suite runs the same flows as tests; this is the CLI's one-shot form. */
+/** The smoke battery, each check timed. The integration suite runs the same checks as tests; this is
+ *  the CLI's one-shot form. */
 import type { BridgeBlock, ManifestV2 } from "../../src/manifest-v2"
-import { flowGenerationBindings } from "./bindings"
+import { flowGenerationBindings, flowHubRegistrations } from "./bindings"
 import type { SandboxClients } from "./handle"
 
 export interface FlowResult {
@@ -27,6 +27,8 @@ async function timed(label: string, fn: () => Promise<string>): Promise<FlowResu
 /** Runs the whole battery and stops at the first failure. */
 export async function runSmoke(clients: SandboxClients, manifest: ManifestV2): Promise<FlowResult[]> {
 	const bridge = manifest.bridge as BridgeBlock
+	const [usdc, usdt, pxo] = bridge.tokens
+	if (!usdc || !usdt || !pxo) throw new Error("the sandbox manifest lists fewer than three tokens")
 	const results: FlowResult[] = []
 	const step = async (label: string, fn: () => Promise<string>) => {
 		const r = await timed(label, fn)
@@ -35,6 +37,9 @@ export async function runSmoke(clients: SandboxClients, manifest: ManifestV2): P
 	}
 	console.log("\n=== smoke ===")
 	await step("generation bindings: vault, cap, paused entries, one portal per token", () => flowGenerationBindings(clients.l1, bridge))
+	await step("hub registrations: deployed tokens bound to their portals, the portal-only one unregistered", () =>
+		flowHubRegistrations({ wallet: clients.l2.wallet, from: clients.l2.relayer }, bridge, [usdc, usdt], [pxo]),
+	)
 	return results
 }
 
