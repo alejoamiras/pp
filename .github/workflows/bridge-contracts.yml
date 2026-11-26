@@ -50,6 +50,8 @@ jobs:
               - 'packages/bridge-spec/src/**'
               - 'packages/bridge-spec/package.json'
               - 'packages/bridge-spec/vectors/**'
+              - 'packages/pool-client/src/**'
+              - 'packages/pool-client/package.json'
               - 'packages/labelled-token/**'
               # labelled-token's dependency library, named as the graph pin requires.
               - 'packages/bridge-core/src/**'

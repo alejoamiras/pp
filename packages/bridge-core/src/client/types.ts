@@ -1,4 +1,12 @@
+import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
+import type { PreparedSpend } from "@pp/pool-client"
 import type { Address, Hash, Hex } from "viem"
+
+/**
+ * A pool spend to the portal plus what its message binds. `claimSalt` and `secretHash` derive from
+ * the session's claim key and the spent commitment, so a re-proof keeps both and the journal record.
+ */
+export type PreparedBridgeSpend = PreparedSpend & { secretHash: Hex; claimSalt: bigint; recipient: AztecAddress }
 
 export type BridgeStep = "prepared" | "submitted" | "mined" | "claimable" | "claiming" | "claimed" | { error: string }
 

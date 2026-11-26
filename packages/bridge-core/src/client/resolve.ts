@@ -94,7 +94,8 @@ export async function resolveNullifier(
 	return spentAt === 0n ? { kind: "open" } : { kind: "elsewhere" }
 }
 
-function revertData(e: unknown): Hex | undefined {
+/** The raw revert data anywhere in a viem error chain. */
+export function revertData(e: unknown): Hex | undefined {
 	if (!(e instanceof BaseError)) return undefined
 	const raw = e.walk((x) => x instanceof RawContractError) as RawContractError | null
 	if (raw && typeof raw.data === "string") return raw.data

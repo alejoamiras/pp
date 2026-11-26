@@ -22,6 +22,7 @@
 	},
 	"dependencies": {
 		"@pp/bridge-spec": "workspace:*",
+		"@pp/pool-client": "workspace:*",
 		"@nulo-sh/resolve-asset": "0.3.0",
 		"@nulo-sh/wallet-crypto": "0.3.0",
 		"zod": "^4.4.3",

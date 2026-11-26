@@ -44,8 +44,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations (dorny's `some`-quantifier footgun). The kit whole; the
-          # bridge-core sources and sandbox harness it imports; the hub, registry and token artifacts
-          # bridge-core bundles from contracts/. Pinned by scripts/ci-cd/behavior-gating.test.ts.
+          # bridge-core sources, the workspace libraries they import and the sandbox harness; the
+          # hub, registry and token artifacts bridge-core bundles from contracts/. Pinned by
+          # scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             kit:
               - 'packages/e2e-kit/**'
@@ -54,6 +55,8 @@ jobs:
               - 'packages/bridge-core/package.json'
               - 'packages/bridge-spec/src/**'
               - 'packages/bridge-spec/package.json'
+              - 'packages/pool-client/src/**'
+              - 'packages/pool-client/package.json'
               - 'contracts/bridge/aztec/token_bridge_hub/target/**'
               - 'contracts/bridge/aztec/asp_registry/target/**'
               - 'contracts/bridge/aztec/labelled_token/target/**'
