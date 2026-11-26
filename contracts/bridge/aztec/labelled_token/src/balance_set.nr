@@ -54,9 +54,9 @@ impl LabelledBalanceSet<&mut PrivateContext> {
     }
 
     /// Nullifies up to `MAX_NOTES` notes of `label`, largest first, stopping once `amount` is covered.
-    /// The PXE picks the notes; the circuit checks only their label and that they descend. Returns
-    /// their total and their common origin; fails if they disagree on origin. The total may fall
-    /// short of `amount`; the caller decides.
+    /// The PXE picks the notes; the circuit enforces their label and descending value, not that they
+    /// are the owner's largest. Returns their total and their common origin; fails if they disagree
+    /// on origin. The total may fall short of `amount`; the caller decides.
     pub fn try_sub(self, label: Field, amount: u128) -> (u128, u8) {
         let options = NoteGetterOptions::with_preprocessor(preprocess_min_sum, amount)
             .select(LabelledNote::properties().label, Comparator.EQ, label)
