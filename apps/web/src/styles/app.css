@@ -1,6 +1,2 @@
 @import "tailwindcss";
-@import "@fontsource-variable/manrope";
-
-@theme {
-	--font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
-}
+@import "./theme.css";

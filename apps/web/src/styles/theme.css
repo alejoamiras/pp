@@ -1,0 +1,194 @@
+/*
+ * The look, as semantic tokens: a re-skin is this file plus src/ui. Light values sit in @theme
+ * (emitted on :root); the two dark blocks below must stay identical, and contrast.test.ts reads
+ * all three and checks every text/background pair the components use.
+ */
+@import "@fontsource-variable/manrope";
+@import "@fontsource-variable/archivo";
+@import "@fontsource/dm-mono/400.css";
+@import "@fontsource/dm-mono/500.css";
+
+@theme static {
+	/* Only the tokens below exist, so a stock palette class cannot reach the page. */
+	--color-*: initial;
+
+	--font-sans: "Manrope Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+	--font-mono: "DM Mono", ui-monospace, monospace;
+	--font-display: "Archivo Variable", ui-sans-serif, system-ui, sans-serif;
+
+	--color-canvas: #f4f5fa;
+	--color-surface: #f7f7fc;
+	--color-field-a: #e4ddff;
+	--color-field-b: #d6f1e6;
+	--color-field-c: #ffe4d3;
+	--color-glass: rgba(255, 255, 255, 0.64);
+	--color-glass-2: rgba(255, 255, 255, 0.88);
+	--color-rim: rgba(255, 255, 255, 0.95);
+	--color-edge: rgba(27, 30, 43, 0.09);
+	--color-ink: #1b1e2b;
+	--color-ink-2: #41465a;
+	--color-ink-3: #5e6379;
+	--color-track: #d3d6e4;
+	--color-tone-ok: #16704f;
+	--color-tone-ok-bg: #dff2e8;
+	--color-tone-wait: #4d5379;
+	--color-tone-wait-bg: #e9e9f4;
+	--color-tone-attn: #8a4b00;
+	--color-tone-attn-bg: #ffefd6;
+	--color-tone-bad: #ae2116;
+	--color-tone-bad-bg: #fce6e3;
+	--color-action: #1b1e2b;
+	--color-action-ink: #ffffff;
+	--color-id: #5b4fb8;
+	--color-id-bg: #ece9fb;
+
+	/* Apply as `shadow-(--shadow-glass)`: the `shadow-glass` utility inlines this light value and never sees the dark one. */
+	--shadow-glass: 0 1px 2px rgba(27, 30, 43, 0.04), 0 14px 36px rgba(27, 30, 43, 0.08);
+
+	--radius-panel: 20px;
+	--radius-card: 16px;
+	--radius-row: 14px;
+	--radius-control: 10px;
+	--radius-tag: 5px;
+
+	--blur-glass: 18px;
+
+	--text-cap: 0.6875rem;
+	--text-meta: 0.78125rem;
+	--text-ui: 0.8125rem;
+	--text-title: 0.9375rem;
+
+	--animate-travel-x: travel-x 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+	--animate-travel-y: travel-y 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+	--animate-sheet-in: sheet-in 0.2s ease-out;
+	--animate-fade-in: fade-in 0.15s ease-out;
+
+	/* Transform and opacity only: the compositor keeps these moving while proving blocks the main thread. */
+	@keyframes travel-x {
+		0% {
+			transform: translateX(0);
+			opacity: 0;
+		}
+		15%,
+		85% {
+			opacity: 1;
+		}
+		100% {
+			transform: translateX(100%);
+			opacity: 0;
+		}
+	}
+	@keyframes travel-y {
+		0% {
+			transform: translateY(0);
+			opacity: 0;
+		}
+		15%,
+		85% {
+			opacity: 1;
+		}
+		100% {
+			transform: translateY(100%);
+			opacity: 0;
+		}
+	}
+	@keyframes sheet-in {
+		from {
+			transform: translateX(100%);
+		}
+	}
+	@keyframes fade-in {
+		from {
+			opacity: 0;
+		}
+	}
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		color-scheme: dark;
+		--color-canvas: #131419;
+		--color-surface: #1c1d23;
+		--color-field-a: rgba(150, 130, 255, 0.2);
+		--color-field-b: rgba(90, 200, 160, 0.12);
+		--color-field-c: rgba(255, 160, 120, 0.12);
+		--color-glass: rgba(255, 255, 255, 0.06);
+		--color-glass-2: rgba(255, 255, 255, 0.1);
+		--color-rim: rgba(255, 255, 255, 0.12);
+		--color-edge: rgba(255, 255, 255, 0.12);
+		--color-ink: #eeeff5;
+		--color-ink-2: #bfc2d1;
+		--color-ink-3: #9a9eb2;
+		--color-track: #3a3c48;
+		--color-tone-ok: #74d6ac;
+		--color-tone-ok-bg: rgba(116, 214, 172, 0.13);
+		--color-tone-wait: #bbbee6;
+		--color-tone-wait-bg: rgba(187, 190, 230, 0.12);
+		--color-tone-attn: #ffb84d;
+		--color-tone-attn-bg: rgba(255, 184, 77, 0.13);
+		--color-tone-bad: #ff8e85;
+		--color-tone-bad-bg: rgba(255, 142, 133, 0.13);
+		--color-action: #eeeff5;
+		--color-action-ink: #15161b;
+		--color-id: #c7beff;
+		--color-id-bg: rgba(199, 190, 255, 0.14);
+		--shadow-glass: 0 1px 2px rgba(0, 0, 0, 0.3), 0 18px 40px rgba(0, 0, 0, 0.35);
+	}
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--color-canvas: #131419;
+	--color-surface: #1c1d23;
+	--color-field-a: rgba(150, 130, 255, 0.2);
+	--color-field-b: rgba(90, 200, 160, 0.12);
+	--color-field-c: rgba(255, 160, 120, 0.12);
+	--color-glass: rgba(255, 255, 255, 0.06);
+	--color-glass-2: rgba(255, 255, 255, 0.1);
+	--color-rim: rgba(255, 255, 255, 0.12);
+	--color-edge: rgba(255, 255, 255, 0.12);
+	--color-ink: #eeeff5;
+	--color-ink-2: #bfc2d1;
+	--color-ink-3: #9a9eb2;
+	--color-track: #3a3c48;
+	--color-tone-ok: #74d6ac;
+	--color-tone-ok-bg: rgba(116, 214, 172, 0.13);
+	--color-tone-wait: #bbbee6;
+	--color-tone-wait-bg: rgba(187, 190, 230, 0.12);
+	--color-tone-attn: #ffb84d;
+	--color-tone-attn-bg: rgba(255, 184, 77, 0.13);
+	--color-tone-bad: #ff8e85;
+	--color-tone-bad-bg: rgba(255, 142, 133, 0.13);
+	--color-action: #eeeff5;
+	--color-action-ink: #15161b;
+	--color-id: #c7beff;
+	--color-id-bg: rgba(199, 190, 255, 0.14);
+	--shadow-glass: 0 1px 2px rgba(0, 0, 0, 0.3), 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+@layer base {
+	:root {
+		color-scheme: light;
+	}
+	html {
+		min-height: 100%;
+		color: var(--color-ink);
+		font-family: var(--font-sans);
+		background:
+			radial-gradient(55% 45% at 8% 0%, var(--color-field-a), transparent 70%),
+			radial-gradient(45% 45% at 100% 15%, var(--color-field-c), transparent 70%),
+			radial-gradient(60% 55% at 45% 100%, var(--color-field-b), transparent 72%), var(--color-canvas);
+	}
+	body {
+		font-size: 0.875rem;
+		line-height: 1.45;
+	}
+}
+
+/* Dashes as a background rather than a border, so the track keeps a real box for the runner to cross. */
+@utility track-dashed-y {
+	background: repeating-linear-gradient(to bottom, var(--color-track) 0 5px, transparent 5px 10px);
+}
+@utility track-dashed-x {
+	background: repeating-linear-gradient(to right, var(--color-track) 0 6px, transparent 6px 12px);
+}
