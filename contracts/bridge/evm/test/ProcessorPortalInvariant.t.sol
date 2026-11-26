@@ -26,8 +26,8 @@ import {PlainERC20} from "./mocks/MetadataERC20s.sol";
 ///
 /// Every property is checked on real balances, per payee. One invariant function means one campaign.
 /// Each run appends its counts in `afterInvariant`, and `scripts/check-invariant.sh` requires the
-/// campaign totals of Outbox-refused replays, landed forged payouts, cap hits and reserve hits to be
-/// non-zero, so a walk that never reaches a property cannot pass for one that holds it.
+/// campaign totals of Outbox-refused replays, landed forged payouts, cap hits, reserve hits and guard
+/// hits to be non-zero, so a walk that never reaches a property cannot pass for one that holds it.
 contract ProcessorPortalInvariantTest is Test {
     string internal constant STATS_DIR = "out/invariant-stats";
     string internal constant STATS = "out/invariant-stats/ProcessorPortalInvariant.csv";
@@ -125,6 +125,7 @@ contract PortalHandler is Test {
     uint256 internal forgedLanded;
     uint256 internal capHits;
     uint256 internal reserveHits;
+    uint256 internal guardHits;
 
     constructor() {
         inbox = new CapturingInbox();
@@ -173,7 +174,15 @@ contract PortalHandler is Test {
             reverts++;
             bytes4 sel = bytes4(err);
             if (sel == ProcessorPortalImpl.CapExceeded.selector) capHits++;
-            if (m == MockPoolVault.Mode.Reenter && !_refusedBeforeTheVaultOrGuarded(sel)) reentryNotGuarded++;
+            if (m == MockPoolVault.Mode.Reenter) {
+                if (sel == ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector) {
+                    guardHits++;
+                } else if (
+                    sel != ProcessorPortalImpl.EntriesPaused.selector && sel != ProcessorPortalImpl.CapExceeded.selector
+                ) {
+                    reentryNotGuarded++;
+                }
+            }
         }
         vault.setMode(MockPoolVault.Mode.Honest, 0);
     }
@@ -200,15 +209,18 @@ contract PortalHandler is Test {
         if (claimable == 0) return;
         amount = bound(amount, 1, claimable);
         uint256 k = payeeSeed % 3;
+        uint256 outstanding = clones[i].grossAccepted() - clones[i].totalPaid();
         (bool ok, bytes memory err) = _publishAndSettle(i, ragequit, payees[k], amount, label);
         if (ok) {
             honestPaid[i] += amount;
             owed[i][k] += amount;
         } else {
             reverts++;
-            // Only a forged payout can take what an honest exit is owed, and only the reserve check may
-            // then refuse it.
-            if (forgedPaid[i] > 0 && bytes4(err) == ProcessorPortalImpl.ExceedsReserve.selector) reserveHits++;
+            // Only forged payouts can leave less than an honest exit is owed, and only the reserve check
+            // may then refuse it, for exactly that shortfall.
+            bytes memory shortfall =
+                abi.encodeWithSelector(ProcessorPortalImpl.ExceedsReserve.selector, outstanding, amount);
+            if (amount > outstanding && keccak256(err) == keccak256(shortfall)) reserveHits++;
             else honestRefusedUnexpectedly++;
         }
     }
@@ -262,7 +274,7 @@ contract PortalHandler is Test {
         }
     }
 
-    /// `replays,forgedLanded,capHits,reserveHits,calls,reverts`, one line per run.
+    /// `replays,forgedLanded,capHits,reserveHits,guardHits,calls,reverts`, one line per run.
     function statsLine() external view returns (string memory) {
         return string.concat(
             vm.toString(replays),
@@ -272,6 +284,8 @@ contract PortalHandler is Test {
             vm.toString(capHits),
             ",",
             vm.toString(reserveHits),
+            ",",
+            vm.toString(guardHits),
             ",",
             vm.toString(calls),
             ",",
@@ -314,12 +328,6 @@ contract PortalHandler is Test {
                     )
                     : abi.encodeCall(ProcessorPortalImpl.settlePublicExit, (t.payee, t.amount, t.epoch, 1, 0, path))
             );
-    }
-
-    /// The reentrant settle runs only once the vault is reached; the pause and the cap refuse before it.
-    function _refusedBeforeTheVaultOrGuarded(bytes4 sel) internal pure returns (bool) {
-        return sel == ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector
-            || sel == ProcessorPortalImpl.EntriesPaused.selector || sel == ProcessorPortalImpl.CapExceeded.selector;
     }
 
     function _notes() internal pure returns (IPrivacyPoolVault.NoteData[] memory notes) {
