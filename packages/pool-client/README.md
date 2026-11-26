@@ -61,8 +61,9 @@ imports `@pp/pool-client/prover-worker`. The worker keeps a page responsive; `te
 | `test:browser:integration` | all of the above | a spend prepared in the page that the vault accepts |
 
 `@pp/pool-client/testing` (Node and Bun only) exports the seeder those suites use: users, keystore registration, deposits,
-label approval and stub processors on a running `pp-env up`. It is test support, not part of the client. CI runs the suites
-that need the checkout inside a network namespace with loopback only (`scripts/offline-gate.sh`).
+label approval and stub processors on a running `pp-env up`; `circuitsDir()` is the fetched pinned circuits, for
+`{ kind: "dir", path: circuitsDir() }`. It is test support, not part of the client. CI runs the suites that need the
+checkout inside a network namespace with loopback only (`scripts/offline-gate.sh`).
 
 ## Licence
 
