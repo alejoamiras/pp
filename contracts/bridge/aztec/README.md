@@ -83,9 +83,9 @@ usable for new anchors for `1800 - L - I` s: about 11-17 minutes on Sepolia's fi
 Known limits: `birth_root` has no Ethereum counterpart, so no watcher can compare it: the registry
 takes the poster's value. Only `pool_root` can be compared, with `root_time`, against Ethereum at
 `l1_block`. An unshield reverts if the current pair, when it executes, differs from the pair it was
-proved against. So any root change, honest or not, reverts the unshields proved before it, whichever
-tree they used: a new birth approval also reverts pool-origin unshields. A pair that was replaced and
-then restored, even across a poster rotation, passes again. A lost or stolen admin key cannot be replaced
+proved against, whichever tree it used. So an honest post can revert in-flight unshields too, and a
+new birth approval reverts pool-origin ones; a pair that was replaced and then restored, even across
+a poster rotation, passes again. A lost or stolen admin key cannot be replaced
 on chain; recovery is a new registry and a new token generation. While one tree's root is zero, a
 successful checked spend shows which tree it used.
 

@@ -2,7 +2,7 @@
 //!
 //! Time rules, in seconds, against `root_time` (the Ethereum block time the poster observed):
 //! - a post lands only while `now - root_time <= MAX_OBSERVATION_LAG`;
-//! - a spend needs `root_time + MAX_ROOT_AGE >= anchor + SPEND_WINDOW` and expires at
+//! - a spend needs `root_time + MAX_ROOT_AGE >= anchor + SPEND_WINDOW` and expires by
 //!   `anchor + SPEND_WINDOW`.
 //! So a record serves anchors up to `root_time + 1800`, and their spends land by `root_time + 3600`.
 //!
