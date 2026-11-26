@@ -49,21 +49,26 @@ contract ProcessorPortalFuzzTest is PortalFixture {
         _assertNothingMoved();
     }
 
-    /// The wire format bounds the amount first, then the cap bounds what is left of it.
-    function testFuzz_bridge_amountAndCap(uint256 amount, uint256 cap) public {
+    /// The wire format bounds the amount first, then the cap bounds what is left of it. The cap counts
+    /// everything ever accepted, so a payout never frees room under it.
+    function testFuzz_bridge_amountAndCap(uint256 amount, uint256 cap, uint256 prior, uint256 paid) public {
         cap = bound(cap, 1, type(uint128).max);
+        prior = bound(prior, 0, cap);
+        paid = bound(paid, 0, prior);
         amount = bound(amount, 0, uint256(type(uint128).max) + 2);
         _deploy(cap);
+        if (prior > 0) _bridge(portal, prior);
+        if (paid > 0) _settlePublicExit(portal, address(0xA11CE), paid);
         (IPrivacyPoolVault.TransactProof memory proof,) = _proof(portal, amount, SECRET_HASH);
         _snapshot();
         if (amount == 0 || amount > type(uint128).max) {
             vm.expectRevert(abi.encodeWithSelector(BridgeMessageV1.AmountOutOfRange.selector, amount));
-        } else if (amount > cap) {
-            vm.expectRevert(abi.encodeWithSelector(ProcessorPortalImpl.CapExceeded.selector, 0, amount));
+        } else if (amount > cap - prior) {
+            vm.expectRevert(abi.encodeWithSelector(ProcessorPortalImpl.CapExceeded.selector, prior, amount));
         } else {
             portal.bridgeFromPool(proof, _notes(), SECRET_HASH);
-            assertEq(portal.grossAccepted(), amount);
-            assertEq(token.balanceOf(address(portal)), amount);
+            assertEq(portal.grossAccepted(), prior + amount);
+            assertEq(token.balanceOf(address(portal)), prior - paid + amount);
             assertEq(inbox.sent(), sentBefore + 1);
             return;
         }
@@ -161,18 +166,33 @@ contract ProcessorPortalFuzzTest is PortalFixture {
         _assertNothingMoved();
     }
 
-    function testFuzz_settle_payee(address payee, bool ragequit, uint256 label, uint256 amount) public {
+    /// The wire format refuses a zero payee, then a ragequit label outside the field; the clone then
+    /// refuses itself as payee.
+    function testFuzz_settle_payee(address payee, bool ragequit, uint256 label, uint8 labelPick, uint256 amount)
+        public
+    {
         amount = bound(amount, 1, SEED);
-        label = ragequit ? bound(label, 1, P - 1) : 0;
+        if (!ragequit) label = 0;
+        else if (labelPick % 4 == 0) label = 0;
+        else if (labelPick % 4 == 1) label = bound(label, P, type(uint256).max);
+        else label = bound(label, 1, P - 1);
         uint256 before = token.balanceOf(payee);
+        bool refused = true;
         if (payee == address(0)) {
             vm.expectRevert(BridgeMessageV1.ZeroPayee.selector);
+        } else if (ragequit && (label == 0 || label >= P)) {
+            vm.expectRevert(abi.encodeWithSelector(BridgeMessageV1.LabelOutOfRange.selector, label));
         } else if (payee == address(portal)) {
             vm.expectRevert(ProcessorPortalImpl.PayeeIsPortal.selector);
+        } else {
+            refused = false;
         }
         if (ragequit) _settleRagequit(portal, payee, amount, label);
         else _settlePublicExit(portal, payee, amount);
-        if (payee != address(0) && payee != address(portal)) {
+        if (refused) {
+            assertEq(portal.totalPaid(), 0);
+            assertEq(token.balanceOf(address(portal)), SEED);
+        } else {
             assertEq(token.balanceOf(payee), before + amount);
             assertEq(portal.totalPaid(), amount);
         }
