@@ -237,5 +237,6 @@ if (process.env.PP_STACK_INTEGRATION && process.env.PP_STACK_LONG)
 			} finally {
 				await stack.stop()
 			}
-		})
+			// Past the config's 30 min: boot, settling and 32 samples a minute apart.
+		}, 2_400_000)
 	})
