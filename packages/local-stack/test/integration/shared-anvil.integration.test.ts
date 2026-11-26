@@ -93,15 +93,17 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the pool on the anvil the Az
 		spends: await client.readContract({ address: stub, abi: STUB_PROCESSOR_ABI, functionName: "spendCount" }),
 	})
 	const ping = async () => {
-		const w = wallet(stack.l1Rpc, PINGER_INDEX)
+		const w = wallet(stack.manifest.l1Rpc, PINGER_INDEX)
 		const hash = await w.sendTransaction({ to: PING_TO, value: 1n })
 		expect((await client.waitForTransactionReceipt({ hash })).status).toBe("success")
 	}
 	const spend = (amountOut: bigint) => user.prepareSpend({ processor: stub, data: DATA, asset: stack.pool.asset, amountOut })
 
 	beforeAll(async () => {
-		stack = await timed("boot", () => startStack({ onStep: (s) => console.log(`[stack] ${s.step} up in ${s.seconds.toFixed(1)} s`) }))
-		client = createPublicClient({ transport: http(stack.l1Rpc), pollingInterval: 100 })
+		stack = await timed("boot", () =>
+			startStack({ heartbeat: false, onStep: (s) => console.log(`[stack] ${s.step} up in ${s.seconds.toFixed(1)} s`) }),
+		)
+		client = createPublicClient({ transport: http(stack.manifest.l1Rpc), pollingInterval: 100 })
 	})
 
 	afterAll(async () => {
@@ -112,12 +114,12 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the pool on the anvil the Az
 	})
 
 	test("a. ten Aztec blocks checkpoint on the shared anvil", async () => {
-		const [aztec0, l10] = [await checkpointed(stack.aztecNode), await l1Latest(client)]
-		for (let i = 0; i < 10; i++) await mineAztecBlock(stack.aztecNode)
-		const [aztec1, l11] = [await checkpointed(stack.aztecNode), await l1Latest(client)]
+		const [aztec0, l10] = [await checkpointed(stack.manifest.aztecNode), await l1Latest(client)]
+		for (let i = 0; i < 10; i++) await mineAztecBlock(stack.manifest.aztecNode)
+		const [aztec1, l11] = [await checkpointed(stack.manifest.aztecNode), await l1Latest(client)]
 		expect(aztec1.number - aztec0.number).toBe(10)
 		expect(l11.number - l10.number).toBeGreaterThanOrEqual(10n)
-		const { l1ContractAddresses } = await nodeInfo(stack.aztecNode)
+		const { l1ContractAddresses } = await nodeInfo(stack.manifest.aztecNode)
 		expect(await client.getCode({ address: l1ContractAddresses.rollupAddress })).toBeTruthy()
 	})
 
@@ -149,9 +151,9 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the pool on the anvil the Az
 	})
 
 	test("d. eighteen blocks back to back step 72 s each and reach the liveness window", async () => {
-		let prev: AztecBlock = await checkpointed(stack.aztecNode)
+		let prev: AztecBlock = await checkpointed(stack.manifest.aztecNode)
 		for (let i = 0; i < 18; i++) {
-			const next = await mineAztecBlock(stack.aztecNode)
+			const next = await mineAztecBlock(stack.manifest.aztecNode)
 			steps.push(Number(next.timestamp - prev.timestamp))
 			prev = next
 		}
@@ -182,13 +184,13 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the pool on the anvil the Az
 	test("f. the three gaps, with Ethereum traffic and while idle", async () => {
 		for (let i = 1; i <= 5; i++) {
 			await ping()
-			gaps.push(await sampleThenMine(stack.aztecNode, client, `transfer-${i}`))
+			gaps.push(await sampleThenMine(stack.manifest.aztecNode, client, `transfer-${i}`))
 		}
 		await Bun.sleep(90_000)
-		gaps.push(await sampleThenMine(stack.aztecNode, client, "idle-90"))
+		gaps.push(await sampleThenMine(stack.manifest.aztecNode, client, "idle-90"))
 		await Bun.sleep(90_000)
 		await ping()
-		gaps.push(await sampleThenMine(stack.aztecNode, client, "idle-90-then-transfer"))
+		gaps.push(await sampleThenMine(stack.manifest.aztecNode, client, "idle-90-then-transfer"))
 		console.log(`[stack] gaps ${JSON.stringify(gaps)}`)
 		expect(gaps).toHaveLength(7)
 	})
@@ -218,7 +220,7 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the pool on the anvil the Az
 	test("h. the superseded root stops being known exactly at its expiry", async () => {
 		while ((await l1Latest(client)).timestamp < p1Expiry) {
 			if (++expiryBlocks > MAX_EXPIRY_BLOCKS) throw new Error(`still before ${p1Expiry} after ${MAX_EXPIRY_BLOCKS} blocks`)
-			await mineAztecBlock(stack.aztecNode)
+			await mineAztecBlock(stack.manifest.aztecNode)
 		}
 		let after = await l1Latest(client)
 		for (;;) {
@@ -235,7 +237,7 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the pool on the anvil the Az
 
 	test("i. P1 is refused once its root expired, and nothing moves", async () => {
 		const before = await stubState()
-		const submit = wallet(stack.l1Rpc, SUBMITTER_INDEX).writeContract({
+		const submit = wallet(stack.manifest.l1Rpc, SUBMITTER_INDEX).writeContract({
 			address: stub,
 			abi: SPEND_ABI,
 			functionName: "spend",

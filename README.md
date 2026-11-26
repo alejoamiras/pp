@@ -10,6 +10,7 @@ its tests and CI gates. The pool processor, labelled notes and the web app build
 | [`contracts/bridge/aztec`](contracts/bridge/aztec/README.md) | L2 contracts (Noir): `TokenBridgeHub`, which mints on a claim and burns on an exit. |
 | [`packages/bridge-core`](packages/bridge-core/README.md) | Bridge logic over viem and aztec.js, and the local network its integration tests run on. |
 | [`packages/e2e-kit`](packages/e2e-kit/README.md) | Playwright kit for the web app: a test wallet, an injected Ethereum wallet, an egress fence. |
+| [`packages/local-stack`](packages/local-stack/README.md) | `bun run demo`: one anvil carrying the Aztec local network and the pool, booted and torn down as one stack. |
 
 ## Run the gates
 

@@ -14,6 +14,10 @@ export async function nodeRpc<T>(nodeUrl: string, method: string, params: unknow
 	return reply.result as T
 }
 
-export type NodeInfo = { l1ChainId: number; l1ContractAddresses: { rollupAddress: `0x${string}` } }
+export type NodeInfo = {
+	l1ChainId: number
+	rollupVersion: number
+	l1ContractAddresses: { rollupAddress: `0x${string}`; inboxAddress: `0x${string}` }
+}
 
 export const nodeInfo = (nodeUrl: string) => nodeRpc<NodeInfo>(nodeUrl, "node_getNodeInfo")

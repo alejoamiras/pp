@@ -1,16 +1,37 @@
+import { rm } from "node:fs/promises"
+import { join } from "node:path"
+import { type StackManifest, serializeStackManifest } from "@pp/bridge-core"
 import { type LocalNetwork, startLocalNetwork } from "@pp/bridge-core/sandbox"
 import { type PoolEnv, startPoolEnv } from "@pp/pp-env"
 import { type Address, createPublicClient, http, type PublicClient } from "viem"
-import { nodeInfo } from "./node-rpc.ts"
+import { refuseAttach } from "./attach.ts"
+import { BeatPolicy, type ChainView, type L1Tx } from "./beat-policy.ts"
+import { type Heartbeat, startHeartbeat } from "./heartbeat.ts"
+import { buildManifest } from "./manifest.ts"
+import { nodeInfo, nodeRpc } from "./node-rpc.ts"
+import { createRunDir, RUNS_DIR, removeRunDir, writeAtomic } from "./run-dir.ts"
 import { Teardown } from "./teardown.ts"
 
 export const STACK_CHAIN_ID = 31337
+export const HEARTBEAT_MS = 120_000
+/** A beat open this long would let two checkpoints drift 300 s apart, A8's cadence. */
+const LATE_BEAT_MS = 180_000
+const STOP_WAIT_MS = 60_000
 /** pp-env's default deployer; bridge-core's harness and actors sit at 15 and from 1 up. */
 const POOL_DEPLOYER_INDEX = 14
+/** One path segment, short enough that pp-env's `-pool` id stays inside its 64 characters. */
+const RUN_ID = /^[a-z0-9][a-z0-9-]{0,47}$/
 
 export type StepName = "network" | "pool" | "manifest" | "heartbeat"
 
 export type StartStackOptions = {
+	runId?: string
+	/** Parent of the run directory; defaults to `~/.cache/pp/runs`. */
+	runsDir?: string
+	/** Default true. Off, no block is mined unless a consumer asks for one. */
+	heartbeat?: boolean
+	/** Tick spacing; only tests shorten it. */
+	heartbeatMs?: number
 	/** Checked between steps; a step already starting runs to the end first, since neither harness can be cancelled mid-start. */
 	signal?: AbortSignal
 	/** Progress for the CLI; a throw aborts the boot. */
@@ -19,29 +40,15 @@ export type StartStackOptions = {
 
 export interface Stack {
 	runId: string
-	l1Rpc: string
-	aztecNode: string
+	manifestPath: string
+	manifest: StackManifest
 	/** pp-env's handle, for in-process tests (createUser, deployStub). */
 	pool: PoolEnv
-	/** Idempotent; stops the pool, then the network. */
+	/** Idempotent; stops the heartbeat, withdraws the manifest, then stops the pool and the network. */
 	stop(): Promise<void>
 }
 
-/** The attach variables make scaffold's harness reuse whatever chain they name, and the pool would then be deployed onto it. */
-export class AttachRefused extends Error {
-	constructor(names: string[]) {
-		super(
-			`${names.join(" and ")} ${names.length > 1 ? "are" : "is"} set, as a kept stack prints them for scaffold-harness suites. ` +
-				"The stack always boots its own network: run `unset SANDBOX_L1_RPC SANDBOX_NODE_URL` first.",
-		)
-		this.name = "AttachRefused"
-	}
-}
-
-function refuseAttach(): void {
-	const set = ["SANDBOX_L1_RPC", "SANDBOX_NODE_URL"].filter((k) => process.env[k])
-	if (set.length) throw new AttachRefused(set)
-}
+export const newRunId = () => `stack-${process.pid}-${Date.now().toString(36)}`
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
 	if (signal?.aborted) throw signal.reason ?? new Error("aborted")
@@ -89,15 +96,68 @@ async function assertReady(client: PublicClient, nodeUrl: string, pool: PoolEnv)
 	await asp.body?.cancel()
 }
 
+function chainView(client: PublicClient, nodeUrl: string): ChainView {
+	return {
+		l1Head: () => client.getBlockNumber({ cacheTime: 0 }),
+		l1Txs: async (n) =>
+			(await client.getBlock({ blockNumber: n, includeTransactions: true })).transactions.map((t) => ({
+				from: t.from.toLowerCase(),
+				to: t.to?.toLowerCase() ?? null,
+			})),
+		aztecTip: async () =>
+			(await nodeRpc<{ checkpointed: { block: { number: number } } }>(nodeUrl, "node_getChainTips")).checkpointed.block.number,
+	}
+}
+
+const mineBlock = (nodeUrl: string, signal?: AbortSignal) => nodeRpc<null>(nodeUrl, "aztecDebug_mineBlock", [], signal)
+
 /**
- * Boots one anvil carrying both the Aztec local network and the pool. Anything started is torn
- * down again when a later step fails or `signal` aborts between steps.
+ * The first beat is part of readiness, so a renamed debug method fails the boot. Its propose
+ * transaction also names the node's sender and target, which the policy must not count as work.
+ */
+async function firstBeat(client: PublicClient, nodeUrl: string): Promise<BeatPolicy> {
+	const view = chainView(client, nodeUrl)
+	const [head, tip] = [await view.l1Head(), await view.aztecTip()]
+	await mineBlock(nodeUrl)
+	if ((await view.aztecTip()) <= tip) throw new Error("aztecDebug_mineBlock returned without a new checkpointed block")
+	const txs = new Map<string, L1Tx>()
+	for (let n = head + 1n, last = await view.l1Head(); n <= last; n++) for (const t of await view.l1Txs(n)) txs.set(`${t.from}>${t.to}`, t)
+	const [nodeTx, ...others] = txs.values()
+	if (!nodeTx || others.length)
+		throw new Error(`the first beat's L1 transactions are [${[...txs.keys()].join(", ")}]; expected one propose`)
+	const policy = new BeatPolicy(view, nodeTx)
+	await policy.start()
+	return policy
+}
+
+function beatEvery(intervalMs: number, nodeUrl: string, policy: BeatPolicy): Heartbeat {
+	return startHeartbeat({
+		intervalMs,
+		slowMs: LATE_BEAT_MS,
+		stopWaitMs: STOP_WAIT_MS,
+		log: (line) => console.warn(line),
+		due: () => policy.due(),
+		beat: async (signal) => {
+			await mineBlock(nodeUrl, signal)
+			await policy.beaten()
+		},
+	})
+}
+
+/**
+ * Boots one anvil carrying both the Aztec local network and the pool, writes the manifest once the
+ * stack is ready, and keeps blocks coming while work waits on them. Anything started is torn down
+ * again when a later step fails or `signal` aborts between steps.
+ * @throws AttachRefused when `SANDBOX_L1_RPC` or `SANDBOX_NODE_URL` is set.
  */
 export async function startStack(o: StartStackOptions = {}): Promise<Stack> {
 	refuseAttach()
-	const runId = `stack-${process.pid}-${Date.now().toString(36)}`
+	const runId = o.runId ?? newRunId()
+	if (!RUN_ID.test(runId)) throw new Error(`runId ${JSON.stringify(runId)} must match ${RUN_ID}`)
 	const teardown = new Teardown()
 	try {
+		const runDir = await createRunDir(o.runsDir ?? RUNS_DIR, runId)
+		teardown.push("run dir", () => removeRunDir(runDir))
 		const net = await runStep(
 			o,
 			"network",
@@ -113,7 +173,31 @@ export async function startStack(o: StartStackOptions = {}): Promise<Stack> {
 		)
 		const client = createPublicClient({ transport: http(net.anvilUrl) })
 		await assertReady(client, net.nodeUrl, pool)
-		return { runId, l1Rpc: net.anvilUrl, aztecNode: net.nodeUrl, pool, stop: () => teardown.run() }
+		const policy = o.heartbeat === false ? undefined : await firstBeat(client, net.nodeUrl)
+		const { pool: poolVault, entrypoint, aspRegistry, keystore, deployBlock } = pool.deployment
+		const manifest = buildManifest({
+			chainId: STACK_CHAIN_ID,
+			l1Rpc: net.anvilUrl,
+			aztecNode: net.nodeUrl,
+			pool: { poolVault, entrypoint, aspRegistry, keystore, deployBlock },
+			asset: pool.asset,
+			aspUrl: pool.asp.url,
+		})
+		const manifestPath = join(runDir, "manifest.json")
+		await runStep(
+			o,
+			"manifest",
+			() => writeAtomic(manifestPath, serializeStackManifest(manifest)),
+			() => teardown.push("manifest", () => rm(manifestPath, { force: true })),
+		)
+		if (policy)
+			await runStep(
+				o,
+				"heartbeat",
+				async () => beatEvery(o.heartbeatMs ?? HEARTBEAT_MS, net.nodeUrl, policy),
+				(hb) => teardown.push("heartbeat", () => hb.stop()),
+			)
+		return { runId, manifestPath, manifest, pool, stop: () => teardown.run() }
 	} catch (err) {
 		await teardown.run().catch((e: unknown) => console.warn(`[stack] ${runId}: teardown after a failed boot also failed`, e))
 		throw err
