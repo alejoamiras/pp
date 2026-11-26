@@ -26,9 +26,10 @@ if [ "${1:-}" = "reap" ]; then
   for pidfile in "$KIT_DIR"/.e2e-state/*/sandbox.pid; do
     [ -f "$pidfile" ] || continue
     pgid=$(cat "$pidfile")
+    statedir=$(dirname "$pidfile")
     # A number alone is not ownership: the kernel recycles pids, so the group's leader must still be
-    # the sandbox command this checkout started, or the file is stale and only gets removed.
-    if [ -n "$pgid" ] && kill -0 -- "-$pgid" 2>/dev/null && ps -o args= -p "$pgid" 2>/dev/null | grep -q 'sandbox:up'; then
+    # the sandbox command this run started, named by its own artifacts dir, or the file is stale.
+    if [ -n "$pgid" ] && kill -0 -- "-$pgid" 2>/dev/null && ps -o args= -p "$pgid" 2>/dev/null | grep -qF -- "--artifacts $statedir/sandbox"; then
       found=1
       echo "[e2e] reaping sandbox pgid $pgid ($(dirname "$pidfile"))"
       kill -TERM -- "-$pgid" 2>/dev/null || true
@@ -37,7 +38,6 @@ if [ "${1:-}" = "reap" ]; then
     fi
     rm -f "$pidfile"
     # The run's browser ports: ports.json names the owner its rows were claimed under.
-    statedir=$(dirname "$pidfile")
     if [ -f "$statedir/ports.json" ]; then
       bun scripts/e2e/resolve-ports.ts --release "$statedir" 2>/dev/null || true
     fi

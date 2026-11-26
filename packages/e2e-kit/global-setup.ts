@@ -1,4 +1,4 @@
-/** Proves the run is coherent before a browser opens: the handle names the sandbox the builds were made for. */
+/** Before a browser opens: the run's handle must name the sandbox chain, 31337. */
 import { readHandle } from "@pp/bridge-core/sandbox"
 import { runEnv } from "./env"
 

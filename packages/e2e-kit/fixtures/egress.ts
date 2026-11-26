@@ -1,11 +1,11 @@
 /**
- * Nothing leaves the machine. Every request that is not loopback is aborted and recorded; a test
- * asserts the record is empty at the end, so a new remote dependency fails loudly here.
+ * Nothing leaves the machine. Every request and WebSocket that is not loopback is refused and
+ * recorded; a test asserts the record is empty at the end, so a new remote dependency fails loudly.
  */
 import type { BrowserContext } from "@playwright/test"
 
 export interface Egress {
-	/** URLs of every non-loopback request the context attempted, in order. */
+	/** URLs of every non-loopback request or WebSocket the context attempted, in order. */
 	readonly blocked: string[]
 }
 
@@ -18,6 +18,13 @@ export async function confineEgress(context: BrowserContext): Promise<Egress> {
 		if (isLoopback(url.hostname)) return route.continue()
 		blocked.push(url.href)
 		return route.abort("blockedbyclient")
+	})
+	// WebSockets never reach `route`; they have their own router.
+	await context.routeWebSocket(/.*/, (ws) => {
+		const url = new URL(ws.url())
+		if (isLoopback(url.hostname)) return ws.connectToServer()
+		blocked.push(url.href)
+		return ws.close({ code: 1008, reason: "egress blocked" })
 	})
 	return { blocked }
 }
