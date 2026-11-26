@@ -64,7 +64,7 @@ forge snapshot --match-test test_gas_ --no-match-contract Fork --check --toleran
 
 The live generation is deployed by the TypeScript conductor (`packages/bridge-core/scripts/deploy-generation.ts` —
 nonce-pinned factory prediction, journalled, candidate-first; runbook in
-[`bridge-generation`](../../../.claude/skills/bridge-generation/SKILL.md), Branch B). The forge scripts are fixtures and one-job helpers:
+`bridge-generation`, Branch B). The forge scripts are fixtures and one-job helpers:
 
 - `DeployGeneration.s.sol` — the three constructor argument lists in one place; the fork suites' fixture.
 - `SeedTokenPool.s.sol` — gives a fresh mintable test token its TOKEN/WETH pool leg (the conductor runs it per

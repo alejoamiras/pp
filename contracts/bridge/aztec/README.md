@@ -27,7 +27,7 @@ scripts/compile.sh            # AZTEC_HOME defaults to ~/.aztec/versions/6.0.0 (
 scripts/compile.sh --check    # CI: the class id derived from a rebuild must equal the committed one
 ```
 
-The committed `token_bridge_hub/target/*.json` is a build input for `@unleashed/bridge-core`
+The committed `token_bridge_hub/target/*.json` is a build input for `@pp/bridge-core`
 (`src/artifacts.ts`) and the deploy scripts; a class-id shift there is a new generation, never a
 re-pin of the live hub.
 
