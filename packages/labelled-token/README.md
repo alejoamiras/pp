@@ -34,7 +34,7 @@ already shares an interactive handshake (see below).
 | Layer | Command | What it proves |
 |---|---|---|
 | Unit | `bun run test` | The ABI surface (no parameter named `offset`, which aztec-nr's call stubs shadow), the gate budgets, the handoff vector. |
-| TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | The contract's rules, against the committed artifact: compile first. |
+| TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | The contract's rules, against an artifact the runner rebuilds from source (and the test minter's). |
 | Network | `bun run test:net` | Stage A across separate devices on a local network; see below. |
 
 `test:net` boots one anvil and one local network for the run under the run id `tok-<pid>-<time>` and

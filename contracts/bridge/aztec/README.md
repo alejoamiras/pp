@@ -31,8 +31,8 @@ path. A mismatched toolchain fails with a flood of macro errors
 selects it:
 
 ```bash
-scripts/compile.sh            # AZTEC_HOME defaults to ~/.aztec/versions/6.0.0 (aztec-up install 6.0.0 first)
-scripts/compile.sh --check    # CI: the class id derived from a rebuild must equal the committed one
+scripts/compile.sh            # AZTEC_HOME defaults to ~/.aztec/versions/<the crates' aztec-nr tag>
+scripts/compile.sh --check    # CI: a rebuild must reproduce the committed class id (program hash) and ABI
 ```
 
 The committed `token_bridge_hub/target/*.json` is a build input for `@pp/bridge-core`

@@ -275,6 +275,28 @@ test("Commitlint lints only the PR's own commits, excluding its base and main", 
   expect(job.steps.map((s: { run?: string }) => s.run)).toContain('bash scripts/ci-cd/commitlint-own.sh "$HEAD_SHA" "$BASE_SHA" origin/main')
 })
 
+describe("Noir crate manifest", () => {
+  test("bridge-contracts gates every crate in contracts/crates.json, the manifest and its reader", async () => {
+    const { loadManifest } = await import("./crates")
+    const contracts = filtersOf("bridge-contracts.yml")["contracts"]
+    const gated = (path: string) => contracts.some((pattern) => new Bun.Glob(pattern).match(path))
+    for (const path of ["contracts/crates.json", "scripts/ci-cd/crates.ts"]) expect(gated(path), path).toBe(true)
+    for (const crate of loadManifest().crates) {
+      expect(gated(`${crate.path}/Nargo.toml`), crate.name).toBe(true)
+      if (crate.nargo && "check" in crate.nargo) expect(gated(crate.nargo.check), crate.nargo.check).toBe(true)
+    }
+  })
+
+  test("the Noir jobs take their crates from the manifest", () => {
+    const jobs = workflow("_bridge-contracts.yml").jobs
+    expect(jobs.parity.strategy.matrix.crate).toBe("${{ fromJSON(needs.crates.outputs.parity) }}")
+    expect(jobs.txe.strategy.matrix.crate).toBe("${{ fromJSON(needs.crates.outputs.txe) }}")
+    const noir = jobs.noir.steps.map((step: { run?: string }) => step.run ?? "")
+    expect(noir).toContain("bun scripts/ci-cd/crates.ts nargo-test")
+    expect(noir).toContain("bun scripts/ci-cd/crates.ts check-pins")
+  })
+})
+
 test("the unit-test workflow runs this suite", () => {
   const steps: { run?: string }[] = workflow("_unit-tests.yml").jobs["unit-tests"].steps
   expect(steps.map((step) => step.run)).toContain("bun run test:ci-gating")

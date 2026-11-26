@@ -1,9 +1,9 @@
 name: _Bridge contracts (reusable)
 
-# Runs the L1 (Foundry) and L2 (Noir) contract suites for contracts/bridge/**, the hub's and the
-# labelled token's TXE suites, the token's gate budgets, and packages/bridge-core's integration
-# suite: one anvil + `aztec start --local-network` per job, a generation deployed onto it, every
-# round trip driven through the same seams the tools app calls.
+# Runs the L1 (Foundry) and L2 (Noir) contract suites for contracts/bridge/** (every Noir gate
+# from contracts/crates.json), the labelled token's gate budgets, and packages/bridge-core's
+# integration suite: one anvil + `aztec start --local-network` per job, a generation deployed onto
+# it, every round trip driven through the same seams the tools app calls.
 #
 # Nothing under contracts/ was gated before this workflow existed, so a build-breaking
 # remap regression went unnoticed: the only signal was a local run on a machine that
@@ -93,8 +93,35 @@ jobs:
           test -f contracts/bridge/evm/out/TokenPortalImpl.sol/TokenPortalImpl.json
           bun run --cwd packages/bridge-core test -- factory-abi
 
+  # contracts/crates.json decides which Noir gates run on which crate; a new crate is one entry there.
+  crates:
+    name: crate manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      aztec: ${{ steps.read.outputs.aztec }}
+      parity: ${{ steps.read.outputs.parity }}
+      txe: ${{ steps.read.outputs.txe }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      # One toolchain for every crate: the reader refuses two different aztec-nr tags. Compiling a
+      # tag's aztec-nr with another nargo dies inside upstream's macros.
+      - name: Read contracts/crates.json
+        id: read
+        run: |
+          aztec=$(bun scripts/ci-cd/crates.ts aztec-version)
+          parity=$(bun scripts/ci-cd/crates.ts matrix parity)
+          txe=$(bun scripts/ci-cd/crates.ts matrix txe)
+          printf 'aztec=%s\nparity=%s\ntxe=%s\n' "$aztec" "$parity" "$txe" >> "$GITHUB_OUTPUT"
+
   noir:
-    name: nargo test (pure crates)
+    name: nargo test
+    needs: crates
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -105,74 +132,35 @@ jobs:
       # setup-aztec shells out to bun, so it has to be on PATH before that step runs.
       - uses: ./.github/actions/setup-bun
 
-      # Read the toolchain out of the crate rather than hardcoding it: these Nargo.toml files pin
-      # aztec-nr to their own tag, and compiling that tag's aztec-nr with a newer nargo dies
-      # inside upstream's macros. Deriving it here means the job cannot drift from the pin.
-      - name: Resolve the pinned Aztec toolchain
-        id: aztec-pin
-        run: |
-          TAG=$(sed -n 's/.*aztec-nr".*tag = "v\([^"]*\)".*/\1/p' \
-            contracts/bridge/aztec/keystone/Nargo.toml | head -1)
-          if [ -z "$TAG" ]; then
-            echo "::error::could not read the aztec-nr tag from keystone/Nargo.toml"
-            exit 1
-          fi
-          echo "pinned Aztec toolchain: $TAG"
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
-
       - uses: ./.github/actions/setup-aztec
         with:
-          version: ${{ steps.aztec-pin.outputs.version }}
+          version: ${{ needs.crates.outputs.aztec }}
 
-      # Pure-library crates only; the hub's TXE suite has its own job below (it needs the oracle).
-      #
-      # --force because target/ is tracked: without it nargo can report a stale success having
-      # compiled nothing. The claim_secret crate is deliberately absent — it carries no #[test]
-      # functions of its own, and its vectors are exercised through keystone; running it would
-      # have been a step that always passes without asserting anything.
-      # Runs keystone once and requires each generated v1 test by name (a filter or a dropped test
-      # that runs nothing would otherwise pass), plus every legacy keystone test.
-      - name: keystone vectors
-        run: bun run --cwd packages/bridge-spec vectors:nargo
+      # Oracle-free tests only (a TXE suite has its own job). Each crate's run must reach its floor,
+      # or pass its check script's by-name requirements: nargo exits 0 when a filter matches
+      # nothing. --force because target/ is tracked: without it nargo can report a stale success
+      # having compiled nothing.
+      - name: nargo tests
+        run: bun scripts/ci-cd/crates.ts nargo-test
 
       - name: Wire-format vector mutation (Noir)
         run: bun run --cwd packages/bridge-spec vectors:mutate -- --suite nr
 
-      # nargo exits 0 when nothing runs, so the run must show a pass count.
-      - name: pp_hash
-        working-directory: contracts/bridge/aztec/pp_hash
-        run: |
-          set -o pipefail
-          aztec-nargo test --force 2>&1 | tee "$RUNNER_TEMP/pp_hash.log"
-          grep -qE "[1-9][0-9]* tests? passed" "$RUNNER_TEMP/pp_hash.log"
+      # Nargo has no lockfile, so a moved tag would change a build silently. The tests above fetched
+      # every pinned tag; each must sit at the commit the manifest records.
+      - name: pinned dependency commits
+        run: bun scripts/ci-cd/crates.ts check-pins
 
-      # Nargo has no lockfile, so a moved v0.3.0 tag would change the pool hash silently. The commit
-      # nargo resolved (the steps above fetched it) must equal the one pp_hash's README records.
-      - name: poseidon v0.3.0 commit
-        run: |
-          want=$(grep -F 'noir-lang/poseidon v0.3.0 commit:' contracts/bridge/aztec/pp_hash/README.md \
-            | grep -oE '[0-9a-f]{40}' | head -1)
-          got=$(git -C "$HOME/nargo/github.com/noir-lang/poseidon/v0.3.0" rev-parse HEAD)
-          if [ -z "$want" ] || [ "$want" != "$got" ]; then
-            echo "::error::noir-lang/poseidon v0.3.0 resolved to $got; pp_hash/README.md records '$want'"
-            exit 1
-          fi
-
-      # The hub's address-derivation keystone is a plain #[test] on a contract_library_method —
-      # no oracle — selected by name so the crate's TXE suite (which needs the oracle server) is
-      # not swept in.
-      # nargo exits 0 when a name filter matches nothing, so the run must prove it ran something.
-      - name: hub keystone (derive_token, word decomposition)
-        working-directory: contracts/bridge/aztec/token_bridge_hub
-        run: |
-          set -o pipefail
-          aztec-nargo test --force keystone 2>&1 | tee keystone.log
-          grep -qE "[1-9][0-9]* tests? passed" keystone.log
-
-  hub-parity:
-    name: hub artifact parity (aztec compile)
+  parity:
+    name: artifact parity (${{ matrix.crate }})
+    needs: crates
+    if: needs.crates.outputs.parity != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.crates.outputs.parity) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -180,47 +168,55 @@ jobs:
 
       - uses: ./.github/actions/setup-bun
 
-      # The class-id helper runs on bridge-core's installed @aztec-labs/stdlib.
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Resolve the pinned Aztec toolchain
-        id: aztec-pin
-        run: |
-          TAG=$(sed -n 's/.*aztec-nr".*tag = "v\([^"]*\)".*/\1/p' \
-            contracts/bridge/aztec/token_bridge_hub/Nargo.toml | head -1)
-          if [ -z "$TAG" ]; then
-            echo "::error::could not read the aztec-nr tag from token_bridge_hub/Nargo.toml"
-            exit 1
-          fi
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
-
       - uses: ./.github/actions/setup-aztec
         with:
-          version: ${{ steps.aztec-pin.outputs.version }}
+          version: ${{ needs.crates.outputs.aztec }}
 
-      # The committed hub artifact is what every deploy and every claim binds to. Rebuilding it from
-      # source with the pinned `aztec compile` (nargo + AVM transpile) and requiring the same DERIVED
-      # class id is the only proof that the bytes in git are the bytes the source describes.
-      # The toolchain this job resolved is the one the script must use — its default is a fixed
-      # version and would silently check parity against the wrong nargo after a tag bump.
-      - name: compile.sh --check token_bridge_hub
+      # The committed artifacts are what every deploy and every claim binds to. Rebuilding one from
+      # source with the pinned `aztec compile` and requiring the same class id (a program's hash)
+      # and the same ABI is the only proof that the bytes in git are the bytes the source describes.
+      # AZTEC_HOME is the toolchain this run installed, never a default.
+      - name: compile.sh --check
         env:
-          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/compile.sh --check token_bridge_hub
-
-      - name: compile.sh --check asp_registry
-        env:
-          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/compile.sh --check asp_registry
-
-      - name: compile.sh --check asp_registry_probe
-        env:
-          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/compile.sh --check asp_registry_probe
+          AZTEC_VERSION: ${{ needs.crates.outputs.aztec }}
+          CRATE: ${{ matrix.crate }}
+        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_VERSION" bash contracts/bridge/aztec/scripts/compile.sh --check "$CRATE"
 
   txe:
-    name: hub TXE suite
+    name: TXE suite (${{ matrix.crate }})
+    needs: crates
+    if: needs.crates.outputs.txe != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.crates.outputs.txe) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: ./.github/actions/setup-aztec
+        with:
+          version: ${{ needs.crates.outputs.aztec }}
+
+      # The runner rebuilds the crate, spins the oracle server itself (the committed txe-server
+      # mini-project, frozen lockfile) and checks every name in txe-manifest.txt passed, so a dropped
+      # `mod test;` or a silently skipped file cannot read as green.
+      - name: run-txe-tests.sh
+        env:
+          AZTEC_VERSION: ${{ needs.crates.outputs.aztec }}
+          CRATE: ${{ matrix.crate }}
+        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_VERSION" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate "$CRATE"
+
+  token-gates:
+    name: labelled token gates
+    # Parity fixes every private function's circuit, so profiling the committed artifact measures
+    # the source; a hand-edited bench/gates.json fails here.
+    needs: [crates, parity]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -230,111 +226,14 @@ jobs:
 
       - uses: ./.github/actions/setup-bun
 
-      - name: Resolve the pinned Aztec toolchain
-        id: aztec-pin
-        run: |
-          TAG=$(sed -n 's/.*aztec-nr".*tag = "v\([^"]*\)".*/\1/p' \
-            contracts/bridge/aztec/token_bridge_hub/Nargo.toml | head -1)
-          if [ -z "$TAG" ]; then
-            echo "::error::could not read the aztec-nr tag from token_bridge_hub/Nargo.toml"
-            exit 1
-          fi
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
-
       - uses: ./.github/actions/setup-aztec
         with:
-          version: ${{ steps.aztec-pin.outputs.version }}
+          version: ${{ needs.crates.outputs.aztec }}
 
-      # The runner spins the oracle server itself (the committed txe-server mini-project, frozen
-      # lockfile) and checks every name in txe-manifest.txt passed, so a dropped `mod test;` or a
-      # silently skipped file cannot read as green.
-      - name: run-txe-tests.sh token_bridge_hub
-        env:
-          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate token_bridge_hub
-
-      - name: run-txe-tests.sh asp_registry
-        env:
-          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate asp_registry
-
-      - name: run-txe-tests.sh asp_registry_probe
-        env:
-          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate asp_registry_probe
-
-  token-parity:
-    name: labelled token parity and gates
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-bun
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Resolve the pinned Aztec toolchain
-        id: aztec-pin
-        run: |
-          TAG=$(sed -n 's/.*aztec-nr".*tag = "v\([^"]*\)".*/\1/p' \
-            contracts/bridge/aztec/labelled_token/Nargo.toml | head -1)
-          if [ -z "$TAG" ]; then
-            echo "::error::could not read the aztec-nr tag from labelled_token/Nargo.toml"
-            exit 1
-          fi
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
-
-      - uses: ./.github/actions/setup-aztec
-        with:
-          version: ${{ steps.aztec-pin.outputs.version }}
-
-      # The TXE suite deploys the committed bridge_stub artifact, so it is parity-checked too.
-      - name: compile.sh --check labelled_token bridge_stub
-        env:
-          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/compile.sh --check labelled_token bridge_stub
-
-      # Parity above fixes every private function's circuit, so profiling the committed artifact
-      # measures the source; a hand-edited bench/gates.json fails here.
       - name: gates:check
         env:
-          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bun run --cwd packages/labelled-token gates:check
-
-  token-txe:
-    name: labelled token TXE suite
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-bun
-
-      - name: Resolve the pinned Aztec toolchain
-        id: aztec-pin
-        run: |
-          TAG=$(sed -n 's/.*aztec-nr".*tag = "v\([^"]*\)".*/\1/p' \
-            contracts/bridge/aztec/labelled_token/Nargo.toml | head -1)
-          if [ -z "$TAG" ]; then
-            echo "::error::could not read the aztec-nr tag from labelled_token/Nargo.toml"
-            exit 1
-          fi
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
-
-      - uses: ./.github/actions/setup-aztec
-        with:
-          version: ${{ steps.aztec-pin.outputs.version }}
-
-      - name: run-txe-tests.sh labelled_token
-        env:
-          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token
+          AZTEC_VERSION: ${{ needs.crates.outputs.aztec }}
+        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_VERSION" bun run --cwd packages/labelled-token gates:check
 
   integration:
     name: sandbox integration (anvil + local network)
