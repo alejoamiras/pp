@@ -33,7 +33,7 @@ case "$crate" in
   token_bridge_hub) floor=65 ;;
   asp_registry) floor=49 ;;
   asp_registry_probe) floor=21 ;;
-  labelled_token) floor=2 ;;
+  labelled_token) floor=18 ;;
   *) echo "usage: $0 [--crate token_bridge_hub|asp_registry|asp_registry_probe|labelled_token] [nargo flags...] [-- test names...]" >&2; exit 2 ;;
 esac
 # Everything before `--` is a nargo flag (with or without a value); only names after `--` filter.
@@ -78,23 +78,23 @@ trap cleanup EXIT INT TERM
 # ── 1. Stage dependency artifacts into <crate>/target/ ──────────────────────────────
 # Resolved through bridge-core's declared dependency, not $repo_root/node_modules: this repo
 # uses bun's isolated linker, so there is no hoisted root node_modules to look in.
-if [ "$crate" = token_bridge_hub ]; then
-  TOKEN_ARTIFACT="$repo_root/packages/bridge-core/node_modules/@aztec-foundation/aztec-standards/artifacts/target/token_contract-Token.json"
-  [ -f "$TOKEN_ARTIFACT" ] || { echo "Token artifact missing at $TOKEN_ARTIFACT — run bun install." >&2; exit 1; }
-  cp "$TOKEN_ARTIFACT" "$tb/target/token_contract-Token.json"
-fi
-if [ "$crate" = asp_registry_probe ]; then
-  REGISTRY_ARTIFACT="$here/asp_registry/target/asp_registry-AspRootRegistry.json"
-  [ -f "$REGISTRY_ARTIFACT" ] || { echo "registry artifact missing at $REGISTRY_ARTIFACT — run scripts/compile.sh asp_registry." >&2; exit 1; }
-  cp "$REGISTRY_ARTIFACT" "$tb/target/asp_registry-AspRootRegistry.json"
-fi
-if [ "$crate" = labelled_token ]; then
-  # Test-only contracts are compiled by compile.sh into their own crates; the TXE finds them
-  # only beside the crate under test.
-  for a in "$tb"/test_contracts/*/target/*.json; do
-    [ -e "$a" ] && cp "$a" "$tb/target/"
-  done
-fi
+case "$crate" in
+  token_bridge_hub)
+    TOKEN_ARTIFACT="$repo_root/packages/bridge-core/node_modules/@aztec-foundation/aztec-standards/artifacts/target/token_contract-Token.json"
+    [ -f "$TOKEN_ARTIFACT" ] || { echo "Token artifact missing at $TOKEN_ARTIFACT — run bun install." >&2; exit 1; }
+    cp "$TOKEN_ARTIFACT" "$tb/target/token_contract-Token.json"
+    ;;
+  asp_registry_probe)
+    REGISTRY_ARTIFACT="$here/asp_registry/target/asp_registry-AspRootRegistry.json"
+    [ -f "$REGISTRY_ARTIFACT" ] || { echo "registry artifact missing at $REGISTRY_ARTIFACT — run scripts/compile.sh asp_registry." >&2; exit 1; }
+    cp "$REGISTRY_ARTIFACT" "$tb/target/asp_registry-AspRootRegistry.json"
+    ;;
+  labelled_token)
+    # The test-only stub is its own crate (committed artifact, parity-checked); the TXE finds it
+    # only beside the crate under test.
+    cp "$here/bridge_stub/target/bridge_stub-BridgeStub.json" "$tb/target/"
+    ;;
+esac
 
 # TXE speaks JSON-RPC and does not answer a bare GET, so `curl -sf` reports failure even once
 # it is serving. Probe the TCP socket instead — the original HTTP probe never succeeded, which

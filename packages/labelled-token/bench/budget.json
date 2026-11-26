@@ -1,1 +1,4 @@
-{}
+{
+	"burn_for_exit": 70000,
+	"mint_from_bridge": 36000
+}

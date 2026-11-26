@@ -1,2 +1,5 @@
+mod burn;
 mod metadata;
-mod utils;
+mod mint;
+pub mod utils;
+mod views;

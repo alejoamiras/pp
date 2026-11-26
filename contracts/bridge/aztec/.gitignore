@@ -9,6 +9,7 @@ target/*
 txe-run.log
 token_bridge_hub/target/token_contract-Token.json
 asp_registry_probe/target/asp_registry-AspRootRegistry.json
+labelled_token/target/bridge_stub-BridgeStub.json
 # The TXE server mini-project: its lockfile is committed, its install is not.
 txe-server/node_modules/
 txe-server/*.log

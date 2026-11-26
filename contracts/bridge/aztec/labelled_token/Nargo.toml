@@ -7,3 +7,5 @@ type = "contract"
 [dependencies]
 aztec = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", directory = "aztec" }
 compressed_string = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", directory = "compressed-string" }
+# Test-only: the minter stand-in the TXE suite deploys.
+bridge_stub = { path = "../bridge_stub" }

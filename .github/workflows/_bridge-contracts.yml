@@ -292,10 +292,11 @@ jobs:
         with:
           version: ${{ steps.aztec-pin.outputs.version }}
 
-      - name: compile.sh --check labelled_token
+      # The TXE suite deploys the committed bridge_stub artifact, so it is parity-checked too.
+      - name: compile.sh --check labelled_token bridge_stub
         env:
           AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
-        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/compile.sh --check labelled_token
+        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/compile.sh --check labelled_token bridge_stub
 
       # Parity above fixes every private function's circuit, so profiling the committed artifact
       # measures the source; a hand-edited bench/gates.json fails here.
