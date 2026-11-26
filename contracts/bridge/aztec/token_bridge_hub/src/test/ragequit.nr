@@ -101,7 +101,7 @@ unconstrained fn ragequit_failure_portal_payee() {
     ragequit(h, user, token, PORTAL_A, 11, label);
 }
 
-// `EthAddress::from_field` would truncate; deserializing keeps the raw word, as a raw L2 caller can.
+// `EthAddress::from_field` range-checks; deserializing keeps the raw word, as a raw L2 caller's does.
 #[test(should_fail_with = "PayeeOutOfRange")]
 unconstrained fn ragequit_failure_wide_payee() {
     let (h, user, token, label) = holder();

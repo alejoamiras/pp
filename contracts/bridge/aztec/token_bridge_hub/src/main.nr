@@ -162,11 +162,9 @@ pub contract TokenBridgeHub {
 
     // ── Claim ──────────────────────────────────────────────────────────────────────────────
 
-    // The portal's message commits to (nullifier, hash_2([change_precommitment, label]), amount)
-    // under the secret hash of `derive_claim_secret(claim_salt, recipient)`. Re-deriving both here,
-    // with the caller as recipient, means only the bound account can claim, and the note's label is
-    // the one inside the pool's change commitment. INVARIANT: the only consumer of a bridge message;
-    // `check-sole-consumer.sh` pins this dataflow.
+    // The commitment and the secret are rebuilt with the caller as recipient, so only the bound
+    // account can claim and the note keeps the label inside the pool's change commitment.
+    // INVARIANT: the only consumer of a bridge message; `check-sole-consumer.sh` pins this dataflow.
     #[external("private")]
     fn claim_from_pool(
         token: AztecAddress,
@@ -189,15 +187,13 @@ pub contract TokenBridgeHub {
 
     // ── Ragequit ───────────────────────────────────────────────────────────────────────────
 
-    // Burns `amount` of the caller's `label` notes and sends the portal the message that pays
-    // `payee` on Ethereum. Every refusal (payee 0, the portal, a payee word ≥ 2^160, amount 0,
-    // label 0) comes before the burn, and the burn, the message and the ticket come from this one
-    // private call, so they land in one phase together or not at all. One `label` reaches all three.
+    // Every refusal comes before the burn, and the burn, the message and the ticket share one
+    // revert phase: all three land or none does.
     #[external("private")]
     fn ragequit(token: AztecAddress, payee: EthAddress, amount: u128, label: Field) {
         let from = self.msg_sender();
         let portal = self.storage.portal_of.at(token).read();
-        // The portal would pay the exit to itself and strand the funds.
+        // The portal refuses to pay itself (`PayeeIsPortal`), so this exit would burn and never settle.
         assert(payee != portal, "exit payee is the portal");
         let content = ragequit_content_v1(payee, amount, label);
         self.call(LabelledToken::at(token).burn_for_exit(from, amount, label));

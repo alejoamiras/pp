@@ -216,14 +216,22 @@ describe("deployGeneration — crash-resume at every journalled step", () => {
 	})
 
 	it("refuses a malformed ASP registry before it publishes or deploys anything", async () => {
-		const chain = fakeChain(5n)
-		const journal = openDeployJournal(join(dir, "bad-registry.jsonl"))
-		answerReads(chain)
-		await expect(deployGeneration(chain.l1, chain.l2, { ...inputs, aspRegistry: "0x7" }, journal)).rejects.toThrow(
-			/aspRegistry must be a 32-byte/,
-		)
-		expect(journal.steps.map((s) => s.kind)).not.toContain("factory-deployed")
-		expect(chain.deployed).toHaveLength(0)
+		const { publishContractClass } = await import("@aztec-labs/aztec.js/deployment")
+		for (const [name, aspRegistry] of [
+			["short", "0x7"],
+			["above the field", `0x${"f".repeat(64)}`],
+		]) {
+			vi.mocked(publishContractClass).mockClear()
+			const chain = fakeChain(5n)
+			const journal = openDeployJournal(join(dir, `bad-registry-${name}.jsonl`))
+			answerReads(chain)
+			await expect(deployGeneration(chain.l1, chain.l2, { ...inputs, aspRegistry }, journal), name).rejects.toThrow(
+				/aspRegistry must be a 32-byte/,
+			)
+			expect(journal.steps, name).toEqual([])
+			expect(publishContractClass, name).not.toHaveBeenCalled()
+			expect(chain.deployed, name).toHaveLength(0)
+		}
 	})
 
 	it("a class the network already carries is not re-published, and a lost publication race is a no-op", async () => {

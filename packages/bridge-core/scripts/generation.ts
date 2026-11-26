@@ -273,9 +273,9 @@ type HubArgs = [string, Address, string]
 
 const hubConstructorArgs = (tokenClassId: string, factory: Address, aspRegistry: string): HubArgs => [tokenClassId, factory, aspRegistry]
 
-/** The registry is part of every token's address, so a malformed one is refused before it is used. */
+/** The registry is part of every token's address, so a malformed one is refused before any side effect. */
 function validAspRegistry(aspRegistry: string): string {
-	if (!/^0x[0-9a-f]{64}$/.test(aspRegistry))
+	if (!/^0x[0-9a-f]{64}$/.test(aspRegistry) || BigInt(aspRegistry) >= Fr.MODULUS)
 		throw new Error(`aspRegistry must be a 32-byte lower-case hex Aztec address, got ${aspRegistry}`)
 	return aspRegistry
 }
@@ -355,9 +355,9 @@ async function assertGeneration(l1: L1Ctx, l2: L2Ctx, record: GenerationRecord):
 }
 
 export async function deployGeneration(l1: L1Ctx, l2: L2Ctx, inputs: GenerationInputs, journal: DeployJournal): Promise<GenerationRecord> {
+	const aspRegistry = validAspRegistry(inputs.aspRegistry)
 	const { tokenClassId } = await publishClasses(l2, journal)
 	const predicted = await predictFactory(l1, journal)
-	const aspRegistry = validAspRegistry(inputs.aspRegistry)
 	const args = hubConstructorArgs(tokenClassId, predicted.factory, aspRegistry)
 	const hubInstance = await deriveHub(tokenClassId, predicted.factory, aspRegistry)
 	// The hub deploys to the rollup this node follows, so the implementation must pin that one.

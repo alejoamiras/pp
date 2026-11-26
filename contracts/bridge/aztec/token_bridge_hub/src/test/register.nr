@@ -12,8 +12,8 @@ global PORTAL: EthAddress = PORTAL_A;
 global NAME: str<31> = NAME_A;
 global SYMBOL: str<31> = SYMBOL_A;
 
-// Wrong metadata fails in the private phase — no publish, no bind. (That a correct registration
-// still succeeds afterwards is a sandbox assertion: a failed TXE call ends the test.)
+// Wrong metadata fails in the private phase — no publish, no bind. A correct registration
+// afterwards is observable only on a network: a failed TXE call ends the test.
 #[test(should_fail_with = "No L1 to L2 message found")]
 unconstrained fn wrong_metadata_fails_before_any_side_effect() {
     let h = setup();
@@ -27,8 +27,7 @@ unconstrained fn wrong_metadata_fails_before_any_side_effect() {
     );
 }
 
-// The plain bind (no claim) is the relayer's shape. (A retry after a wrong attempt cannot be
-// observed here — a failed call aborts the test — the sandbox smoke covers it.)
+// The plain bind (no claim) is the relayer's shape.
 #[test]
 unconstrained fn bind_token_alone_registers() {
     let h = setup();

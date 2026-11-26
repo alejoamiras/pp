@@ -151,8 +151,8 @@ check_claim() {
 	[ "$(count 'consume_l1_to_l2_message\(' "$body")" -eq 1 ] &&
 		printf '%s' "$body" | grep -qE "consume_l1_to_l2_message\($c, \[$s\], $p, message_leaf_index\)" ||
 		{ violation "claim_from_pool does not consume (content, [secret], portal, message_leaf_index)"; return 1; }
-	printf '%s' "$body" | grep -qE "LabelledToken::at\(token\)\.mint_from_bridge\($r, amount, label\)" ||
-		{ violation "claim_from_pool does not mint LabelledToken::at(token).mint_from_bridge(recipient, amount, label)"; return 1; }
+	printf '%s' "$body" | grep -qE "self\.call\(LabelledToken::at\(token\)\.mint_from_bridge\($r, amount, label\)\);" ||
+		{ violation "claim_from_pool does not mint with self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label))"; return 1; }
 }
 
 # Returns 0 if the hub crate at $1 upholds the invariant, 1 with one reason on stderr otherwise.
@@ -176,7 +176,7 @@ check_crate() {
 	# These consume or nullify a message without consume_l1_to_l2_message.
 	[ "$(count 'process_l1_to_l2_message|push_nullifier' "$all")" -eq 0 ] ||
 		{ violation "a lower-level messaging or nullifier primitive is present"; return 1; }
-	n=$(count 'mint_from_bridge\(' "$src")
+	n=$(count 'mint_from_bridge[[:space:]]*\(' "$src")
 	[ "$n" -eq 1 ] || { violation "expected 1 mint_from_bridge call in the hub, found $n"; return 1; }
 
 	check_bind "$src" || return 1
@@ -278,6 +278,8 @@ self_test() {
 	expect string_block "a lower-level messaging or nullifier primitive is present"
 	fixture second_mint 's/(\n}\n)$/\n    fn mint_more(token: AztecAddress, to: AztecAddress, amount: u128, label: Field) {\n        self.call(LabelledToken::at(token).mint_from_bridge(to, amount, label));\n    }$1/'
 	expect second_mint "expected 1 mint_from_bridge call in the hub, found 2"
+	fixture spaced_mint 's/(\n}\n)$/\n    fn mint_more(token: AztecAddress, to: AztecAddress, amount: u128, label: Field) {\n        self.call(LabelledToken::at(token).mint_from_bridge (to, amount, label));\n    }$1/'
+	expect spaced_mint "expected 1 mint_from_bridge call in the hub, found 2"
 
 	# _bind.
 	fixture bind_renamed 's/fn _bind\(/fn _attach(/'
@@ -325,7 +327,9 @@ self_test() {
 	fixture consume_via_helper 's/self\.context\.consume_l1_to_l2_message\(content, \[secret\], portal, message_leaf_index\);/self.internal._consume(content, [secret], portal, message_leaf_index);/; s/(\n}\n)$/\n    fn _consume(c: Field, s: [Field; 1], p: EthAddress, i: Field) { self.context.consume_l1_to_l2_message(c, s, p, i); }$1/'
 	expect consume_via_helper "claim_from_pool does not consume (content, [secret], portal, message_leaf_index)"
 	fixture mint_elsewhere 's/mint_from_bridge\(recipient, amount, label\)/mint_from_bridge(beneficiary, amount, label)/; s/(        token: AztecAddress,\n)/$1        beneficiary: AztecAddress,\n/'
-	expect mint_elsewhere "claim_from_pool does not mint LabelledToken::at(token).mint_from_bridge(recipient, amount, label)"
+	expect mint_elsewhere "claim_from_pool does not mint with self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label))"
+	fixture discarded_mint 's/self\.call\((LabelledToken::at\(token\)\.mint_from_bridge\(recipient, amount, label\))\);/let _ = $1;/'
+	expect discarded_mint "claim_from_pool does not mint with self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label))"
 
 	if [ "$fails" -ne 0 ]; then
 		echo "❌ check-sole-consumer self-test FAILED ($fails)" >&2

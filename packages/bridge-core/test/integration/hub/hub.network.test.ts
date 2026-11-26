@@ -1,7 +1,7 @@
 /**
  * The hub on a local network: the claim from a pool withdrawal (N1), the ragequit and its
- * settlement on Ethereum (N2), and every refusal leaving the balance untouched (N3). The cases share
- * one chain and one holder, in order.
+ * settlement on Ethereum (N2), and each refusal reaching a wallet by name before anything is sent
+ * (N3). The cases share one chain and one holder, in order.
  */
 import { getPublicEvents } from "@aztec-labs/aztec.js/events"
 import { Fr } from "@aztec-labs/aztec.js/fields"
@@ -116,7 +116,7 @@ describe("the hub on a local network", () => {
 		console.log(`N2: Outbox depth ${acceptance.depth}; ragequit to settled ${((Date.now() - started) / 1000).toFixed(1)} s`)
 	})
 
-	it("N3: each refused ragequit is rejected by name and leaves the label's balance as it was", async () => {
+	it("N3: the wallet refuses each invalid ragequit by name before sending it, and the label's balance stays", async () => {
 		const before = await labelBalance(holder, d.label)
 		expect(before).toBeGreaterThan(0n)
 		const wide = new Fr(2n ** 160n)
