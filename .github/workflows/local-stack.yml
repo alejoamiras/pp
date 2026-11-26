@@ -76,7 +76,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.stack == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # About 1.5 times each leg's measured job time, so a hang fails fast; a suite with no entry gets
+    # the 20 min ceiling.
+    timeout-minutes: ${{ fromJSON('{"heartbeat":10,"imports":3,"shared-anvil":10,"teardown":5}')[matrix.suite] || 20 }}
     strategy:
       fail-fast: false
       matrix:
