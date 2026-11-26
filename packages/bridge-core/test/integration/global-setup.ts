@@ -6,7 +6,7 @@ import { join } from "node:path"
 import type { TestProject } from "vitest/node"
 import { deployEverything } from "../../scripts/sandbox/deploy"
 import type { SandboxHandle } from "../../scripts/sandbox/handle"
-import { SANDBOX_CACHE_DIR, startLocalNetwork } from "../../scripts/sandbox/local-network"
+import { assertNothingLeft, SANDBOX_CACHE_DIR, startLocalNetwork } from "../../scripts/sandbox/local-network"
 
 declare module "vitest" {
 	export interface ProvidedContext {
@@ -26,6 +26,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
 	const teardown = async () => {
 		await net.stop()
 		if (!named) rmSync(artifactsDir, { recursive: true, force: true })
+		assertNothingLeft(net)
 	}
 	try {
 		const { handle } = await deployEverything(net, { artifactsDir })

@@ -14,7 +14,7 @@ import { stopwatch } from "../script-bootstrap"
 import { deployEverything } from "./deploy"
 import { openSandbox, readHandle, readManifest } from "./handle"
 import { actorAddress } from "./l2"
-import { startLocalNetwork } from "./local-network"
+import { assertNothingLeft, startLocalNetwork } from "./local-network"
 import { durationTable, runSmoke } from "./smoke"
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -44,6 +44,7 @@ async function commandRun(): Promise<void> {
 		console.log(`\nnetwork kept — re-attach with:\n  SANDBOX_L1_RPC=${net.anvilUrl} SANDBOX_NODE_URL=${net.nodeUrl}`)
 	} else {
 		await net.stop()
+		assertNothingLeft(net)
 	}
 	if (failure) throw failure
 	console.log(`\n✅ sandbox deploy${process.argv.includes("--smoke") ? " + smoke" : ""} OK (${mins()})`)

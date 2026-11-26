@@ -390,6 +390,20 @@ function groupAlive(pgid: number): boolean {
 	}
 }
 
+/** What a stopped run still holds, found by its own identifiers: directories that exist, process
+ *  groups with a live member, registry rows naming its run id. */
+export function runLeftovers(run: { runId: string; dirs: readonly string[]; pgids: readonly number[] }): string[] {
+	const left = run.dirs.filter((dir) => existsSync(dir)).map((dir) => `directory ${dir}`)
+	for (const pgid of run.pgids) if (groupAlive(pgid)) left.push(`process group ${pgid}`)
+	const rows = existsSync(REGISTRY)
+		? readFileSync(REGISTRY, "utf8")
+				.split("\n")
+				.filter((l) => l.includes(ownerCell(run.runId)))
+		: []
+	if (rows.length) left.push(`${rows.length} registry row(s) owned by ${run.runId}`)
+	return left
+}
+
 /**
  * BOTH streams must be consumed. A piped stdout nobody reads fills its 64 KiB kernel buffer and the
  * child blocks on its next write — the aztec node stops sequencing a few blocks in, with no error
@@ -524,6 +538,15 @@ export interface LocalNetwork {
 	anvilUrl: string
 	nodeUrl: string
 	stop(): Promise<void>
+	/** What this run still holds; meaningful after `stop`. Always empty for an attached network,
+	 *  which this process never owned. */
+	leftovers(): string[]
+}
+
+/** Throws when a stopped network left anything behind. */
+export function assertNothingLeft(net: LocalNetwork): void {
+	const left = net.leftovers()
+	if (left.length) throw new Error(`[sandbox] the stopped network left behind: ${left.join("; ")}`)
 }
 
 /** Both env vars together mean "use the network already running"; one alone would boot a fresh
@@ -537,7 +560,7 @@ function attachedNetwork(): LocalNetwork | undefined {
 			`SANDBOX_L1_RPC and SANDBOX_NODE_URL must be set together — only ${anvilUrl ? "SANDBOX_L1_RPC" : "SANDBOX_NODE_URL"} is set`,
 		)
 	}
-	return { anvilUrl, nodeUrl, stop: () => Promise.resolve() }
+	return { anvilUrl, nodeUrl, stop: () => Promise.resolve(), leftovers: () => [] }
 }
 
 export interface StartLocalNetworkOptions {
@@ -630,5 +653,6 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 	}
 	const pids = spawned.map((o) => o.child.pid).filter((p): p is number => p !== undefined)
 	console.log(`[sandbox] local network ready — listening on ${listeningSockets(pids)}`)
-	return { anvilUrl, nodeUrl, stop }
+	const leftovers = () => runLeftovers({ runId: opts.runId, dirs: [dataDir, tmpDir], pgids: pids })
+	return { anvilUrl, nodeUrl, stop, leftovers }
 }
