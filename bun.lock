@@ -86,6 +86,26 @@
         "vitest": "^4.1.9",
       },
     },
+    "packages/labelled-token": {
+      "name": "@pp/labelled-token",
+      "version": "0.1.0",
+      "dependencies": {
+        "@aztec-labs/aztec.js": "6.0.0",
+      },
+      "devDependencies": {
+        "@aztec-foundation/aztec-standards": "6.0.0",
+        "@aztec-labs/constants": "6.0.0",
+        "@aztec-labs/foundation": "6.0.0",
+        "@aztec-labs/protocol-contracts": "6.0.0",
+        "@aztec-labs/standard-contracts": "6.0.0",
+        "@aztec-labs/stdlib": "6.0.0",
+        "@nulo-sh/resolve-asset": "0.3.0",
+        "@pp/bridge-core": "workspace:*",
+        "@types/node": "^24.13.2",
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.9",
+      },
+    },
     "packages/pp-env": {
       "name": "@pp/pp-env",
       "version": "0.0.0",
@@ -417,6 +437,8 @@
     "@pp/bridge-spec": ["@pp/bridge-spec@workspace:packages/bridge-spec"],
 
     "@pp/e2e-kit": ["@pp/e2e-kit@workspace:packages/e2e-kit"],
+
+    "@pp/labelled-token": ["@pp/labelled-token@workspace:packages/labelled-token"],
 
     "@pp/pp-env": ["@pp/pp-env@workspace:packages/pp-env"],
 

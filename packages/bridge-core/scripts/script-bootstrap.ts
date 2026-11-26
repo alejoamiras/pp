@@ -46,12 +46,20 @@ export function createNode(nodeUrl: string): ReturnType<typeof createAztecNodeCl
 	return createAztecNodeClient(nodeUrl)
 }
 
+/** The PXE execution hooks (`resolveCustomRequest`, `resolveTaggingSecretStrategy`, ...) a wallet can install. */
+export type PxeHooks = NonNullable<NonNullable<NonNullable<Parameters<typeof EmbeddedWallet.create>[1]>["pxe"]>["hooks"]>
+
 /** Embedded Aztec wallet. `proverEnabled` is REQUIRED — every call site states
  *  its choice visibly, so the sandbox's `false` is never a silent outlier. `sandboxKeysOnly` lets the store fall back to disk on a
  *  host without a tmpfs `/dev/shm`; a wallet holding real keys refuses to run there. */
-export function createL2Wallet(opts: { nodeUrl: string; proverEnabled: boolean; sandboxKeysOnly?: boolean }): Promise<EmbeddedWallet> {
+export function createL2Wallet(opts: {
+	nodeUrl: string
+	proverEnabled: boolean
+	sandboxKeysOnly?: boolean
+	hooks?: PxeHooks
+}): Promise<EmbeddedWallet> {
 	const dataDirectory = ownedWalletStore("wallet", { allowDisk: opts.sandboxKeysOnly ?? false })
-	return EmbeddedWallet.create(opts.nodeUrl, { pxeConfig: { proverEnabled: opts.proverEnabled, dataDirectory } })
+	return EmbeddedWallet.create(opts.nodeUrl, { pxe: { proverEnabled: opts.proverEnabled, dataDirectory, hooks: opts.hooks } })
 }
 
 /** Elapsed-minutes stopwatch — replaces each hand-rolled `t0`/`mins()` pair. */

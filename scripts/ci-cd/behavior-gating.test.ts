@@ -165,6 +165,7 @@ describe("CI behavior-gating guard", () => {
     const contracts = filtersOf("bridge-contracts.yml")["contracts"]
     expect(contracts, "the Solidity + Noir sources").toContain("contracts/bridge/**")
     assertGraphCovered(contracts, "bridge-core", "bridge-contracts")
+    assertGraphCovered(contracts, "labelled-token", "bridge-contracts")
     for (const p of [
       "vitest.base.ts",
       "package.json",

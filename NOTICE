@@ -4,3 +4,8 @@ This product includes software derived from Unleashed
 (https://github.com/alejoamiras/unleashed), commit
 4d53adc207512adfb6a5e755eed09dae7023341a, licensed under the Apache License,
 Version 2.0. Files taken from it have been modified.
+
+This product includes software derived from aztec-standards
+(https://github.com/AztecProtocol/aztec-standards), tag v6.0.0, licensed under
+the MIT License; see contracts/bridge/aztec/labelled_token/THIRD_PARTY_LICENSE.
+Files taken from it have been modified.
