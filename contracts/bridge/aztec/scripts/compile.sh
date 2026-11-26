@@ -37,7 +37,7 @@ for arg in "$@"; do
 		*) crates+=("$arg") ;;
 	esac
 done
-[ ${#crates[@]} -gt 0 ] || crates=(token_bridge_hub keystone asp_registry)
+[ ${#crates[@]} -gt 0 ] || crates=(token_bridge_hub keystone asp_registry asp_registry_probe)
 
 drift=0
 for c in "${crates[@]}"; do
