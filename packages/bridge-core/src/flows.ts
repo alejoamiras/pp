@@ -1,6 +1,6 @@
 /**
  * The L2→L1 exit tail: wait for the burn to prove, build the Outbox membership witness and consume it
- * through the portal's `withdraw`. Framework-agnostic; `scripts/sandbox/flows.ts` drives it end to end.
+ * through the portal's `withdraw`. Framework-agnostic.
  */
 import { waitForProven } from "@aztec-labs/aztec.js/contracts"
 import type { createAztecNodeClient } from "@aztec-labs/aztec.js/node"

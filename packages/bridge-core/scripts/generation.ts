@@ -25,7 +25,7 @@ import { resolvePackageAsset } from "@nulo-sh/resolve-asset"
 import { TokenContractArtifact } from "@aztec-foundation/aztec-standards/artifacts/src/artifacts/Token.js"
 import { type Address, getContractAddress, type Hex } from "viem"
 import { tokenBridgeHubArtifact } from "../src/artifacts"
-import { PORTAL_FACTORY_ABI } from "../src/factory-abi"
+import { PORTAL_FACTORY_ABI, PROCESSOR_PORTAL_ABI } from "../src/factory-abi"
 import { type Registration, readRegistration } from "../src/factory-registry"
 import type { L1Ctx } from "../src/flows"
 import { hubTokenFor } from "../src/hub-l2"
@@ -55,6 +55,10 @@ export interface L2Ctx {
 
 export interface GenerationInputs {
 	registry: Address
+	/** The Privacy Pools vault every portal of this generation is the processor for. */
+	pool: Address
+	/** Each portal's lifetime limit on accepted funds, in its token's base units. */
+	lifetimeCap: bigint
 	guardianL1: Address
 	/** The L2 guardian, as an Aztec address hex. */
 	guardianL2: string
@@ -180,11 +184,44 @@ async function deployEvm(l1: L1Ctx, name: string, args: unknown[], nonce?: bigin
 	return { address: lc(receipt.contractAddress), txHash }
 }
 
-async function readFactoryBindings(l1: L1Ctx, factory: Address): Promise<{ implementation: Address; l2Hub: string }> {
-	const read = (functionName: "IMPLEMENTATION" | "L2_HUB") =>
-		l1.pub.readContract({ address: factory, abi: PORTAL_FACTORY_ABI, functionName, args: [] })
-	return { implementation: lc(String(await read("IMPLEMENTATION"))), l2Hub: String(await read("L2_HUB")).toLowerCase() }
+interface FactoryBindings {
+	implementation: Address
+	hub: string
+	pool: Address
+	lifetimeCap: bigint
 }
+
+/** The vault and cap are the implementation's immutables, which every clone delegates to. */
+async function readFactoryBindings(l1: L1Ctx, factory: Address): Promise<FactoryBindings> {
+	const fromFactory = (functionName: "IMPLEMENTATION" | "L2_HUB") =>
+		l1.pub.readContract({ address: factory, abi: PORTAL_FACTORY_ABI, functionName, args: [] })
+	const implementation = lc(String(await fromFactory("IMPLEMENTATION")))
+	const fromImplementation = (functionName: "POOL" | "LIFETIME_CAP") =>
+		l1.pub.readContract({ address: implementation, abi: PROCESSOR_PORTAL_ABI, functionName, args: [] })
+	return {
+		implementation,
+		hub: String(await fromFactory("L2_HUB")),
+		pool: lc(String(await fromImplementation("POOL"))),
+		lifetimeCap: BigInt(await fromImplementation("LIFETIME_CAP")),
+	}
+}
+
+/** A factory is this generation's only if all four bindings agree: one bound to another vault or cap
+ *  would route every portal's funds by rules this generation never chose. */
+async function assertFactoryBindings(l1: L1Ctx, factory: Address, expected: FactoryBindings, label: string): Promise<void> {
+	const actual = await readFactoryBindings(l1, factory)
+	assertSame(actual.implementation, expected.implementation, `${label} IMPLEMENTATION`)
+	assertSame(actual.hub, expected.hub, `${label} L2_HUB`)
+	assertSame(actual.pool, expected.pool, `${label} POOL`)
+	assertSame(actual.lifetimeCap.toString(), expected.lifetimeCap.toString(), `${label} LIFETIME_CAP`)
+}
+
+const expectedBindings = (implementation: Address, hub: string, inputs: GenerationInputs): FactoryBindings => ({
+	implementation,
+	hub,
+	pool: lc(inputs.pool),
+	lifetimeCap: inputs.lifetimeCap,
+})
 
 /**
  * A factory already sitting at the predicted address is this generation's — the deploy landed and
@@ -194,16 +231,14 @@ async function readFactoryBindings(l1: L1Ctx, factory: Address): Promise<{ imple
 async function adoptLandedFactory(
 	l1: L1Ctx,
 	predicted: FactoryPrediction,
-	hubAddress: string,
+	expected: FactoryBindings,
 	journal: DeployJournal,
 ): Promise<FactoryPrediction | undefined> {
 	const code = await l1.pub.getCode({ address: predicted.factory })
 	if (!code || code === "0x") return undefined
-	const { implementation, l2Hub } = await readFactoryBindings(l1, predicted.factory)
-	assertSame(implementation, predicted.implementation, "landed factory IMPLEMENTATION")
-	assertSame(l2Hub, hubAddress, "landed factory L2_HUB")
+	await assertFactoryBindings(l1, predicted.factory, expected, "landed factory")
 	console.log(`  PortalFactory: ${predicted.factory} (adopted — it landed before the journal was written)`)
-	journal.append({ kind: "factory-deployed", factory: predicted.factory, implementation, txHash: undefined })
+	journal.append({ kind: "factory-deployed", factory: predicted.factory, implementation: predicted.implementation, txHash: undefined })
 	return predicted
 }
 
@@ -215,8 +250,17 @@ async function deployFactory(
 	journal: DeployJournal,
 ): Promise<FactoryPrediction> {
 	const done = findStep(journal, "factory-deployed")
-	if (done) return { factory: lc(done.factory), implementation: lc(done.implementation) }
-	const adopted = await adoptLandedFactory(l1, predicted, hubAddress, journal)
+	if (done) {
+		const recorded = { factory: lc(done.factory), implementation: lc(done.implementation) }
+		await assertFactoryBindings(
+			l1,
+			recorded.factory,
+			expectedBindings(recorded.implementation, hubAddress, inputs),
+			"journalled factory",
+		)
+		return recorded
+	}
+	const adopted = await adoptLandedFactory(l1, predicted, expectedBindings(predicted.implementation, hubAddress, inputs), journal)
 	if (adopted) return adopted
 	// The hub is already salted with the predicted address; a factory that lands anywhere else is
 	// bound to a hub nothing can reach, so a moved nonce ends the generation rather than the step.
@@ -227,12 +271,17 @@ async function deployFactory(
 			`the deployer's next CREATE is ${live}, not the predicted ${predicted.factory} — this generation is dead; start a new one`,
 		)
 	}
-	const { address, txHash } = await deployEvm(l1, "PortalFactory", [inputs.registry, hubAddress, inputs.guardianL1], nonce)
+	const { address, txHash } = await deployEvm(
+		l1,
+		"PortalFactory",
+		[inputs.registry, hubAddress, inputs.pool, inputs.lifetimeCap, inputs.guardianL1],
+		nonce,
+	)
 	assertSame(address, predicted.factory, "PortalFactory address")
-	const { implementation } = await readFactoryBindings(l1, address)
-	assertSame(implementation, predicted.implementation, "TokenPortalImpl address")
-	journal.append({ kind: "factory-deployed", factory: address, implementation, txHash })
-	return { factory: address, implementation }
+	await assertFactoryBindings(l1, address, expectedBindings(predicted.implementation, hubAddress, inputs), "deployed factory")
+	// Entries stay paused: the factory starts them so, and opening them is the guardian's later call.
+	journal.append({ kind: "factory-deployed", factory: address, implementation: predicted.implementation, txHash })
+	return { factory: address, implementation: predicted.implementation }
 }
 
 // ─── L2 hub ──────────────────────────────────────────────────────────────────

@@ -3,8 +3,8 @@
 Framework-agnostic L1↔L2 bridge logic in TypeScript over `viem` (L1) and `aztec.js` (L2), plus the
 local-network harness that proves it. No UI framework, no server.
 
-One **generation** per network: an L1 `PortalFactory` (one storage-less portal clone per ERC-20) and
-one L2 `TokenBridgeHub` that registers a token from the factory's attested words and derives its L2
+One **generation** per network: an L1 `PortalFactory` (one processor-portal clone per ERC-20, all
+bound to one Privacy Pools vault and lifetime cap) and one L2 `TokenBridgeHub` that registers a token from the factory's attested words and derives its L2
 `Token`. Every derivable address (portal, hub, L2 token) is a pure function of that pair, and this
 package re-derives it rather than trusting a file.
 
@@ -14,7 +14,7 @@ package re-derives it rather than trusting a file.
 |---|---|
 | `@pp/bridge-core` | `src/index.ts`: claim, exit, readiness, hashes, secrets, journal. |
 | `@pp/bridge-core/artifacts` | The committed hub artifact. |
-| `@pp/bridge-core/sandbox` | `scripts/sandbox/`: boot a local network, deploy a generation, deposit, claim, exit. Also the generation manifest schema (`manifest-v2`), a per-run handoff. Node only. |
+| `@pp/bridge-core/sandbox` | `scripts/sandbox/`: boot a local network, deploy a generation, read its bindings back. Also the generation manifest schema (`manifest-v2`), a per-run handoff. Node only. |
 
 ## File map (`src/`)
 
@@ -35,9 +35,9 @@ package re-derives it rather than trusting a file.
 |---|---|
 | `bun run test` | vitest on Bun: pure functions, mocked-L1 orchestrations, the deploy journal, the harness's units. |
 | `bun run typecheck` | `tsc --noEmit -p tsconfig.scripts.json` (src + scripts + test). |
-| `bun run test:integration` | Boots one anvil + `aztec start --local-network`, deploys a generation, and drives each round trip as its own test on a fresh actor: public, private and relayed deposits; public and private exits; both pause switches; the Outbox round trip; registration races and a tampered registration. `SANDBOX_L1_RPC` + `SANDBOX_NODE_URL` attach to a network kept up by `sandbox:up`; `PP_SANDBOX_ARTIFACTS` keeps the run's artifacts. |
+| `bun run test:integration` | Boots one anvil + `aztec start --local-network`, deploys a generation, and checks its bindings: vault, cap, paused entries, one portal per manifest token. `SANDBOX_L1_RPC` + `SANDBOX_NODE_URL` attach to a network kept up by `sandbox:up`; `PP_SANDBOX_ARTIFACTS` keeps the run's artifacts. |
 | `bun run sandbox:up --artifacts <dir>` | Boot and deploy, write `<dir>/{manifest,handle}.json`, then hold until SIGTERM. |
-| `bun run sandbox:smoke` | Boot, deploy, run every flow once on one actor with timings, tear down. `deploy:sandbox [--smoke] [--keep]` is the same entry; `--keep` leaves the network up and prints how to re-attach. |
+| `bun run sandbox:smoke` | Boot, deploy, run every flow once with timings, tear down. `deploy:sandbox [--smoke] [--keep]` is the same entry; `--keep` leaves the network up and prints how to re-attach. |
 
 Every harness run reads the forge build (`contracts/bridge/evm/out/`, gitignored): in a fresh clone,
 install the libs and `forge build` first ([`contracts/bridge/evm/README.md`](../../contracts/bridge/evm/README.md)).
@@ -51,15 +51,11 @@ temp stores from `TMPDIR`, both under `~/.cache/pp/bridge-sandbox/<run>/`, which
 
 Fees: every harness transaction is paid by the local network's SponsoredFPC.
 
-Deposits go straight to the token's portal (`scripts/sandbox/deposit.ts`): create the portal if the
-factory has none, `approve`, then `depositToAztecPublic` or `depositToAztecPrivate`. It is test
-plumbing, not a user-facing deposit.
+The sandbox has no Privacy Pools vault yet: the generation binds a placeholder address
+(`SANDBOX_POOL`) and keeps entries paused, so no bridge round trip runs on it.
 
 ## Key invariants
 
-- **Leaf indices come from the mined portal event, never a preflight simulate.** A concurrent deposit
-  changes a simulated index. `readPortalDeposit` accepts exactly one `DepositToAztec*` log emitted at
-  the portal's address, with every field matching the call, so a token's look-alike log cannot forge it.
 - **Checks run before the irreversible L1 transaction.** A non-positive amount or a recipient that is
   zero or off the Grumpkin curve is refused before any write.
 - **A claim is decided at claim time** (`hub-l2.ts`): `token_for == 0` ⇒ this claim also registers.
@@ -77,4 +73,6 @@ plumbing, not a user-facing deposit.
 - **Scripts spawn other programs only through `scripts/run.ts`**: argv arrays, never a shell string.
 - **The deploy journal is the resume record.** Every irreversible generation step is appended after its
   receipt, stamped with the chain, rollup and deployer; a re-run skips journalled steps and adopts a
-  factory or hub that landed before its line was written only when its bindings agree.
+  factory or hub that landed before its line was written only when its bindings agree. A factory's
+  bindings are its implementation and hub and the implementation's vault and cap, checked on a fresh
+  deploy, an adopted landing and a journalled resume alike.

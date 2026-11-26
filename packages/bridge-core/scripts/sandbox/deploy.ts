@@ -7,7 +7,7 @@ import type { ManifestV2 } from "../../src/manifest-v2"
 import { openDeployJournal, writeCandidateAtomically } from "../deploy-manifest"
 import { deployGeneration, preCreateToken } from "../generation"
 import { createL1Clients, stopwatch } from "../script-bootstrap"
-import { anvilKey, CHAIN_ID, HARNESS_INDEX, HARNESS_KEY, lc, sandboxChain } from "./constants"
+import { anvilKey, CHAIN_ID, HARNESS_INDEX, HARNESS_KEY, lc, SANDBOX_LIFETIME_CAP, SANDBOX_POOL, sandboxChain } from "./constants"
 import { ensureForgeArtifacts } from "./forge"
 import type { SandboxClients, SandboxHandle } from "./handle"
 import { deployL1Fixtures } from "./l1"
@@ -64,7 +64,18 @@ export async function deployEverything(net: { anvilUrl: string; nodeUrl: string 
 		registry,
 	})
 	console.log(`\n=== generation (${mins()}) ===`)
-	const gen = await deployGeneration(l1, l2, { registry, guardianL1: l1.account.address, guardianL2: l2.from.toString() }, journal)
+	const gen = await deployGeneration(
+		l1,
+		l2,
+		{
+			registry,
+			pool: SANDBOX_POOL,
+			lifetimeCap: SANDBOX_LIFETIME_CAP,
+			guardianL1: l1.account.address,
+			guardianL2: l2.from.toString(),
+		},
+		journal,
+	)
 
 	console.log(`\n=== tokens (${mins()}) ===`)
 	const tokens = [

@@ -61,6 +61,8 @@ const DEPLOYER = "0x7777777777777777777777777777777777777777" as const
 const GUARDIAN_L2 = `0x${"7".padStart(64, "0")}`
 const inputs = {
 	registry: "0x1111111111111111111111111111111111111111",
+	pool: "0x2222222222222222222222222222222222222222",
+	lifetimeCap: 10n ** 24n,
 	guardianL1: DEPLOYER,
 	guardianL2: GUARDIAN_L2,
 } as const
@@ -73,12 +75,16 @@ interface ChainOptions {
 	landedHub?: ContractInstanceWithAddress
 	/** Class ids the network already carries — on a shared network the Token class is never ours to publish. */
 	publishedClasses?: Set<string>
+	/** The hub a factory this chain did not deploy was constructed with, as a crashed earlier run left it. */
+	factoryHub?: string
 }
 
 /** What the deployed contracts answer for every constant read; the factory's `L2_HUB` is per test. */
-function constantReads(chain: { expected: { factory: () => string; implementation: () => string } }): Record<string, string> {
+function constantReads(chain: { expected: { factory: () => string; implementation: () => string } }): Record<string, unknown> {
 	return {
 		IMPLEMENTATION: chain.expected.implementation(),
+		POOL: inputs.pool,
+		LIFETIME_CAP: inputs.lifetimeCap,
 	}
 }
 
@@ -86,6 +92,7 @@ function constantReads(chain: { expected: { factory: () => string; implementatio
 function fakeChain(startNonce: bigint, predictedAt = startNonce, opts: ChainOptions = {}) {
 	const pending = opts.pending ?? 0n
 	let nonce = startNonce
+	let factoryHub = opts.factoryHub
 	const deployed: string[] = []
 	const factory = () => getContractAddress({ from: DEPLOYER, nonce: predictedAt }).toLowerCase()
 	const implementation = () => getContractAddress({ from: factory() as `0x${string}`, nonce: 1n }).toLowerCase()
@@ -93,11 +100,12 @@ function fakeChain(startNonce: bigint, predictedAt = startNonce, opts: ChainOpti
 		account: { address: DEPLOYER },
 		wallet: {
 			chain: undefined,
-			deployContract: vi.fn(async ({ bytecode, nonce: pinned }: { bytecode: string; nonce?: number }) => {
+			deployContract: vi.fn(async ({ bytecode, args, nonce: pinned }: { bytecode: string; args: unknown[]; nonce?: number }) => {
 				// A pinned nonce a queued transaction already took is rejected, never re-assigned.
 				if (pinned !== undefined && BigInt(pinned) !== nonce) throw new Error("nonce too low")
 				const address = getContractAddress({ from: DEPLOYER, nonce }).toLowerCase()
 				nonce += 1n
+				factoryHub = String(args[1])
 				deployed.push(bytecode)
 				return `0x${address.slice(2).padStart(64, "0")}`
 			}),
@@ -146,17 +154,23 @@ function fakeChain(startNonce: bigint, predictedAt = startNonce, opts: ChainOpti
 		wallet: l2.wallet,
 		deployed,
 		expected: { factory, implementation },
+		factoryHub: () => factoryHub,
 	}
 }
 
-/** The factory's `L2_HUB` read answers with whatever the hub step journalled — the binding under test. */
-function answerReads(journal: ReturnType<typeof openDeployJournal>, chain: ReturnType<typeof fakeChain>): void {
+/** The factory's `L2_HUB` read answers with whatever the hub step journalled, else the hub its
+ *  constructor took — the binding under test. `overrides` replaces any read's answer. */
+function answerReads(
+	journal: ReturnType<typeof openDeployJournal>,
+	chain: ReturnType<typeof fakeChain>,
+	overrides: Record<string, unknown> = {},
+): void {
 	;(chain.l1.pub.readContract as unknown as ReturnType<typeof vi.fn>).mockImplementation(
 		async ({ functionName }: { functionName: string }) => {
-			const answer = constantReads(chain)[functionName]
+			const answer = overrides[functionName] ?? constantReads(chain)[functionName]
 			if (answer !== undefined) return answer
 			const hubStep = journal.steps.find((s) => s.kind === "hub-deployed")
-			return hubStep && hubStep.kind === "hub-deployed" ? hubStep.hub : ""
+			return hubStep && hubStep.kind === "hub-deployed" ? hubStep.hub : (chain.factoryHub() ?? "")
 		},
 	)
 }
@@ -251,7 +265,7 @@ describe("deployGeneration — crash-resume at every journalled step", () => {
 			for (const step of full.steps.slice(0, crashAfter)) partial.append(step)
 			// The chain state after the crash: every L1 deploy that was journalled has consumed its nonce.
 			const l1Deploys = full.steps.slice(0, crashAfter).filter((s) => s.kind === "factory-deployed").length
-			const resumed = fakeChain(5n + BigInt(l1Deploys), 5n)
+			const resumed = fakeChain(5n + BigInt(l1Deploys), 5n, { factoryHub: reference.l2.hub.address })
 			answerReads(partial, resumed)
 			const record = await deployGeneration(resumed.l1, resumed.l2, inputs, partial)
 			expect(record, `crash after step ${crashAfter}`).toEqual(reference)
@@ -309,6 +323,40 @@ describe("deployGeneration — crash-resume at every journalled step", () => {
 		expect(foreign.chain.deployed).toHaveLength(0)
 	})
 
+	it("refuses a factory bound to another vault or cap on a fresh deploy, an adopted landing and a journalled resume", async () => {
+		const clean = fakeChain(5n)
+		const cleanJournal = openDeployJournal(join(dir, "bindings-clean.jsonl"))
+		answerReads(cleanJournal, clean)
+		const reference = await deployGeneration(clean.l1, clean.l2, inputs, cleanJournal)
+		expect(vi.mocked(clean.l1.wallet.deployContract)).toHaveBeenCalledWith(
+			expect.objectContaining({
+				args: [inputs.registry, reference.l2.hub.address, inputs.pool, inputs.lifetimeCap, inputs.guardianL1],
+			}),
+		)
+		const stepsBefore = (kind: string) =>
+			cleanJournal.steps.slice(
+				0,
+				cleanJournal.steps.findIndex((st) => st.kind === kind),
+			)
+		const paths = [
+			{ label: "deployed factory", nonce: 5n, steps: stepsBefore("factory-deployed"), landed: false },
+			{ label: "landed factory", nonce: 6n, steps: stepsBefore("factory-deployed"), landed: true },
+			{ label: "journalled factory", nonce: 6n, steps: stepsBefore("hub-deployed"), landed: false },
+		]
+		const wrong = { POOL: "0x9999999999999999999999999999999999999999", LIFETIME_CAP: inputs.lifetimeCap - 1n }
+		for (const [read, value] of Object.entries(wrong)) {
+			for (const path of paths) {
+				const chain = fakeChain(path.nonce, 5n, { factoryHub: reference.l2.hub.address })
+				if (path.landed) (chain.l1.pub.getCode as unknown as ReturnType<typeof vi.fn>).mockResolvedValue("0x6001")
+				const journal = openDeployJournal(join(dir, `bindings-${read}-${path.label.split(" ")[0]}.jsonl`))
+				for (const step of path.steps) journal.append(step)
+				answerReads(journal, chain, { [read]: value })
+				await expect(deployGeneration(chain.l1, chain.l2, inputs, journal), path.label).rejects.toThrow(`${path.label} ${read}`)
+				expect(journal.steps.map((st) => st.kind)).toEqual(path.steps.map((st) => st.kind))
+			}
+		}
+	}, 30_000)
+
 	it("a hub that landed before its journal entry is adopted, not redeployed — if its preimage agrees", async () => {
 		const clean = fakeChain(5n)
 		const cleanJournal = openDeployJournal(join(dir, "hub-clean.jsonl"))
@@ -318,7 +366,7 @@ describe("deployGeneration — crash-resume at every journalled step", () => {
 
 		// The crash happened after the hub's deploy landed: the chain carries it, the journal does not.
 		const resumed = (landedHub: ContractInstanceWithAddress, label: string) => {
-			const chain = fakeChain(6n, 5n, { landedHub })
+			const chain = fakeChain(6n, 5n, { landedHub, factoryHub: reference.l2.hub.address })
 			const journal = openDeployJournal(join(dir, `hub-landed-${label}.jsonl`))
 			for (const step of cleanJournal.steps.filter((s) => s.kind !== "hub-deployed")) journal.append(step)
 			answerReads(journal, chain)

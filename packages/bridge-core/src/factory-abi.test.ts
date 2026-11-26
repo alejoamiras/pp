@@ -2,11 +2,11 @@ import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { PORTAL_FACTORY_ABI, TOKEN_PORTAL_ABI } from "./factory-abi"
+import { PORTAL_FACTORY_ABI, PROCESSOR_PORTAL_ABI } from "./factory-abi"
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "contracts", "bridge", "evm", "out")
 const FACTORY_ARTIFACT = join(OUT, "PortalFactory.sol", "PortalFactory.json")
-const PORTAL_ARTIFACT = join(OUT, "TokenPortalImpl.sol", "TokenPortalImpl.json")
+const PORTAL_ARTIFACT = join(OUT, "ProcessorPortalImpl.sol", "ProcessorPortalImpl.json")
 
 type AbiParam = { name: string; type: string; indexed?: boolean; components?: AbiParam[] }
 type AbiEntry = { type: string; name?: string; stateMutability?: string; inputs?: AbiParam[]; outputs?: AbiParam[] }
@@ -44,7 +44,7 @@ describe.skipIf(!existsSync(FACTORY_ARTIFACT) || !existsSync(PORTAL_ARTIFACT))("
 		expectPinned(PORTAL_FACTORY_ABI as unknown as readonly AbiEntry[], FACTORY_ARTIFACT)
 	})
 
-	it("TOKEN_PORTAL_ABI matches the compiled TokenPortalImpl", () => {
-		expectPinned(TOKEN_PORTAL_ABI as unknown as readonly AbiEntry[], PORTAL_ARTIFACT)
+	it("PROCESSOR_PORTAL_ABI matches the compiled ProcessorPortalImpl", () => {
+		expectPinned(PROCESSOR_PORTAL_ABI as unknown as readonly AbiEntry[], PORTAL_ARTIFACT)
 	})
 })

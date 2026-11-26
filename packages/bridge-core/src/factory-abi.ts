@@ -1,6 +1,6 @@
 /**
- * Minimal PortalFactory + portal-clone ABIs for browser callers (the faucet can't read forge
- * artifacts at runtime). Hand-written and PINNED against the forge artifacts by
+ * Minimal PortalFactory + processor-portal ABIs for browser callers, which cannot read forge
+ * artifacts at runtime. Hand-written and PINNED against the forge artifacts by
  * factory-abi.test.ts — any drift between these consts and the compiled contracts fails the suite.
  */
 
@@ -49,8 +49,14 @@ export const PORTAL_FACTORY_ABI = [
 		inputs: [{ name: "token", type: "address" }],
 		outputs: [{ name: "", type: "tuple", components: REGISTRATION_COMPONENTS }],
 	},
-	{ type: "function", name: "depositsPaused", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bool" }] },
-	{ type: "function", name: "withdrawsPaused", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bool" }] },
+	{ type: "function", name: "entriesPaused", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bool" }] },
+	{
+		type: "function",
+		name: "setEntriesPaused",
+		stateMutability: "nonpayable",
+		inputs: [{ name: "paused", type: "bool" }],
+		outputs: [],
+	},
 	{ type: "function", name: "IMPLEMENTATION", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
 	{ type: "function", name: "L2_HUB", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bytes32" }] },
 	{
@@ -66,87 +72,20 @@ export const PORTAL_FACTORY_ABI = [
 			{ name: "registerIndex", type: "uint256", indexed: false },
 		],
 	},
-	{
-		type: "event",
-		name: "PauseChanged",
-		inputs: [
-			{ name: "deposits", type: "bool", indexed: false },
-			{ name: "withdraws", type: "bool", indexed: false },
-		],
-	},
+	{ type: "event", name: "EntriesPausedChanged", inputs: [{ name: "paused", type: "bool", indexed: false }] },
 	{ type: "error", name: "NotAContract", inputs: [] },
 	{ type: "error", name: "NoDecimals", inputs: [] },
 ] as const
 
-export const TOKEN_PORTAL_ABI = [
-	{
-		type: "function",
-		name: "depositToAztecPublic",
-		stateMutability: "nonpayable",
-		inputs: [
-			{ name: "_to", type: "bytes32" },
-			{ name: "_amount", type: "uint256" },
-			{ name: "_secretHash", type: "bytes32" },
-		],
-		outputs: [
-			{ name: "", type: "bytes32" },
-			{ name: "", type: "uint256" },
-		],
-	},
-	{
-		type: "function",
-		name: "depositToAztecPrivate",
-		stateMutability: "nonpayable",
-		inputs: [
-			{ name: "_amount", type: "uint256" },
-			{ name: "_secretHashForL2MessageConsumption", type: "bytes32" },
-		],
-		outputs: [
-			{ name: "", type: "bytes32" },
-			{ name: "", type: "uint256" },
-		],
-	},
-	{
-		type: "function",
-		name: "withdraw",
-		stateMutability: "nonpayable",
-		inputs: [
-			{ name: "_recipient", type: "address" },
-			{ name: "_amount", type: "uint256" },
-			{ name: "_withCaller", type: "bool" },
-			{ name: "_epoch", type: "uint256" },
-			{ name: "_numCheckpointsInEpoch", type: "uint256" },
-			{ name: "_leafIndex", type: "uint256" },
-			{ name: "_path", type: "bytes32[]" },
-		],
-		outputs: [],
-	},
-	{ type: "function", name: "underlying", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
-	{ type: "function", name: "FACTORY", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
-	{
-		type: "event",
-		name: "DepositToAztecPublic",
-		inputs: [
-			{ name: "to", type: "bytes32", indexed: false },
-			{ name: "amount", type: "uint256", indexed: false },
-			{ name: "secretHash", type: "bytes32", indexed: false },
-			{ name: "key", type: "bytes32", indexed: false },
-			{ name: "index", type: "uint256", indexed: false },
-		],
-	},
-	{
-		type: "event",
-		name: "DepositToAztecPrivate",
-		inputs: [
-			{ name: "amount", type: "uint256", indexed: false },
-			{ name: "secretHashForL2MessageConsumption", type: "bytes32", indexed: false },
-			{ name: "key", type: "bytes32", indexed: false },
-			{ name: "index", type: "uint256", indexed: false },
-		],
-	},
-	{ type: "error", name: "DepositsPaused", inputs: [] },
-	{ type: "error", name: "WithdrawsPaused", inputs: [] },
-	{ type: "error", name: "AmountExceedsL2Max", inputs: [] },
-	{ type: "error", name: "InexactTransfer", inputs: [] },
+const view = <const N extends string, const T extends string>(name: N, type: T) =>
+	({ type: "function", name, stateMutability: "view", inputs: [], outputs: [{ name: "", type }] }) as const
+
+export const PROCESSOR_PORTAL_ABI = [
+	view("underlying", "address"),
+	view("FACTORY", "address"),
+	view("POOL", "address"),
+	view("LIFETIME_CAP", "uint256"),
+	view("grossAccepted", "uint256"),
+	view("totalPaid", "uint256"),
 	{ type: "error", name: "ImplementationOnly", inputs: [] },
 ] as const
