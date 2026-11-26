@@ -54,9 +54,13 @@ describe("teardownNetwork", () => {
 	it("fails a vitest run whose global teardown finds leftovers", () => teardownRun())
 
 	it("fails the run and still cleans up when the stop itself throws", () => {
-		const marker = join(mkdtempSync(join(tmpdir(), "pp-teardown-")), "cleaned")
-		teardownRun({ TEARDOWN_CASE: "stop-throws", TEARDOWN_MARKER: marker })
-		expect(existsSync(marker)).toBe(true)
+		const dir = mkdtempSync(join(tmpdir(), "pp-teardown-"))
+		try {
+			teardownRun({ TEARDOWN_CASE: "stop-throws", TEARDOWN_MARKER: join(dir, "cleaned") })
+			expect(existsSync(join(dir, "cleaned"))).toBe(true)
+		} finally {
+			rmSync(dir, { recursive: true, force: true })
+		}
 	})
 })
 

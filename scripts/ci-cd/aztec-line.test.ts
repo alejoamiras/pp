@@ -96,7 +96,15 @@ type Workspace = { dir: string; manifest: Manifest }
 type LockDeps = { dependencies?: Specs; optionalDependencies?: Specs; peerDependencies?: Specs }
 type ResolvedLock = { packages: Record<string, [string, string?, LockDeps?, string?]> }
 
-const runtimeDeps = (m: LockDeps | undefined) => Object.keys({ ...m?.dependencies, ...m?.optionalDependencies, ...m?.peerDependencies })
+const runtimeSpecs = (m: LockDeps | undefined): Specs => ({ ...m?.dependencies, ...m?.optionalDependencies, ...m?.peerDependencies })
+const runtimeDeps = (m: LockDeps | undefined) => Object.keys(runtimeSpecs(m))
+
+/** The workspace a dependency names: the target of a `workspace:<name>` alias, else its own key. */
+function workspaceOf(dep: string, spec: string, workspaces: Map<string, Workspace>): string | undefined {
+	const target = /^workspace:((?:@[^@/]+\/)?[^@]+)/.exec(spec)?.[1]
+	if (target && workspaces.has(target)) return target
+	return workspaces.has(dep) ? dep : undefined
+}
 
 function workspacesByName(): Map<string, Workspace> {
 	const paths = (manifest("package.json").workspaces ?? []).flatMap((glob) => [...new Bun.Glob(`${glob}/package.json`).scanSync({ cwd: ROOT })])
@@ -110,7 +118,7 @@ function appClosure(workspaces: Map<string, Workspace>): Set<string> {
 	for (let name = queue.pop(); name !== undefined; name = queue.pop()) {
 		if (members.has(name)) continue
 		members.add(name)
-		queue.push(...runtimeDeps(workspaces.get(name)?.manifest).filter((dep) => workspaces.has(dep)))
+		queue.push(...Object.entries(runtimeSpecs(workspaces.get(name)?.manifest)).flatMap(([dep, spec]) => workspaceOf(dep, spec, workspaces) ?? []))
 	}
 	return members
 }
@@ -199,6 +207,9 @@ test("the closure walk finds a nested second viem and stops at a workspace outsi
 	const members = appClosure(workspaces)
 	expect([...members]).toEqual(["@pp/bridge-core"])
 	expect([...viemReached(lock, workspaces, members)]).toEqual(["2.40.0"])
+	const aliasing = { name: "@pp/bridge-core", dependencies: { env: "workspace:@pp/pp-env" } }
+	const aliased = new Map(workspaces).set("@pp/bridge-core", { dir: "packages/bridge-core", manifest: aliasing })
+	expect([...appClosure(aliased)].sort()).toEqual(["@pp/bridge-core", "@pp/pp-env"])
 })
 
 test("the foundation version is the exact one the locked aztec.js requires", () => {
