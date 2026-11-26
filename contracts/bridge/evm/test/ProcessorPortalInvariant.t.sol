@@ -110,7 +110,6 @@ contract PortalHandler is Test {
 
     uint256[2] public donated;
     uint256[2] internal honestPaid;
-    uint256[2] internal forgedPaid;
     uint256[3][2] public owed;
     uint256 internal nullifiers;
     uint256 internal epochs;
@@ -234,7 +233,6 @@ contract PortalHandler is Test {
         (bool ok, bytes memory err) = _publishAndSettle(i, ragequit, payees[k], amount, label);
         if (ok) {
             forgedLanded++;
-            forgedPaid[i] += amount;
             owed[i][k] += amount;
         } else {
             reverts++;
