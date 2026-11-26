@@ -18,7 +18,13 @@ export default async function setup(project: TestProject): Promise<() => Promise
 	project.provide("nodeUrl", net.nodeUrl)
 	project.provide("attached", attached)
 	return async () => {
-		await net.stop()
-		assertNothingLeft(net)
+		try {
+			await net.stop()
+			assertNothingLeft(net)
+		} catch (e) {
+			// vitest logs a throwing global teardown and still exits 0.
+			process.exitCode = 1
+			throw e
+		}
 	}
 }
