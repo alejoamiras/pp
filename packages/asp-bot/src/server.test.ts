@@ -19,7 +19,7 @@ describe("snapshot routes", () => {
 		expect(respond("GET", "/v1/snapshots/latest", book).status).toBe(404)
 		book.hold(snapshot(3n))
 		book.hold(snapshot(4n))
-		book.setCurrent(4n)
+		book.setCurrent(snapshot(4n))
 
 		const ok = respond("GET", "/v1/snapshots/3?label=1", book)
 		expect(ok.status).toBe(200)
@@ -35,7 +35,8 @@ describe("snapshot routes", () => {
 			expect(respond("GET", path, book).status, path).toBe(404)
 		}
 		expect(respond("POST", "/v1/snapshots/latest", book).status).toBe(405)
-		book.setCurrent(9n)
+		// After `set_poster`: the same sequence with cleared roots, which this process does not hold.
+		book.setCurrent({ sequence: 4n, poolRoot: 0n, birthRoot: 0n })
 		expect(respond("GET", "/v1/snapshots/latest", book).status).toBe(404)
 
 		const live = await serve(book)

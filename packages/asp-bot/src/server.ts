@@ -1,25 +1,35 @@
 import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
-import { type AspSnapshot, serializeAspSnapshot } from "@pp/label-paths"
+import { type AspSnapshot, type RootRecord, serializeAspSnapshot } from "@pp/label-paths"
+
+type Held = { poolRoot: bigint; birthRoot: bigint; body: string }
 
 /** Snapshots this process can back: the ones it posted and the record it found current at start. */
 export class SnapshotBook {
-	private readonly bodies = new Map<bigint, string>()
+	private readonly held = new Map<bigint, Held>()
 	private current: bigint | null = null
 
 	/** Serialises once; `serializeAspSnapshot` refuses a snapshot whose roots do not rebuild. */
 	hold(s: AspSnapshot): void {
-		this.bodies.set(s.sequence, serializeAspSnapshot(s))
+		this.held.set(s.sequence, { poolRoot: s.poolRoot, birthRoot: s.birthRoot, body: serializeAspSnapshot(s) })
 	}
 
-	/** Points `/latest` at `sequence`, or at nothing when this process does not hold the current record. */
-	setCurrent(sequence: bigint | null): void {
-		this.current = sequence !== null && this.bodies.has(sequence) ? sequence : null
+	has(sequence: bigint): boolean {
+		return this.held.has(sequence)
+	}
+
+	/**
+	 * Points `/latest` at the registry's current record, or at nothing when this process holds no snapshot
+	 * with its roots: `set_poster` keeps the sequence but clears the roots.
+	 */
+	setCurrent(r: Pick<RootRecord, "sequence" | "poolRoot" | "birthRoot">): void {
+		const h = this.held.get(r.sequence)
+		this.current = h && h.poolRoot === r.poolRoot && h.birthRoot === r.birthRoot ? r.sequence : null
 	}
 
 	body(sequence: bigint | "latest"): string | undefined {
 		const n = sequence === "latest" ? this.current : sequence
-		return n === null ? undefined : this.bodies.get(n)
+		return n === null ? undefined : this.held.get(n)?.body
 	}
 }
 
