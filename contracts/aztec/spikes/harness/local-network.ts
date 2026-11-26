@@ -26,7 +26,7 @@ async function rpcResponds(url: string, method: string): Promise<boolean> {
 	}
 }
 
-/** Requires `child` alive at every probe, so an answer from an unrelated listener on the port never counts. */
+/** Fails fast when `child` exits before answering. */
 async function waitHealthy(label: string, child: ChildProcess, probe: () => Promise<boolean>, timeoutMs: number): Promise<void> {
 	for (const start = Date.now(); Date.now() - start < timeoutMs; await sleep(500)) {
 		if (child.exitCode !== null || child.signalCode !== null) throw new Error(`${label} exited before answering`)
@@ -46,8 +46,7 @@ export async function startLocalNetwork(): Promise<LocalNetwork> {
 	let stopping: Promise<void> | undefined
 	const stop = (): Promise<void> => {
 		stopping ??= (async () => {
-			for (const child of [...children].reverse()) await killGroup(child)
-			children.length = 0
+			while (children.length > 0) await killGroup(children.pop())
 			await releasePorts(runId)
 			removeRunDir(runId)
 		})()

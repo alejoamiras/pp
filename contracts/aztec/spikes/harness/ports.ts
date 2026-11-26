@@ -71,7 +71,7 @@ function unlock(): void {
 /** Replaces the table atomically: an interrupted write must not truncate other runs' rows. */
 function writeRegistry(lines: string[]): void {
 	const tmp = `${REGISTRY}.${TOKEN}.tmp`
-	writeFileSync(tmp, lines.join("\n"))
+	writeFileSync(tmp, lines.join("\n"), { mode: 0o600 })
 	renameSync(tmp, REGISTRY)
 }
 

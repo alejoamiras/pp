@@ -70,6 +70,17 @@ interface WalletInternals {
 	pxe: {
 		sync(): Promise<void>
 		proveTx(req: TxExecutionRequest, opts: { scopes: AztecAddress[]; senderForTags?: AztecAddress }): Promise<TxProvingResult>
+		getRegisteredAccounts(): Promise<{ address: AztecAddress }[]>
+		getTaggingSecretSources(filter: { kind: "address-derived" }): Promise<{ sender: AztecAddress }[]>
+	}
+}
+
+/** What the actor's PXE scans for: its own accounts and its address-derived senders. The wallet's address book is a separate store. */
+export async function pxeTagSources(who: Actor): Promise<{ accounts: string[]; senders: string[] }> {
+	const pxe = (who.wallet as unknown as WalletInternals).pxe
+	return {
+		accounts: (await pxe.getRegisteredAccounts()).map((a) => a.address.toString()),
+		senders: (await pxe.getTaggingSecretSources({ kind: "address-derived" })).map((s) => s.sender.toString()),
 	}
 }
 

@@ -3,7 +3,7 @@ import { Fr } from "@aztec-labs/aztec.js/fields"
 import { waitForTx } from "@aztec-labs/aztec.js/node"
 import { TxExecutionResult, type Tx } from "@aztec-labs/aztec.js/tx"
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest"
-import { type Actor, actor, artifact, proveOnly, record, summarizeProfile } from "./helpers"
+import { type Actor, actor, artifact, proveOnly, pxeTagSources, record, summarizeProfile } from "./helpers"
 
 describe("q4 partial note committing to a private label", () => {
 	let alice: Actor
@@ -25,8 +25,8 @@ describe("q4 partial note committing to a private label", () => {
 	}
 
 	type Effect = Awaited<ReturnType<typeof landed>>
-	/** Every field a transaction publishes, for a plaintext search. */
-	const published = (e: Effect, calldata: Fr[] = []) => [
+	/** The published fields searched for the label in plaintext. */
+	const published = (e: Effect, calldata: Fr[]) => [
 		...calldata,
 		...e.privateLogs.flatMap((l) => l.fields),
 		...e.publicLogs.flatMap((l) => l.getEmittedFields()),
@@ -41,7 +41,9 @@ describe("q4 partial note committing to a private label", () => {
 	async function prepare(by: Actor, label: Fr) {
 		const proven = await proveOnly(by, at[by === bob ? "bob" : "carol"]!.methods.prepare_partial(bob.address, label, alice.address))
 		const effect = await landed(by, proven.tx)
-		expect(published(effect).some((f) => f.equals(label))).toBe(false)
+		expect(published(effect, proven.tx.publicFunctionCalldata.flatMap((c) => c.values)).some((f) => f.equals(label))).toBe(false)
+		// Tx and validity nullifiers; a third party's constrained first contact adds the handshake and sequence ones.
+		expect(effect.nullifiers.length).toBe(by === bob ? 2 : 4)
 		return new Fr(proven.returnValues[0]!)
 	}
 
@@ -51,7 +53,7 @@ describe("q4 partial note committing to a private label", () => {
 		const calldata = proven.tx.publicFunctionCalldata.flatMap((c) => c.values)
 		const effect = await landed(alice, proven.tx)
 		const log = effect.publicLogs.flatMap((l) => l.getEmittedFields())
-		// Calldata: selector, commitment, amount. Completion log: tag, slot, amount.
+		// Calldata ends (commitment, amount); the completion log is (tag, slot, amount).
 		expect(calldata.slice(1)).toEqual([commitment, new Fr(amount)])
 		expect(log).toHaveLength(3)
 		expect(log[2]).toEqual(new Fr(amount))
@@ -95,12 +97,12 @@ describe("q4 partial note committing to a private label", () => {
 	})
 
 	it("a third party unknown to bob prepares for him with constrained delivery, and bob finds it", async () => {
-		expect((await bob.wallet.getAddressBook()).map((a) => a.item.toString())).not.toContain(carol.address.toString())
+		expect((await pxeTagSources(bob)).senders).not.toContain(carol.address.toString())
 		const label = Fr.random()
 		record("q4.prepare_partial.third_party.gates", summarizeProfile(await at.carol!.methods.prepare_partial(bob.address, label, alice.address).profile({ from: carol.address, profileMode: "gates" })))
 		const commitment = await prepare(carol, label)
 		await complete(commitment, label, 25n)
 		expect(await bobBalance(label)).toBe(25n)
-		expect((await bob.wallet.getAddressBook()).map((a) => a.item.toString())).not.toContain(carol.address.toString())
+		expect((await pxeTagSources(bob)).senders).not.toContain(carol.address.toString())
 	})
 })

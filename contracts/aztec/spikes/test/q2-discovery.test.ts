@@ -2,7 +2,7 @@ import { Fr } from "@aztec-labs/aztec.js/fields"
 import { Contract } from "@aztec-labs/aztec.js/contracts"
 import type { TxHash } from "@aztec-labs/aztec.js/tx"
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest"
-import { type Actor, actor, artifact, record, summarizeProfile } from "./helpers"
+import { type Actor, actor, artifact, pxeTagSources, record, summarizeProfile } from "./helpers"
 
 const L1 = new Fr(0x111n)
 const L2 = new Fr(0x222n)
@@ -42,8 +42,7 @@ describe("q2 labelled note: discovery without a registered sender", () => {
 	})
 
 	it("bob's PXE does not know alice in any way", async () => {
-		const accounts = (await bob.wallet.getAccounts()).map((a) => a.item.toString())
-		const senders = (await bob.wallet.getAddressBook()).map((a) => a.item.toString())
+		const { accounts, senders } = await pxeTagSources(bob)
 		expect(accounts).toEqual([bob.address.toString()])
 		expect(senders).not.toContain(alice.address.toString())
 	})
@@ -66,7 +65,7 @@ describe("q2 labelled note: discovery without a registered sender", () => {
 		// The handshake is reused; the sequence nullifier remains.
 		expect(e2.nullifiers).toBe(2)
 		expect(await bobBalance(L1)).toBe(101n)
-		expect((await bob.wallet.getAddressBook()).map((a) => a.item.toString())).not.toContain(alice.address.toString())
+		expect((await pxeTagSources(bob)).senders).not.toContain(alice.address.toString())
 	})
 
 	it("control: an address-derived mint stays invisible until bob registers alice", async () => {

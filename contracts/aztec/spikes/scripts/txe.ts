@@ -15,7 +15,9 @@ let nargo: ChildProcess | undefined
 // nargo first: blocked on an oracle call, it would outlive a stopped TXE.
 async function cleanup(): Promise<void> {
 	await killGroup(nargo)
+	nargo = undefined
 	await killGroup(txe)
+	txe = undefined
 	await releasePorts(runId)
 	removeRunDir(runId)
 }

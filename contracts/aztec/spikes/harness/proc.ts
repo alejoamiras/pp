@@ -49,7 +49,10 @@ export async function killGroup(child: ChildProcess | undefined, graceMs = 5_000
 	try {
 		process.kill(-pgid, "SIGTERM")
 	} catch {}
-	for (let waited = 0; waited < graceMs && alive(pgid); waited += 100) await sleep(100)
+	for (let waited = 0; waited < graceMs; waited += 100) {
+		await sleep(100)
+		if (!alive(pgid)) return
+	}
 	killGroupSync(child)
 }
 

@@ -85,6 +85,7 @@ impl LabelNote {
         let randomness = unsafe { random() };
         let commitment = compute_partial_commitment(owner, label, randomness);
         let content = LabelPartialNotePrivateContent { label };
+        // The raw commitment goes in as the completion log tag; discovery applies DOM_SEP__NOTE_COMPLETION_LOG_TAG.
         do_private_message_delivery(
             context,
             || encode_partial_note_private_message(content, owner, randomness, commitment),
@@ -131,7 +132,7 @@ impl PartialLabelNote {
         storage_slot: Field,
         value: u128,
     ) {
-        // As in aztec-nr's UintNote: a trailing zero may be trimmed from the completion log, breaking discovery.
+        // Token policy, as in aztec-nr's UintNote: a completion never creates a zero-value note.
         assert(value != 0, "zero completion");
         assert(
             context.nullifier_exists_unsafe(
