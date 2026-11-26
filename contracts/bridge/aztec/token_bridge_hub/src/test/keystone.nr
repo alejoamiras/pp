@@ -9,7 +9,8 @@ use aztec::protocol::{
 };
 
 // The committed LabelledToken artifact's class — pinned in bridge-core's
-// noir-artifact-classids.test.ts as well.
+// noir-artifact-classids.test.ts as well. Both vectors are the token's own `bench/handoff.json`
+// cases, so the token, the hub and bridge-core pin one pair.
 global TOKEN_CLASS_ID: Field = 0x0ffdf2f819f7dbbeed8dabe38a38a76aef084445509c653762a3e3158fe1aaaa;
 
 fn derive(registry: Field) -> Field {
@@ -35,8 +36,7 @@ fn keystone_hub_token_address_matches_bridge_core() {
 #[test]
 fn keystone_hub_token_address_binds_the_registry() {
     assert(
-        derive(0x2eed000000000000000000000000000000000000000000000000000000000123)
-            == 0x1a15a6e90c3236ec41e3007b5b1d5daac2168c6afffb246e9cc7cd33f6ab577a,
+        derive(0x7e57) == 0x2726ceefe5c0d65f7e5fc95fad27d414ee0568e22c446c947edc14ba230a9616,
     );
 }
 

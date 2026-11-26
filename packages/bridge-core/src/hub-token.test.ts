@@ -1,7 +1,8 @@
 /**
  * KEYSTONE (TS leg): the hub-derived token instance must equal the hub's in-circuit `derive_token`
  * (contracts/bridge/aztec/token_bridge_hub/src/test/keystone.nr) for the fixed vectors. The class id
- * is the committed LabelledToken's — the same pin as noir-artifact-classids.test.ts.
+ * is the committed LabelledToken's — the same pin as noir-artifact-classids.test.ts. The vectors are
+ * the token's `bench/handoff.json` cases.
  */
 import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import { describe, expect, it } from "vitest"
@@ -15,7 +16,7 @@ const WORDS = {
 	symbolWord: "0x0054535400000000000000000000000000000000000000000000000000000000",
 	decimals: 18,
 }
-const REGISTRY = AztecAddress.fromBigIntUnsafe(0x2eed000000000000000000000000000000000000000000000000000000000123n)
+const REGISTRY = AztecAddress.fromBigIntUnsafe(0x7e57n)
 
 describe("hub token keystone", () => {
 	it("salts with the ERC-20 address", () => {
@@ -24,7 +25,7 @@ describe("hub token keystone", () => {
 
 	it.each([
 		["no registry", AztecAddress.ZERO, "0x28189b2f7821160c75afd58709a863c5c49ccc7680eccc26b728d7858698e38e"],
-		["a registry", REGISTRY, "0x1a15a6e90c3236ec41e3007b5b1d5daac2168c6afffb246e9cc7cd33f6ab577a"],
+		["a registry", REGISTRY, "0x2726ceefe5c0d65f7e5fc95fad27d414ee0568e22c446c947edc14ba230a9616"],
 	])("matches the hub's in-circuit derivation with %s", async (_, registry, address) => {
 		const inst = await deriveHubTokenInstance(HUB, ERC20, WORDS, TOKEN_CLASS_ID, registry)
 		expect(inst.currentContractClassId.toString()).toBe(TOKEN_CLASS_ID)
