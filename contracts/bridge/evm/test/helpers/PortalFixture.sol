@@ -23,6 +23,7 @@ abstract contract PortalFixture is Test {
     address internal constant NATIVE_ASSET = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
     bytes32 internal constant SECRET_HASH = bytes32(uint256(0x5EC2E7));
 
+    IRegistry internal registry;
     CapturingInbox internal inbox;
     CapturingOutbox internal outbox;
     MockPoolVault internal vault;
@@ -34,9 +35,9 @@ abstract contract PortalFixture is Test {
     function _deploy(uint256 cap) internal {
         inbox = new CapturingInbox();
         outbox = new CapturingOutbox();
-        FakeRegistry registry = new FakeRegistry(address(new FakeRollup(address(inbox), address(outbox))));
+        registry = IRegistry(address(new FakeRegistry(address(new FakeRollup(address(inbox), address(outbox))))));
         vault = new MockPoolVault();
-        factory = new PortalFactory(IRegistry(address(registry)), HUB, IPrivacyPoolVault(address(vault)), cap, GUARDIAN);
+        factory = new PortalFactory(registry, HUB, IPrivacyPoolVault(address(vault)), cap, GUARDIAN);
         token = new PlainERC20("Tok", "TOK");
         token.mint(address(vault), 1 << 200);
         portal = ProcessorPortalImpl(factory.createPortal(address(token)));
@@ -80,8 +81,7 @@ abstract contract PortalFixture is Test {
         returns (IPrivacyPoolVault.TransactProof memory proof, uint256 nullifier)
     {
         nullifier = ++nullifiers;
-        uint256 context =
-            _context(address(on), abi.encode(BridgeMessageV1.PP_BRIDGE_DATA_V1, secretHash), _notes());
+        uint256 context = _context(address(on), abi.encode(BridgeMessageV1.PP_BRIDGE_DATA_V1, secretHash), _notes());
         proof.pubSignals = _signals(nullifier, nullifier + 1000, amount, uint160(address(on.underlying())), context);
     }
 
