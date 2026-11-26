@@ -4,10 +4,9 @@
 !*/target/*.json
 target/*
 !target/*.json
-# Runtime-staged dependency artifact for the TXE suite (run-txe-tests.sh) — a derived
-# copy vendored from @aztec-foundation/aztec-standards, never source-of-truth.
+# Runtime-staged dependency artifact for the TXE suite (run-txe-tests.sh) — a derived copy,
+# never source-of-truth.
 txe-run.log
-token_bridge_hub/target/token_contract-Token.json
 asp_registry_probe/target/asp_registry-AspRootRegistry.json
 labelled_token/target/bridge_stub-BridgeStub.json
 # The TXE server mini-project: its lockfile is committed, its install is not.

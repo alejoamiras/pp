@@ -153,7 +153,7 @@ describe("CI behavior-gating guard", () => {
     assertGraphCovered(kit, "e2e-kit", "kit")
     expect(kit, "the kit imports @pp/bridge-core/sandbox, which lives in scripts/").toContain("packages/bridge-core/scripts/**")
     const outside = importsOutside("bridge-core")
-    expect(outside.length, "bridge-core bundles the hub artifact from contracts/").toBeGreaterThan(0)
+    expect(outside.length, "bridge-core bundles the hub, registry and token artifacts from contracts/").toBeGreaterThan(0)
     for (const path of outside) {
       expect(kit.some((pattern) => new Bun.Glob(pattern).match(path)), `kit must gate ${path}`).toBe(true)
     }

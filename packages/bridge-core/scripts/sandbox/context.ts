@@ -22,8 +22,6 @@ export interface SmokeContext {
 	l2: L2Ctx
 	relayer: AztecAddress
 	relayerOpts: Record<string, unknown>
-	/** Sends as the hub's guardian — the base actor that deployed the generation. */
-	guardianOpts: Record<string, unknown>
 	manifest: ManifestV2
 	bridge: BridgeBlock
 	hub: ContractBase
@@ -45,7 +43,6 @@ export async function buildContext(clients: SandboxClients, manifest: ManifestV2
 		l2: l2CtxFor(clients.l2, from),
 		relayer: clients.l2.relayer,
 		relayerOpts: clients.l2.relayerOpts,
-		guardianOpts: clients.l2.guardianOpts,
 		manifest,
 		bridge,
 		hub,
@@ -57,6 +54,7 @@ export async function buildContext(clients: SandboxClients, manifest: ManifestV2
 				hubAddress,
 				tokenFromBlock(block, block.decimals),
 				bridge.l2.tokenClassId,
+				bridge.l2.aspRegistry,
 			)
 			known.set(block.erc20.toLowerCase(), contract)
 			return contract

@@ -1,8 +1,7 @@
 /**
  * L2-side helpers shared by the operator scripts: deterministic instance derivation, the
  * manifest-bound hub and hub-token registration (recompute the recorded address, then teach the
- * wallet the instance), the SponsoredFPC fee, and the claim loop the smoke gates share while an
- * L1→L2 message syncs.
+ * wallet the instance) and the SponsoredFPC fee.
  */
 import type { ContractArtifact } from "@aztec-labs/aztec.js/abi"
 import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
@@ -20,11 +19,9 @@ import { SPONSORED_FPC_SALT } from "@aztec-labs/constants"
 import { EthAddress } from "@aztec-labs/foundation/eth-address"
 import { SponsoredFPCContract } from "@aztec-labs/noir-contracts.js/SponsoredFPC"
 import { computeSiloedPrivateInitializationNullifier } from "@aztec-labs/stdlib/hash"
-import { TokenContractArtifact } from "@aztec-foundation/aztec-standards/artifacts/src/artifacts/Token.js"
-import { tokenBridgeHubArtifact } from "../src/artifacts"
-import { claimViaHub, hubAt, type HubClaimOutcome, type HubClaimParams } from "../src/hub-l2"
+import { labelledTokenArtifact, tokenBridgeHubArtifact } from "../src/artifacts"
+import { hubAt } from "../src/hub-l2"
 import { deriveHubTokenInstance } from "../src/hub-token"
-import type { SendOpts } from "../src/hub-l2"
 import type { ManifestToken, ManifestV2 } from "../src/manifest-v2"
 
 /** The manifest's hub record: address + the salt and constructor args it derives from. */
@@ -74,10 +71,14 @@ async function teachWallet(wallet: Wallet, instance: ContractInstanceWithAddress
  */
 /** The hub instance the manifest record derives to; its address commits to every constructor arg. */
 export function deriveHubInstance(hub: ManifestHub): Promise<ContractInstanceWithAddress> {
-	const [tokenClassId, factory, guardian] = hub.constructorArgs
+	const [tokenClassId, factory, aspRegistry] = hub.constructorArgs
 	return deriveInstance(
 		tokenBridgeHubArtifact,
-		[Fr.fromHexString(String(tokenClassId)), EthAddress.fromString(String(factory)), AztecAddress.fromStringUnsafe(String(guardian))],
+		[
+			Fr.fromHexString(String(tokenClassId)),
+			EthAddress.fromString(String(factory)),
+			AztecAddress.fromStringUnsafe(String(aspRegistry)),
+		],
 		hub.constructorArtifact,
 		Fr.fromHexString(hub.salt),
 		AztecAddress.ZERO,
@@ -92,8 +93,8 @@ export async function registerHub(wallet: Wallet, hub: ManifestHub): Promise<Con
 }
 
 /**
- * Register the L2 Token the hub derives for one manifest token. The wallet needs this instance to
- * simulate a claim (the hub calls into the Token), and the assert is what proves the manifest names
+ * Register the L2 token the hub derives for one manifest token. The wallet needs this instance to
+ * simulate any hub call that reaches the token, and the assert is what proves the manifest names
  * the address the hub would actually mint to.
  */
 export async function registerHubToken(
@@ -101,46 +102,12 @@ export async function registerHubToken(
 	hub: AztecAddress,
 	token: ManifestToken,
 	tokenClassId: string,
+	aspRegistry: string,
 ): Promise<ContractBase> {
-	const instance = await deriveHubTokenInstance(hub, token.erc20, token, tokenClassId)
+	const instance = await deriveHubTokenInstance(hub, token.erc20, token, tokenClassId, AztecAddress.fromStringUnsafe(aspRegistry))
 	assertDerived(`token ${token.displaySymbol}`, instance, token.l2Token)
-	await teachWallet(wallet, instance, TokenContractArtifact)
-	return Contract.at(instance.address, TokenContractArtifact, wallet)
-}
-
-/** The L1→L2 message is not in the tree yet — the ONE failure a claim retries. Every other revert
- *  (a wrong amount, a stale leaf, a paused hub) is final and must surface on the first attempt. */
-/** The deposit's message is not in the L2 tree yet — worded by the public `consume` assert
- *  (`nonexistent L1-to-L2 message`) or the private witness helper (`No L1 to L2 message found`).
- *  `No non-nullified …` is the opposite case, an already-consumed message: waiting never helps. */
-function isMessageNotSynced(e: unknown): boolean {
-	const msg = e instanceof Error ? e.message : String(e)
-	return /nonexistent L1-to-L2 message|l1_to_l2_msg_exists|message not in state|(?<!non-nullified )No L1 to L2 message found/i.test(msg)
-}
-
-/** Claim through the hub on the smoke cadence until the deposit's message syncs. Registration of a
- *  first-seen token happens inside the claim, so the outcome names which path ran. */
-export async function claimTokensUntilSynced(p: {
-	hub: ContractBase
-	claim: HubClaimParams
-	sendOpts: SendOpts
-	attempts?: number
-	intervalMs?: number
-}): Promise<HubClaimOutcome> {
-	const attempts = p.attempts ?? 300
-	let last: unknown
-	for (let i = 0; i < attempts; i++) {
-		try {
-			return await claimViaHub(p.hub, p.claim, p.sendOpts)
-		} catch (e) {
-			if (!isMessageNotSynced(e)) throw e
-			last = e
-			await new Promise((r) => setTimeout(r, p.intervalMs ?? 6000))
-		}
-	}
-	throw new Error(
-		`hub claim gave up after ${attempts} attempts — the L1→L2 message never synced (${last instanceof Error ? last.message : String(last)})`,
-	)
+	await teachWallet(wallet, instance, labelledTokenArtifact)
+	return Contract.at(instance.address, labelledTokenArtifact, wallet)
 }
 
 /** Register the canonical SponsoredFPC and build its fee payment, the harness's only fee method.

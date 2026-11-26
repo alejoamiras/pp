@@ -211,7 +211,7 @@ describe("recovery-crypto — recipient-committed backup durability", () => {
 
 	it("the token claim-salt round-trips the sealed envelope (the strand-prevention credential)", async () => {
 		// For a recipient-committed PRIVATE token deposit the sealed `secret` field IS the claim_salt
-		// (claim_private re-derives the consumption secret from it + the recipient), so it MUST survive
+		// (the hub re-derives the consumption secret from it + the recipient), so it MUST survive
 		// the sealed backup — losing it strands the deposit.
 		const key = await recoveryKeyFromSignature(SIG_A)
 		const claimSalt = "0x07abc0ffee1234"

@@ -1,6 +1,6 @@
-// KEYSTONE (no TXE): the hub's in-circuit Token derivation must equal bridge-core's
-// `deriveHubTokenInstance` (aztec.js `getContractInstanceFromInstantiationParams`) for a fixed
-// vector. Both sides compute the address independently; a drift means the app registers an
+// KEYSTONE (no TXE): the hub's in-circuit token derivation must equal bridge-core's
+// `deriveHubTokenInstance` (aztec.js `getContractInstanceFromInstantiationParams`) for fixed
+// vectors. Both sides compute the address independently; a drift means the app registers an
 // instance the hub will never mint to. Run with a name filter so the oracle-less runner skips
 // the TXE suite: `aztec-nargo test keystone`.
 use crate::TokenBridgeHub;
@@ -8,28 +8,35 @@ use aztec::protocol::{
     address::{AztecAddress, EthAddress}, contract_class_id::ContractClassId, traits::{FromField, ToField},
 };
 
-// The installed aztec-standards@6.0.0 Token class — pinned in bridge-core's
+// The committed LabelledToken artifact's class — pinned in bridge-core's
 // noir-artifact-classids.test.ts as well.
-global TOKEN_CLASS_ID: Field = 0x2ff0939914ff64bd3f7979926dbe8cf3332bc2fee55928bf3cc9ca802568ea9f;
+global TOKEN_CLASS_ID: Field = 0x0ffdf2f819f7dbbeed8dabe38a38a76aef084445509c653762a3e3158fe1aaaa;
+
+fn derive(registry: Field) -> Field {
+    TokenBridgeHub::derive_token(
+        AztecAddress::from_field(0x1234000000000000000000000000000000000000000000000000000000000abc),
+        ContractClassId::from_field(TOKEN_CLASS_ID),
+        EthAddress::from_field(0xe2c20),
+        TokenBridgeHub::word_to_str(0x005465737420546f6b656e000000000000000000000000000000000000000000),
+        TokenBridgeHub::word_to_str(0x0054535400000000000000000000000000000000000000000000000000000000),
+        18,
+        AztecAddress::from_field(registry),
+    )
+        .to_field()
+}
 
 #[test]
 fn keystone_hub_token_address_matches_bridge_core() {
-    let hub = AztecAddress::from_field(0x1234000000000000000000000000000000000000000000000000000000000abc);
-    let erc20 = EthAddress::from_field(0xe2c20);
-    let name_word = 0x005465737420546f6b656e000000000000000000000000000000000000000000;
-    let symbol_word = 0x0054535400000000000000000000000000000000000000000000000000000000;
-    let name = TokenBridgeHub::word_to_str(name_word);
-    let symbol = TokenBridgeHub::word_to_str(symbol_word);
-    let token = TokenBridgeHub::derive_token(
-        hub,
-        ContractClassId::from_field(TOKEN_CLASS_ID),
-        erc20,
-        name,
-        symbol,
-        18,
-    );
+    assert(derive(0) == 0x28189b2f7821160c75afd58709a863c5c49ccc7680eccc26b728d7858698e38e);
+}
+
+// The registry is a constructor argument, so it moves the address: a generation with a registry
+// derives tokens no registry-free generation can collide with.
+#[test]
+fn keystone_hub_token_address_binds_the_registry() {
     assert(
-        token.to_field() == 0x2a7bc05ce46e0510b3ed3b0b57ad498b60b59f068352bdfd5ab2f647c745493c,
+        derive(0x2eed000000000000000000000000000000000000000000000000000000000123)
+            == 0x1a15a6e90c3236ec41e3007b5b1d5daac2168c6afffb246e9cc7cd33f6ab577a,
     );
 }
 
