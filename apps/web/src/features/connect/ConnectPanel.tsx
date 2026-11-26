@@ -24,7 +24,7 @@ export function ConnectPanel({ source }: { source: DataSource }) {
 						type="button"
 						data-testid="disconnect-button"
 						className="self-start rounded-md border border-slate-300 px-4 py-2"
-						onClick={close}
+						onClick={() => void close()}
 					>
 						Disconnect
 					</button>
