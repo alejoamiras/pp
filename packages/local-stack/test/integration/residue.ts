@@ -44,7 +44,10 @@ export function sampleTree(root: number, ignorePgids: ReadonlySet<number> = new 
 	}
 	take()
 	const timer = setInterval(take, everyMs)
-	const owned = (g: number) => groupAlive(g) && startTime(g) === leaders.get(g)
+	const owned = (g: number) => {
+		const started = leaders.get(g)
+		return started !== undefined && groupAlive(g) && startTime(g) === started
+	}
 	return {
 		pgids,
 		/** Live groups whose leader is still the process sampled. */

@@ -11,6 +11,9 @@ It starts one anvil (chain 31337) and the Aztec 6.0.0 local network on it throug
 sandbox harness. Then pp-env deploys the pool on that same anvil: the Poseidon libraries, the pool
 contracts, a 6-decimal test token and the mock ASP.
 
+Besides the toolchain (Bun, Foundry 1.7.1, Aztec 6.0.0), a fresh clone needs the pool's checkout
+once: `bun run --cwd packages/pp-env fetch` (about 3.5 min). Every boot after that is offline.
+
 ## Output and exit codes
 
 ```
