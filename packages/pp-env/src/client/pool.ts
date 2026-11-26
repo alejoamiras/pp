@@ -28,58 +28,14 @@ import {
 	ViemWalletInteractor,
 	WitnessPreparationService,
 } from "@ppv2/evm-sdk"
-import {
-	type Account,
-	type Address,
-	type Chain,
-	createPublicClient,
-	decodeFunctionData,
-	getAddress,
-	type Hex,
-	http,
-	keccak256,
-	type Transport,
-	toHex,
-	type WalletClient,
-} from "viem"
-import { POOL_VAULT_TRANSACT_ABI, type TransactArgs } from "./abi.ts"
+import { type Address, createPublicClient, decodeFunctionData, getAddress, type Hex, http, keccak256, toHex } from "viem"
+import { POOL_VAULT_TRANSACT_ABI } from "./abi.ts"
 import { secretDerivationTypedData } from "./derivation.ts"
 import { createProofService } from "./prover.ts"
+import type { ClientConfig, LocalWallet, PoolNote, PoolUser, PreparedSpend, SpendRequest } from "./types.ts"
 
-export type ClientDeployment = { pool: Address; entrypoint: Address; keystore: Address; aspRegistry: Address; deployBlock: bigint }
-
-/** Everything the user side needs to reach a deployed pool; nothing here is harness-specific. */
-export type ClientConfig = { rpcUrl: string; chainId: number; deployment: ClientDeployment; aspUrl: string; circuitsDir: string }
-
-export type PoolNote = { commitment: bigint; label: bigint; value: bigint; asset: Address; status: NoteStatus }
-
-export type PreparedSpend = {
-	/** Forward unchanged: the proof's context binds `params` and `noteData`. */
-	args: TransactArgs
-	input: bigint
-	nullifier: bigint
-	changeCommitment: bigint
-	changeValue: bigint
-	amountOut: bigint
-	asset: Address
-	label: bigint
-}
-
-export interface PoolUser {
-	address: Address
-	registerKeystore(): Promise<void>
-	deposit(p: { asset: Address; value: bigint }): Promise<{ label: bigint; commitment: bigint }>
-	/** Scans the chain for this user's notes, spends and change. */
-	sync(): Promise<void>
-	notes(): PoolNote[]
-	/**
-	 * Proves a one-input spend that pays `amountOut` of `asset` to `processor` and returns the
-	 * rest to the user as change, possibly zero. Spends `input` if given, else the largest active note.
-	 */
-	prepareSpend(p: { processor: Address; data: Hex; asset: Address; amountOut: bigint; input?: bigint }): Promise<PreparedSpend>
-}
-
-export type LocalWallet = WalletClient<Transport, Chain, Account>
+type SdkPublicClient = ConstructorParameters<typeof ViemRPCInteractor>[0]["publicClient"]
+type SdkWalletClient = ConstructorParameters<typeof ViemWalletInteractor>[0]["walletClient"]
 
 /** Self-submitting sessions never relay, but the SDK asks for relayers before some flows. */
 function noRelayer(): IRelayerInteractor {
@@ -92,9 +48,6 @@ function noRelayer(): IRelayerInteractor {
 					},
 	})
 }
-
-type SdkPublicClient = ConstructorParameters<typeof ViemRPCInteractor>[0]["publicClient"]
-type SdkWalletClient = ConstructorParameters<typeof ViemWalletInteractor>[0]["walletClient"]
 
 /**
  * The checkout's SDK types against its own viem copy. Both copies are viem 2.45.3, so a client
@@ -115,7 +68,6 @@ function toPoolNote(n: Note): PoolNote {
 }
 
 type Sdk = { session: ReturnType<typeof createEvmPoolSession>; orchestrator: TransactOrchestrator; noteManager: NoteManager }
-type SpendRequest = Parameters<PoolUser["prepareSpend"]>[0]
 
 function contracts(config: ClientConfig, wallet: LocalWallet, merkleService: MerkleService) {
 	const d = config.deployment

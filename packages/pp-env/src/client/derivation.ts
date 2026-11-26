@@ -1,5 +1,6 @@
 import { APP_IDENTIFIER } from "@ppv2/evm-sdk"
 import { type Address, keccak256, toHex, zeroAddress } from "viem"
+import type { SecretDerivationTypedData } from "./types.ts"
 
 /** Part of the signed hash, and so of every derived key: it must never change by a byte. */
 export const SECRET_DERIVATION_PURPOSE =
@@ -10,7 +11,7 @@ export const SECRET_DERIVATION_PURPOSE =
  * The SDK leaves building it to the integrator; this matches the pinned upstream sample app, so a
  * wallet signing either derives the same keys.
  */
-export function secretDerivationTypedData(signer: Address) {
+export function secretDerivationTypedData(signer: Address): SecretDerivationTypedData {
 	return {
 		domain: {
 			name: "Standardized Secret Derivation",

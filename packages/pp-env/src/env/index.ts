@@ -6,56 +6,19 @@ import { EvmDeploymentSnapshotSource, startEvmMockAsp } from "@ppv2/mock-asp/evm
 import { type Address, createPublicClient, createWalletClient, type Hex, http, type PublicClient, toHex } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { foundry } from "viem/chains"
-import { type ClientConfig, createPoolUser, type LocalWallet, type PoolUser, type PreparedSpend } from "../client/pool.ts"
+import { createPoolUser } from "../client/pool.ts"
+import type { ClientConfig, LocalWallet } from "../client/types.ts"
 import { checkout } from "./checkout.ts"
 import { deployFixture, deployPool, enableAsset, ensureFixtures, installPoseidon, mintTestToken, type PoolDeployment } from "./deploy.ts"
 import { verifyFetched } from "./fetch/index.ts"
 import { anvilKey, attachAnvil, CHAIN_ID, DEPLOYER_INDEX, startAnvil } from "./harness/anvil.ts"
 import { claimPort, releasePorts } from "./harness/ports.ts"
 import { CleanupStack } from "./harness/process.ts"
+import type { PoolEnv, StartPoolEnvOptions } from "./types.ts"
 import { submitViaStub } from "./stub.ts"
 
 export type { PoolDeployment } from "./deploy.ts"
-
-export type StartPoolEnvOptions = {
-	/** Attach to this loopback anvil instead of starting one; stop() then leaves it running. */
-	rpcUrl?: string
-	/** Anvil index of the deployer, who is also the ASP postman. */
-	deployerIndex?: number
-	/** Names the run's port rows, logs and run dir; defaults to a fresh id. */
-	runId?: string
-	/**
-	 * Default true: SIGINT and SIGTERM run stop() and then re-raise. Pass false when the caller
-	 * owns one ordered teardown and calls stop() itself.
-	 */
-	signals?: boolean
-}
-
-export interface PoolEnv {
-	runId: string
-	rpcUrl: string
-	chainId: typeof CHAIN_ID
-	deployment: PoolDeployment
-	asset: Address
-	deployerIndex: number
-	asp: {
-		url: string
-		/** Adds the label's leaf, publishes the new root on chain, and returns that root. */
-		approveLabel(label: bigint): Promise<bigint>
-	}
-	/** What the user side needs to reach this pool. */
-	clientConfig: ClientConfig
-	/** A pool user on anvil account `accountIndex`; see `createPoolUser` for `signature`. */
-	createUser(o: { accountIndex: number; signature?: Hex }): Promise<PoolUser>
-	/** Mints the test token, which has an open mint. */
-	mint(to: Address, amount: bigint): Promise<void>
-	/** Deploys a StubProcessor bound to this pool and asset. */
-	deployStub(): Promise<Address>
-	/** Submits a prepared spend through `stub` from anvil account `fromIndex`. */
-	submitViaStub(stub: Address, spend: PreparedSpend, fromIndex: number): Promise<Hex>
-	/** Idempotent; also runs on SIGINT and SIGTERM unless started with `signals: false`. */
-	stop(): Promise<void>
-}
+export type { PoolEnv, StartPoolEnvOptions } from "./types.ts"
 
 export const RUNS_DIR = join(homedir(), ".cache/pp/pp-env/runs")
 const RUN_ID = /^[a-z0-9][a-z0-9-]{0,63}$/
