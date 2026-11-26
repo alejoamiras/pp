@@ -55,7 +55,7 @@ fresh token, both deposits and `withdraw`.
 
 | Layer | Suites |
 |---|---|
-| unit | `PortalFactory`, `CloneWithdrawRealOutbox` (a clone against Aztec's real `Outbox`: replay, caller binding, cross-clone proofs; the other suites' capturing fake accepts anything), `Keystone` (3-way vectors with Noir and TS), `ContentHash`, `MintableERC20`, `TestUsdc` |
+| unit | `PortalFactory`, `CloneWithdrawRealOutbox` (a clone against Aztec's real `Outbox`: replay, caller binding, cross-clone proofs; the other suites' capturing fake accepts anything), `Keystone` (3-way vectors with Noir and TS), `ContentHash`, `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `MintableERC20`, `TestUsdc` |
 | fuzz | `PortalFactoryFuzz`, `CloneRoundtripFuzz` |
 | invariant | `PortalFactoryInvariant` |
 | symbolic | `FormalFactory`, `FormalClone`; see each header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |

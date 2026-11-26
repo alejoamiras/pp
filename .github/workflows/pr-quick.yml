@@ -52,6 +52,8 @@ jobs:
               - 'packages/bridge-core/src/**'
               - 'packages/bridge-core/scripts/**'
               - 'packages/bridge-core/package.json'
+              - 'packages/bridge-spec/src/**'
+              - 'packages/bridge-spec/package.json'
               - 'contracts/bridge/aztec/token_bridge_hub/target/**'
               - 'contracts/bridge/aztec/asp_registry/target/**'
             workflows:
