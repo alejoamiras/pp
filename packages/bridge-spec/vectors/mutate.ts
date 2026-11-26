@@ -214,7 +214,6 @@ function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	return problems
 }
 
-/** The runner fails, every control test runs, each mutated section fails naming its vector, and nothing else fails. */
 function verifyMutant(mutations: Mutation[], outcome: Outcome, control: Outcome): string[] {
 	if (outcome.error) return [`mutant: ${outcome.error}`]
 	if (outcome.exitCode === 0) return ["mutant: runner exited 0 although vectors were flipped"]
