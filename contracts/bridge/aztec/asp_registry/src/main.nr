@@ -11,7 +11,7 @@ use aztec::macros::aztec;
 pub contract AspRootRegistry {
     use crate::label_check::MAX_OBSERVATION_LAG;
     use aztec::{
-        macros::{functions::{external, initializer, view}, storage::storage},
+        macros::{events::event, functions::{external, initializer, view}, storage::storage},
         protocol::{address::AztecAddress, traits::{Deserialize, Packable, Serialize}},
         state_vars::{PublicImmutable, PublicMutable},
         utils::WithHash,
@@ -24,6 +24,31 @@ pub contract AspRootRegistry {
         pub birth_root: Field,
         pub l1_block: u64,
         pub root_time: u64,
+    }
+
+    // Events keep the order of several updates in one block, which a storage read at its end loses.
+    // Storage stays the authority.
+
+    /// Every accepted post, with `RootRecord`'s fields in its order.
+    #[event]
+    pub struct RootPosted {
+        pub sequence: u64,
+        pub pool_root: Field,
+        pub birth_root: Field,
+        pub l1_block: u64,
+        pub root_time: u64,
+    }
+
+    /// The record is cleared at `sequence`, which the next post continues from.
+    #[event]
+    pub struct PosterChanged {
+        pub sequence: u64,
+        pub poster: AztecAddress,
+    }
+
+    #[event]
+    pub struct BirthIntakeChanged {
+        pub intake: AztecAddress,
     }
 
     #[storage]
@@ -62,6 +87,7 @@ pub contract AspRootRegistry {
         self.storage.current.write(WithHash::new(
             RootRecord { sequence, pool_root, birth_root, l1_block, root_time },
         ));
+        self.emit(RootPosted { sequence, pool_root, birth_root, l1_block, root_time });
     }
 
     /// A dead address freezes posting. Clearing the block and the time lets the next poster recover
@@ -74,6 +100,7 @@ pub contract AspRootRegistry {
             RootRecord { sequence, pool_root: 0, birth_root: 0, l1_block: 0, root_time: 0 },
         ));
         self.storage.poster.write(next);
+        self.emit(PosterChanged { sequence, poster: next });
     }
 
     /// Zero pauses shields: the token's read of the intake rejects it.
@@ -81,6 +108,7 @@ pub contract AspRootRegistry {
     fn set_birth_intake(next: AztecAddress) {
         assert(self.msg_sender() == self.storage.admin.read(), "not admin");
         self.storage.birth_intake.write(next);
+        self.emit(BirthIntakeChanged { intake: next });
     }
 
     #[external("public")]

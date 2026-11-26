@@ -30,7 +30,7 @@ if [ "${1:-}" = "--crate" ]; then
 fi
 case "$crate" in
   token_bridge_hub) floor=65 ;;
-  asp_registry) floor=46 ;;
+  asp_registry) floor=49 ;;
   asp_registry_probe) floor=8 ;;
   *) echo "usage: $0 [--crate token_bridge_hub|asp_registry|asp_registry_probe] [nargo flags...] [-- test names...]" >&2; exit 2 ;;
 esac
