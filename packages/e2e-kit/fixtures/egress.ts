@@ -19,6 +19,11 @@ export async function confineEgress(context: BrowserContext): Promise<Egress> {
 		blocked.push(url.href)
 		return route.abort("blockedbyclient")
 	})
+	// A redirect hop never reaches `route`, but every hop raises `request`: record what got past.
+	context.on("request", (request) => {
+		const url = new URL(request.url())
+		if (/^(https?|wss?):$/.test(url.protocol) && !isLoopback(url.hostname) && !blocked.includes(url.href)) blocked.push(url.href)
+	})
 	// WebSockets never reach `route`; they have their own router.
 	await context.routeWebSocket(/.*/, (ws) => {
 		const url = new URL(ws.url())

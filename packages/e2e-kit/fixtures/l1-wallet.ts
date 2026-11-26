@@ -12,6 +12,8 @@ export interface L1WalletOptions {
 	rpcUrl: string
 	privateKey: Hex
 	chainId: number
+	/** The only origin whose frames may call the signer; the egress fence admits every loopback port. */
+	appOrigin: string
 }
 
 export type RejectKind = "signature" | "transaction"
@@ -191,7 +193,10 @@ export async function installL1Wallet(context: BrowserContext, o: L1WalletOption
 
 	// PP_E2E_TRACE_L1=1 prints every request and its outcome to the runner's stdout.
 	const trace = process.env.PP_E2E_TRACE_L1 === "1" ? (line: string) => console.log(`[l1] ${line}`) : () => {}
-	await context.exposeFunction("__ppL1Request", async (json: string) => {
+	await context.exposeBinding("__ppL1Request", async ({ frame }, json: string) => {
+		if (originOf(frame.url()) !== o.appOrigin) {
+			return JSON.stringify({ error: { code: 4100, message: `the test L1 wallet answers ${o.appOrigin} only` } })
+		}
 		const rpc = JSON.parse(json) as Rpc
 		try {
 			const result = await handle(rpc)

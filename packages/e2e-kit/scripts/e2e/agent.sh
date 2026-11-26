@@ -29,7 +29,8 @@ if [ "${1:-}" = "reap" ]; then
     statedir=$(dirname "$pidfile")
     # A number alone is not ownership: the kernel recycles pids, so the group's leader must still be
     # the sandbox command this run started, named by its own artifacts dir, or the file is stale.
-    if [ -n "$pgid" ] && kill -0 -- "-$pgid" 2>/dev/null && ps -o args= -p "$pgid" 2>/dev/null | grep -qF -- "--artifacts $statedir/sandbox"; then
+    args=$(ps -o args= -p "$pgid" 2>/dev/null || true)
+    if [ -n "$pgid" ] && kill -0 -- "-$pgid" 2>/dev/null && [[ "$args" == *" --artifacts $statedir/sandbox" ]]; then
       found=1
       echo "[e2e] reaping sandbox pgid $pgid ($(dirname "$pidfile"))"
       kill -TERM -- "-$pgid" 2>/dev/null || true
