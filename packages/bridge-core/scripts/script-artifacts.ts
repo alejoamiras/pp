@@ -4,7 +4,7 @@
  * regardless of its own location. L2 (nargo) artifacts come from `../src/artifacts` instead;
  * these are the L1 side only.
  */
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Abi } from "viem"
@@ -18,4 +18,9 @@ export function evmArtifact(name: string): { abi: Abi; bytecode: `0x${string}` }
 
 export function evmAbi(name: string): Abi {
 	return JSON.parse(readFileSync(join(OUT, `${name}.sol`, `${name}.json`), "utf8")).abi as Abi
+}
+
+/** The artifacts among `names` that `forge build` has not produced, as paths. */
+export function missingEvmArtifacts(names: readonly string[]): string[] {
+	return names.map((name) => join(OUT, `${name}.sol`, `${name}.json`)).filter((path) => !existsSync(path))
 }

@@ -7,7 +7,11 @@
 		".": "./src/index.ts",
 		"./artifacts": "./src/artifacts.ts",
 		"./asp-registry-artifact": "./src/asp-registry-artifact.ts",
-		"./sandbox": "./scripts/sandbox/index.ts"
+		"./sandbox": "./scripts/sandbox/index.ts",
+		"./deploy": {
+			"browser": null,
+			"default": "./scripts/deploy/index.ts"
+		}
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.scripts.json",
@@ -18,7 +22,8 @@
 		"sandbox:smoke": "bun scripts/sandbox/cli.ts run --smoke",
 		"test:integration": "BRIDGE_INTEGRATION=1 bun --bun vitest run --config vitest.integration.config.ts",
 		"test:registry": "BRIDGE_INTEGRATION=1 bun --bun vitest run --config vitest.registry.config.ts",
-		"test:hub": "bun --bun vitest run --config vitest.hub.config.ts"
+		"test:hub": "bun --bun vitest run --config vitest.hub.config.ts",
+		"test:stack": "bun --bun vitest run --config vitest.stack.config.ts"
 	},
 	"dependencies": {
 		"@pp/bridge-spec": "workspace:*",
