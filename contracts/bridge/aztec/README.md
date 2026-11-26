@@ -1,6 +1,6 @@
 # Bridge L2 contracts (Noir)
 
-L2 contracts for the Unleashed any-ERC-20 bridge: `token_bridge_hub` — one hub per generation, bound
+L2 contracts for the any-ERC-20 bridge: `token_bridge_hub` — one hub per generation, bound
 at construction to `[token_class_id, l1_factory, guardian]`. It consumes the factory's `register`
 message (sender-keyed to the factory, the portal inside the content), derives and publishes the
 token's L2 `Token` (aztec-standards, `deployer = hub`, `salt = erc20`, minter = hub), claims into
@@ -14,7 +14,7 @@ pins them against their TypeScript and Solidity mirrors.
 
 The crates pin aztec-nr and `compressed_string` (`aztec-labs-eng/aztec-nr`) and the standards `token`
 (`AztecProtocol/aztec-standards`) at the `v6.0.0` tags: the `@aztec-labs/*` version, which the
-sandbox and the live testnet run (the `@aztec-foundation/*` packages carry their own number). Every
+local network runs (the `@aztec-foundation/*` packages carry their own number). Every
 manifest names aztec-nr by the identical URL, with no trailing slash: a different spelling makes
 Nargo build a second `aztec` crate. The content-hash library is vendored at
 `token_portal_content_hash_lib/` (its header names the upstream commit and digest) and consumed by
@@ -28,8 +28,8 @@ scripts/compile.sh --check    # CI: the class id derived from a rebuild must equ
 ```
 
 The committed `token_bridge_hub/target/*.json` is a build input for `@pp/bridge-core`
-(`src/artifacts.ts`) and the deploy scripts; a class-id shift there is a new generation, never a
-re-pin of the live hub.
+(`src/artifacts.ts`) and the local-network harness; a class-id shift there is a new generation,
+never a re-pin of a deployed hub.
 
 ## Tests
 
@@ -41,4 +41,4 @@ re-pin of the live hub.
 - **Sole-consumer invariant** (three named consume sites; `claim_private` derives its secret)
   enforced statically by `scripts/check-sole-consumer.sh`.
 - **Keystone** content-hash / register-hash / claim-secret equality (Solidity ↔ Noir ↔ TS) pinned in
-  `contracts/bridge/evm/test/Keystone.t.sol` + `packages/bridge-core/src/{register-hash,claim-secret,l1}.test.ts`.
+  `contracts/bridge/evm/test/Keystone.t.sol` + `packages/bridge-core/src/{content-hash,register-hash,claim-secret}.test.ts`.

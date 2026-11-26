@@ -151,7 +151,7 @@ grep -qE "[1-9][0-9]* tests? passed" "$tb/txe-run.log" || {
 # manifest is not a pass criterion either.
 if [ "${#filters[@]}" -eq 0 ]; then
   [ -f "$tb/txe-manifest.txt" ] || { echo "run-txe-tests.sh: $tb/txe-manifest.txt is missing" >&2; exit 1; }
-  floor=40
+  floor=65
   named=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*$' "$tb/txe-manifest.txt" | sort -u | wc -l | tr -d ' ')
   if [ "$named" -lt "$floor" ]; then
     echo "run-txe-tests.sh: $tb/txe-manifest.txt names $named tests; the floor for $crate is $floor" >&2
