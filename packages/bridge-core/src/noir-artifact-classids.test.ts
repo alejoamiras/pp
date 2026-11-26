@@ -33,7 +33,7 @@ const PINS = [
 		// Test-only consumer of the registry's library; committed for the network suite, never exported.
 		name: "AspRegistryProbe",
 		path: join(CONTRACTS, "asp_registry_probe", "target", "asp_registry_probe-AspRegistryProbe.json"),
-		classId: "0x1fa71dd57410acc9b967772f271225c52d4b6ebaaf8a155d6970c727257a47bf",
+		classId: "0x03f65333df9eea7277c78ac1ee1b8ec81e497220cf73aafd035184a3c17d123c",
 	},
 ] as const
 
