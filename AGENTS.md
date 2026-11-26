@@ -81,7 +81,10 @@ the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contr
   is the executable guarantee.
 - **Unit tests run on Bun** (`bun --bun vitest run`). Every vitest config spreads `sharedTest` from
   [`vitest.base.ts`](vitest.base.ts); its `deps.interopDefault: false` is a stopgap for vitest 4
-  mistaking Bun's ES-module namespaces for CommonJS.
+  mistaking Bun's ES-module namespaces for CommonJS. `bun:test` is for files that load no
+  `@aztec-labs/*` package, directly or through a workspace: on a cold transpiler cache, which every CI
+  runner has, it breaks `@aztec-labs/foundation` at import. `test:all`, `test:ci-gating` and the kit's
+  runner set `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` so a local run starts cold too.
 - **Biome** lints and formats. `noExplicitAny` is an error: use `unknown` and narrow.
 - **Commits** are Conventional Commits with a lower-case subject, checked by the commit-msg hook and
   in CI. The pre-commit hook runs Biome on staged files, the absolute-path guard and the complexity

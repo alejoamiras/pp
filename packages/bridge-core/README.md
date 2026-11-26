@@ -73,7 +73,8 @@ plumbing, not a user-facing deposit.
   observer brute-force the recipient. The public path uses a raw secret (`claim_public` binds the
   recipient in its content hash).
 - **Tests run under vitest, not `bun:test`.** `@aztec-labs/foundation` calls `expect.addEqualityTesters`
-  at import, which `bun:test`'s `expect` lacks.
+  at import, which `bun:test`'s `expect` lacks. A warm Bun transpiler cache hides the failure and every
+  CI runner starts cold, so the root gate scripts set `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0`.
 - **Scripts spawn other programs only through `scripts/run.ts`**: argv arrays, never a shell string.
 - **The deploy journal is the resume record.** Every irreversible generation step is appended after its
   receipt, stamped with the chain, rollup and deployer; a re-run skips journalled steps and adopts a
