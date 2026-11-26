@@ -28,6 +28,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$(cd "$here/../.." && pwd)"
 bridge_core="$(cd "$here/../../../packages/bridge-core" && pwd)"
 class_id() { (cd "$bridge_core" && bun scripts/noir-class-id.ts "$1"); }
+# Parsed as TOML, not matched: any spelling TOML accepts must not skip a crate's check.
+crate_type() { bun -e 'console.log(Bun.TOML.parse(await Bun.file(process.argv[1]).text()).package?.type ?? "")' "$1"; }
 
 check=0
 crates=()
@@ -63,12 +65,15 @@ for c in "${crates[@]}"; do
 	perl -i -pe "s{\Q$repo_root\E/}{}g; s{\Q$HOME\E/}{}g" "$here/$c"/target/*.json
 	if [ "$check" = 1 ]; then
 		[ -n "$tracked" ] || { echo "✖ $c: no committed artifact to compare against" >&2; drift=1; }
+		# An assignment, so a manifest that fails to parse stops the script instead of reading as
+		# "not a contract".
+		kind="$(crate_type "$here/$c/Nargo.toml")"
 		for name in $tracked; do
 			was="$committed/$name"
 			fresh="$here/$c/target/$name"
 			# Only a contract crate has a class id to bind; decided from the manifest, never from the
 			# artifact under test (a truncated artifact must not skip its own check).
-			grep -qE "^type *= *[\"']contract[\"']" "$here/$c/Nargo.toml" || { echo "· $c: not a contract crate, nothing to bind"; continue; }
+			[ "$kind" = contract ] || { echo "· $c: not a contract crate, nothing to bind"; continue; }
 			if [ ! -f "$fresh" ]; then
 				echo "✖ $c: the source no longer produces $name" >&2
 				drift=1
