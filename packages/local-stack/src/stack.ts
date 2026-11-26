@@ -13,7 +13,8 @@ import { createRunDir, newRunId, RUNS_DIR, removeRunDir, writeAtomic } from "./r
 import { Teardown } from "./teardown.ts"
 
 export const STACK_CHAIN_ID = 31337
-export const HEARTBEAT_MS = 120_000
+/** A tick only checks for owed beats and never ages the chain, so it can be short: a claim waits about two ticks. */
+export const HEARTBEAT_MS = 2_000
 /** The node answers a mine within a second; a beat open this long is logged as stuck. */
 const LATE_BEAT_MS = 180_000
 const STOP_WAIT_MS = 60_000
@@ -27,7 +28,7 @@ export type StartStackOptions = {
 	runsDir?: string
 	/** Default true. Off, no block is mined unless a consumer asks for one. */
 	heartbeat?: boolean
-	/** Tick spacing; only tests shorten it. */
+	/** Tick spacing; defaults to `HEARTBEAT_MS`. */
 	heartbeatMs?: number
 	/** Checked between steps; a step already starting runs to the end first, since neither harness can be cancelled mid-start. */
 	signal?: AbortSignal

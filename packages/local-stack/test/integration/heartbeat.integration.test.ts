@@ -204,7 +204,8 @@ if (process.env.PP_STACK_INTEGRATION && process.env.PP_STACK_LONG)
 					aztec: (await nodeRpc<{ checkpointed: { block: { number: number } } }>(stack.manifest.aztecNode, "node_getChainTips"))
 						.checkpointed.block.number,
 				})
-				await Bun.sleep(150_000)
+				// The boot's owed beat lands on one of the first ticks.
+				await Bun.sleep(30_000)
 				const start = await read()
 				const samples: { s: number; l1: string; aztec: number }[] = []
 				for (let s = 60; s <= 1900; s += 60) {
@@ -214,7 +215,7 @@ if (process.env.PP_STACK_INTEGRATION && process.env.PP_STACK_LONG)
 					expect(now).toEqual(start)
 				}
 				console.log(`[stack] long idle ${JSON.stringify(samples)}`)
-				await (await fetch(stack.manifest.pool.aspApiUrl)).body?.cancel()
+				expect((await fetch(new URL("/health", stack.manifest.pool.aspApiUrl))).ok).toBe(true)
 			} finally {
 				await stack.stop()
 			}

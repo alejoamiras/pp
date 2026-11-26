@@ -79,8 +79,9 @@ tests carry that proof.
 
 ## Heartbeat
 
-The heartbeat mines an Aztec block (`aztecDebug_mineBlock`) only for work that waits on one. On a
-120 s tick it owes:
+The heartbeat mines an Aztec block (`aztecDebug_mineBlock`) only for work that waits on one. It
+checks every 2 s (`startStack`'s `heartbeatMs`); a tick that owes nothing mines nothing, so the
+tick never ages the chain. It owes:
 
 - **two beats** after any Ethereum transaction other than the node's own propose, or a revert
   of the block it last scanned (so an L1→L2 message is carried even when the first beat races the
