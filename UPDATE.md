@@ -60,6 +60,11 @@ lockfile and in the TXE server's. The hub's class ids depend on these inputs.
 
 ## Couplings
 
+- **The node's local-network environment.** The harness starts the CLI entry directly, not the
+  `aztec` wrapper script, whose `start --local-network` branch also launches an anvil on a fixed
+  port. `nodeEnv` in `packages/bridge-core/scripts/sandbox/local-network.ts` copies the variables that
+  branch exports; compare them with the new version's `scripts/aztec.sh`.
+
 - **Noir wasm dedupe**: the test wallet's `packages/e2e-kit/test-wallet/vite.config.mts` dedupes
   `@aztec-foundation/noir-noirc_abi` and `@aztec-foundation/noir-acvm_js`; without it `initAbi()` and
   `abiEncode()` land in different module scopes and the wasm instance never resolves.

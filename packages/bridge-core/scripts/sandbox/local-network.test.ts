@@ -2,16 +2,21 @@ import { execFileSync, spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { basename, dirname, join } from "node:path"
+import { dirname, join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { assertSocketRoom, killGroup, own, runLeftovers, SANDBOX_CACHE_DIR, SANDBOX_TMP_ROOT, startLocalNetwork } from "./local-network"
+import {
+	assertSocketRoom,
+	killGroup,
+	own,
+	parseListeners,
+	runLeftovers,
+	SANDBOX_CACHE_DIR,
+	SANDBOX_TMP_ROOT,
+	startLocalNetwork,
+	strayListeners,
+} from "./local-network"
 
 const freshRunId = (label: string) => `${label}-${randomBytes(4).toString("hex")}`
-
-async function eventually(check: () => boolean, ms = 3_000): Promise<boolean> {
-	for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 50))) if (check()) return true
-	return check()
-}
 
 const module = join(import.meta.dirname, "local-network.ts")
 
@@ -59,7 +64,7 @@ describe("killGroup", () => {
 		try {
 			expect(runLeftovers(run)).toEqual([`process group ${pgid}`])
 			await killGroup(leader)
-			expect(await eventually(() => runLeftovers(run).length === 0)).toBe(true)
+			expect(runLeftovers(run)).toEqual([])
 		} finally {
 			try {
 				process.kill(-pgid, "SIGKILL")
@@ -69,25 +74,57 @@ describe("killGroup", () => {
 })
 
 describe("startLocalNetwork", () => {
-	it("releases its claimed ports when a later step fails, and installs no signal handler when told not to", async () => {
+	const stubToolchain = () => {
 		const root = mkdtempSync(join(tmpdir(), "pp-toolchain-"))
-		for (const bin of ["bin/aztec-anvil", "node_modules/.bin/aztec", "internal-bin/forge", "internal-bin/anvil"]) {
+		for (const bin of [
+			"bin/aztec-anvil",
+			"node_modules/.bin/aztec",
+			"internal-bin/forge",
+			"internal-bin/anvil",
+			"node_modules/dest/bin/index.js",
+		]) {
 			mkdirSync(dirname(join(root, bin)), { recursive: true })
 			writeFileSync(join(root, bin), "#!/bin/sh\nexit 1\n", { mode: 0o755 })
 		}
-		// A regular file where the run's data directory needs a parent: creating it fails after the claim.
+		return root
+	}
+	const listeners = () => ["SIGTERM", "exit"].map((e) => process.listenerCount(e))
+
+	it("releases its ports and its handlers when a step after the claim fails", async () => {
+		const root = stubToolchain()
 		mkdirSync(SANDBOX_CACHE_DIR, { recursive: true })
-		const blocker = join(SANDBOX_CACHE_DIR, freshRunId("start-test-blocker"))
-		writeFileSync(blocker, "")
-		const runId = `${basename(blocker)}/run`
-		const handlers = process.listenerCount("SIGTERM")
+		const before = listeners()
+		const blockers: string[] = []
 		try {
-			await expect(startLocalNetwork({ runId, toolchainRoot: root, signals: false })).rejects.toThrow(/ENOTDIR|not a directory/)
-			expect(process.listenerCount("SIGTERM")).toBe(handlers)
-			expect(runLeftovers({ runId, dirs: [], pgids: [] })).toEqual([])
+			for (const signals of [true, false]) {
+				// A regular file where the run's data directory goes: creating it fails after the claim.
+				const runId = freshRunId("start-test")
+				blockers.push(join(SANDBOX_CACHE_DIR, runId))
+				writeFileSync(join(SANDBOX_CACHE_DIR, runId), "")
+				await expect(startLocalNetwork({ runId, toolchainRoot: root, signals })).rejects.toThrow(/EEXIST|exists/)
+				expect(listeners()).toEqual(before)
+				expect(runLeftovers({ runId, dirs: [], pgids: [] })).toEqual([])
+			}
 		} finally {
 			rmSync(root, { recursive: true, force: true })
-			rmSync(blocker, { force: true })
+			for (const b of blockers) rmSync(b, { force: true })
 		}
+	})
+
+	it("refuses a run id that is not one path segment", async () => {
+		await expect(startLocalNetwork({ runId: "../escape" })).rejects.toThrow(/not a single path segment/)
+	})
+})
+
+describe("strayListeners", () => {
+	it("flags a run's listener on a port it never claimed", () => {
+		const ss = [
+			'LISTEN 0 128 127.0.0.1:8545 0.0.0.0:* users:(("anvil",pid=2761590,fd=9))',
+			'LISTEN 0 511 *:30418 *:* users:(("node",pid=2761564,fd=43))',
+			'LISTEN 0 511 *:20365 *:* users:(("node",pid=2761564,fd=44))',
+		].join("\n")
+		expect(strayListeners(parseListeners(ss), [26938, 30418, 20365, 28901])).toEqual([
+			{ pid: 2761590, address: "127.0.0.1:8545", port: 8545 },
+		])
 	})
 })
