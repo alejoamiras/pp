@@ -1,8 +1,10 @@
 /**
- * What a label's allow-list state means on screen. One allow-list snapshot cannot tell a label never
- * approved from one removed, so the copy leans on the origin: a fresh shield (origin 1) is awaiting
- * approval; a bridged label (origin 0) that is absent is out of the list. Leaving to Ethereum never
- * reads the allow list, so ragequit stays open in every state.
+ * What a label's allow-list state means on screen. ABSENT is the snapshot server's claim, not proof:
+ * a server can withhold part of the tree, or collapse it and still match the root, while ACTIVE cannot
+ * be faked. One snapshot also cannot tell a label never approved from one dropped. So the copy never
+ * says a label was revoked or removed: a fresh shield (origin 1) reads as awaiting approval, a bridged
+ * label (origin 0) as not found in the latest list, with a fresh read offered. Leaving to Ethereum
+ * never reads the allow list, so ragequit stays open in every state.
  */
 import type { LabelState, Origin } from "./a7"
 import type { Tone } from "../ui"
@@ -14,6 +16,8 @@ export interface LabelView {
 	can: { send: boolean; unshield: boolean; ragequit: boolean }
 	/** Why send and unshield are closed; empty when they are open. */
 	reason: string
+	/** Offer a fresh read of the allow list beside the ragequit. */
+	checkAgain: boolean
 }
 
 const CLOSED = { send: false, unshield: false, ragequit: true }
@@ -26,6 +30,7 @@ export function labelView(origin: Origin, state: LabelState): LabelView {
 			meaning: "In the posted allow list: sends and unshields work.",
 			can: { send: true, unshield: true, ragequit: true },
 			reason: "",
+			checkAgain: false,
 		}
 	if (state === "STALE_ROOT")
 		return {
@@ -34,6 +39,7 @@ export function labelView(origin: Origin, state: LabelState): LabelView {
 			meaning: "The posted list is too old for a private spend: wait for the next post. Leaving still works.",
 			can: CLOSED,
 			reason: "Send and Unshield wait for the next allow-list post",
+			checkAgain: false,
 		}
 	if (origin === 1)
 		return {
@@ -42,12 +48,14 @@ export function labelView(origin: Origin, state: LabelState): LabelView {
 			meaning: "Not in the allow list yet: it can only leave to Ethereum.",
 			can: CLOSED,
 			reason: "Send and Unshield open once the label is approved",
+			checkAgain: false,
 		}
 	return {
-		text: "Not in the allow list",
-		tone: "bad",
-		meaning: "This label is not in the posted allow list: it can only leave to Ethereum.",
+		text: "Not found in the latest list",
+		tone: "attn",
+		meaning: "Not found in the latest allow list. Check again, or leave to Ethereum (ragequit).",
 		can: CLOSED,
-		reason: "Send and Unshield are closed for this label",
+		reason: "Send and Unshield wait until the label is found in the allow list",
+		checkAgain: true,
 	}
 }
