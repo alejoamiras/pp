@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: Apache-2.0
 pragma solidity >=0.8.27;
 
 /// @notice The permissionless L1 side of the any-ERC-20 bridge: one storage-less portal clone per
