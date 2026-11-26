@@ -180,6 +180,11 @@ jobs:
           AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
         run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/compile.sh --check token_bridge_hub
 
+      - name: compile.sh --check asp_registry
+        env:
+          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
+        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/compile.sh --check asp_registry
+
   txe:
     name: hub TXE suite
     runs-on: ubuntu-latest
@@ -213,6 +218,11 @@ jobs:
         env:
           AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
         run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate token_bridge_hub
+
+      - name: run-txe-tests.sh asp_registry
+        env:
+          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
+        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate asp_registry
 
   integration:
     name: sandbox integration (anvil + local network)
