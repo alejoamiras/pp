@@ -33,9 +33,14 @@ abstract contract PortalFixture is Test {
     uint256 private nullifiers;
 
     function _deploy(uint256 cap) internal {
-        inbox = new CapturingInbox();
         outbox = new CapturingOutbox();
-        registry = IRegistry(address(new FakeRegistry(address(new FakeRollup(address(inbox), address(outbox))))));
+        _deployWith(cap, address(outbox));
+    }
+
+    /// The same generation with the rollup naming `outbox_`, e.g. Aztec's real Outbox.
+    function _deployWith(uint256 cap, address outbox_) internal {
+        inbox = new CapturingInbox();
+        registry = IRegistry(address(new FakeRegistry(address(new FakeRollup(address(inbox), outbox_)))));
         vault = new MockPoolVault();
         factory = new PortalFactory(registry, HUB, IPrivacyPoolVault(address(vault)), cap, GUARDIAN);
         token = new PlainERC20("Tok", "TOK");
