@@ -8,7 +8,16 @@
 	},
 	"files": {
 		"ignoreUnknown": false,
-		"includes": ["apps/**", "packages/**", "vitest.base.ts", "!**/node_modules", "!**/dist", "!**/target", "!**/*.svg"]
+		"includes": [
+			"apps/**",
+			"packages/**",
+			"vitest.base.ts",
+			"!**/node_modules",
+			"!**/dist",
+			"!**/target",
+			"!**/*.svg",
+			"!packages/bridge-spec/vectors/*.json"
+		]
 	},
 	"formatter": {
 		"enabled": true,

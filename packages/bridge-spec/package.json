@@ -10,7 +10,10 @@
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
-		"test": "bun --bun vitest run"
+		"test": "bun --bun vitest run",
+		"vectors": "bun vectors/gen.ts",
+		"vectors:check": "bun vectors/gen.ts --check",
+		"vectors:mutate": "bun vectors/mutate.ts"
 	},
 	"dependencies": {
 		"@aztec-labs/aztec.js": "6.0.0",
