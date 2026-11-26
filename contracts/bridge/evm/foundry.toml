@@ -15,8 +15,12 @@ libs = ["lib"]
 allow_paths = ["../../../node_modules"]
 solc = "0.8.28"
 via_ir = true
-# Read-only, one directory: test/BridgeMessageV1.t.sol reads the shared wire-format vectors.
-fs_permissions = [{ access = "read", path = "../../../packages/bridge-spec/vectors" }]
+# Read: test/BridgeMessageV1.t.sol and PortalVectors read the shared wire-format vectors.
+# Write: ProcessorPortalInvariant appends each run's counts for scripts/check-invariant.sh.
+fs_permissions = [
+  { access = "read", path = "../../../packages/bridge-spec/vectors" },
+  { access = "write", path = "./out/invariant-stats" },
+]
 
 remappings = [
   "@oz/=lib/openzeppelin-contracts/contracts/",
@@ -34,8 +38,15 @@ runs = 256
 
 [profile.default.invariant]
 runs = 256
-depth = 500
+depth = 100
 # Kept permissive deliberately: handler actions bound their own inputs and wrap the
 # expected-revert cases in try/catch, but `sweep` on an empty balance and other benign
 # no-ops still revert, and failing the campaign on those would only add noise.
 fail_on_revert = false
+
+# The deep run, scripts/nightly.sh. Every key not set here comes from the default profile.
+[profile.nightly.fuzz]
+runs = 5000
+
+[profile.nightly.invariant]
+depth = 500
