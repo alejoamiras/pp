@@ -1,9 +1,20 @@
 import { describe, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { aztecVersion, cratesWith, gitDeps, loadManifest, parseManifest, passedCount, pinProblems, ROOT, txeBuild } from "./crates"
+import {
+	aztecVersion,
+	cratesWith,
+	gitDeps,
+	loadManifest,
+	parseManifest,
+	passedCount,
+	pinProblems,
+	ROOT,
+	reachableTags,
+	txeBuild,
+} from "./crates"
 
 const manifest = loadManifest()
 const git = (cwd: string, ...args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" }).stdout.trim()
@@ -17,9 +28,11 @@ describe("contracts/crates.json", () => {
 		expect(manifest.crates.map((c) => c.path).sort()).toEqual(onDisk)
 	})
 
-	test("pins every git dependency tag a crate declares, and nothing else", () => {
+	// The transitive tags are only known once nargo has fetched them; `check-pins` requires the exact set.
+	test("pins every git dependency tag a crate declares", () => {
+		const pinned = manifest.pins.map((p) => `${p.repo}@${p.tag}`)
 		const declared = new Set(manifest.crates.flatMap((c) => gitDeps(ROOT, c).map((d) => `${d.repo}@${d.tag}`)))
-		expect(manifest.pins.map((p) => `${p.repo}@${p.tag}`).sort()).toEqual([...declared].sort())
+		expect([...declared].filter((d) => !pinned.includes(d))).toEqual([])
 	})
 
 	test("pins one aztec-nr version, the npm line's", () => {
@@ -34,6 +47,14 @@ describe("contracts/crates.json", () => {
 		}
 		for (const c of cratesWith(manifest, "parity")) {
 			expect(git(ROOT, "ls-files", "--", `${c.path}/target/*.json`), c.name).not.toBe("")
+		}
+	})
+
+	// Dropping a gate from an entry must not drop the crate from its matrix unnoticed.
+	test("a crate with a committed artifact runs parity, and one with a TXE list runs it", () => {
+		for (const c of manifest.crates) {
+			if (git(ROOT, "ls-files", "--", `${c.path}/target/*.json`)) expect(c.parity, `${c.name} parity`).toBe(true)
+			if (existsSync(join(ROOT, c.path, "txe-manifest.txt"))) expect(c.txe, `${c.name} txe`).toBeDefined()
 		}
 	})
 
@@ -61,9 +82,33 @@ describe("contracts/crates.json", () => {
 			[{ crates: [{ ...lib, path: "../outside" }], pins: [] }, /repo-relative/],
 			[{ crates: [{ ...lib, nargo: { check: "scripts/ci-cd/crates.ts", floor: 1 } }], pins: [] }, /nargo.check stands alone/],
 			[{ crates: [{ ...lib, nargo: { check: "scripts/missing.ts" } }], pins: [] }, /repo-relative script/],
+			[{ crates: [{ ...lib, path: "./contracts/bridge/aztec/claim_secret" }], pins: [] }, /repo-relative/],
+			[
+				{ crates: [{ ...hub, txe: { floor: 1, stage: [`${lib.path}/src/lib.nr`] } }, lib], pins: [] },
+				/not a parity crate's target\/ artifact/,
+			],
 		]
 		for (const [input, error] of cases) expect(() => parseManifest(input), String(error)).toThrow(error)
 	})
+})
+
+test("reachableTags follows fetched dependencies and names a tag nargo has not fetched", () => {
+	const root = mkdtempSync(join(tmpdir(), "pp-reach-"))
+	const toml = (dir: string, deps: string) => {
+		mkdirSync(dir, { recursive: true })
+		writeFileSync(join(dir, "Nargo.toml"), `[package]\nname = "x"\ntype = "lib"\n\n[dependencies]\n${deps}\n`)
+	}
+	toml(join(root, "crate"), `a = { git = "https://github.com/o/a", tag = "v1", directory = "lib" }`)
+	toml(join(root, "home/github.com/o/a/v1/lib"), `b = { path = "../b" }`)
+	toml(join(root, "home/github.com/o/a/v1/b"), `c = { git = "https://github.com/o/c/", tag = "v2" }`)
+	try {
+		const m = { crates: [{ name: "crate", path: "crate", kind: "lib" as const, parity: false }], pins: [] }
+		const { tags, unfetched } = reachableTags(m, join(root, "home"), root)
+		expect([...tags]).toEqual(["o/a@v1", "o/c@v2"])
+		expect(unfetched).toEqual(["o/c@v2"])
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
 })
 
 test("passedCount sums every package's line through colour codes", () => {

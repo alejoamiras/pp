@@ -1,9 +1,9 @@
 /**
  * Compares a fresh build of a Noir crate with its committed artifact, which is what
- * `compile.sh --check` runs. Two things must match: what a deploy binds (a contract's class id, a
- * program's hash) and the ABI, which the class id does not cover: a renamed parameter or struct
- * field leaves it unchanged while every generated client changes. Byte identity is too strict
- * (debug metadata).
+ * `compile.sh --check` runs. Two things must match: what a deploy binds (a contract's class id,
+ * derived from its bytecode; a program's bytecode, and the hash stored beside it) and the ABI,
+ * which the class id does not cover: a renamed parameter or struct field leaves it unchanged while
+ * every generated client changes. Whole-file identity is too strict (debug metadata).
  *
  *   bun scripts/noir-artifact-parity.ts <contract|bin> <committed.json> <fresh.json>
  *
@@ -51,6 +51,9 @@ export async function parityProblems(kind: ArtifactKind, committed: Json, fresh:
 	const [want, got] = await Promise.all([bindingOf(kind, committed), bindingOf(kind, fresh)])
 	const binding = kind === "bin" ? "program hash" : "class id"
 	if (want !== got) problems.push(`${binding} drift: committed ${want}, source compiles to ${got}`)
+	// The stored hash is metadata beside the bytecode; a committed program can carry a hash its bytes do not.
+	if (kind === "bin" && (typeof committed.bytecode !== "string" || committed.bytecode !== fresh.bytecode))
+		problems.push("program bytecode drift")
 	const diff = firstDifference(abiOf(kind, committed), abiOf(kind, fresh), "abi")
 	if (diff) problems.push(`ABI drift at ${diff}`)
 	return problems

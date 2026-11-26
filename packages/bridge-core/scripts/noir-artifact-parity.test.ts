@@ -30,4 +30,9 @@ describe("parityProblems", () => {
 		expect(problems[0]).toMatch(/^program hash drift/)
 		expect(problems[1]).toBe("ABI drift at abi.return_type")
 	})
+
+	it("catches committed program bytecode that the stored hash does not cover", async () => {
+		const { bytecode: _, ...stripped } = keystone
+		expect(await parityProblems("bin", stripped, keystone)).toEqual(["program bytecode drift"])
+	})
 })

@@ -62,6 +62,9 @@
 		{ "repo": "aztec-labs-eng/aztec-nr", "tag": "v6.0.0", "commit": "0472012201fdff1429d184f8d25cecf13ca94326" },
 		{ "repo": "AztecProtocol/aztec-standards", "tag": "v6.0.0", "commit": "ed402d82fd81339d8b2442c2f14ec6213316ed5d" },
 		{ "repo": "noir-lang/keccak256", "tag": "v0.1.3", "commit": "f64ab3af714aa1a1e2699243037e0f11fe5bf706" },
-		{ "repo": "noir-lang/poseidon", "tag": "v0.3.0", "commit": "0880c371e88e583d39515fd3f877538657ac41eb" }
+		{ "repo": "noir-lang/poseidon", "tag": "v0.3.0", "commit": "0880c371e88e583d39515fd3f877538657ac41eb" },
+		{ "repo": "AztecProtocol/aztec-packages", "tag": "v6.0.0", "commit": "0219f11d8133970df3974fe5ae65e006bf8c193a" },
+		{ "repo": "noir-lang/sha256", "tag": "v0.3.0", "commit": "9442e5b6856f98b2ec029882d7e90199ecff91ba" },
+		{ "repo": "noir-lang/poseidon", "tag": "v0.4.0", "commit": "e105cdd5c79c222860d53c5dfdb8fa8012b291c0" }
 	]
 }

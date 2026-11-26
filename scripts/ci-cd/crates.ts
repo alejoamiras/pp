@@ -11,12 +11,13 @@
  *   bun scripts/ci-cd/crates.ts nargo-test [name...]      each crate's nargo gate (default: every crate with one):
  *                                                        `aztec-nargo test --force [filter]` with at least `floor`
  *                                                        passing, or its `check` script
- *   bun scripts/ci-cd/crates.ts check-pins [nargo-home]   every pinned tag is fetched and at its recorded commit
+ *   bun scripts/ci-cd/crates.ts check-pins [nargo-home]   the pins are exactly the git tags the crates reach through
+ *                                                        nargo's cache, each fetched and at its recorded commit
  */
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, posix } from "node:path"
 
 export const ROOT = join(import.meta.dir, "..", "..")
 export const MANIFEST = "contracts/crates.json"
@@ -74,7 +75,9 @@ export function nargoToml(root: string, path: string): Raw | undefined {
 	return existsSync(file) ? (Bun.TOML.parse(readFileSync(file, "utf8")) as Raw) : undefined
 }
 
-const repoRelative = (s: unknown): s is string => typeof s === "string" && s !== "" && !s.startsWith("/") && !s.includes("..")
+/** A repo-relative path in canonical form: `./x`, `x//y` or `x/` would name the same file under another spelling. */
+const repoRelative = (s: unknown): s is string =>
+	typeof s === "string" && s !== "" && !s.startsWith("/") && !s.split("/").includes("..") && posix.normalize(s) === s && !s.endsWith("/")
 
 function parseNargo(name: string, v: unknown, root: string): Crate["nargo"] {
 	if (!isRecord(v)) return fail(name, "nargo must be an object")
@@ -141,6 +144,13 @@ export function parseManifest(v: unknown, root = ROOT): Manifest {
 	uniqueBy(crates, (c) => c.name, "crates")
 	uniqueBy(crates, (c) => c.path, "crates")
 	uniqueBy(pins, (p) => `${p.repo}@${p.tag}`, "pins")
+	for (const c of crates) {
+		for (const staged of c.txe?.stage ?? []) {
+			const producer = crates.find((p) => staged.startsWith(`${p.path}/`))
+			if (producer && !(producer.parity && staged.startsWith(`${producer.path}/target/`)))
+				fail(c.name, `stages ${staged}, which is not a parity crate's target/ artifact and so is never rebuilt`)
+		}
+	}
 	return { crates, pins }
 }
 
@@ -156,14 +166,42 @@ export function crateNamed(m: Manifest, name: string): Crate {
 
 /** Every git dependency a crate declares, as `owner/name@tag` keyed to the dependency's alias. */
 export function gitDeps(root: string, crate: Crate): { alias: string; repo: string; tag: string }[] {
-	const deps = (nargoToml(root, crate.path)?.dependencies ?? {}) as Record<string, Raw>
+	return gitDepsAt(join(root, crate.path)).map(({ alias, repo, tag }) => ({ alias, repo, tag }))
+}
+
+const repoOf = (url: unknown) => String(url).replace(/^https:\/\/github\.com\//, "").replace(/\/$/, "").replace(/\.git$/, "")
+
+function gitDepsAt(dir: string): { alias: string; repo: string; tag: string; directory: string }[] {
+	const deps = (nargoToml(dir, "")?.dependencies ?? {}) as Record<string, Raw>
 	return Object.entries(deps)
 		.filter(([, d]) => typeof d.git === "string")
-		.map(([alias, d]) => ({
-			alias,
-			repo: String(d.git).replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, ""),
-			tag: String(d.tag),
-		}))
+		.map(([alias, d]) => ({ alias, repo: repoOf(d.git), tag: String(d.tag), directory: String(d.directory ?? "") }))
+}
+
+/**
+ * Every git tag the crates reach, directly or through a fetched dependency's own Nargo.toml (path
+ * dependencies included), as `owner/name@tag`. A tag nargo has not fetched is listed in `unfetched`
+ * and not walked.
+ */
+export function reachableTags(m: Manifest, nargoHome: string, root = ROOT): { tags: Set<string>; unfetched: string[] } {
+	const tags = new Set<string>()
+	const unfetched: string[] = []
+	const seen = new Set<string>()
+	const walk = (dir: string) => {
+		if (seen.has(dir)) return
+		seen.add(dir)
+		const deps = (nargoToml(dir, "")?.dependencies ?? {}) as Record<string, Raw>
+		for (const d of Object.values(deps)) if (typeof d.path === "string") walk(join(dir, d.path))
+		for (const { repo, tag, directory } of gitDepsAt(dir)) {
+			const id = `${repo}@${tag}`
+			const fetched = join(nargoHome, "github.com", repo, tag)
+			if (!tags.has(id) && !existsSync(fetched)) unfetched.push(id)
+			tags.add(id)
+			if (existsSync(fetched)) walk(join(fetched, directory))
+		}
+	}
+	for (const c of m.crates) walk(join(root, c.path))
+	return { tags, unfetched }
 }
 
 /** The one aztec-nr version the crates pin; two different tags fail, since one toolchain builds them all. */
@@ -259,10 +297,18 @@ function main(argv: string[]): void {
 		for (const name of names) nargoTest(m, name)
 	}
 	else if (cmd === "check-pins") {
-		const problems = pinProblems(m.pins, a ?? join(homedir(), "nargo"))
+		const home = a ?? join(homedir(), "nargo")
+		const { tags, unfetched } = reachableTags(m, home)
+		const pinned = new Set(m.pins.map((p) => `${p.repo}@${p.tag}`))
+		const problems = [
+			...unfetched.map((t) => `${t} is not fetched; build a crate that uses it first`),
+			...[...tags].filter((t) => !pinned.has(t)).map((t) => `${t} is reached through the crates but not pinned in ${MANIFEST}`),
+			...[...pinned].filter((t) => !tags.has(t)).map((t) => `${t} is pinned but no crate reaches it`),
+			...pinProblems(m.pins.filter((p) => tags.has(`${p.repo}@${p.tag}`)), home),
+		]
 		for (const p of problems) console.error(`✖ ${p}`)
 		if (problems.length) process.exit(1)
-		console.log(`${m.pins.length} pinned tags at their recorded commits`)
+		console.log(`${m.pins.length} pinned tags, exactly the ones the crates reach, at their recorded commits`)
 	} else fail("usage", "see the header of scripts/ci-cd/crates.ts")
 }
 

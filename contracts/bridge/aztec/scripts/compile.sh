@@ -32,6 +32,14 @@ export PATH="$AZTEC_HOME/bin:$AZTEC_HOME/node_modules/.bin:$PATH"
 export NARGO="$AZTEC_HOME/bin/aztec-nargo"
 export BB="$AZTEC_HOME/node_modules/.bin/bb"
 
+# Puts the JSON moved aside into $committed back in $dir/target/, replacing whatever the build wrote.
+restore_committed() {
+	local f
+	[ "$built" = 0 ] || rm -f "$dir"/target/*.json
+	for f in "$committed"/*.json; do [ ! -e "$f" ] || mv -f "$f" "$dir/target/"; done
+	rmdir "$committed"
+}
+
 check=0
 names=()
 for arg in "$@"; do
@@ -53,11 +61,15 @@ for c in "${names[@]}"; do
 	[ "$kind" != lib ] || { echo "✖ $c: a lib crate builds no artifact" >&2; exit 1; }
 	# `aztec compile` skips the build unless a source is newer than the OLDEST target/*.json, and a
 	# checkout, a restore or the TXE runner's staged Token copy can leave any mtimes there. Every
-	# JSON is moved aside to force the build; a failed build puts them back.
-	committed="$(mktemp -d)"
+	# JSON is moved aside to force the build, inside target/ so each move is a rename that cannot
+	# half-copy. A failed move stops the script before the build; the trap deletes target/'s JSON only
+	# once every original is aside, then puts the originals back.
+	committed="$(mktemp -d "$dir/target/.committed.XXXXXX")"
+	built=0
+	trap 'restore_committed' EXIT
 	tracked="$(cd "$dir" && git ls-files -- target | xargs -r -n1 basename)"
-	mv "$dir"/target/*.json "$committed/" 2>/dev/null || true
-	trap 'rm -f "$dir"/target/*.json; mv -f "$committed"/*.json "$dir"/target/ 2>/dev/null; rm -rf "$committed"' EXIT
+	for f in "$dir"/target/*.json; do [ ! -e "$f" ] || mv "$f" "$committed/"; done
+	built=1
 	(cd "$dir" && "$AZTEC" compile)
 	# `aztec compile` embeds absolute source paths (this machine's checkout + the ~/.aztec and
 	# ~/nargo dependency caches) in the artifact's debug file_map. They are not load-bearing, but
@@ -80,8 +92,7 @@ for c in "${names[@]}"; do
 		done
 		# --check never dirties the tree; a renamed contract's fresh JSON must not survive beside the
 		# restored set.
-		rm -f "$dir"/target/*.json
-		mv -f "$committed"/*.json "$dir"/target/ 2>/dev/null || true
+		restore_committed
 	fi
 	rm -rf "$committed"
 	trap - EXIT

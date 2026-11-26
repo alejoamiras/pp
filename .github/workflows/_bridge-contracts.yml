@@ -87,6 +87,7 @@ jobs:
           bun run --cwd packages/bridge-core test -- factory-abi
 
   # contracts/crates.json decides which Noir gates run on which crate; a new crate is one entry there.
+  # The matrices carry no `if:`: an empty one fails its job instead of skipping it green.
   crates:
     name: crate manifest
     runs-on: ubuntu-latest
@@ -147,7 +148,6 @@ jobs:
   parity:
     name: artifact parity (${{ matrix.crate }})
     needs: crates
-    if: needs.crates.outputs.parity != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -178,7 +178,6 @@ jobs:
   txe:
     name: TXE suite (${{ matrix.crate }})
     needs: crates
-    if: needs.crates.outputs.txe != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:

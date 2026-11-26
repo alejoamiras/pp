@@ -14,8 +14,10 @@ Current line: **`6.0.0`**. Labs and foundation number their releases separately,
 package keeps a pin of its own:
 
 - **`@aztec-labs/*` at `6.0.0`**, the `@aztec-labs/aztec.js` pin. The Noir contract source follows
-  this number (the aztec-nr tags in every `Nargo.toml`, their commits under `pins` in
-  `contracts/crates.json`, the committed `target/*.json`), and so does the toolchain at
+  this number (the aztec-nr tags in every `Nargo.toml`; under `pins` in `contracts/crates.json`,
+  the commit of every tag the crates reach, aztec-nr's own dependencies included, which
+  `bun scripts/ci-cd/crates.ts check-pins` lists after a build; the committed `target/*.json`), and
+  so does the toolchain at
   `~/.aztec/versions/6.0.0`. The Nulo
   wallet's packages sit at `0.3.0`, whose Aztec peers are exact labs `6.0.0` pins.
 - **`@aztec-foundation/*` at `6.0.0`** (`bb.js`, `l1-artifacts`, `noir-acvm_js`,
