@@ -4,17 +4,15 @@ pragma solidity >=0.8.27;
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@oz/access/Ownable.sol";
 import {Hash} from "@aztec/core/libraries/crypto/Hash.sol";
-import {Epoch} from "@aztec/core/libraries/TimeLib.sol";
-import {DataStructures} from "@aztec/core/libraries/DataStructures.sol";
 import {IRegistry} from "@aztec/governance/interfaces/IRegistry.sol";
 
 import {PortalFactory} from "../src/PortalFactory.sol";
-import {TokenPortalImpl} from "../src/TokenPortalImpl.sol";
+import {ProcessorPortalImpl} from "../src/ProcessorPortalImpl.sol";
+import {IPrivacyPoolVault} from "../src/interfaces/IPrivacyPoolVault.sol";
 import {IPortalFactory} from "../src/interfaces/IPortalFactory.sol";
 import {CapturingInbox, CapturingOutbox, FakeRegistry, FakeRollup} from "./mocks/AztecFakes.sol";
 import {
     Bytes32MetadataERC20,
-    FeeOnTransferERC20,
     HeadlessStringERC20,
     HugeDecimalsERC20,
     HugeNameERC20,
@@ -22,7 +20,6 @@ import {
     NonAsciiNameERC20,
     PlainERC20,
     ReentrantNameERC20,
-    SenderSurchargeERC20,
     StringDecimalsERC20,
     WeirdDecimalsERC20
 } from "./mocks/MetadataERC20s.sol";
@@ -31,6 +28,8 @@ contract PortalFactoryTest is Test {
     bytes32 internal constant HUB = bytes32(uint256(0x4B));
     address internal guardian = makeAddr("guardian");
     address internal alice = makeAddr("alice");
+    IPrivacyPoolVault internal constant POOL = IPrivacyPoolVault(address(0x9001));
+    uint256 internal constant CAP = type(uint256).max;
 
     CapturingInbox internal inbox;
     CapturingOutbox internal outbox;
@@ -42,7 +41,7 @@ contract PortalFactoryTest is Test {
         inbox = new CapturingInbox();
         outbox = new CapturingOutbox();
         registry = new FakeRegistry(address(new FakeRollup(address(inbox), address(outbox))));
-        factory = new PortalFactory(IRegistry(address(registry)), HUB, guardian);
+        factory = new PortalFactory(IRegistry(address(registry)), HUB, POOL, CAP, guardian);
         usdc = new PlainERC20("USD Coin", "USDC");
     }
 
@@ -72,7 +71,7 @@ contract PortalFactoryTest is Test {
         address portal = factory.createPortal(address(usdc));
 
         assertEq(portal, predicted, "clone landed at the predicted address");
-        assertEq(address(TokenPortalImpl(portal).underlying()), address(usdc), "clone's immutable arg is the token");
+        assertEq(address(ProcessorPortalImpl(portal).underlying()), address(usdc), "clone's immutable arg is the token");
         assertEq(factory.portalOf(address(usdc)), portal);
         assertEq(factory.tokenOf(portal), address(usdc));
 
@@ -89,8 +88,8 @@ contract PortalFactoryTest is Test {
         assertEq(inbox.lastVersion(), 4242);
         assertEq(inbox.lastContentHash(), registerHash(address(usdc), portal, word("USD Coin"), word("USDC"), 18));
         assertEq(inbox.lastSecretHash(), factory.REGISTER_SECRET_HASH());
-        assertEq(TokenPortalImpl(portal).L2_HUB(), HUB);
-        assertEq(address(TokenPortalImpl(portal).FACTORY()), address(factory));
+        assertEq(ProcessorPortalImpl(portal).L2_HUB(), HUB);
+        assertEq(address(ProcessorPortalImpl(portal).FACTORY()), address(factory));
     }
 
     function test_createPortal_isIdempotent() public {
@@ -186,17 +185,42 @@ contract PortalFactoryTest is Test {
 
     // ── Guardian ──────────────────────────────────────────────────────────────────────
 
-    function test_setPaused_isGuardianOnly() public {
+    function test_entries_startPaused_andOnlyTheGuardianFlipsThem() public {
+        assertTrue(factory.entriesPaused(), "a new generation starts paused");
+
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
-        factory.setPaused(true, true);
+        factory.setEntriesPaused(false);
 
         vm.prank(guardian);
         vm.expectEmit(true, true, true, true);
-        emit IPortalFactory.PauseChanged(true, false);
-        factory.setPaused(true, false);
-        assertTrue(factory.depositsPaused());
-        assertFalse(factory.withdrawsPaused());
+        emit IPortalFactory.EntriesPausedChanged(false);
+        factory.setEntriesPaused(false);
+        assertFalse(factory.entriesPaused());
+
+        vm.prank(guardian);
+        factory.setEntriesPaused(true);
+        assertTrue(factory.entriesPaused());
+    }
+
+    function test_constructor_rejectsZeroPoolOrCap() public {
+        vm.expectRevert(IPortalFactory.ZeroPool.selector);
+        new PortalFactory(IRegistry(address(registry)), HUB, IPrivacyPoolVault(address(0)), CAP, guardian);
+        vm.expectRevert(IPortalFactory.ZeroCap.selector);
+        new PortalFactory(IRegistry(address(registry)), HUB, POOL, 0, guardian);
+    }
+
+    /// Every clone reads the vault, the cap and the Aztec pointers from the one implementation.
+    function test_clone_readsTheGenerationsBindings() public {
+        PortalFactory capped = new PortalFactory(IRegistry(address(registry)), HUB, POOL, 1e12, guardian);
+        ProcessorPortalImpl portal = ProcessorPortalImpl(capped.createPortal(address(usdc)));
+        assertEq(address(portal.POOL()), address(POOL));
+        assertEq(portal.LIFETIME_CAP(), 1e12);
+        assertEq(address(portal.INBOX()), address(inbox));
+        assertEq(address(portal.OUTBOX()), address(outbox));
+        assertEq(portal.ROLLUP_VERSION(), 4242);
+        assertEq(portal.grossAccepted(), 0);
+        assertEq(portal.totalPaid(), 0);
     }
 
     function test_renounceOwnership_isDisabled() public {
@@ -214,107 +238,9 @@ contract PortalFactoryTest is Test {
         assertEq(factory.owner(), alice);
     }
 
-    // ── Clone behaviour ───────────────────────────────────────────────────────────────
-
-    function _fundedPortal(uint256 amount) internal returns (TokenPortalImpl portal) {
-        portal = TokenPortalImpl(factory.createPortal(address(usdc)));
-        usdc.mint(alice, amount);
-        vm.prank(alice);
-        usdc.approve(address(portal), amount);
-    }
-
-    function test_clone_depositPublic_commitsCanonicalHash() public {
-        TokenPortalImpl portal = _fundedPortal(1_000);
-        bytes32 to = bytes32(uint256(0x1234));
-        vm.prank(alice);
-        (bytes32 key, uint256 index) = portal.depositToAztecPublic(to, 1_000, bytes32(uint256(0x5EC)));
-        assertEq(index, 1, "register was leaf 0");
-        assertEq(key, keccak256(abi.encode(inbox.lastContentHash(), inbox.lastSecretHash())));
-        assertEq(inbox.lastSender(), address(portal));
-        assertEq(inbox.lastBridge(), HUB);
-        assertEq(inbox.lastContentHash(), Hash.sha256ToField(abi.encodeWithSignature("mint_to_public(bytes32,uint256)", to, uint256(1_000))));
-        assertEq(usdc.balanceOf(address(portal)), 1_000);
-    }
-
-    function test_clone_depositPrivate_commitsCanonicalHash() public {
-        TokenPortalImpl portal = _fundedPortal(7);
-        vm.prank(alice);
-        portal.depositToAztecPrivate(7, bytes32(uint256(0x5EC)));
-        assertEq(inbox.lastContentHash(), Hash.sha256ToField(abi.encodeWithSignature("mint_to_private(uint256)", uint256(7))));
-    }
-
-    function test_clone_rejectsAmountAboveU128() public {
-        TokenPortalImpl portal = _fundedPortal(1);
-        vm.prank(alice);
-        vm.expectRevert(TokenPortalImpl.AmountExceedsL2Max.selector);
-        portal.depositToAztecPrivate(uint256(type(uint128).max) + 1, bytes32(0));
-    }
-
-    function test_clone_rejectsFeeOnTransfer() public {
-        FeeOnTransferERC20 tax = new FeeOnTransferERC20(100);
-        TokenPortalImpl portal = TokenPortalImpl(factory.createPortal(address(tax)));
-        tax.mint(alice, 1_000);
-        vm.startPrank(alice);
-        tax.approve(address(portal), 1_000);
-        vm.expectRevert(TokenPortalImpl.InexactTransfer.selector);
-        portal.depositToAztecPublic(bytes32(uint256(1)), 1_000, bytes32(0));
-        vm.stopPrank();
-    }
-
-    function test_clone_pauseBitsGateDepositsAndWithdrawals() public {
-        TokenPortalImpl portal = _fundedPortal(10);
-        vm.prank(guardian);
-        factory.setPaused(true, true);
-
-        vm.prank(alice);
-        vm.expectRevert(TokenPortalImpl.DepositsPaused.selector);
-        portal.depositToAztecPublic(bytes32(uint256(1)), 10, bytes32(0));
-
-        bytes32[] memory path;
-        vm.expectRevert(TokenPortalImpl.WithdrawsPaused.selector);
-        portal.withdraw(alice, 1, false, Epoch.wrap(0), 0, 0, path);
-    }
-
-    function test_clone_withdraw_consumesAndDebitsExactly() public {
-        TokenPortalImpl portal = _fundedPortal(500);
-        vm.prank(alice);
-        portal.depositToAztecPublic(bytes32(uint256(1)), 500, bytes32(0));
-
-        bytes32[] memory path;
-        portal.withdraw(alice, 200, true, Epoch.wrap(3), 9, 5, path);
-
-        DataStructures.L2ToL1Msg memory m = outbox.lastMsg();
-        assertEq(m.sender.actor, HUB);
-        assertEq(m.sender.version, 4242);
-        assertEq(m.recipient.actor, address(portal));
-        assertEq(m.recipient.chainId, block.chainid);
-        assertEq(m.content, Hash.sha256ToField(abi.encodeWithSignature("withdraw(address,uint256,address)", alice, uint256(200), address(this))));
-        assertEq(usdc.balanceOf(alice), 200);
-        assertEq(usdc.balanceOf(address(portal)), 300);
-    }
-
-    /// The mirror of the deposit check: a token that debits the reserve by more than the message
-    /// authorised would bleed every other holder's backing, one withdrawal at a time.
-    function test_clone_withdraw_rejectsOverDebit() public {
-        SenderSurchargeERC20 sur = new SenderSurchargeERC20(100);
-        TokenPortalImpl portal = TokenPortalImpl(factory.createPortal(address(sur)));
-        sur.mint(alice, 1_010);
-        vm.startPrank(alice);
-        sur.approve(address(portal), 1_000);
-        portal.depositToAztecPublic(bytes32(uint256(1)), 1_000, bytes32(0));
-        vm.stopPrank();
-        assertEq(sur.balanceOf(address(portal)), 1_000, "the deposit itself is exact");
-
-        bytes32[] memory path;
-        vm.expectRevert(TokenPortalImpl.InexactTransfer.selector);
-        portal.withdraw(alice, 500, false, Epoch.wrap(3), 9, 5, path);
-    }
-
     function test_implementation_refusesDirectUse() public {
-        TokenPortalImpl impl = TokenPortalImpl(factory.IMPLEMENTATION());
-        vm.expectRevert(TokenPortalImpl.ImplementationOnly.selector);
+        ProcessorPortalImpl impl = ProcessorPortalImpl(factory.IMPLEMENTATION());
+        vm.expectRevert(ProcessorPortalImpl.ImplementationOnly.selector);
         impl.underlying();
-        vm.expectRevert(TokenPortalImpl.ImplementationOnly.selector);
-        impl.depositToAztecPrivate(1, bytes32(0));
     }
 }

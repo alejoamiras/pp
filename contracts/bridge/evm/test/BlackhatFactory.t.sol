@@ -2,7 +2,7 @@
 pragma solidity >=0.8.27;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BLACKHAT SUITE — adversarial PoCs against PortalFactory + TokenPortalImpl clones.
+// BLACKHAT SUITE — adversarial PoCs against PortalFactory and its processor portal clones.
 // Every test is an ATTACK attempt; PASS = the outcome asserted in its name.
 //   [F-1] front-running createPortal for an honest token → identity-preserving (nothing to gain)
 //   [F-2] metadata callbacks re-entering the factory → fail closed (STATICCALL, no second portal)
@@ -10,21 +10,18 @@ pragma solidity >=0.8.27;
 //   [F-4] metadata mutated after creation → registration frozen
 //   [F-5] two tokens with identical metadata → distinct portals, distinct register hashes
 //   [F-6] portal-of-a-portal / factory / implementation as "token" → refused
-//   [F-7] ERC-777-style transfer hook re-entering deposit → rejected, one message, exact reserve
 //   [F-8] guardian pending-ownership hijack → only the pending owner can accept
-//   [F-9] ERC-777-style transfer hook re-entering withdraw → rejected, one payout, exact reserve
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {Test} from "forge-std/Test.sol";
 import {IRegistry} from "@aztec/governance/interfaces/IRegistry.sol";
 import {Hash} from "@aztec/core/libraries/crypto/Hash.sol";
-import {Epoch} from "@aztec/core/libraries/TimeLib.sol";
 import {ERC20} from "@oz/token/ERC20/ERC20.sol";
 import {Ownable} from "@oz/access/Ownable.sol";
-import {ReentrancyGuardTransient} from "@oz/utils/ReentrancyGuardTransient.sol";
 
 import {PortalFactory} from "../src/PortalFactory.sol";
-import {TokenPortalImpl} from "../src/TokenPortalImpl.sol";
+import {ProcessorPortalImpl} from "../src/ProcessorPortalImpl.sol";
+import {IPrivacyPoolVault} from "../src/interfaces/IPrivacyPoolVault.sol";
 import {IPortalFactory} from "../src/interfaces/IPortalFactory.sol";
 import {CapturingInbox, CapturingOutbox, FakeRegistry, FakeRollup} from "./mocks/AztecFakes.sol";
 import {HugeNameERC20, PlainERC20, ReentrantNameERC20} from "./mocks/MetadataERC20s.sol";
@@ -77,48 +74,6 @@ contract MutableMetadataERC20 is ERC20 {
     }
 }
 
-/// `transferFrom` re-enters the portal's deposit from inside the pull, and `transfer` re-enters
-/// `withdraw` from inside the payout (ERC-777 hook shape).
-contract HookERC20 is ERC20 {
-    TokenPortalImpl public portal;
-    bytes4 public hookRevert;
-    bytes4 public withdrawHookRevert;
-
-    constructor() ERC20("Hook", "HOOK") {}
-
-    function setPortal(TokenPortalImpl p) external {
-        portal = p;
-    }
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-
-    function transferFrom(address from, address to, uint256 value) public override returns (bool) {
-        bool ok = super.transferFrom(from, to, value);
-        if (to == address(portal)) {
-            try portal.depositToAztecPublic(bytes32(uint256(0xBAD)), 1, bytes32(0)) {
-                hookRevert = 0xffffffff;
-            } catch (bytes memory reason) {
-                hookRevert = bytes4(reason);
-            }
-        }
-        return ok;
-    }
-
-    function transfer(address to, uint256 value) public override returns (bool) {
-        bool ok = super.transfer(to, value);
-        if (msg.sender == address(portal)) {
-            try portal.withdraw(to, value, false, Epoch.wrap(0), 1, 0, new bytes32[](0)) {
-                withdrawHookRevert = 0xffffffff;
-            } catch (bytes memory reason) {
-                withdrawHookRevert = bytes4(reason);
-            }
-        }
-        return ok;
-    }
-}
-
 // ═══════════════════════════ suite ═══════════════════════════
 
 contract BlackhatFactoryTest is Test {
@@ -126,6 +81,8 @@ contract BlackhatFactoryTest is Test {
     address internal constant MALLORY = address(0xBAD);
     address internal constant ALICE = address(0xA11CE);
     uint256 internal constant METADATA_GAS = 100_000;
+    IPrivacyPoolVault internal constant POOL = IPrivacyPoolVault(address(0x9001));
+    uint256 internal constant CAP = type(uint256).max;
 
     PortalFactory internal factory;
     CapturingInbox internal inbox;
@@ -133,7 +90,7 @@ contract BlackhatFactoryTest is Test {
     function setUp() public {
         inbox = new CapturingInbox();
         FakeRegistry registry = new FakeRegistry(address(new FakeRollup(address(inbox), address(new CapturingOutbox()))));
-        factory = new PortalFactory(IRegistry(address(registry)), bytes32(uint256(0x4B)), GUARDIAN);
+        factory = new PortalFactory(IRegistry(address(registry)), bytes32(uint256(0x4B)), POOL, CAP, GUARDIAN);
     }
 
     /// [F-1] Mallory creates the portal for Alice's token first. Every observable — portal address,
@@ -241,7 +198,7 @@ contract BlackhatFactoryTest is Test {
         assertEq(factory.registrationOf(address(real)).nameWord, factory.registrationOf(address(fake)).nameWord);
         assertEq(factory.tokenOf(pr), address(real));
         assertEq(factory.tokenOf(pf), address(fake));
-        assertEq(address(TokenPortalImpl(pf).underlying()), address(fake));
+        assertEq(address(ProcessorPortalImpl(pf).underlying()), address(fake));
     }
 
     /// [F-6] Contracts without a sane `decimals()` — a clone, the factory, the implementation — are
@@ -260,42 +217,8 @@ contract BlackhatFactoryTest is Test {
         assertEq(inbox.sent(), 1);
     }
 
-    /// [F-7] The token's `transferFrom` re-enters `depositToAztecPublic` mid-pull. The transient
-    /// guard rejects it; the outer deposit completes with one message and an exact reserve.
-    function test_F7_transferHookReentersDeposit_rejected() public {
-        HookERC20 t = new HookERC20();
-        TokenPortalImpl portal = TokenPortalImpl(factory.createPortal(address(t)));
-        t.setPortal(portal);
-        t.mint(ALICE, 100);
-        uint256 registers = inbox.sent();
-
-        vm.startPrank(ALICE);
-        t.approve(address(portal), 100);
-        portal.depositToAztecPublic(bytes32(uint256(1)), 100, bytes32(0));
-        vm.stopPrank();
-
-        assertEq(t.hookRevert(), ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector, "hook was not rejected");
-        assertEq(inbox.sent(), registers + 1, "the nested deposit sent a message");
-        assertEq(t.balanceOf(address(portal)), 100, "reserve drifted");
-    }
-
-    /// [F-9] The token's `transfer` re-enters `withdraw` mid-payout. The capturing outbox would
-    /// accept the nested message, so the transient guard is all that refuses it.
-    function test_F9_transferHookReentersWithdraw_rejected() public {
-        HookERC20 t = new HookERC20();
-        TokenPortalImpl portal = TokenPortalImpl(factory.createPortal(address(t)));
-        t.setPortal(portal);
-        t.mint(address(portal), 100);
-
-        portal.withdraw(ALICE, 40, false, Epoch.wrap(0), 1, 0, new bytes32[](0));
-
-        assertEq(t.withdrawHookRevert(), ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector, "hook was not rejected");
-        assertEq(t.balanceOf(ALICE), 40, "the nested withdrawal paid out");
-        assertEq(t.balanceOf(address(portal)), 60, "reserve drifted");
-    }
-
     /// [F-8] A pending ownership transfer cannot be accepted by anyone but the nominee, and the
-    /// guardian keeps the pause bits until then.
+    /// guardian keeps the entry pause until then.
     function test_F8_pendingOwnershipHijack_rejected() public {
         vm.prank(GUARDIAN);
         factory.transferOwnership(ALICE);
@@ -306,11 +229,11 @@ contract BlackhatFactoryTest is Test {
 
         vm.prank(MALLORY);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, MALLORY));
-        factory.setPaused(true, true);
+        factory.setEntriesPaused(false);
 
         assertEq(factory.owner(), GUARDIAN);
         vm.prank(GUARDIAN);
-        factory.setPaused(true, false);
-        assertTrue(factory.depositsPaused());
+        factory.setEntriesPaused(false);
+        assertFalse(factory.entriesPaused());
     }
 }

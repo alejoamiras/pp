@@ -85,7 +85,7 @@ jobs:
         run: |
           # The pin suites skip when the artifacts are absent; here that would be a silent pass.
           test -f contracts/bridge/evm/out/PortalFactory.sol/PortalFactory.json
-          test -f contracts/bridge/evm/out/TokenPortalImpl.sol/TokenPortalImpl.json
+          test -f contracts/bridge/evm/out/ProcessorPortalImpl.sol/ProcessorPortalImpl.json
           bun run --cwd packages/bridge-core test -- factory-abi
 
   noir:

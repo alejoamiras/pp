@@ -15,8 +15,5 @@ while read -r name; do
 	}
 done <<'CASES'
 test_gas_createPortal_freshToken
-test_gas_depositToAztecPublic
-test_gas_depositToAztecPrivate
-test_gas_withdraw
 CASES
 exit "$fail"
