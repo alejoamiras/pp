@@ -6,7 +6,7 @@ import { POOL_VAULT_ERRORS_ABI, POOL_VAULT_EVENTS_ABI, POOL_VAULT_TRANSACT_ABI }
 import { SECRET_DERIVATION_PURPOSE } from "../../src/client/derivation.ts"
 import { checkout } from "../../src/env/checkout.ts"
 
-type AbiItem = { type: string; name?: string; inputs?: unknown[] }
+type AbiItem = { type: string; name?: string; inputs?: readonly unknown[] }
 /** Drops what viem ignores: Solidity internal types and the default `anonymous: false`. */
 const stripInternalTypes = (v: unknown): unknown =>
 	Array.isArray(v)
@@ -19,13 +19,19 @@ const stripInternalTypes = (v: unknown): unknown =>
 				)
 			: v
 
-test("our PoolVault ABI matches the compiled contract", () => {
+test("our PoolVault ABI matches the compiled contract, and covers all of its errors", () => {
 	const artifact = join(checkout().contracts, "out/PoolVault.sol/PoolVault.json")
 	const compiled = (JSON.parse(readFileSync(artifact, "utf8")) as { abi: AbiItem[] }).abi
 	for (const ours of [...POOL_VAULT_TRANSACT_ABI, ...POOL_VAULT_ERRORS_ABI, ...POOL_VAULT_EVENTS_ABI]) {
 		const theirs = compiled.find((i) => i.type === ours.type && i.name === ours.name)
 		expect(stripInternalTypes(theirs)).toEqual(stripInternalTypes(ours))
 	}
+	const names = (items: readonly AbiItem[]) =>
+		items
+			.filter((i) => i.type === "error")
+			.map((i) => i.name)
+			.sort()
+	expect(names(POOL_VAULT_ERRORS_ABI)).toEqual(names(compiled))
 })
 
 test("every SDK value the client uses is exported at runtime, not only in the typings", () => {
