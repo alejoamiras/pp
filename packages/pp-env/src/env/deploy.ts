@@ -122,7 +122,7 @@ export async function deployFixture(
 	const hash = await wallet.deployContract({ abi, bytecode: bytecode.object, args, account: wallet.account, chain: wallet.chain })
 	const receipt = await client.waitForTransactionReceipt({ hash })
 	if (receipt.status !== "success" || !receipt.contractAddress) throw new Error(`${name} deployment failed`)
-	return receipt.contractAddress
+	return getAddress(receipt.contractAddress)
 }
 
 const SET_ASSET_ABI = [
@@ -146,6 +146,38 @@ const SET_ASSET_ABI = [
 		outputs: [],
 	},
 ] as const
+
+const MINT_ABI = [
+	{
+		type: "function",
+		name: "mint",
+		stateMutability: "nonpayable",
+		inputs: [
+			{ name: "to", type: "address" },
+			{ name: "amount", type: "uint256" },
+		],
+		outputs: [],
+	},
+] as const
+
+export async function mintTestToken(
+	wallet: WalletClient,
+	client: PublicClient,
+	token: Address,
+	to: Address,
+	amount: bigint,
+): Promise<void> {
+	if (!wallet.account) throw new Error("wallet has no account")
+	const hash = await wallet.writeContract({
+		address: token,
+		abi: MINT_ABI,
+		functionName: "mint",
+		args: [to, amount],
+		account: wallet.account,
+		chain: wallet.chain,
+	})
+	if ((await client.waitForTransactionReceipt({ hash })).status !== "success") throw new Error("mint failed")
+}
 
 export async function enableAsset(wallet: WalletClient, client: PublicClient, entrypoint: Address, asset: Address): Promise<void> {
 	if (!wallet.account) throw new Error("wallet has no account")

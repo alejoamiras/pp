@@ -3,15 +3,17 @@ import { mkdir, rm, rmdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { EvmDeploymentSnapshotSource, startEvmMockAsp } from "@ppv2/mock-asp/evm"
-import { type Address, createPublicClient, createWalletClient, http, type PublicClient, toHex } from "viem"
+import { type Address, createPublicClient, createWalletClient, type Hex, http, type PublicClient, toHex } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { foundry } from "viem/chains"
+import { type ClientConfig, createPoolUser, type LocalWallet, type PoolUser, type PreparedSpend } from "../client/pool.ts"
 import { checkout } from "./checkout.ts"
-import { deployFixture, deployPool, enableAsset, ensureFixtures, installPoseidon, type PoolDeployment } from "./deploy.ts"
+import { deployFixture, deployPool, enableAsset, ensureFixtures, installPoseidon, mintTestToken, type PoolDeployment } from "./deploy.ts"
 import { verifyFetched } from "./fetch/index.ts"
 import { anvilKey, attachAnvil, CHAIN_ID, DEPLOYER_INDEX, startAnvil } from "./harness/anvil.ts"
 import { claimPort, releasePorts } from "./harness/ports.ts"
 import { CleanupStack } from "./harness/process.ts"
+import { submitViaStub } from "./stub.ts"
 
 export type { PoolDeployment } from "./deploy.ts"
 
@@ -36,8 +38,16 @@ export interface PoolEnv {
 		/** Adds the label's leaf, publishes the new root on chain, and returns that root. */
 		approveLabel(label: bigint): Promise<bigint>
 	}
+	/** What the user side needs to reach this pool. */
+	clientConfig: ClientConfig
+	/** A pool user on anvil account `accountIndex`; see `createPoolUser` for `signature`. */
+	createUser(o: { accountIndex: number; signature?: Hex }): Promise<PoolUser>
+	/** Mints the test token, which has an open mint. */
+	mint(to: Address, amount: bigint): Promise<void>
 	/** Deploys a StubProcessor bound to this pool and asset. */
 	deployStub(): Promise<Address>
+	/** Submits a prepared spend through `stub` from anvil account `fromIndex`. */
+	submitViaStub(stub: Address, spend: PreparedSpend, fromIndex: number): Promise<Hex>
 	/** Idempotent; also runs on SIGINT and SIGTERM. */
 	stop(): Promise<void>
 }
@@ -45,7 +55,7 @@ export interface PoolEnv {
 export const RUNS_DIR = join(homedir(), ".cache/pp/pp-env/runs")
 const RUN_ID = /^[a-z0-9][a-z0-9-]{0,63}$/
 
-export function localClients(rpcUrl: string, key: `0x${string}`) {
+export function localClients(rpcUrl: string, key: Hex): { client: PublicClient; wallet: LocalWallet } {
 	const chain = { ...foundry, rpcUrls: { default: { http: [rpcUrl] } } }
 	const transport = http(rpcUrl)
 	const client = createPublicClient({ chain, transport, pollingInterval: 100 }) as PublicClient
@@ -109,6 +119,15 @@ export async function startPoolEnv(o: StartPoolEnvOptions = {}): Promise<PoolEnv
 			port: await claimPort(runId, "pp-env-asp"),
 		})
 		cleanup.push(() => stopAsp(asp))
+		const { pool, entrypoint, keystore, aspRegistry, deployBlock } = deployment
+		const clientConfig: ClientConfig = {
+			rpcUrl,
+			chainId: CHAIN_ID,
+			deployment: { pool, entrypoint, keystore, aspRegistry, deployBlock },
+			aspUrl: asp.url,
+			circuitsDir: co.circuits,
+		}
+		const walletAt = (index: number) => localClients(rpcUrl, anvilKey(index)).wallet
 		return {
 			runId,
 			rpcUrl,
@@ -120,7 +139,11 @@ export async function startPoolEnv(o: StartPoolEnvOptions = {}): Promise<PoolEnv
 				url: asp.url,
 				approveLabel: async (label) => BigInt((await asp.approveLabel(toHex(label))).root),
 			},
+			clientConfig,
+			createUser: ({ accountIndex, signature }) => createPoolUser(clientConfig, { wallet: walletAt(accountIndex), signature }),
+			mint: (to, amount) => mintTestToken(wallet, client, asset, to, amount),
 			deployStub: () => deployFixture(wallet, client, "StubProcessor", [deployment.pool, asset]),
+			submitViaStub: (stub, spend, fromIndex) => submitViaStub(walletAt(fromIndex), client, stub, spend),
 			stop: () => cleanup.run(),
 		}
 	} catch (err) {
