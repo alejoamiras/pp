@@ -27,7 +27,8 @@
 	"packageManager": "bun@1.4.2",
 	"license": "Apache-2.0",
 	"overrides": {
-		"vite": "^8.0.0"
+		"vite": "^8.0.0",
+		"ws": "8.21.0"
 	},
 	"patchedDependencies": {
 		"@aztec-foundation/noir-acvm_js@6.0.0": "patches/@aztec-foundation%2Fnoir-acvm_js@6.0.0.patch",
