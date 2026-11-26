@@ -135,16 +135,18 @@ async function timed<T>(timings: Record<string, number>, key: string, fn: () => 
 const PNPM_FILTERS = ["@privacy-pools-v2/evm-sdk...", "@privacy-pools-v2/mock-asp...", "@privacy-pools-v2/contracts"]
 const SDK_PACKAGES = ["@privacy-pools-v2/core-sdk", "@privacy-pools-v2/evm-sdk", "@privacy-pools-v2/mock-asp"]
 
-async function stage(staging: string, log: Log): Promise<void> {
+type Staged = { lfs: LfsRecord[]; urlPinnedDeps: Record<string, string>; timings: Record<string, number> }
+
+/** Everything that does not depend on the tree's final path: sources, LFS objects, pnpm install, SDK builds. */
+async function stageSources(staging: string, log: Log): Promise<Staged> {
 	const timings: Record<string, number> = {}
 	const src = join(staging, "src")
-	const contracts = join(src, CONTRACTS_DIR)
 	const tarball = join(staging, "src.tar.gz")
 	await timed(timings, "tarball", () => downloadTarball(tarball))
 	await mkdir(src)
 	await run(["tar", "xzf", tarball, "-C", src, "--strip-components=1", "--no-same-owner"])
 	const lfs = await timed(timings, "lfs", () => hydrateLfs(src, log))
-	await disableFfi(contracts)
+	await disableFfi(join(src, CONTRACTS_DIR))
 	const pnpmEnv = cleanEnv({ CI: "1", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" })
 	const filters = PNPM_FILTERS.flatMap((f) => ["--filter", f])
 	await timed(timings, "pnpmInstall", () =>
@@ -156,12 +158,23 @@ async function stage(staging: string, log: Log): Promise<void> {
 	const sdkFilters = SDK_PACKAGES.flatMap((p) => ["--filter", p])
 	await timed(timings, "sdkBuild", () => run(["pnpm", "-r", ...sdkFilters, "run", "build"], { cwd: src, env: pnpmEnv }))
 	log("sdk: built")
+	return { lfs, urlPinnedDeps, timings }
+}
+
+/**
+ * Forge's cache records the project's absolute paths, so the contracts are built at their final
+ * location: a build moved afterwards recompiles from scratch on first use and rewrites the shared tree.
+ */
+async function buildInPlace(target: string, staged: Staged, log: Log): Promise<void> {
+	const { lfs, urlPinnedDeps, timings } = staged
+	const src = join(target, "src")
+	const contracts = join(src, CONTRACTS_DIR)
 	await assertFfiDisabled(contracts)
 	const forgeBuild = [forgeBin(), "build", "--skip", "test", "--root", contracts, ...forgeLibraryFlags()]
 	await timed(timings, "forgeBuild", () => run(forgeBuild, { env: forgeEnv() }))
 	log(`forge: built (${timings.forgeBuild} ms)`)
 	const files = await manifest(src)
-	await writeFile(join(staging, "manifest.json"), `${JSON.stringify(files, null, "\t")}\n`)
+	await writeFile(join(target, "manifest.json"), `${JSON.stringify(files, null, "\t")}\n`)
 	const bytes = Object.fromEntries(await Promise.all(lfs.map(async (r) => [r.path, (await stat(join(src, r.path))).size] as const)))
 	const ready: ReadyRecord = {
 		recipe: FETCH_RECIPE,
@@ -173,7 +186,10 @@ async function stage(staging: string, log: Log): Promise<void> {
 		timingsMs: timings,
 		bytes,
 	}
-	await writeFile(join(staging, "ready.json"), `${JSON.stringify(ready, null, "\t")}\n`)
+	// ready.json is the completion marker, so it appears atomically and last.
+	const tmp = join(target, `ready.json.${process.pid}`)
+	await writeFile(tmp, `${JSON.stringify(ready, null, "\t")}\n`)
+	await rename(tmp, join(target, "ready.json"))
 }
 
 /** Re-checks a published tree against its pins; any drift throws. */
@@ -195,23 +211,34 @@ export async function verifyFetched(target: string): Promise<ReadyRecord> {
 	return ready
 }
 
-/** Fetches into a private staging directory and publishes it with one rename; a concurrent winner is reused. */
+function incomplete(target: string): Error {
+	return new Error(
+		`${target} has no ready.json: another fetch is building it, or one crashed. If none is running, delete it and fetch again.`,
+	)
+}
+
+/**
+ * Stages sources privately, claims the target with one rename, builds the contracts there, and
+ * writes ready.json last. Only a tree with ready.json is ever used.
+ */
 export async function fetchPpv2(log: Log = () => {}): Promise<{ target: string; fetched: boolean }> {
 	const target = targetDir()
 	if (existsSync(join(target, "ready.json"))) {
 		await verifyFetched(target)
 		return { target, fetched: false }
 	}
+	if (existsSync(target)) throw incomplete(target)
 	await mkdir(dirname(target), { recursive: true })
 	const staging = await mkdtemp(join(cacheParent(), ".staging-"))
+	let staged: Staged
 	try {
-		await stage(staging, log)
+		staged = await stageSources(staging, log)
 		await rename(staging, target)
 	} catch (err) {
 		await rm(staging, { recursive: true, force: true })
-		if (!existsSync(join(target, "ready.json"))) throw err
-		log("another fetch published first; reusing it")
+		throw existsSync(target) ? incomplete(target) : err
 	}
+	await buildInPlace(target, staged, log)
 	await verifyFetched(target)
 	return { target, fetched: true }
 }
