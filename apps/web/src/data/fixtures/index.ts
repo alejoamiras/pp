@@ -1,36 +1,47 @@
 /**
- * The fixture world behind `#data`. Its clock is chain time, never the browser's: it moves only when
- * a test advances it, as a local chain moves only with blocks.
+ * The fixture world behind `#data`: every port over one in-memory world whose clock is chain time,
+ * moving only when a test advances it, as a local chain moves only with blocks.
  */
+import { target } from "../../target"
+import { stageManifest } from "../capabilities"
 import type { DataSource } from "../source"
 import { loadRealConnector } from "../wallet/load"
+import { fixtureAllowList } from "./allow-list"
+import { fixtureAztec } from "./aztec"
 import { fixtureConnector } from "./connector"
+import { createControl } from "./control"
+import { fixtureExits } from "./exits"
+import { fixtureL1 } from "./l1"
+import { fixtureSessions } from "./session"
+import { createWorld, type KeyValue } from "./world"
 
-/** 2026-01-01T00:00:00Z, an arbitrary genesis for both chains. */
-const GENESIS = 1_767_225_600n
-const L1_BLOCK_SECONDS = 12n
+export type { FixtureControl } from "./control"
 
-const world = { l1Blocks: 0n }
-const now = () => GENESIS + world.l1Blocks * L1_BLOCK_SECONDS
-
-export interface FixtureControl {
-	/** Moves L1 by `blocks` blocks; chain time moves with it. */
-	advance(blocks: number): void
-	state(): { l1Time: string }
+/** Reading `sessionStorage` itself throws where site data is blocked. */
+function sessionStore(): KeyValue | null {
+	try {
+		return typeof sessionStorage === "undefined" ? null : sessionStorage
+	} catch {
+		return null
+	}
 }
 
-const control: FixtureControl = {
-	advance(blocks) {
-		if (!Number.isSafeInteger(blocks) || blocks < 0) throw new Error("__ppFixtures.advance: blocks must be a non-negative integer")
-		world.l1Blocks += BigInt(blocks)
-	},
-	state: () => ({ l1Time: now().toString() }),
-}
+const world = createWorld({ chainId: target.l1ChainId, storage: sessionStore() })
+const l1 = fixtureL1(world)
+const manifest = stageManifest(world.deployment.stage, world.deployment)
+const wallet = fixtureConnector(world, manifest)
 
-if (typeof window !== "undefined") window.__ppFixtures = control
+if (typeof window !== "undefined") window.__ppFixtures = createControl(world, wallet)
 
 export const source: DataSource = {
 	mode: "fixtures",
-	clock: { aztecNow: async () => now(), l1Now: async () => now() },
-	wallet: () => (__PP_CONNECTOR__ === "real" ? loadRealConnector() : Promise.resolve(fixtureConnector())),
+	deployment: world.deployment,
+	clock: world.clock,
+	timer: world.timer,
+	l1,
+	sessions: fixtureSessions(world, l1.provider),
+	aztec: fixtureAztec(world),
+	exits: fixtureExits(world),
+	allowList: fixtureAllowList(world),
+	wallet: () => (__PP_CONNECTOR__ === "real" ? loadRealConnector(manifest) : Promise.resolve(wallet)),
 }
