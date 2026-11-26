@@ -118,6 +118,7 @@ export {
 export type {
 	CircuitArtifactCIDs,
 	Hex,
+	ICacheStore,
 	ICircuitArtifacts,
 	IGroth16Prover,
 	IHTTPClient,

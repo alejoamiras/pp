@@ -7,6 +7,7 @@ import {
 	IpfsCircuitArtifacts,
 	LocalCircuitArtifacts,
 } from "../sdk.ts"
+import { cacheStorageStore, sha256Hex } from "./cache-store.ts"
 
 export type ArtifactSource = { kind: "gateway"; urls: readonly string[] } | { kind: "dir"; path: string }
 
@@ -38,12 +39,6 @@ type Loaded = Record<ArtifactFile, Uint8Array>
 
 const mismatch = (circuit: string, file: ArtifactFile, why: string) =>
 	new PoolClientError("ARTIFACT_MISMATCH", `${circuit} ${file}: ${why}`, { circuit, file })
-
-const hex = (b: ArrayBuffer) => Array.from(new Uint8Array(b), (x) => x.toString(16).padStart(2, "0")).join("")
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-	return hex(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>))
-}
 
 async function readCapped(body: ReadableStream<Uint8Array>, cap: number): Promise<Uint8Array> {
 	const out = new Uint8Array(cap)
@@ -94,18 +89,27 @@ function boundedHttp(capOf: (cid: string) => number | undefined, deadlineMs: num
 function sourceLoader(src: ArtifactSource, circuits: Readonly<Record<string, PinnedCircuit>>, opts: ArtifactOptions): ICircuitArtifacts {
 	if (src.kind === "dir") return new LocalCircuitArtifacts({ baseDir: src.path })
 	const caps = new Map<string, number>()
-	for (const pin of Object.values(circuits)) for (const f of FILES) caps.set(pin[f], pin.sizes[f])
+	const digests = new Map<string, string | undefined>()
+	for (const pin of Object.values(circuits))
+		for (const f of FILES) {
+			caps.set(pin[f], pin.sizes[f])
+			digests.set(pin[f], pin[`${f}Sha256`]?.toLowerCase().replace(/^0x/, ""))
+		}
 	const manifest = Object.fromEntries(Object.entries(circuits).map(([name, { sizes: _, ...cids }]) => [name, cids]))
-	return new IpfsCircuitArtifacts({
-		ipfsGatewayUrls: [...src.urls],
-		circuitManifest: manifest,
-		httpClient: boundedHttp((cid) => caps.get(cid), opts.deadlineMs ?? 120_000, opts.fetch ?? fetch),
-	})
+	const cacheStore = cacheStorageStore((cid) => digests.get(cid))
+	return new IpfsCircuitArtifacts(
+		{
+			ipfsGatewayUrls: [...src.urls],
+			circuitManifest: manifest,
+			httpClient: boundedHttp((cid) => caps.get(cid), opts.deadlineMs ?? 120_000, opts.fetch ?? fetch),
+		},
+		cacheStore ? { cacheStore } : undefined,
+	)
 }
 
 /**
  * Circuit files checked against the pinned manifest in every runtime. The gateway loader verifies
- * digests itself; files from a directory are hashed here.
+ * digests itself and, in a browser, keeps files across page loads; files from a directory are hashed here.
  */
 export function createArtifacts(src: ArtifactSource, opts: ArtifactOptions = {}): VerifiedArtifacts {
 	const circuits = opts.circuits ?? PINNED_CIRCUITS
