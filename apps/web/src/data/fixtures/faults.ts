@@ -4,7 +4,8 @@
  * - `preflight`, `prove`, `submit`: throw the code before anything is sent (`submit` with `UNCERTAIN`
  *   also marks the note, so later submits need `acceptUncertain`).
  * - `send`: at the Ethereum send, `REVERTED` (mined and reverted, note unspent) or `REJECTED` (the
- *   wallet says no).
+ *   wallet says no); `hangNext("send")` is a wallet that never answers, leaving the journal record
+ *   without a transaction hash.
  * - `claim` and the token calls: `REJECTED` (the wallet says no), `REVERTED` or `DROPPED`.
  * - `open`, `settle`: throw the code.
  */

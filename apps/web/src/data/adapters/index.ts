@@ -44,7 +44,7 @@ const aztec: AztecPort = {
 	ragequit: unavailable("AztecPort.ragequit"),
 	exitPublic: unavailable("AztecPort.exitPublic"),
 }
-const sessions: SessionPort = { open: unavailable("SessionPort.open") }
+const sessions: SessionPort = { open: unavailable("SessionPort.open"), forget: unavailable("SessionPort.forget") }
 const exits: ExitPort = { tickets: unavailable("ExitPort.tickets"), settle: unavailable("ExitPort.settle") }
 const allowList: AllowListPort = {
 	current: unavailable("AllowListPort.current"),

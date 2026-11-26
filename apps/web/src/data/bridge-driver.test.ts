@@ -79,6 +79,7 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 	const session: Session = {
 		owner: OWNER,
 		notes: async () => [NOTE],
+		nullifierOf: async (c) => c + 1n,
 		preflight: async () => pass("preflight"),
 		warmUp: async () => {},
 		prove: vi.fn(async () => {

@@ -9,13 +9,14 @@ import { loadRealConnector } from "../wallet/load"
 import { fixtureAllowList } from "./allow-list"
 import { fixtureAztec } from "./aztec"
 import { fixtureConnector } from "./connector"
-import { createControl } from "./control"
+import { createControl, type FixtureControl } from "./control"
 import { fixtureExits } from "./exits"
 import { fixtureL1 } from "./l1"
 import { fixtureSessions } from "./session"
 import { createWorld, type KeyValue } from "./world"
 
 export type { FixtureControl } from "./control"
+export type { KeyValue } from "./world"
 
 /** Reading `sessionStorage` itself throws where site data is blocked. */
 function sessionStore(): KeyValue | null {
@@ -26,22 +27,29 @@ function sessionStore(): KeyValue | null {
 	}
 }
 
-const world = createWorld({ chainId: target.l1ChainId, storage: sessionStore() })
-const l1 = fixtureL1(world)
-const manifest = stageManifest(world.deployment.stage, world.deployment)
-const wallet = fixtureConnector(world, manifest)
-
-if (typeof window !== "undefined") window.__ppFixtures = createControl(world, wallet)
-
-export const source: DataSource = {
-	mode: "fixtures",
-	deployment: world.deployment,
-	clock: world.clock,
-	timer: world.timer,
-	l1,
-	sessions: fixtureSessions(world, l1.provider),
-	aztec: fixtureAztec(world),
-	exits: fixtureExits(world),
-	allowList: fixtureAllowList(world),
-	wallet: () => (__PP_CONNECTOR__ === "real" ? loadRealConnector(manifest) : Promise.resolve(wallet)),
+/** One world over `storage` (a reload is a second call over the same store) and the control that drives it. */
+export function createFixtureSource(storage: KeyValue | null): { source: DataSource; control: FixtureControl } {
+	const world = createWorld({ chainId: target.l1ChainId, storage })
+	const l1 = fixtureL1(world)
+	const manifest = stageManifest(world.deployment.stage, world.deployment)
+	const wallet = fixtureConnector(world, manifest)
+	const source: DataSource = {
+		mode: "fixtures",
+		deployment: world.deployment,
+		clock: world.clock,
+		timer: world.timer,
+		l1,
+		sessions: fixtureSessions(world, l1.provider),
+		aztec: fixtureAztec(world),
+		exits: fixtureExits(world),
+		allowList: fixtureAllowList(world),
+		wallet: () => (__PP_CONNECTOR__ === "real" ? loadRealConnector(manifest) : Promise.resolve(wallet)),
+	}
+	return { source, control: createControl(world, wallet) }
 }
+
+const page = createFixtureSource(sessionStore())
+
+if (typeof window !== "undefined") window.__ppFixtures = page.control
+
+export const source: DataSource = page.source

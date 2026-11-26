@@ -389,6 +389,8 @@ export function createBridgeDriver(deps: DriverDeps) {
 			submit(st, input, dispatch, signal, flags),
 		follow: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => follow(st, record, dispatch, signal),
 		claim: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => claim(st, record, dispatch, signal),
+		/** Closes `note` for this page: reconciliation found a record of it that may be in flight. */
+		hold: (note: bigint, code: UiCode) => void st.closed.set(note, code),
 	}
 }
 

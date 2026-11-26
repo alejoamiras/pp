@@ -71,6 +71,11 @@ export interface WalletPort {
 export interface SessionPort {
 	/** Asks `sign` for the secret-derivation signature, which stays inside the session. */
 	open(a: { owner: Address; sign(td: TypedDataDefinition): Promise<Hex> }): Promise<Session>
+	/**
+	 * Deletes every bridge record this device keeps. A bridge already mined stays recoverable from the
+	 * signature and the chain (`recover`); one not yet mined loses its "may be in flight" hold.
+	 */
+	forget(): Promise<void>
 }
 
 declare const provedBrand: unique symbol
@@ -99,6 +104,8 @@ export interface ClaimHooks {
 export interface Session {
 	readonly owner: Address
 	notes(): Promise<PoolNoteView[]>
+	/** The nullifier spending `commitment` would publish (the pool client's `nullifierOf`); ties a record to its note. */
+	nullifierOf(commitment: bigint): Promise<bigint>
 	/** Binds the client to `recipient` for 10 minutes; one send consumes it. */
 	preflight(recipient: AztecAddress): Promise<void>
 	/** Derives what the first proof needs once, so Submit does not wait on it. */

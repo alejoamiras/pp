@@ -70,8 +70,11 @@ export interface FixtureBridge {
 	label: bigint
 	amount: bigint
 	l1TxHash?: `0x${string}`
-	state: "mined" | "reverted" | "claimed"
+	/** `pending`: journalled before the Ethereum send and not answered yet; it lives on this device only. */
+	state: "pending" | "mined" | "reverted" | "claimed"
 	minedAtAztecBlock: number
+	/** Dropped from this device's journal; still on chain for `recover` once mined. */
+	forgotten?: true
 }
 export interface FixtureExit {
 	deployment: string

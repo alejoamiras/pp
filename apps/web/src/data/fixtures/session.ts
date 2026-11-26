@@ -1,8 +1,9 @@
 /**
  * The fixture bridge session. It keeps the rules the driver depends on (a preflight bound to its
  * recipient for 10 minutes and consumed by a send, at most two internal re-proofs, `UNCERTAIN` until
- * `acceptUncertain`, the send going through the guarded wallet so `handoff` runs first), and holds the
- * signature it was opened with in its closure only.
+ * `acceptUncertain`, the send going through the guarded wallet so `handoff` runs first, a journal record
+ * written before the send and restored on a refusal), and holds the signature it was opened with in
+ * its closure only.
  */
 import { type Address, type Hex, isAddressEqual, type TypedDataDefinition } from "viem"
 import type { AztecAddress, BridgeRecordView, PoolNoteView } from "../a7"
@@ -10,7 +11,7 @@ import { BridgeFailure, ProviderError, type UiCode } from "../errors"
 import { parseAztecAddress } from "../parse"
 import type { Attempt, ClaimHooks, Proved, Sent, Session, SessionPort, SubmitHooks } from "../ports"
 import { type Eip1193Provider, guardedProvider } from "../wallet/guarded-provider"
-import { ACCOUNTS, type FixtureBridge } from "./seed"
+import { ACCOUNTS, type FixtureBridge, type FixtureNote } from "./seed"
 import type { World } from "./world"
 
 const PREFLIGHT_MS = 10 * 60_000
@@ -23,6 +24,7 @@ const fail = (code: string): never => {
 
 /** A different pairing per note, so ids and nullifiers never collide. */
 export const nullifierOf = (commitment: bigint): bigint => commitment * 7919n + 104_729n
+const idOf = (note: bigint) => `fx-${nullifierOf(note).toString(16)}`
 
 function typedData(owner: Address, chainId: number): TypedDataDefinition {
 	return {
@@ -36,6 +38,7 @@ function typedData(owner: Address, chainId: number): TypedDataDefinition {
 function stepOf(w: World, b: FixtureBridge): BridgeRecordView["step"] {
 	if (b.state === "reverted") return { error: "REVERTED" }
 	if (b.state === "claimed") return "claimed"
+	if (b.state === "pending") return "submitted"
 	return w.aztecBlock() > b.minedAtAztecBlock ? "claimable" : "mined"
 }
 
@@ -50,11 +53,12 @@ function view(w: World, b: FixtureBridge): BridgeRecordView {
 	}
 }
 
-/** The wallet behind the guard; an armed `send` fault answers here, after the guard let it through. */
-function sendingWallet(inner: Eip1193Provider, fault: string | null): Eip1193Provider {
+/** The wallet behind the guard; an armed `send` fault or hang answers here, after the guard let it through. */
+function sendingWallet(inner: Eip1193Provider, fault: string | null, hang: boolean): Eip1193Provider {
 	return {
 		async request(args) {
 			if (fault === "REJECTED") throw new ProviderError(4001, "User rejected the request.")
+			if (hang) return never()
 			return inner.request(args)
 		},
 	}
@@ -73,32 +77,32 @@ function upsertBridge(w: World, b: FixtureBridge): void {
 	})
 }
 
-function mine(c: Ctx, a: Attempt, l1TxHash: Hex): FixtureBridge {
-	const { w } = c
-	const note = w.s.notes.find((n) => n.commitment === a.note)
-	if (note?.status !== "approved" || note.value < a.amount) return fail("CONSUMED_ELSEWHERE")
-	const nullifier = nullifierOf(a.note)
-	const b: FixtureBridge = {
-		id: `fx-${nullifier.toString(16)}`,
+function journalled(c: Ctx, a: Attempt, note: FixtureNote, state: FixtureBridge["state"], l1TxHash?: Hex): FixtureBridge {
+	return {
+		id: idOf(a.note),
 		owner: c.owner,
 		note: a.note,
-		nullifier,
+		nullifier: nullifierOf(a.note),
 		recipient: a.recipient,
 		label: note.label,
 		amount: a.amount,
-		l1TxHash,
-		state: "mined",
-		minedAtAztecBlock: w.aztecBlock(),
+		...(l1TxHash ? { l1TxHash } : {}),
+		state,
+		minedAtAztecBlock: c.w.aztecBlock(),
 	}
-	const changeCommitment = BigInt(w.nextHex(31))
-	w.update((s) => {
+}
+
+function mine(c: Ctx, a: Attempt, note: FixtureNote, l1TxHash: Hex): FixtureBridge {
+	const b = journalled(c, a, note, "mined", l1TxHash)
+	const changeCommitment = BigInt(c.w.nextHex(31))
+	c.w.update((s) => {
 		s.l1Block++
 		note.status = "spent"
 		// The change keeps the label and its approval; a whole-note bridge leaves it at 0.
 		s.notes.push({ commitment: changeCommitment, label: note.label, value: note.value - a.amount, status: "approved" })
 		s.uncertain = s.uncertain.filter((n) => n !== a.note)
 	})
-	upsertBridge(w, b)
+	upsertBridge(c.w, b)
 	return b
 }
 
@@ -127,32 +131,28 @@ async function submit(c: Ctx, a: Attempt, on: SubmitHooks, o?: { acceptUncertain
 	}
 	if ((c.preflights.get(a.recipient) ?? -1) < w.timer.now()) fail("PREFLIGHT_REQUIRED")
 	c.preflights.delete(a.recipient)
+	const note = w.s.notes.find((n) => n.commitment === a.note)
+	if (note?.status !== "approved" || note.value < a.amount) return fail("CONSUMED_ELSEWHERE")
 	const sendFault = w.takeFault("send")
-	const wallet = guardedProvider(sendingWallet(c.provider, sendFault), on.handoff)
-	const hash = (await wallet.request({ method: "eth_sendTransaction", params: [{ from: a.sender, to: w.deployment.portal }] })) as Hex
+	const wallet = guardedProvider(sendingWallet(c.provider, sendFault, w.takeHang("send")), on.handoff)
+	// Journalled before the wallet is asked, so a reload mid-send still knows a bridge may be in flight.
+	upsertBridge(w, journalled(c, a, note, "pending"))
+	let hash: Hex
+	try {
+		hash = (await wallet.request({ method: "eth_sendTransaction", params: [{ from: a.sender, to: w.deployment.portal }] })) as Hex
+	} catch (err) {
+		// Every refusal here comes before broadcast, so the record goes.
+		w.update((s) => {
+			s.bridges = s.bridges.filter((b) => b.id !== idOf(a.note))
+		})
+		throw err
+	}
 	if (sendFault === "REVERTED") {
-		upsertBridge(w, revertedBridge(c, a, hash))
+		upsertBridge(w, journalled(c, a, note, "reverted", hash))
 		w.update((s) => void s.l1Block++)
 		throw new BridgeFailure("REVERTED", { l1TxHash: hash, stale: null })
 	}
-	return view(w, mine(c, a, hash))
-}
-
-function revertedBridge(c: Ctx, a: Attempt, l1TxHash: Hex): FixtureBridge {
-	const nullifier = nullifierOf(a.note)
-	const label = c.w.s.notes.find((n) => n.commitment === a.note)?.label ?? 0n
-	return {
-		id: `fx-${nullifier.toString(16)}`,
-		owner: c.owner,
-		note: a.note,
-		nullifier,
-		recipient: a.recipient,
-		label,
-		amount: a.amount,
-		l1TxHash,
-		state: "reverted",
-		minedAtAztecBlock: c.w.aztecBlock(),
-	}
+	return view(w, mine(c, a, note, hash))
 }
 
 async function claim(c: Ctx, id: string, on: ClaimHooks): Promise<Sent> {
@@ -175,6 +175,16 @@ async function claim(c: Ctx, id: string, on: ClaimHooks): Promise<Sent> {
 	return { txHash, status: "success" }
 }
 
+function waitClaimable(c: Ctx, id: string, signal: AbortSignal): Promise<void> {
+	const { w } = c
+	return new Promise<void>((resolve, reject) => {
+		const b = w.s.bridges.find((x) => x.id === id && x.owner === c.owner && (x.state === "mined" || x.state === "claimed"))
+		if (!b) return reject(new BridgeFailure("NOT_CLAIMABLE"))
+		signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+		void w.until(() => stepOf(w, b) !== "mined", signal).then(resolve)
+	})
+}
+
 function notes(c: Ctx): PoolNoteView[] {
 	if (!isAddressEqual(c.owner, ACCOUNTS.owner)) return []
 	return c.w.s.notes.map((n) => ({ ...n, asset: "0x00000000000000000000000000000000000a55e7" }))
@@ -194,6 +204,10 @@ function makeSession(c: Ctx, signature: Hex): Session {
 		async notes() {
 			live()
 			return notes(c)
+		},
+		async nullifierOf(commitment) {
+			live()
+			return nullifierOf(commitment)
 		},
 		async preflight(recipient) {
 			live()
@@ -227,20 +241,14 @@ function makeSession(c: Ctx, signature: Hex): Session {
 			if (!proofs.has(p)) fail("SPEND_MISMATCH")
 			return submit(c, a, on, o)
 		},
-		waitClaimable: (id, signal) =>
-			new Promise<void>((resolve, reject) => {
-				const b = w.s.bridges.find((x) => x.id === id && x.owner === c.owner && x.state !== "reverted")
-				if (!b) return reject(new BridgeFailure("NOT_CLAIMABLE"))
-				signal.addEventListener("abort", () => reject(signal.reason), { once: true })
-				void w.until(() => stepOf(w, b) !== "mined", signal).then(resolve)
-			}),
+		waitClaimable: (id, signal) => waitClaimable(c, id, signal),
 		async claim(id, on) {
 			live()
 			return claim(c, id, on)
 		},
 		async records() {
 			live()
-			return w.s.bridges.filter((b) => b.owner === c.owner).map((b) => view(w, b))
+			return w.s.bridges.filter((b) => b.owner === c.owner && !b.forgotten).map((b) => view(w, b))
 		},
 		async recover(recipient) {
 			live()
@@ -260,6 +268,12 @@ export function fixtureSessions(w: World, provider: Eip1193Provider): SessionPor
 			const signature = await sign(typedData(owner, w.s.chainId))
 			if (!/^0x[0-9a-fA-F]{128,130}$/.test(signature)) fail("FORGED_SESSION")
 			return makeSession({ w, provider, owner, preflights: new Map() }, signature)
+		},
+		async forget() {
+			// A pending record exists only in this device's journal; the rest stay on chain for `recover`.
+			w.update((s) => {
+				s.bridges = s.bridges.filter((b) => b.state !== "pending").map((b) => ({ ...b, forgotten: true }))
+			})
 		},
 	}
 }
