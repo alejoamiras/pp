@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { existsSync } from "node:fs"
+import { existsSync, readdirSync } from "node:fs"
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { parseCeremonyTable } from "./ceremony.ts"
 import { sha256Hex, treeDigest } from "./digest.ts"
-import { publish } from "./index.ts"
+import { assertBuiltHere, publish } from "./index.ts"
 import { downloadVerified, type LfsPointer, parsePointer, requestBatch } from "./lfs.ts"
 
 const BODY = new TextEncoder().encode("verifier bytes")
@@ -102,7 +102,26 @@ test("ceremony table parses rows and refuses duplicates", () => {
 	expect(() => parseCeremonyTable(`${row("deposit")}\n${row("deposit")}`)).toThrow("twice")
 })
 
-const scratch = () => mkdtemp(join(homedir(), ".cache/pp/pp-env/fetch-test-"))
+const scratch = async () => {
+	const parent = join(homedir(), ".cache/pp/pp-env")
+	await mkdir(parent, { recursive: true })
+	return mkdtemp(join(parent, "fetch-test-"))
+}
+
+test("a tree whose Forge cache names paths outside it is refused", async () => {
+	const src = await scratch()
+	try {
+		const cache = join(src, "packages/contracts/cache")
+		await mkdir(cache, { recursive: true })
+		const write = (lib: string) => writeFile(join(cache, "solidity-files-cache.json"), JSON.stringify({ libraries: { [lib]: {} } }))
+		await write(join(src, "packages/contracts/node_modules/p/PoseidonT3.sol"))
+		await assertBuiltHere(src)
+		await write("/elsewhere/packages/contracts/node_modules/p/PoseidonT3.sol")
+		await expect(assertBuiltHere(src)).rejects.toThrow("built at another path")
+	} finally {
+		await rm(src, { recursive: true, force: true })
+	}
+})
 
 describe("publishing a staged tree", () => {
 	const staged = async () => {
@@ -115,7 +134,7 @@ describe("publishing a staged tree", () => {
 		const { dir, staging, target } = await staged()
 		try {
 			await expect(publish(staging, target, () => Promise.reject(new Error("forge failed")))).rejects.toThrow("forge failed")
-			expect(existsSync(target)).toBe(false)
+			expect(readdirSync(dir)).toEqual([])
 		} finally {
 			await rm(dir, { recursive: true, force: true })
 		}

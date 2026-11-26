@@ -3,9 +3,9 @@
 // with no path aliases, no Bun types and no `.ts` imports allowed: what a workspace package sees,
 // and proof that the public types need no pool checkout. Declarations are checked too, so one that
 // names an SDK type fails even when nothing uses it; viem's own typings need the DOM lib.
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { PACKAGE_DIR } from "../src/env/checkout.ts"
 
 const CONSUMER = `import {
@@ -53,8 +53,10 @@ const parent = join(homedir(), ".cache/pp/pp-env")
 mkdirSync(parent, { recursive: true })
 const dir = mkdtempSync(join(parent, "consumer-"))
 try {
-	mkdirSync(join(dir, "node_modules/@pp"), { recursive: true })
-	symlinkSync(PACKAGE_DIR, join(dir, "node_modules/@pp/pp-env"))
+	// A copy of what the package publishes, so nothing resolves into `.ppv2` or other local state.
+	const view = join(dir, "node_modules/@pp/pp-env")
+	for (const part of ["package.json", "types", "src"]) cpSync(join(PACKAGE_DIR, part), join(view, part), { recursive: true })
+	symlinkSync(realpathSync(dirname(Bun.resolveSync("viem/package.json", PACKAGE_DIR))), join(dir, "node_modules/viem"))
 	await Bun.write(join(dir, "consumer.ts"), CONSUMER)
 	await Bun.write(join(dir, "tsconfig.json"), JSON.stringify(TSCONFIG))
 	const tsc = Bun.resolveSync("typescript/bin/tsc", PACKAGE_DIR)

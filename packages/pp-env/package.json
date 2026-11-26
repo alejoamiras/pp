@@ -20,7 +20,6 @@
 	},
 	"scripts": {
 		"fetch": "bun scripts/fetch.ts",
-		"forge": "bun scripts/forge.ts",
 		"typecheck": "tsc -p tsconfig.public.json && bun scripts/typecheck-consumer.ts",
 		"typecheck:full": "tsc --noEmit",
 		"lint": "biome check .",

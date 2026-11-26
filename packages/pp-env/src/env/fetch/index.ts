@@ -74,6 +74,17 @@ async function forgeInputs(src: string): Promise<string[]> {
 	})
 }
 
+/**
+ * Forge's cache pins linked libraries by absolute path, so a tree moved after its build would
+ * recompile on first use and write into the shared `out`.
+ */
+export async function assertBuiltHere(src: string): Promise<void> {
+	const cache = await readFile(join(src, CONTRACTS_DIR, "cache/solidity-files-cache.json"), "utf8")
+	const roots = [`${src}/`, `${await realpath(src)}/`]
+	for (const [, path = ""] of cache.matchAll(/"(\/[^"]*)"/g))
+		if (!roots.some((r) => path.startsWith(r))) throw new Error(`${src} was built at another path (${path}); delete it and fetch again`)
+}
+
 async function manifest(src: string): Promise<Record<string, string>> {
 	const files: Record<string, string> = {}
 	for (const root of MANIFEST_ROOTS) {
@@ -222,6 +233,7 @@ export async function verifyFetched(target: string): Promise<ReadyRecord> {
 	}
 	for (const path of Object.keys(current)) if (!(path in recorded)) throw new Error(`${target}: unexpected file ${path}`)
 	if (manifestDigest(recorded) !== ready.manifestSha256) throw new Error(`${target}: manifest.json does not match ready.json`)
+	await assertBuiltHere(src)
 	assertUrlPinned(await urlPinnedDigests(src))
 	return ready
 }
@@ -247,7 +259,10 @@ export async function publish(staging: string, target: string, build: () => Prom
 	try {
 		await build()
 	} catch (err) {
-		await rm(target, { recursive: true, force: true })
+		// Moved aside first: once emptied in place, the path could take another fetch's rename.
+		const failed = `${target}.failed-${process.pid}-${Date.now()}`
+		await rename(target, failed)
+		await rm(failed, { recursive: true, force: true })
 		throw err
 	}
 	return { fetched: true }
