@@ -47,6 +47,9 @@ jobs:
             contracts:
               - 'contracts/bridge/**'
               - 'packages/bridge-core/**'
+              - 'packages/bridge-spec/src/**'
+              - 'packages/bridge-spec/package.json'
+              - 'packages/bridge-spec/vectors/**'
               - 'vitest.base.ts'
               - 'package.json'
               - 'bun.lock'

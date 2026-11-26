@@ -67,6 +67,11 @@ jobs:
         working-directory: contracts/bridge/evm
         run: forge test --no-match-contract Fork
 
+      # BridgeMessageV1Test must fail on a flipped vector in each section it reads, after a clean
+      # control run against the same override path.
+      - name: Wire-format vector mutation (Solidity)
+        run: bun run --cwd packages/bridge-spec vectors:mutate -- --suite sol
+
       # The metered portal calls. A regression fails here rather than surfacing as a surprise on a
       # user's first deposit; regenerate deliberately with `forge snapshot --match-test test_gas_`
       # when the cost change is intended. The script also requires every metered case to have run.
@@ -128,6 +133,26 @@ jobs:
       - name: keystone vectors
         working-directory: contracts/bridge/aztec/keystone
         run: aztec-nargo test --force
+
+      # nargo exits 0 when nothing runs, so the run must show a pass count.
+      - name: pp_hash
+        working-directory: contracts/bridge/aztec/pp_hash
+        run: |
+          set -o pipefail
+          aztec-nargo test --force 2>&1 | tee "$RUNNER_TEMP/pp_hash.log"
+          grep -qE "[1-9][0-9]* tests? passed" "$RUNNER_TEMP/pp_hash.log"
+
+      # Nargo has no lockfile, so a moved v0.3.0 tag would change the pool hash silently. The commit
+      # nargo resolved (the steps above fetched it) must equal the one pp_hash's README records.
+      - name: poseidon v0.3.0 commit
+        run: |
+          want=$(grep -F 'noir-lang/poseidon v0.3.0 commit:' contracts/bridge/aztec/pp_hash/README.md \
+            | grep -oE '[0-9a-f]{40}' | head -1)
+          got=$(git -C "$HOME/nargo/github.com/noir-lang/poseidon/v0.3.0" rev-parse HEAD)
+          if [ -z "$want" ] || [ "$want" != "$got" ]; then
+            echo "::error::noir-lang/poseidon v0.3.0 resolved to $got; pp_hash/README.md records '$want'"
+            exit 1
+          fi
 
       # The hub's address-derivation keystone is a plain #[test] on a contract_library_method —
       # no oracle — selected by name so the crate's TXE suite (which needs the oracle server) is
