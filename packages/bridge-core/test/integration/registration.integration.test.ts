@@ -13,7 +13,7 @@ describe.skipIf(!INTEGRATION)("registration races and tampering", () => {
 		expect(await flowRelayerFirstRegister(a.s)).toContain("registered RLY first")
 	})
 
-	it("two concurrent first-time deposits settle as one register+claim and one claim", async () => {
+	it("two first-time claims racing to register settle as one register+claim and one claim", async () => {
 		const a = await freshActor()
 		// Either depositor may win the registration; the flow asserts one of each path.
 		expect(await flowConcurrentFirstClaims(a.s)).toMatch(/register\+claim \+ claim|claim \+ register\+claim/)

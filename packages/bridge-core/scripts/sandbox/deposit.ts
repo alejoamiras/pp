@@ -67,7 +67,8 @@ async function sendAndConfirm(l1: L1Ctx, call: Record<string, unknown>, what: st
 	const hash = await l1.wallet.writeContract({ ...call, account: l1.account, chain: l1.wallet.chain, gas } as never)
 	const receipt = await l1.pub.waitForTransactionReceipt({ hash })
 	if (receipt.status !== "success") throw new Error(`${what} REVERTED (${hash})`)
-	return { hash, logs: receipt.logs }
+	// viem follows a replacement; the receipt's hash is the transaction whose logs these are.
+	return { hash: receipt.transactionHash, logs: receipt.logs }
 }
 
 /**
@@ -105,6 +106,7 @@ export function readPortalDeposit(
 export async function depositViaPortal(l1: L1Ctx, p: PortalDepositParams): Promise<PortalDepositResult> {
 	const recipient = await assertDepositable(p)
 	const { reg } = await ensurePortal(l1, p.factory, p.erc20)
+	const token = await tokenBlockOf(p, reg)
 	const portal = reg.portal
 	const claimValue = Fr.random()
 	const secret = p.isPrivate ? deriveTokenClaimSecret(claimValue, recipient) : claimValue
@@ -122,7 +124,7 @@ export async function depositViaPortal(l1: L1Ctx, p: PortalDepositParams): Promi
 	const { hash, logs } = await sendAndConfirm(l1, call, `${call.functionName}(${p.erc20})`, true)
 	const { key, index } = readPortalDeposit(logs, portal, { amount: p.amount, secretHash, to: p.isPrivate ? undefined : to })
 	return {
-		token: await tokenBlockOf(p, reg),
+		token,
 		claimValueHex: claimValue.toString(),
 		secretHashHex: secretHash,
 		leafIndex: index,

@@ -59,7 +59,7 @@ export async function runSmoke(clients: SandboxClients, manifest: ManifestV2, ac
 	await step("public exit → L1 withdraw", () => runExit(s, { token: usdc, l2Token: usdcL2, amount: 10n * unit, isPrivate: false }))
 	await step("private exit → L1 withdraw", () => runExit(s, { token: usdc, l2Token: usdcL2, amount: 5n * unit, isPrivate: true }))
 	await step("relayer registers before the depositor claims", () => flowRelayerFirstRegister(s))
-	await step("two concurrent first-time deposits", () => flowConcurrentFirstClaims(s))
+	await step("two first-time claims race to register", () => flowConcurrentFirstClaims(s))
 	await step("portal-only token registers on its first claim", () => flowPortalOnlyToken(s, pxo))
 	await step("tampered registration rejected, then corrected", () => flowRejectedRegistration(s))
 	await step("guardian pause blocks exits, not claims", () => flowGuardianPause(s, usdc))

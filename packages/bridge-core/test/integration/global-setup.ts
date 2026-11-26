@@ -22,13 +22,13 @@ export default async function setup(project: TestProject): Promise<() => Promise
 	// A caller-named directory is the caller's to keep; one this run made goes with the network.
 	const named = process.env.PP_SANDBOX_ARTIFACTS
 	const artifactsDir = named ?? join(SANDBOX_CACHE_DIR, `${runId}-artifacts`)
-	mkdirSync(artifactsDir, { recursive: true })
 	const teardown = async () => {
 		await net.stop()
 		if (!named) rmSync(artifactsDir, { recursive: true, force: true })
 		assertNothingLeft(net)
 	}
 	try {
+		mkdirSync(artifactsDir, { recursive: true })
 		const { handle } = await deployEverything(net, { artifactsDir })
 		project.provide("handle", handle)
 	} catch (e) {
