@@ -60,7 +60,7 @@ function assertGraphCovered(patterns: string[], target: string, label: string) {
   }
 }
 
-const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml"]
+const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml"]
 
 /**
  * The check-run each PR workflow's aggregator job produces. Branch protection matches these by
@@ -70,6 +70,7 @@ const AGGREGATOR_CHECKS: Record<string, string> = {
   "pr-quick.yml": "quality-status",
   "bridge-contracts.yml": "bridge-contracts-status",
   "actionlint.yml": "actionlint-status",
+  "pp-env.yml": "pp-env-status",
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed-YAML shape is dynamic.
@@ -164,6 +165,7 @@ describe("CI behavior-gating guard", () => {
     const contracts = filtersOf("bridge-contracts.yml")["contracts"]
     expect(contracts, "the Solidity + Noir sources").toContain("contracts/bridge/**")
     assertGraphCovered(contracts, "bridge-core", "bridge-contracts")
+    assertGraphCovered(contracts, "labelled-token", "bridge-contracts")
     for (const p of [
       "vitest.base.ts",
       "package.json",
@@ -175,6 +177,19 @@ describe("CI behavior-gating guard", () => {
     ]) {
       expect(contracts, `bridge-contracts must gate ${p}`).toContain(p)
     }
+  })
+
+  test("pp-env covers its package, its graph, and every action its suites job calls", () => {
+    const ppEnv = filtersOf("pp-env.yml")["pp-env"]
+    assertGraphCovered(ppEnv, "pp-env", "pp-env")
+    const calls: string[] = workflow("pp-env.yml")
+      .jobs.suites.steps.map((step: { uses?: string }) => step.uses)
+      .filter((uses: string | undefined) => uses?.startsWith("./.github/actions/"))
+    expect(calls.length).toBeGreaterThan(0)
+    for (const p of [...calls.map((c) => `${c.slice(2)}/**`), "package.json", "bun.lock", "bunfig.toml", "patches/**"]) {
+      expect(ppEnv, `pp-env must gate ${p}`).toContain(p)
+    }
+    expect(workflow("pp-env.yml").jobs.suites.if).toBe("needs.changes.outputs.pp-env == 'true'")
   })
 })
 

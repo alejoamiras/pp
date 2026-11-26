@@ -1,7 +1,7 @@
 /** L2 side of the sandbox: the embedded scripting wallet, the genesis relayer, and the actors —
  *  constructor-based Schnorr accounts under the Nulo wallet's key derivation, the shape that wallet deploys,
  *  deployed through the sponsor so a fresh actor costs the harness nothing but a transaction. */
-import type { AztecAddress } from "@aztec-labs/aztec.js/addresses"
+import type { AztecAddress, CompleteAddress } from "@aztec-labs/aztec.js/addresses"
 import { SetPublicAuthwitContractInteraction } from "@aztec-labs/aztec.js/authorization"
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import { TxStatus } from "@aztec-labs/aztec.js/tx"
@@ -10,7 +10,7 @@ import { registerInitialLocalNetworkAccountsInWallet } from "@aztec-labs/wallets
 import { deriveNuloAccountKeys } from "@nulo-sh/wallet-crypto"
 import type { Hex } from "viem"
 import type { L2Ctx } from "../generation"
-import { createL2Wallet, createNode } from "../script-bootstrap"
+import { createL2Wallet, createNode, type PxeHooks } from "../script-bootstrap"
 import { deployAccountIfAbsent, sponsoredFpcFee } from "../script-l2"
 import { FEE_CEILING } from "./constants"
 
@@ -25,20 +25,31 @@ export interface Actor {
 	address: AztecAddress
 }
 
+type AccountManagerLike = {
+	getAccount: () => Promise<{ getAddress: () => AztecAddress }>
+	getCompleteAddress: () => Promise<CompleteAddress>
+}
 type EmbeddedLike = {
-	createSchnorrAccount: (
-		secretKey: unknown,
-		salt: Fr,
-		signingKey: unknown,
-	) => Promise<{ getAccount: () => Promise<{ getAddress: () => AztecAddress }> }>
+	createSchnorrAccount: (secretKey: unknown, salt: Fr, signingKey: unknown) => Promise<AccountManagerLike>
+}
+
+/** An actor's account as `wallet` now holds it (registered, not deployed), with the PXE secret key
+ *  and complete address a test wallet needs to sign on the actor's behalf. */
+export async function actorAccount(
+	wallet: unknown,
+	secret: Hex,
+	salt: bigint = SANDBOX_ACTOR_SALT,
+): Promise<{ address: AztecAddress; secretKey: Fr; completeAddress: CompleteAddress; manager: AccountManagerLike }> {
+	const { signingKey, secretKey } = await deriveNuloAccountKeys(Fr.fromHexString(secret))
+	const manager = await (wallet as EmbeddedLike).createSchnorrAccount(secretKey, new Fr(salt), signingKey)
+	const address = (await manager.getAccount()).getAddress()
+	return { address, secretKey, completeAddress: await manager.getCompleteAddress(), manager }
 }
 
 /** The address an actor secret derives to — the same derivation the browser test wallet runs, so a
  *  fixture can fund an account before any wallet holds it. */
 export async function actorAddress(wallet: unknown, secret: Hex, salt: bigint = SANDBOX_ACTOR_SALT): Promise<AztecAddress> {
-	const { signingKey, secretKey } = await deriveNuloAccountKeys(Fr.fromHexString(secret))
-	const manager = await (wallet as EmbeddedLike).createSchnorrAccount(secretKey, new Fr(salt), signingKey)
-	return (await manager.getAccount()).getAddress()
+	return (await actorAccount(wallet, secret, salt)).address
 }
 
 export async function createActor(
@@ -49,9 +60,7 @@ export async function createActor(
 	salt: bigint = SANDBOX_ACTOR_SALT,
 	log: (line: string) => void = console.log,
 ): Promise<Actor> {
-	const { signingKey, secretKey } = await deriveNuloAccountKeys(Fr.fromHexString(secret))
-	const manager = await (wallet as EmbeddedLike).createSchnorrAccount(secretKey, new Fr(salt), signingKey)
-	const address = (await manager.getAccount()).getAddress()
+	const { address, manager } = await actorAccount(wallet, secret, salt)
 	await deployAccountIfAbsent({
 		node: node as never,
 		manager: manager as never,
@@ -101,6 +110,14 @@ export async function connectL2(nodeUrl: string): Promise<L2Base> {
 		relayerOpts: { from: relayer, fee: paid, wait: { waitForStatus: TxStatus.PROPOSED } },
 		guardianOpts: {},
 	}
+}
+
+/** A second device: its own PXE and store, no account and no genesis senders, paying through the
+ *  sponsor. `hooks` reach its PXE (a test wallet that answers interactive-handshake requests). */
+export async function connectPeer(nodeUrl: string, hooks?: PxeHooks): Promise<{ wallet: Wallet; fee: Record<string, unknown> }> {
+	const wallet = await createL2Wallet({ nodeUrl, proverEnabled: false, sandboxKeysOnly: true, hooks })
+	const { fee } = await sponsoredFpcFee(wallet)
+	return { wallet: wallet as unknown as Wallet, fee: { ...fee, gasSettings: FEE_CEILING } }
 }
 
 /** The L2 context an actor acts through. This network builds a block only when a transaction

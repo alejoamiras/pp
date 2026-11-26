@@ -1,0 +1,8 @@
+[package]
+name = "bridge_stub"
+authors = [""]
+compiler_version = ">=1.0.0"
+type = "contract"
+
+[dependencies]
+aztec = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", directory = "aztec" }

@@ -1,0 +1,103 @@
+name: pp-env
+
+# PR gate for packages/pp-env: fetch the pinned Privacy Pools v2 checkout once, then run every
+# post-fetch suite inside a network namespace that has loopback only.
+#
+# NO `branches:` filter on pull_request, deliberately — see the long note in pr-quick.yml.
+# `push` to main runs it too: only non-PR runs save the fetched checkout to the cache that pull
+# requests restore (see .github/actions/ppv2-fetch).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+concurrency:
+  group: pp-env-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pp-env: ${{ steps.override.outputs.full || steps.filter.outputs.pp-env }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: paths-filter needs the merge-base with the comparison branch.
+          fetch-depth: 0
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Positive-only, no `!` negations. Whole-package for pp-env, which has no @pp/* deps; the
+          # actions the suites job calls; root install config. Pinned by
+          # scripts/ci-cd/behavior-gating.test.ts.
+          filters: |
+            pp-env:
+              - 'packages/pp-env/**'
+              - 'package.json'
+              - 'bun.lock'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - '.github/workflows/pp-env.yml'
+              - '.github/actions/ppv2-fetch/**'
+              - '.github/actions/setup-aztec/**'
+              - '.github/actions/setup-bun/**'
+      - name: Override for manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        id: override
+        run: echo "full=true" >> "$GITHUB_OUTPUT"
+
+  suites:
+    name: Fetch, then offline suites
+    needs: changes
+    if: needs.changes.outputs.pp-env == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      # Aztec 6.0.0's anvil, which pp-env starts, and the Node 24 whose corepack the fetch uses.
+      - uses: ./.github/actions/setup-aztec
+
+      - uses: ./.github/actions/ppv2-fetch
+
+      # Typecheck, smoke, fixture-contract and integration suites, as the runner user, with only
+      # `lo` up: anything that still reaches for the network fails here.
+      - name: Post-fetch gate, loopback only
+        run: |
+          gate_path="$(dirname "$(command -v bun)"):$(dirname "$(command -v node)"):/usr/bin:/bin"
+          sudo unshare --net -- bash packages/pp-env/scripts/offline-gate.sh outer \
+            "$(id -u)" "$(id -g)" "$HOME" "$gate_path" "$PP_FORGE"
+
+  status:
+    name: pp-env-status
+    if: always()
+    needs: [changes, suites]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-cd/aggregate-status.sh
+          sparse-checkout-cone-mode: false
+      - name: Aggregate results
+        run: bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.pp-env }}" "${{ needs.suites.result }}"
