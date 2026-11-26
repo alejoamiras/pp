@@ -43,8 +43,8 @@ pub struct AnchorRoots {
 /// The one call a checked spend makes: `label` is in the `origin` tree of the record at the anchor,
 /// which is fresh; returns both trees for the unshield's public step. Callers must pass their own
 /// immutable registry, never an argument; the constrained common origin and label of every note they
-/// spend; and, for an unshield, enqueue `assert_current` with the result from an `only_self` step that
-/// also makes the credit, keeping the spend's effects revertible.
+/// spend; and, for an unshield, emit its effects only while `context.in_revertible_phase()`, then
+/// pass the result unchanged to an `only_self` step that calls `assert_current` before the credit.
 pub fn check_label(
     context: &mut PrivateContext,
     registry: AztecAddress,
