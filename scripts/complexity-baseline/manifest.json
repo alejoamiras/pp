@@ -1,0 +1,8 @@
+{
+	"biomeVersion": "2.5.13",
+	"rules": {
+		"noExcessiveCognitiveComplexity": {},
+		"noExcessiveLinesPerFunction": {}
+	},
+	"accepted": []
+}

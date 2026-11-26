@@ -1,0 +1,91 @@
+# @pp/e2e-kit
+
+The Playwright kit a web app under `apps/web` will be driven with: a real Chromium against a real
+local network, with a wallet that is not a product wallet. It holds an `@aztec-labs/wallets`
+embedded wallet behind `@aztec-labs/wallet-sdk`'s iframe handler (`test-wallet/`) and an injected
+EIP-1193 L1 wallet answered from Node (`fixtures/l1-wallet.ts`). No app exists yet, so a run stops
+after the sandbox boots and the wallet bundles against it.
+
+```bash
+bun run --cwd packages/e2e-kit test:browser                    # everything, one sandbox
+bun run --cwd packages/e2e-kit test:browser -- --shard=1/2     # a shard (each boots its own sandbox)
+bun run --cwd packages/e2e-kit test:browser reap               # stop sandboxes this checkout left behind
+```
+
+`scripts/e2e/agent.sh` is the whole run:
+
+1. Claim three ports from `~/.agents/ports.md`: the app and one wallet origin per profile.
+2. `sandbox:up` from `packages/bridge-core` (anvil, `aztec start --local-network`, a bridge
+   generation).
+3. `build:test-wallet` with the run's node and app origin baked in.
+4. Once `apps/web` exists: its `build:local` with the node and wallet URLs, then a check that both
+   bundles name the node, then Playwright with one `vite preview` per build.
+5. Reap.
+
+State lives under `.e2e-state/<run>/` (gitignored): ports, the sandbox artifacts, both builds, logs,
+traces. `PP_E2E_KEEP=1` keeps the sandbox and prints the line that reattaches to it
+(`PP_E2E_ATTACH=<state dir>`, with `PP_E2E_REBUILD=1` to rebuild).
+
+## Layout
+
+| Path | Role |
+|---|---|
+| `playwright.config.ts` | Chromium, `workers: 1`, the app and wallet servers, traces on failure; specs come from `apps/web/e2e` or `PP_E2E_SPECS` |
+| `env.ts` | the run's coordinates from the `PP_*` variables the runner sets |
+| `global-setup.ts` | the handle names chain 31337 |
+| `fixtures/test.ts` | the `test` every spec uses: sandbox access, an actor pool per file, a fresh actor per test, the L1 shim, the egress fence, the parked wallet panel |
+| `fixtures/sandbox.ts` | the Node side: `openSandbox` on the handle, `newActor()` (sponsor-deployed, with its own flow context) |
+| `fixtures/l1-wallet.ts` | `window.ethereum` → `exposeFunction` → viem over anvil: `setChainId`, `setAccount`, `rejectNext`, `holdNext(kind, { to })`, per-method `calls` |
+| `fixtures/egress.ts` | aborts every non-loopback request; the record must be empty at teardown |
+| `fixtures/wallet-panel.ts` | parks the SDK's floating session panel in a corner so it covers no test id |
+| `fixtures/build-artifacts/handle.json` | placeholder handle for the build-only CI job; names no live network and holds no key |
+| `test-wallet/` | the wallet page: `profile.ts`, `wallet.ts` (embedded wallet, grant, wallet-specific RPCs), `main.ts` (the handler and the control hook `window.__ppTestWallet`), its own `vite.config.mts` |
+| `shard-reporter.ts`, `scripts/e2e/shard-plan.ts` | under `--shard`, deal whole spec files by recorded duration instead of test count |
+| `shard-durations.json` | the record `shard-plan.ts` reads; empty until the app has specs |
+| `scripts/e2e/resolve-ports.ts` | claims and releases the run's ports in the host registry |
+
+## Accounts
+
+Actors are created in Node before the browser opens, `cells + 2` per file, capped at 16 per grant.
+A context init script sets `window.__ppTestWalletSeeds` on the wallet origins only, so the app page
+never sees a seed. The wallet imports every seed before it answers `requestCapabilities`. A test
+takes the next unused actor, a retry takes a spare, and no actor is reused.
+
+## Profiles
+
+- `plain`: a stock wallet-sdk wallet. Wallet-specific RPCs answer `Unknown wallet method`.
+- `full`: loads `@nulo-sh/wallet-sdk-schema-patch` and answers `registerToken` and
+  `isTokenRegistered`.
+
+Each profile is served on its own loopback origin from the same build. The SDK's discovery probe
+tells wallet frames apart by origin alone, so same-origin profiles answer each other's probe.
+
+The wallet accepts only the app id `pp` and the sandbox's chain. Only the app origin may frame it
+(CSP `frame-ancestors` and the handler's `allowedOrigins`).
+
+## Control hook
+
+`window.__ppTestWallet` on the wallet origin: `addAccount`, `calls`, `submitted`, `failNext`,
+`holdNext` (park until `release`), `swallowNext` (run, never answer), `dropNextSubmission` (record
+the transaction at the node hand-off, never forward it) and `declineNextGrant`.
+
+## Blocks come on demand
+
+The local network builds a block only when a transaction arrives, so a claim driven from the UI
+would wait forever on an L1→L2 message. The `test` fixture keeps a heartbeat for the worker's life,
+the same nudge the integration harness uses. This is the one place the suite differs from a real
+network.
+
+## CI
+
+`pr-quick.yml` builds the test wallet against `fixtures/build-artifacts` on every change the kit can
+see. The browser suite itself does not run in CI until `apps/web` has specs.
+
+## Rules
+
+- Selectors are `data-testid` only, narrowed by `data-*` attributes on the same element where an id
+  repeats.
+- Every test states its expected payer and its balance or note postconditions, read from the chain
+  through the harness; the UI's text is never the authority.
+- Nothing here boots a network or picks a port by hand; the runner owns both. Two runs on one
+  machine are two sandboxes on two port sets.

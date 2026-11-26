@@ -1,0 +1,36 @@
+{
+	"name": "pp",
+	"private": true,
+	"workspaces": [
+		"apps/*",
+		"packages/*"
+	],
+	"scripts": {
+		"lint": "biome check && bun scripts/complexity-baseline/check.ts",
+		"lint:fix": "biome check --fix",
+		"lint:actions": "actionlint",
+		"format": "biome format --write",
+		"check": "biome check",
+		"typecheck:all": "bun run --filter '@pp/*' typecheck",
+		"test:all": "bun run --filter '@pp/*' --if-present test",
+		"test:ci-gating": "bun test scripts/ci-cd/",
+		"baseline:complexity": "bun scripts/complexity-baseline/generate.ts",
+		"baseline:rescore": "bun scripts/complexity-baseline/rescore.ts",
+		"check:imports": "biome check packages/",
+		"prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.13",
+		"@commitlint/cli": "^21.0.2",
+		"@commitlint/config-conventional": "^21.0.2"
+	},
+	"packageManager": "bun@1.4.2",
+	"license": "Apache-2.0",
+	"overrides": {
+		"vite": "^8.0.0"
+	},
+	"patchedDependencies": {
+		"@aztec-foundation/noir-acvm_js@6.0.0": "patches/@aztec-foundation%2Fnoir-acvm_js@6.0.0.patch",
+		"@aztec-foundation/noir-noirc_abi@6.0.0": "patches/@aztec-foundation%2Fnoir-noirc_abi@6.0.0.patch"
+	}
+}

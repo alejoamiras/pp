@@ -1,0 +1,61 @@
+/**
+ * Shared harness bootstrap: the L1/L2 client construction and the elapsed-timer, in one place so no
+ * caller can differ silently in `proverEnabled`. Separate factories, never a combined one: callers
+ * interleave L1, node and wallet creation with domain logic in their own order.
+ */
+import { ownedWalletStore } from "./wallet-store"
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
+import { EmbeddedWallet } from "@aztec-labs/wallets/embedded"
+import {
+	type Account,
+	type Chain,
+	createPublicClient,
+	createWalletClient,
+	http,
+	type PublicClient,
+	type Transport,
+	type WalletClient,
+} from "viem"
+
+/** L1 wallet + public client pair. Generic over chain + account so viem's
+ *  literal narrowing survives — `writeContract`/`deployContract` keep their
+ *  optional chain/account params at every call site, no casts needed. */
+export function createL1Clients<TChain extends Chain, TAccount extends Account>(opts: {
+	chain: TChain
+	rpcUrl: string
+	account: TAccount
+}): {
+	wallet: WalletClient<Transport, TChain, TAccount>
+	pub: PublicClient<Transport, TChain>
+} {
+	// One contained cast: viem's createWalletClient widens the account through
+	// parseAccount, so its inferred client type doesn't re-narrow to TAccount —
+	// the runtime value IS the caller's account. Centralizing the narrow here
+	// is the whole point (it replaced nine per-script casts).
+	const wallet = createWalletClient({
+		account: opts.account,
+		chain: opts.chain,
+		transport: http(opts.rpcUrl),
+	}) as unknown as WalletClient<Transport, TChain, TAccount>
+	const pub = createPublicClient({ chain: opts.chain, transport: http(opts.rpcUrl) })
+	return { wallet, pub }
+}
+
+/** Aztec node client. Separate from the wallet factory: callers create the two in either order. */
+export function createNode(nodeUrl: string): ReturnType<typeof createAztecNodeClient> {
+	return createAztecNodeClient(nodeUrl)
+}
+
+/** Embedded Aztec wallet. `proverEnabled` is REQUIRED — every call site states
+ *  its choice visibly, so the sandbox's `false` is never a silent outlier. `sandboxKeysOnly` lets the store fall back to disk on a
+ *  host without a tmpfs `/dev/shm`; a wallet holding real keys refuses to run there. */
+export function createL2Wallet(opts: { nodeUrl: string; proverEnabled: boolean; sandboxKeysOnly?: boolean }): Promise<EmbeddedWallet> {
+	const dataDirectory = ownedWalletStore("wallet", { allowDisk: opts.sandboxKeysOnly ?? false })
+	return EmbeddedWallet.create(opts.nodeUrl, { pxeConfig: { proverEnabled: opts.proverEnabled, dataDirectory } })
+}
+
+/** Elapsed-minutes stopwatch — replaces each hand-rolled `t0`/`mins()` pair. */
+export function stopwatch(): () => string {
+	const t0 = Date.now()
+	return () => `${((Date.now() - t0) / 60000).toFixed(1)}m`
+}

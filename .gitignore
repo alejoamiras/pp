@@ -1,7 +1,39 @@
 # Plans, audit transcripts and decision logs are private and never committed.
 /implementations-plan
 
+# Logs
+logs
+*.log
+bun-debug.log*
+
 node_modules/
+dist
+dist-ssr
+*.local
+
+# Secrets / env (committed templates are .env.example only)
 .env
 .env.*
 !.env.example
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.sw?
+*.tsbuildinfo
+
+# sandbox deploy output (instance-specific) — deploy-sandbox.ts writes here for manual inspection
+packages/bridge-core/sandbox-deploy/
+
+# browser and script PXE data
+.playwright-mcp/
+**/pxe_data_*/
+**/wallet_data_*/
+
+# e2e runner state and Playwright output
+packages/e2e-kit/.e2e-state/
+packages/e2e-kit/test-results/
+packages/e2e-kit/playwright-report/

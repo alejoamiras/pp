@@ -1,0 +1,40 @@
+{
+	"name": "@pp/e2e-kit",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"build:test-wallet": "vite build --config test-wallet/vite.config.mts",
+		"preview:test-wallet": "vite preview --config test-wallet/vite.config.mts",
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "bun --bun vitest run",
+		"test:browser": "bash scripts/e2e/agent.sh"
+	},
+	"dependencies": {
+		"@aztec-foundation/bb.js": "6.0.0",
+		"@aztec-foundation/noir-acvm_js": "6.0.0",
+		"@aztec-foundation/noir-noirc_abi": "6.0.0",
+		"@aztec-labs/accounts": "6.0.0",
+		"@aztec-labs/aztec.js": "6.0.0",
+		"@aztec-labs/constants": "6.0.0",
+		"@aztec-labs/foundation": "6.0.0",
+		"@aztec-labs/noir-contracts.js": "6.0.0",
+		"@aztec-labs/pxe": "6.0.0",
+		"@aztec-labs/stdlib": "6.0.0",
+		"@aztec-labs/wallet-sdk": "6.0.0",
+		"@aztec-labs/wallets": "6.0.0",
+		"@nulo-sh/resolve-asset": "0.3.0",
+		"@nulo-sh/wallet-crypto": "0.3.0",
+		"@nulo-sh/wallet-sdk-schema-patch": "0.3.0",
+		"@pp/bridge-core": "workspace:*",
+		"viem": "2.57.1"
+	},
+	"devDependencies": {
+		"@playwright/test": "1.63.0",
+		"@types/node": "^24.13.2",
+		"typescript": "^6.0.3",
+		"vite": "^8.0.16",
+		"vite-plugin-node-polyfills": "^0.28.0",
+		"vitest": "^4.1.9"
+	}
+}
