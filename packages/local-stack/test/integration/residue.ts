@@ -44,10 +44,13 @@ export function sampleTree(root: number, ignorePgids: ReadonlySet<number> = new 
 	}
 	take()
 	const timer = setInterval(take, everyMs)
+	const owned = (g: number) => groupAlive(g) && startTime(g) === leaders.get(g)
 	return {
 		pgids,
-		/** Live groups whose leader is still the process sampled, so a recycled pgid is never signalled. */
-		ownedAlive: () => [...leaders].filter(([g, started]) => groupAlive(g) && startTime(g) === started).map(([g]) => g),
+		/** Live groups whose leader is still the process sampled. */
+		ownedAlive: () => [...leaders.keys()].filter(owned),
+		/** Live groups seen without a verifiable leader: a reap must not signal them. */
+		unverifiedAlive: () => [...pgids].filter((g) => groupAlive(g) && !owned(g)),
 		stop: () => clearInterval(timer),
 	}
 }

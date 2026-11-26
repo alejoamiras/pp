@@ -109,6 +109,20 @@ describe("beat policy", () => {
 		expect(await ticks(policy, chain, 5)).toBe(1)
 	})
 
+	test("a block that lands unproven between the check and the beat is left to its proof first", async () => {
+		const { chain, policy } = await settled()
+		const tip = async () => (await chain.view.aztecTips()).checkpointed.number
+		chain.foreignAztecBlock()
+		expect(await policy.due()).toBe(true)
+		chain.holdProofs(true)
+		chain.foreignAztecBlock()
+		const landed = await tip()
+		await policy.beat(async () => chain.mine())
+		expect(await tip()).toBe(landed)
+		chain.holdProofs(false)
+		expect(await ticks(policy, chain, 5)).toBe(1)
+	})
+
 	test("a last owed beat that picks up a user transaction, or that another block overtakes, owes one more", async () => {
 		const { chain, policy } = await settled()
 		let beats = 0

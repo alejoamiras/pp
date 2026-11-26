@@ -61,10 +61,13 @@ export class BeatPolicy {
 	/**
 	 * One beat: `mine` must return once its block is checkpointed. Anything besides one empty block
 	 * of ours (a user transaction it picked up, a block another caller built meanwhile) leaves a beat
-	 * owed; a failed read leaves the debt as it was.
+	 * owed; a failed read leaves the debt as it was. A block that landed unproven since `due()` is
+	 * left to its proof first, without mining.
 	 */
 	async beat(mine: () => Promise<unknown>): Promise<void> {
-		const before = (await this.view.aztecTips()).checkpointed.number
+		const pre = await this.view.aztecTips()
+		if (pre.proven < pre.checkpointed.number) return
+		const before = pre.checkpointed.number
 		await mine()
 		const tip = (await this.view.aztecTips()).checkpointed
 		const clean = tip.number === before + 1 && !(await this.view.aztecHasTxs(tip.number))

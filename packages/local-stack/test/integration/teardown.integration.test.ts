@@ -14,18 +14,25 @@ import { portsOwnedBy, processTree, registryRows, residueOf, sampleTree } from "
 const REPO = join(import.meta.dirname, "..", "..", "..", "..")
 const BOOT_MS = 600_000
 type Run = ReturnType<typeof launch>
-type Reapable = { child: ChildProcess; tree: { ownedAlive(): number[] }; stopSampling(): void }
+type Reapable = { child: ChildProcess; tree: { ownedAlive(): number[]; unverifiedAlive(): number[] }; stopSampling(): void }
 /** Every CLI this file starts, so a failed assertion cannot leave one running. */
 const launched: Reapable[] = []
 
 /**
- * The reap of a run a failed test left up: SIGINT, then SIGKILL to every group it owned that is
- * still alive, after 90 s or once the CLI is gone, since the harnesses' children run in groups of
- * their own and can outlive it.
+ * Best-effort reap of a run a failed test left up: SIGINT, then, after 90 s or once the CLI is gone,
+ * SIGKILL to each surviving group whose leader is verified, since the harnesses' children run in
+ * groups of their own and can outlive the CLI.
  */
 async function reap(run: Reapable): Promise<void> {
 	const kill = () => {
-		for (const g of run.tree.ownedAlive()) process.kill(-g, "SIGKILL")
+		for (const g of run.tree.ownedAlive()) {
+			try {
+				process.kill(-g, "SIGKILL")
+			} catch (err) {
+				if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err
+			}
+		}
+		for (const g of run.tree.unverifiedAlive()) console.warn(`[reap] left group ${g} alone: its leader is not the process sampled`)
 	}
 	const { child } = run
 	if (child.exitCode === null && child.signalCode === null) {
