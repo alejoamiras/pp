@@ -49,7 +49,6 @@ pub contract LabelToken {
         );
     }
 
-    /// Spends only notes of `label`; the change keeps the label.
     #[external("private")]
     fn transfer_private(to: AztecAddress, label: Field, amount: u128) {
         let from = self.msg_sender();
@@ -70,7 +69,7 @@ pub contract LabelToken {
     /// `complete_partial`. Returns the commitment the completer needs.
     #[external("private")]
     fn prepare_partial(owner: AztecAddress, label: Field, completer: AztecAddress) -> Field {
-        // A third party must deliver constrained: the owner's PXE does not scan unknown senders' address-derived tags.
+        // The owner cannot rely on a third party to deliver the message correctly; constrained delivery guarantees it.
         let partial = if self.msg_sender() == owner {
             LabelNote::partial(
                 owner,

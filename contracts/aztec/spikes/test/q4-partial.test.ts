@@ -24,13 +24,39 @@ describe("q4 partial note committing to a private label", () => {
 		return effect
 	}
 
+	type Effect = Awaited<ReturnType<typeof landed>>
+	/** Every field a transaction publishes, for a plaintext search. */
+	const published = (e: Effect, calldata: Fr[] = []) => [
+		...calldata,
+		...e.privateLogs.flatMap((l) => l.fields),
+		...e.publicLogs.flatMap((l) => l.getEmittedFields()),
+		...e.nullifiers,
+		...e.noteHashes,
+		...e.l2ToL1Msgs,
+		...e.publicDataWrites.flatMap((w) => [w.leafSlot, w.value]),
+	]
+	const alicePublic = async () => BigInt((await at.alice!.methods.balance_of_public(alice.address).simulate({ from: alice.address })).result)
+
 	/** Prepares a partial note for bob under `label`, completable by alice, and returns its commitment. */
 	async function prepare(by: Actor, label: Fr) {
 		const proven = await proveOnly(by, at[by === bob ? "bob" : "carol"]!.methods.prepare_partial(bob.address, label, alice.address))
 		const effect = await landed(by, proven.tx)
-		const visible = [...effect.privateLogs.flatMap((l) => l.fields), ...effect.nullifiers, ...effect.noteHashes]
-		expect(visible.some((f) => f.equals(label))).toBe(false)
+		expect(published(effect).some((f) => f.equals(label))).toBe(false)
 		return new Fr(proven.returnValues[0]!)
+	}
+
+	/** Alice completes with `amount`; the label must not appear in plaintext anywhere the completion publishes. */
+	async function complete(commitment: Fr, label: Fr, amount: bigint) {
+		const proven = await proveOnly(alice, at.alice!.methods.complete_partial(commitment, amount))
+		const calldata = proven.tx.publicFunctionCalldata.flatMap((c) => c.values)
+		const effect = await landed(alice, proven.tx)
+		const log = effect.publicLogs.flatMap((l) => l.getEmittedFields())
+		// Calldata: selector, commitment, amount. Completion log: tag, slot, amount.
+		expect(calldata.slice(1)).toEqual([commitment, new Fr(amount)])
+		expect(log).toHaveLength(3)
+		expect(log[2]).toEqual(new Fr(amount))
+		expect(published(effect, calldata).some((f) => f.equals(label))).toBe(false)
+		return effect
 	}
 
 	beforeAll(async () => {
@@ -53,19 +79,19 @@ describe("q4 partial note committing to a private label", () => {
 		const label = Fr.random()
 		record("q4.prepare_partial.self.gates", summarizeProfile(await at.bob!.methods.prepare_partial(bob.address, label, alice.address).profile({ from: bob.address, profileMode: "gates" })))
 		const commitment = await prepare(bob, label)
-
-		const completion = await proveOnly(alice, at.alice!.methods.complete_partial(commitment, 40n))
-		const calldata = completion.tx.publicFunctionCalldata.flatMap((c) => c.values)
-		const effect = await landed(alice, completion.tx)
-		const logs = effect.publicLogs.flatMap((l) => l.getEmittedFields())
-
-		expect(calldata.some((f) => f.equals(new Fr(40n)))).toBe(true)
-		expect(logs.some((f) => f.equals(new Fr(40n)))).toBe(true)
-		expect([...calldata, ...logs, ...effect.nullifiers, ...effect.noteHashes].some((f) => f.equals(label))).toBe(false)
-		record("q4.complete_partial.effects", { calldataFields: calldata.length, publicLogFields: logs.length, nullifiers: effect.nullifiers.length, noteHashes: effect.noteHashes.length })
-
+		const effect = await complete(commitment, label, 40n)
+		record("q4.complete_partial.effects", { nullifiers: effect.nullifiers.length, noteHashes: effect.noteHashes.length, publicDataWrites: effect.publicDataWrites.length })
 		expect(await bobBalance(label)).toBe(40n)
 		expect(await bobBalance(Fr.random())).toBe(0n)
+
+		// A second completion of the same commitment reverts and rolls back its debit and its note.
+		const paid = await alicePublic()
+		const again = await proveOnly(alice, at.alice!.methods.complete_partial(commitment, 40n))
+		await alice.node.sendTx(again.tx)
+		const receipt = await waitForTx(alice.node, again.tx.getTxHash(), { dontThrowOnRevert: true })
+		expect(receipt.executionResult).toBe(TxExecutionResult.REVERTED)
+		expect(await alicePublic()).toBe(paid)
+		expect(await bobBalance(label)).toBe(40n)
 	})
 
 	it("a third party unknown to bob prepares for him with constrained delivery, and bob finds it", async () => {
@@ -73,7 +99,8 @@ describe("q4 partial note committing to a private label", () => {
 		const label = Fr.random()
 		record("q4.prepare_partial.third_party.gates", summarizeProfile(await at.carol!.methods.prepare_partial(bob.address, label, alice.address).profile({ from: carol.address, profileMode: "gates" })))
 		const commitment = await prepare(carol, label)
-		await at.alice!.methods.complete_partial(commitment, 25n).send({ from: alice.address })
+		await complete(commitment, label, 25n)
 		expect(await bobBalance(label)).toBe(25n)
+		expect((await bob.wallet.getAddressBook()).map((a) => a.item.toString())).not.toContain(carol.address.toString())
 	})
 })

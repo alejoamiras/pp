@@ -1,4 +1,5 @@
 // Anvil plus `aztec start --local-network`, owned by one run. Adapted from Unleashed's local-network harness (Apache-2.0).
+import type { ChildProcess } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { join } from "node:path"
 import { claimPorts, releasePorts, releasePortsSync } from "./ports"
@@ -17,6 +18,7 @@ async function rpcResponds(url: string, method: string): Promise<boolean> {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [] }),
+			signal: AbortSignal.timeout(5_000),
 		})
 		return res.ok && ((await res.json()) as { result?: unknown }).result != null
 	} catch {
@@ -24,8 +26,10 @@ async function rpcResponds(url: string, method: string): Promise<boolean> {
 	}
 }
 
-async function waitHealthy(label: string, probe: () => Promise<boolean>, timeoutMs: number): Promise<void> {
+/** Requires `child` alive at every probe, so an answer from an unrelated listener on the port never counts. */
+async function waitHealthy(label: string, child: ChildProcess, probe: () => Promise<boolean>, timeoutMs: number): Promise<void> {
 	for (const start = Date.now(); Date.now() - start < timeoutMs; await sleep(500)) {
+		if (child.exitCode !== null || child.signalCode !== null) throw new Error(`${label} exited before answering`)
 		if (await probe()) return
 	}
 	throw new Error(`${label} did not answer within ${timeoutMs} ms`)
@@ -33,7 +37,6 @@ async function waitHealthy(label: string, probe: () => Promise<boolean>, timeout
 
 export async function startLocalNetwork(): Promise<LocalNetwork> {
 	const runId = newRunId("net")
-	const dir = runDir(runId)
 	const ports = await claimPorts(runId, ["anvil", "node", "admin", "p2p"] as const)
 	const anvilUrl = `http://127.0.0.1:${ports.anvil}`
 	const nodeUrl = `http://127.0.0.1:${ports.node}`
@@ -44,6 +47,7 @@ export async function startLocalNetwork(): Promise<LocalNetwork> {
 	const stop = (): Promise<void> => {
 		stopping ??= (async () => {
 			for (const child of [...children].reverse()) await killGroup(child)
+			children.length = 0
 			await releasePorts(runId)
 			removeRunDir(runId)
 		})()
@@ -57,7 +61,9 @@ export async function startLocalNetwork(): Promise<LocalNetwork> {
 		removeRunDir(runId)
 	})
 
+	let dir = ""
 	try {
+		dir = runDir(runId)
 		// Base fee 7 wei: from anvil's 1 gwei default, EIP-1559 decay drags the rollup's mana fee down ~40,000x in minutes.
 		children.push(
 			spawnGroup(
@@ -68,7 +74,7 @@ export async function startLocalNetwork(): Promise<LocalNetwork> {
 				join(dir, "anvil.log"),
 			),
 		)
-		await waitHealthy(`anvil at ${anvilUrl}`, () => rpcResponds(anvilUrl, "eth_chainId"), 60_000)
+		await waitHealthy(`anvil at ${anvilUrl}`, children[0]!, () => rpcResponds(anvilUrl, "eth_chainId"), 60_000)
 
 		const { AZTEC_DISABLE_ADMIN_API_KEY: _d, AZTEC_RESET_ADMIN_API_KEY: _r, ...inherited } = process.env
 		const env: NodeJS.ProcessEnv = {
@@ -95,7 +101,7 @@ export async function startLocalNetwork(): Promise<LocalNetwork> {
 				join(dir, "node.log"),
 			),
 		)
-		await waitHealthy(`aztec node at ${nodeUrl}`, () => rpcResponds(nodeUrl, "node_getNodeInfo"), 240_000)
+		await waitHealthy(`aztec node at ${nodeUrl}`, children[1]!, () => rpcResponds(nodeUrl, "node_getNodeInfo"), 240_000)
 	} catch (e) {
 		await stop()
 		throw e

@@ -93,10 +93,17 @@ unconstrained fn asp_member_failure_wrong_sibling() {
 #[test(should_fail_with = "label not in root")]
 unconstrained fn asp_member_failure_wrong_index_bit() {
     let (env, caller, spike) = setup();
-    let m = vectors::FIVE_INNER;
+    // The top direction bit at full depth: no positive vector sets it.
+    let m = vectors::DEEP_FIRST;
     env.call_private(
         caller,
-        PoseidonSpike::at(spike).asp_member(m.label, m.root, m.depth, m.index ^ 1, m.siblings),
+        PoseidonSpike::at(spike).asp_member(
+            m.label,
+            m.root,
+            m.depth,
+            m.index ^ (1 << 17),
+            m.siblings,
+        ),
     );
 }
 
@@ -124,6 +131,7 @@ unconstrained fn asp_member_failure_index_bit_above_depth() {
 unconstrained fn asp_member_failure_depth_above_18_against_zero_root() {
     let (env, caller, spike) = setup();
     let m = vectors::DEEP_FIRST;
+    // An unbounded loop returned 0 for depth > 18, so root 0 is the input it wrongly accepted.
     env.call_private(
         caller,
         PoseidonSpike::at(spike).asp_member(m.label, 0, 19, m.index, m.siblings),

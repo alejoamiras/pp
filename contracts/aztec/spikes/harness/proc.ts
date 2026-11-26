@@ -50,15 +50,16 @@ export async function killGroup(child: ChildProcess | undefined, graceMs = 5_000
 		process.kill(-pgid, "SIGTERM")
 	} catch {}
 	for (let waited = 0; waited < graceMs && alive(pgid); waited += 100) await sleep(100)
-	try {
-		process.kill(-pgid, "SIGKILL")
-	} catch {}
+	killGroupSync(child)
 }
 
-/** Synchronous last resort for an `exit` hook, which cannot await. */
+/**
+ * Synchronous last resort for an `exit` hook, which cannot await. Signals only a group that still exists: once it is
+ * gone, its id can be reused by another run's process.
+ */
 export function killGroupSync(child: ChildProcess | undefined): void {
 	const pgid = child?.pid
-	if (!pgid) return
+	if (!pgid || !alive(pgid)) return
 	try {
 		process.kill(-pgid, "SIGKILL")
 	} catch {}

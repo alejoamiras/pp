@@ -1,14 +1,16 @@
 // Port claims in the host registry shared by every agent on this machine (~/.agents/ports.md).
 // Adapted from Unleashed's local-network harness (Apache-2.0).
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 const REGISTRY = join(homedir(), ".agents", "ports.md")
 const LOCK = `${REGISTRY}.lock`
-// A lock older than this belonged to a run that died holding it.
+// A lock older than this belonged to a run that died holding it; holders keep it for milliseconds.
 const LOCK_STALE_MS = 15_000
+// Written into the lock so a holder whose stale lock was reclaimed never removes its successor's.
+const TOKEN = `${process.pid}-${Math.random().toString(36).slice(2)}`
 // Ports below the kernel's ephemeral range are never handed to an outgoing connection between the bind test and the spawn.
 const STATIC_LO = 10_000
 const HEADER = [
@@ -37,6 +39,8 @@ function bindable(port: number): Promise<boolean> {
 	})
 }
 
+const ownerOf = (line: string): string | undefined => line.split("|")[3]?.trim()
+
 const portOf = (line: string): number | undefined => {
 	const port = Number.parseInt(line.split("|")[1]?.trim() ?? "", 10)
 	return Number.isInteger(port) ? port : undefined
@@ -48,7 +52,7 @@ function registered(lines: string[]): Set<number> {
 
 function tryLock(): boolean {
 	try {
-		closeSync(openSync(LOCK, "wx", 0o600))
+		writeFileSync(LOCK, TOKEN, { flag: "wx", mode: 0o600 })
 		return true
 	} catch {
 		try {
@@ -58,6 +62,19 @@ function tryLock(): boolean {
 	}
 }
 
+function unlock(): void {
+	try {
+		if (readFileSync(LOCK, "utf8") === TOKEN) unlinkSync(LOCK)
+	} catch {}
+}
+
+/** Replaces the table atomically: an interrupted write must not truncate other runs' rows. */
+function writeRegistry(lines: string[]): void {
+	const tmp = `${REGISTRY}.${TOKEN}.tmp`
+	writeFileSync(tmp, lines.join("\n"))
+	renameSync(tmp, REGISTRY)
+}
+
 async function withRegistry<T>(mutate: (lines: string[]) => { lines: string[]; result: T }): Promise<T> {
 	mkdirSync(dirname(REGISTRY), { recursive: true })
 	for (let i = 0; i < 100; i++) {
@@ -65,12 +82,10 @@ async function withRegistry<T>(mutate: (lines: string[]) => { lines: string[]; r
 			try {
 				const text = existsSync(REGISTRY) ? readFileSync(REGISTRY, "utf8") : `${HEADER.join("\n")}\n`
 				const { lines, result } = mutate(text.split("\n"))
-				writeFileSync(REGISTRY, lines.join("\n"))
+				writeRegistry(lines)
 				return result
 			} finally {
-				try {
-					unlinkSync(LOCK)
-				} catch {}
+				unlock()
 			}
 		}
 		await sleep(100)
@@ -108,7 +123,7 @@ export async function claimPorts<S extends string>(runId: string, services: read
 /** Drops every row `runId` owns. Never throws: a registry hiccup must not fail an otherwise clean run. */
 export async function releasePorts(runId: string): Promise<void> {
 	try {
-		await withRegistry((lines) => ({ lines: lines.filter((l) => !l.includes(`| ${runId} |`)), result: undefined }))
+		await withRegistry((lines) => ({ lines: lines.filter((l) => ownerOf(l) !== runId), result: undefined }))
 	} catch (e) {
 		console.warn(`[ports] could not release rows of ${runId}: ${(e as Error).message}`)
 	}
@@ -124,15 +139,14 @@ export function releasePortsSync(runId: string): void {
 		if (tryLock()) {
 			try {
 				if (existsSync(REGISTRY)) {
-					const kept = readFileSync(REGISTRY, "utf8")
-						.split("\n")
-						.filter((l) => !l.includes(`| ${runId} |`))
-					writeFileSync(REGISTRY, kept.join("\n"))
+					writeRegistry(
+						readFileSync(REGISTRY, "utf8")
+							.split("\n")
+							.filter((l) => ownerOf(l) !== runId),
+					)
 				}
 			} finally {
-				try {
-					unlinkSync(LOCK)
-				} catch {}
+				unlock()
 			}
 			return
 		}
@@ -145,5 +159,5 @@ export function rowsOwnedBy(runId: string): string[] {
 	if (!existsSync(REGISTRY)) return []
 	return readFileSync(REGISTRY, "utf8")
 		.split("\n")
-		.filter((l) => l.includes(`| ${runId} |`))
+		.filter((l) => ownerOf(l) === runId)
 }

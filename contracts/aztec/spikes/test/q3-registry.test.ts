@@ -48,13 +48,13 @@ describe("q3 registry read in private", () => {
 	it("baseline: check_current proven and sent at once lands", async () => {
 		const proven = await proveOnly(alice, reader.methods.check_current())
 		record("q3.expiry", { anchor: proven.anchorTimestamp, expiration: proven.expirationTimestamp, requested: proven.anchorTimestamp + WINDOW })
-		expect(proven.expirationTimestamp).toBeLessThanOrEqual(proven.anchorTimestamp + WINDOW)
+		expect(proven.expirationTimestamp).toBe(proven.anchorTimestamp + WINDOW)
 		await alice.node.sendTx(proven.tx)
 		const receipt = await waitForTx(alice.node, proven.tx.getTxHash())
 		expect(receipt.executionResult).toBe(TxExecutionResult.SUCCESS)
 	})
 
-	it("stale root: a proof made before an update still lands, carrying the old record", async () => {
+	it("stale root: a proof whose private execution read the old record still lands after an update", async () => {
 		const before = await current()
 		const proven = await proveOnly(alice, reader.methods.check())
 		expect(proven.returnValues).toEqual([before.sequence, before.root, before.time])
@@ -72,22 +72,30 @@ describe("q3 registry read in private", () => {
 
 	it("current check: the same race with check_current reverts in public", async () => {
 		const proven = await proveOnly(alice, reader.methods.check_current())
+		// The same bytes pass public simulation before the update and fail an assertion after it; the node returns the
+		// assertion without its message, so the update alone is what the attribution rests on.
+		expect((await alice.node.simulatePublicCalls(proven.tx, true)).revertReason).toBeUndefined()
 		await post(0xc3n)
+		const reason = (await alice.node.simulatePublicCalls(proven.tx, true)).revertReason?.message
+		expect(reason).toMatch(/^Assertion failed/)
+
 		await alice.node.sendTx(proven.tx)
 		const receipt = await waitForTx(alice.node, proven.tx.getTxHash(), { dontThrowOnRevert: true })
 		expect(receipt.executionResult).toBe(TxExecutionResult.REVERTED)
-		record("q3.check_current_reverted", { error: receipt.error ?? null, fee: receipt.transactionFee })
+		expect(receipt.transactionFee).toBeGreaterThan(0n)
+		record("q3.check_current_reverted", { simulatedReason: reason, fee: receipt.transactionFee })
 	})
 
 	it("expiry: a proof sent after its expiry is rejected", async () => {
 		const proven = await proveOnly(alice, reader.methods.check())
 		await createAztecNodeDebugClient(inject("nodeUrl")).warpL2TimeAtLeastTo(Number(proven.expirationTimestamp) + 1)
+		const head = (await alice.node.getBlockData("latest"))?.header.globalVariables.timestamp
+		expect(head).toBeGreaterThan(proven.expirationTimestamp)
 		const error = await alice.node.sendTx(proven.tx).then(
 			() => null,
 			(e: Error) => e.message,
 		)
-		record("q3.expired_send", { expiration: proven.expirationTimestamp, error })
-		expect(error).not.toBeNull()
-		expect(error?.toLowerCase()).toMatch(/expir|timestamp|include/)
+		record("q3.expired_send", { expiration: proven.expirationTimestamp, head, error })
+		expect(error).toMatch(/Invalid expiration timestamp/)
 	})
 })

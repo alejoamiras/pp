@@ -80,7 +80,8 @@ impl LabelNote {
     where
         D: MessageDeliveryBuilder,
     {
-        // Safety: a bad randomness only hurts the owner, whose PXE cannot then find the note.
+        // Safety: the randomness keeps owner and label from being brute-forced out of the public commitment; a
+        // preparer that skews it already knows both.
         let randomness = unsafe { random() };
         let commitment = compute_partial_commitment(owner, label, randomness);
         let content = LabelPartialNotePrivateContent { label };
@@ -130,7 +131,7 @@ impl PartialLabelNote {
         storage_slot: Field,
         value: u128,
     ) {
-        // A zero value is trimmed from the completion log, which breaks the owner's discovery.
+        // As in aztec-nr's UintNote: a trailing zero may be trimmed from the completion log, breaking discovery.
         assert(value != 0, "zero completion");
         assert(
             context.nullifier_exists_unsafe(

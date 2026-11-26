@@ -52,14 +52,21 @@ describe("q2 labelled note: discovery without a registered sender", () => {
 		const first = asAlice.methods.mint_private(bob.address, L1, 100n)
 		record("q2.mint_constrained.first.gates", summarizeProfile(await first.profile({ from: alice.address, profileMode: "gates" })))
 		const r1 = await first.send({ from: alice.address })
-		record("q2.mint_constrained.first.effects", await effects(r1.receipt.txHash))
+		const e1 = await effects(r1.receipt.txHash)
+		record("q2.mint_constrained.first.effects", e1)
+		// Tx nullifier, handshake nullifier, constrained-delivery sequence nullifier.
+		expect(e1.nullifiers).toBe(3)
 		expect(await bobBalance(L1)).toBe(100n)
 
 		const second = asAlice.methods.mint_private(bob.address, L1, 1n)
 		record("q2.mint_constrained.second.gates", summarizeProfile(await second.profile({ from: alice.address, profileMode: "gates" })))
 		const r2 = await second.send({ from: alice.address })
-		record("q2.mint_constrained.second.effects", await effects(r2.receipt.txHash))
+		const e2 = await effects(r2.receipt.txHash)
+		record("q2.mint_constrained.second.effects", e2)
+		// The handshake is reused; the sequence nullifier remains.
+		expect(e2.nullifiers).toBe(2)
 		expect(await bobBalance(L1)).toBe(101n)
+		expect((await bob.wallet.getAddressBook()).map((a) => a.item.toString())).not.toContain(alice.address.toString())
 	})
 
 	it("control: an address-derived mint stays invisible until bob registers alice", async () => {

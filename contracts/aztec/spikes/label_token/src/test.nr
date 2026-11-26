@@ -108,6 +108,13 @@ unconstrained fn complete_failure_second_completion() {
     env.call_public(minter, LabelToken::at(token).complete_partial(commitment, 10));
 }
 
+#[test(should_fail_with = "zero completion")]
+unconstrained fn complete_failure_zero_amount() {
+    let (env, token, minter, bob) = setup();
+    let commitment = env.call_private(bob, LabelToken::at(token).prepare_partial(bob, L1, minter));
+    env.call_public(minter, LabelToken::at(token).complete_partial(commitment, 0));
+}
+
 #[test(should_fail_with = "invalid partial note or completer")]
 unconstrained fn complete_failure_wrong_completer() {
     let (mut env, token, minter, bob) = setup();

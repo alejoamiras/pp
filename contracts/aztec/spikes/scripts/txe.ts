@@ -1,7 +1,7 @@
 // Runs the Noir TXE tests against a TXE server this run owns: its own registry-claimed port, process group and
 // data directory. `aztec test` is not used because it binds port 8081 for every caller on the machine.
 // Usage: bun scripts/txe.ts [nargo test filter args…]
-import { spawn } from "node:child_process"
+import { type ChildProcess, spawn } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { claimPorts, releasePorts, releasePortsSync } from "../harness/ports"
@@ -10,13 +10,17 @@ import { killGroup, killGroupSync, newRunId, removeRunDir, runDir, spawnGroup, T
 const runId = newRunId("txe")
 const dir = runDir(runId)
 let txe: ReturnType<typeof spawnGroup> | undefined
+let nargo: ChildProcess | undefined
 
+// nargo first: blocked on an oracle call, it would outlive a stopped TXE.
 async function cleanup(): Promise<void> {
+	await killGroup(nargo)
 	await killGroup(txe)
 	await releasePorts(runId)
 	removeRunDir(runId)
 }
 process.once("exit", () => {
+	killGroupSync(nargo)
 	killGroupSync(txe)
 	releasePortsSync(runId)
 	removeRunDir(runId)
@@ -45,17 +49,19 @@ async function main(): Promise<number> {
 	const args = ["test", "--silence-warnings", "--oracle-resolver", `http://127.0.0.1:${port}`, "--test-threads", "2", ...filter]
 	const out: string[] = []
 	const code = await new Promise<number>((res) => {
-		const nargo = spawn(join(TOOLCHAIN, "bin", "aztec-nargo"), args, {
+		const child = spawn(join(TOOLCHAIN, "bin", "aztec-nargo"), args, {
 			env: { ...process.env, NARGO_FOREIGN_CALL_TIMEOUT: "1200000" },
+			detached: true,
 			stdio: ["ignore", "pipe", "pipe"],
 		})
+		nargo = child
 		const tee = (chunk: Buffer, sink: NodeJS.WriteStream) => {
 			out.push(chunk.toString())
 			sink.write(chunk)
 		}
-		nargo.stdout.on("data", (c: Buffer) => tee(c, process.stdout))
-		nargo.stderr.on("data", (c: Buffer) => tee(c, process.stderr))
-		nargo.on("close", (c) => res(c ?? 1))
+		child.stdout.on("data", (c: Buffer) => tee(c, process.stdout))
+		child.stderr.on("data", (c: Buffer) => tee(c, process.stderr))
+		child.on("close", (c) => res(c ?? 1))
 	})
 	// biome-ignore lint/suspicious/noControlCharactersInRegex: strips ANSI colour codes from nargo's output.
 	const text = out.join("").replace(/\x1b\[[0-9;]*m/g, "")

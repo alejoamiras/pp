@@ -22,6 +22,7 @@ completed_partial_carries_its_label_and_spends_under_it
 third_party_prepares_for_the_owner
 complete_failure_second_completion
 complete_failure_wrong_completer
+complete_failure_zero_amount
 shield_debits_the_shielder
 # Q3 registry read
 historical_reads_equal_the_posted_record

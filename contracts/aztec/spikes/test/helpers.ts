@@ -36,7 +36,7 @@ export function artifact(file: string): ContractArtifact {
 	return loadContractArtifact(JSON.parse(readFileSync(join(import.meta.dirname, "..", "target", file), "utf8")))
 }
 
-/** One line per measurement, grep-able from the test log and copied into the findings. */
+/** One grep-able line per measurement. */
 export function record(name: string, data: Record<string, unknown>): void {
 	const line = JSON.stringify({ ...data, cores: cpus().length, hardwareConcurrency: process.env.HARDWARE_CONCURRENCY ?? null }, (_, v) =>
 		typeof v === "bigint" ? v.toString() : v,
@@ -46,9 +46,14 @@ export function record(name: string, data: Record<string, unknown>): void {
 
 /** Per-circuit gates of a whole transaction (app functions and kernels) plus the client proving time. */
 export function summarizeProfile(p: TxProfileResult) {
+	// `timings.gateCount` is the time spent counting, not a count.
+	const steps = p.executionSteps.map((s) => {
+		if (s.gateCount === undefined) throw new Error(`no gate count for ${s.functionName}`)
+		return { fn: s.functionName, gates: s.gateCount }
+	})
 	return {
-		steps: p.executionSteps.map((s) => ({ fn: s.functionName, gates: s.gateCount ?? s.timings.gateCount ?? null })),
-		totalGates: p.executionSteps.reduce((n, s) => n + (s.gateCount ?? s.timings.gateCount ?? 0), 0),
+		steps,
+		totalGates: steps.reduce((n, s) => n + s.gates, 0),
 		provingMs: p.stats.timings.proving ?? null,
 		witgenMs: p.stats.timings.perFunction.reduce((n, f) => n + f.time, 0),
 		totalMs: p.stats.timings.total,
