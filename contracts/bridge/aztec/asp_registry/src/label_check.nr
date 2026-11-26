@@ -64,13 +64,14 @@ pub fn birth_intake_at_anchor(context: &mut PrivateContext, registry: AztecAddre
     intake
 }
 
-/// The origin's root and both trees, after the freshness rule and the expiry; the path is checked next.
+/// The origin's root, which the caller must prove the label's membership against, and both trees for
+/// the public step.
 pub(crate) fn fresh_roots(context: &mut PrivateContext, registry: AztecAddress, origin: u8) -> (Field, AnchorRoots) {
     assert(!registry.is_zero(), "registry unset");
     assert(origin <= ORIGIN_BIRTH, "unknown origin");
     let record = record_at_anchor(context, registry);
     let root = if origin == ORIGIN_POOL { record.pool_root } else { record.birth_root };
-    // Also rejects an unposted registry and one whose poster was just replaced.
+    // Zero also means nothing posted as of the anchor: before the first post, or since a poster change.
     assert(root != 0, "root unset");
     let anchor = context.get_anchor_block_header().timestamp();
     // Holds only through `post_root`'s `root_time <= now`; a record dated after its anchor would

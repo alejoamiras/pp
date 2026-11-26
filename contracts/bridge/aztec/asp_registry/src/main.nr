@@ -79,7 +79,8 @@ pub contract AspRootRegistry {
         assert(pool_root != 0, "zero pool root");
         assert(l1_block >= current.l1_block, "l1 block regressed");
         assert(root_time >= current.root_time, "root time regressed");
-        // Guards a bot that reposts a stalled block with its own clock: reposting cannot renew freshness.
+        // Guards a bot that reposts a stalled block with its own clock: reposting the same L1 block
+        // cannot renew freshness.
         assert((l1_block > current.l1_block) | (root_time == current.root_time), "new time on same block");
         let now = self.context.timestamp();
         assert(root_time <= now, "root time in the future");
@@ -103,7 +104,7 @@ pub contract AspRootRegistry {
         self.emit(PosterChanged { sequence, poster: next });
     }
 
-    /// Zero pauses shields: the token's read of the intake rejects it.
+    /// Zero pauses shields anchored after it: the token's read of the intake rejects it.
     #[external("public")]
     fn set_birth_intake(next: AztecAddress) {
         assert(self.msg_sender() == self.storage.admin.read(), "not admin");
