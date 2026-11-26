@@ -29,7 +29,7 @@ forge step generate it too.
 bun packages/bridge-core/scripts/gen-remappings.ts        # writes contracts/bridge/evm/remappings.txt
 (cd contracts/bridge/evm && forge build && forge test --no-match-contract Fork)
 bash contracts/bridge/evm/scripts/check-gas.sh             # .gas-snapshot within 2%, every case ran
-bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by name
+bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by name, and the harness check
 ```
 
 ## Contracts
@@ -41,27 +41,40 @@ bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by nam
   cap. Its owner is the **guardian**: one entry pause (a delay, never a transfer of funds) behind
   `Ownable2Step`, renounce disabled. Entries start paused: nothing can sweep a clone, so a spend
   accepted by a generation bound to the wrong hub or vault would be stuck for good, and the guardian
-  opens entries only once the bindings check out.
+  opens entries only once the bindings check out (bridge-core's `assertGenerationBindings`, with the
+  rollup endpoints from `rollupEndpointsOf`) **and** the hub at `L2_HUB` is deployed from the v1 hub
+  artifact. A hub that claims only the legacy messages cannot credit a v1 bridge, so its spend would
+  be stuck the same way.
 - **`ProcessorPortalImpl`** is the implementation every clone delegates to: the vault, the cap and
   the Aztec Inbox, Outbox and version are its immutables, and each clone's only storage is two
-  counters, `grossAccepted` and `totalPaid`. In this version it exposes no entry or exit yet.
+  counters, `grossAccepted` and `totalPaid`. `bridgeFromPool` spends one pool note into the clone
+  (1×1 shape, this token, under the cap, exact receipt) and sends its value to the hub;
+  `settleRagequit` and `settlePublicExit` pay a proven exit, never more than
+  `grossAccepted − totalPaid`, in any pause state. Payloads come from `BridgeMessageV1`.
   `IPrivacyPoolVault` declares the vault's `transact`, its selector pinned to the pool's build.
 - `MintableERC20` / `TestUsdc` are capped-mint test tokens; the local network deploys
   `MintableERC20` (see INFO-1).
 
 ## Tests
 
-Hermetic forge tests (`forge test --no-match-contract Fork`), **2 halmos proofs**
-(`FormalFactoryTest`; each guard-shaped proof carries a forge canary showing the property fails
-without the guard), and a committed `.gas-snapshot` for `createPortal` on a fresh token.
+Hermetic forge tests (`forge test --no-match-contract Fork`), **12 halmos proofs**
+(`FormalFactoryTest 2 · FormalProcessorPortalTest 10`; each guard-shaped proof carries a forge canary
+showing the property fails without the guard), and a committed `.gas-snapshot` for `createPortal` on
+a fresh token, `bridgeFromPool` and both settles.
+
+halmos cannot run sha256, so the portal proofs drive `ProcessorPortalHarness`, whose content hash is
+keccak. Three things keep it honest: `PortalVectors` checks the production hash against the shared
+vectors, `HarnessParity` fuzzes the same calls into a production and a harness clone and requires
+identical outcomes, and `scripts/check-harness.py` (run by `check-halmos.sh`) requires equal selectors
+and storage and a harness that declares nothing but a forwarding constructor and `_contentHash`.
 
 | Layer | Suites |
 |---|---|
-| unit | `PortalFactory`, `ProcessorPortal` (the vault selector), `Keystone` (3-way vectors with Noir and TS), `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `MintableERC20`, `TestUsdc` |
+| unit | `PortalFactory`, `ProcessorPortal`, `HarnessParity`, `PortalVectors` (the clone's wire envelope against the shared vectors), `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `Keystone` (3-way vectors with Noir and TS), `MintableERC20`, `TestUsdc` |
 | fuzz | `PortalFactoryFuzz` |
 | invariant | `PortalFactoryInvariant` |
-| symbolic | `FormalFactory`; see its header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |
-| adversarial | `BlackhatFactory` (F-1…F-9) |
+| symbolic | `FormalFactory`, `FormalProcessorPortal` (on a keccak harness); see each header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |
+| adversarial | `BlackhatFactory` (F-1…F-9; F-7 and F-9 against the processor portal) |
 | gas | `PortalGas` |
 
 ## Threat model: the factory-bound portal

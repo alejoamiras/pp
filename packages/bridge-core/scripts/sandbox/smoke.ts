@@ -36,7 +36,9 @@ export async function runSmoke(clients: SandboxClients, manifest: ManifestV2): P
 		if (!r.ok) throw new Error(r.line)
 	}
 	console.log("\n=== smoke ===")
-	await step("generation bindings: vault, cap, paused entries, one portal per token", () => flowGenerationBindings(clients.l1, bridge))
+	await step("generation bindings: vault, cap, paused entries, one portal per token", () =>
+		flowGenerationBindings(clients.l1, clients.l2.node, bridge),
+	)
 	await step("hub registrations: deployed tokens bound to their portals, the portal-only one unregistered", () =>
 		flowHubRegistrations({ wallet: clients.l2.wallet, from: clients.l2.relayer }, bridge, [usdc, usdt], [pxo]),
 	)

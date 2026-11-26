@@ -10,7 +10,9 @@ pragma solidity >=0.8.27;
 //   [F-4] metadata mutated after creation → registration frozen
 //   [F-5] two tokens with identical metadata → distinct portals, distinct register hashes
 //   [F-6] portal-of-a-portal / factory / implementation as "token" → refused
+//   [F-7] the token's transfer hook re-enters bridgeFromPool mid-payment → refused, one message
 //   [F-8] guardian pending-ownership hijack → only the pending owner can accept
+//   [F-9] the token's transfer hook re-enters a settle mid-payout → refused, paid once
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {Test} from "forge-std/Test.sol";
@@ -23,6 +25,9 @@ import {PortalFactory} from "../src/PortalFactory.sol";
 import {ProcessorPortalImpl} from "../src/ProcessorPortalImpl.sol";
 import {IPrivacyPoolVault} from "../src/interfaces/IPrivacyPoolVault.sol";
 import {IPortalFactory} from "../src/interfaces/IPortalFactory.sol";
+import {ReentrancyGuardTransient} from "@oz/utils/ReentrancyGuardTransient.sol";
+import {Epoch} from "@aztec/core/libraries/TimeLib.sol";
+import {PortalFixture} from "./helpers/PortalFixture.sol";
 import {CapturingInbox, CapturingOutbox, FakeRegistry, FakeRollup} from "./mocks/AztecFakes.sol";
 import {HugeNameERC20, PlainERC20, ReentrantNameERC20} from "./mocks/MetadataERC20s.sol";
 
@@ -235,5 +240,83 @@ contract BlackhatFactoryTest is Test {
         vm.prank(GUARDIAN);
         factory.setEntriesPaused(false);
         assertFalse(factory.entriesPaused());
+    }
+}
+
+/// A token whose every transfer touching the armed portal replays one call into it and records how
+/// the portal refused: a hook that swallows the refusal, so only the reentrancy guard can stop it.
+contract HookERC20 is ERC20 {
+    address public portal;
+    bytes public reentry;
+    bytes4 public hookRevert;
+    bool private armed;
+
+    constructor() ERC20("Hook", "HOOK") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function arm(address p, bytes calldata data) external {
+        portal = p;
+        reentry = data;
+        armed = true;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        super._update(from, to, value);
+        if (armed && (from == portal || to == portal)) {
+            armed = false;
+            (bool ok, bytes memory ret) = portal.call(reentry);
+            // forge-lint: disable-next-line(unsafe-typecast)
+            if (!ok && ret.length >= 4) hookRevert = bytes4(ret);
+        }
+    }
+}
+
+contract BlackhatPortalTest is PortalFixture {
+    address internal constant PAYEE = address(0xBEEF);
+
+    HookERC20 internal hook;
+    ProcessorPortalImpl internal clone;
+
+    function setUp() public {
+        _deploy(type(uint256).max);
+        hook = new HookERC20();
+        hook.mint(address(vault), 1 << 100);
+        clone = ProcessorPortalImpl(factory.createPortal(address(hook)));
+    }
+
+    /// [F-7] The vault's payment to the clone runs the token's hook, which re-enters `bridgeFromPool`
+    /// with a second valid proof. The capturing Inbox would take a second message, so the transient
+    /// guard is all that refuses it.
+    function test_F7_transferHookReentersBridge_rejected() public {
+        (IPrivacyPoolVault.TransactProof memory inner,) = _proof(clone, 1, SECRET_HASH);
+        hook.arm(address(clone), abi.encodeCall(ProcessorPortalImpl.bridgeFromPool, (inner, _notes(), SECRET_HASH)));
+        uint256 sent = inbox.sent();
+
+        _bridge(clone, 1000);
+
+        assertEq(hook.hookRevert(), ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector, "hook was not rejected");
+        assertEq(inbox.sent(), sent + 1, "the nested bridge sent a message");
+        assertEq(clone.grossAccepted(), 1000, "the nested bridge was credited");
+        assertEq(hook.balanceOf(address(clone)), 1000);
+    }
+
+    /// [F-9] The clone's payout runs the token's hook, which re-enters `settlePublicExit`. The
+    /// capturing Outbox would accept the nested message, so the transient guard is all that refuses it.
+    function test_F9_transferHookReentersSettle_rejected() public {
+        _bridge(clone, 1000);
+        hook.arm(
+            address(clone),
+            abi.encodeCall(ProcessorPortalImpl.settlePublicExit, (PAYEE, 400, Epoch.wrap(2), 1, 0, new bytes32[](0)))
+        );
+
+        _settlePublicExit(clone, PAYEE, 400);
+
+        assertEq(hook.hookRevert(), ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector, "hook was not rejected");
+        assertEq(hook.balanceOf(PAYEE), 400, "the nested settle paid out");
+        assertEq(clone.totalPaid(), 400);
+        assertEq(hook.balanceOf(address(clone)), 600, "reserve drifted");
     }
 }

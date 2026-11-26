@@ -6,7 +6,7 @@ import { INTEGRATION, sandbox } from "./sandbox"
 describe.skipIf(!INTEGRATION)("generation", () => {
 	it("binds the vault and cap, starts with entries paused, and creates one portal per manifest token", async () => {
 		const { clients, manifest } = await sandbox()
-		expect(await flowGenerationBindings(clients.l1, manifest.bridge as BridgeBlock)).toContain("entries paused")
+		expect(await flowGenerationBindings(clients.l1, clients.l2.node, manifest.bridge as BridgeBlock)).toContain("entries paused")
 	})
 
 	it("registers the deployed tokens on the hub with their portals and leaves the portal-only one for its first claim", async () => {
