@@ -11,7 +11,9 @@ gains.
 
 ## Dependency policy
 
-- `bunfig.toml` blocks any npm version younger than 7 days (`minimumReleaseAge`). For a CVE fix that
+- `bunfig.toml` blocks any npm version younger than 7 days (`minimumReleaseAge`) when Bun resolves
+  one. An install from an unchanged `bun.lock` resolves nothing, so `--frozen-lockfile` installs
+  whatever the lockfile names: review a lockfile change as code. For a CVE fix that
   is newer than that, add the package to `minimumReleaseAgeExcludes`, install the fix, and remove the
   entry again in the same pull request; `bun install --frozen-lockfile --force` proves the lockfile
   no longer needs it.
