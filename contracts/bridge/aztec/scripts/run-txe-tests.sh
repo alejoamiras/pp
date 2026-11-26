@@ -169,7 +169,8 @@ if [ "${#filters[@]}" -eq 0 ]; then
   # Stripped once, not piped per name: under pipefail, `sed | grep -q` fails whenever grep's early
   # exit SIGPIPEs sed, which happens for a match near the top of a log larger than the pipe buffer.
   run_log="$(sed -E 's/\x1b\[[0-9;]*m//g' "$tb/txe-run.log")"
-  while IFS= read -r name; do
+  # `|| [ -n "$name" ]` also checks a last line without a newline, which the floor count includes.
+  while IFS= read -r name || [ -n "$name" ]; do
     [ -z "$name" ] && continue
     case "$name" in \#*) continue ;; esac
     # Anchored on the module separator so a manifest entry cannot be satisfied by a longer name
