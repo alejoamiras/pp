@@ -193,6 +193,34 @@ describe("CI behavior-gating guard", () => {
   })
 })
 
+// A title on a public repo is written by whoever opens the PR: no write token, no secret, and the
+// title reaches the script only through the environment.
+test("commit-messages.yml runs on pull_request alone, re-judges every head and edit, title as data", () => {
+  const wf = workflow("commit-messages.yml")
+  expect(Object.keys(wf.on)).toEqual(["pull_request"])
+  expect(wf.on.pull_request.types).toEqual(["opened", "edited", "reopened", "synchronize"])
+  expect(wf.concurrency.group).toContain("github.event.pull_request.head.sha")
+  expect(wf.permissions).toEqual({ contents: "read" })
+  const job = wf.jobs["commit-messages"]
+  expect(job.name).toBe("commit-messages-status")
+  expect(job.permissions).toBeUndefined()
+  type Step = { run?: string; env?: Record<string, string> }
+  for (const step of job.steps as Step[]) expect(step.run ?? "").not.toContain("${{")
+  const title = (job.steps as Step[]).find((s) => s.run === "bash scripts/ci-cd/lint-pr-title.sh")
+  expect(title?.env).toEqual({ PR_TITLE: "${{ github.event.pull_request.title }}", PR_NUMBER: "${{ github.event.pull_request.number }}" })
+  const commits = (job.steps as Step[]).find((s) => s.run?.startsWith("bash scripts/ci-cd/commitlint-own.sh"))
+  expect(commits?.run).toBe('bash scripts/ci-cd/commitlint-own.sh "$HEAD_SHA" "$BASE_SHA" origin/main')
+  expect(commits?.env).toEqual({ BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" })
+})
+
+// The excluded main needs every branch fetched, which fetch-depth 0 does.
+test("Commitlint lints only the PR's own commits, excluding its base and main", () => {
+  expect(workflow("commit-messages.yml").jobs["commit-messages"].steps[0].with["fetch-depth"]).toBe(0)
+  const job = workflow("pr-quick.yml").jobs.commitlint
+  expect(job.steps[0].with["fetch-depth"]).toBe(0)
+  expect(job.steps.map((s: { run?: string }) => s.run)).toContain('bash scripts/ci-cd/commitlint-own.sh "$HEAD_SHA" "$BASE_SHA" origin/main')
+})
+
 test("the unit-test workflow runs this suite", () => {
   const steps: { run?: string }[] = workflow("_unit-tests.yml").jobs["unit-tests"].steps
   expect(steps.map((step) => step.run)).toContain("bun run test:ci-gating")
