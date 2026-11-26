@@ -7,6 +7,8 @@ declare module "vitest" {
 	export interface ProvidedContext {
 		nodeUrl: string
 		anvilUrl: string
+		/** False when attached: another client may then mine at any time. */
+		ownsNetwork: boolean
 	}
 }
 
@@ -16,6 +18,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
 	const net = await startLocalNetwork({ runId: `tok-${process.pid}-${Date.now().toString(36)}` })
 	project.provide("nodeUrl", net.nodeUrl)
 	project.provide("anvilUrl", net.anvilUrl)
+	project.provide("ownsNetwork", !process.env.SANDBOX_NODE_URL)
 	return async () => {
 		await net.stop()
 		assertNothingLeft(net)

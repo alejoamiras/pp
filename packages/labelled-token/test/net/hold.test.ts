@@ -83,7 +83,7 @@ describe("stage A on a local network", () => {
 	})
 
 	// Local time moves only with blocks, so a test that needs age or expiry must mine.
-	test("an idle local network does not age", async () => {
+	test.skipIf(!inject("ownsNetwork"))("an idle local network does not age", async () => {
 		const l1Block = async () => {
 			const r = await fetch(anvilUrl, {
 				method: "POST",
