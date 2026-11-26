@@ -11,12 +11,8 @@
 		"isolatedModules": true,
 		"skipLibCheck": true,
 		"resolveJsonModule": true,
-		"types": ["bun", "node"],
-		"paths": {
-			"@ppv2/evm-sdk": ["../pp-env/.ppv2/packages/evm-sdk/dist/index"],
-			"@ppv2/mock-asp/evm": ["../pp-env/.ppv2/packages/mock-asp/dist/evm"]
-		}
+		"types": ["bun", "node"]
 	},
-	"comment": "One tsc program spans pp-env's and bridge-core's sources, so the options must suit both; pp-env's @ppv2 aliases are mirrored until it ships a type entry free of them.",
+	"comment": "One tsc program spans bridge-core's sources and pp-env's type entry, so the options must suit both.",
 	"include": ["src/**/*.ts", "test/**/*.ts"]
 }

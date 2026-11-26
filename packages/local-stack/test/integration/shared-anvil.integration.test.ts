@@ -47,7 +47,6 @@ const KEYSTORE_ABI = [
 const ASP_ABI = [
 	{ type: "function", name: "latestASPRoot", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
 ] as const
-const SPEND_ABI = [...STUB_PROCESSOR_ABI, { type: "error", name: "PoolVault_UnknownKeystoreRoot", inputs: [] }] as const
 
 const keystoreRootOf = (s: PreparedSpend) => s.args[0].pubSignals[3]?.[0]
 const aspRootOf = (s: PreparedSpend) => s.args[0].pubSignals[4]?.[0]
@@ -247,7 +246,7 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the pool on the anvil the Az
 		const before = await stubState()
 		const submit = wallet(stack.manifest.l1Rpc, SUBMITTER_INDEX).writeContract({
 			address: stub,
-			abi: SPEND_ABI,
+			abi: STUB_PROCESSOR_ABI,
 			functionName: "spend",
 			args: p1.args,
 		})
