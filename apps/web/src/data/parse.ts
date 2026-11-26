@@ -68,6 +68,20 @@ export function parseOrigin(value: unknown): Origin | null {
 	return null
 }
 
+const DECIMAL = /^(\d{1,39})(?:\.(\d*))?$/
+
+/**
+ * A typed amount in base units: plain decimal digits with at most `decimals` fraction digits, no sign,
+ * exponent or grouping. Zero parses; the caller decides the range.
+ */
+export function parseAmount(text: string, decimals: number): bigint | null {
+	const m = DECIMAL.exec(text.trim())
+	if (!m) return null
+	const fraction = m[2] ?? ""
+	if (fraction.length > decimals) return null
+	return BigInt(m[1] ?? "0") * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, "0") || "0")
+}
+
 /** A u128 amount from a view; anything else is no amount. */
 export function parseU128(value: unknown): bigint | null {
 	const n = typeof value === "bigint" ? value : typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : null

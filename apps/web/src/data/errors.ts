@@ -3,6 +3,7 @@
  * message, a wallet's wording or a revert string is never displayed.
  */
 import type { BridgeClientErrorCode, StaleRootCode } from "./a7"
+import type { PayeeRefusal } from "./parse"
 
 /** Outcomes the app names itself, beside bridge-core's closed set. */
 export type AppCode =
@@ -18,6 +19,11 @@ export type AppCode =
 	| "PAYEE_INVALID"
 	| "SESSION_CLOSED"
 	| "NO_SENDER"
+	| "TX_REVERTED"
+	| "UNSHIELD_REVERTED"
+	| "TX_DROPPED"
+	| "WAIT_FINALITY"
+	| "TX_BUSY"
 	| "UNKNOWN"
 
 export type UiCode = BridgeClientErrorCode | AppCode
@@ -61,12 +67,28 @@ const MESSAGES: Record<UiCode, string> = {
 	PAYEE_INVALID: "That payee cannot receive an exit: use a checksummed Ethereum address that is neither zero nor the portal.",
 	SESSION_CLOSED: "Sign in with Ethereum first.",
 	NO_SENDER: "Connect your Ethereum wallet first.",
+	TX_REVERTED: "The transaction reverted on Aztec. Refresh your balances, then try again.",
+	UNSHIELD_REVERTED:
+		"The unshield reverted: the fee was paid; your notes are safe. Sending and unshielding wait until that transaction is final.",
+	TX_DROPPED: "Aztec has not included the transaction yet. The page will not send it again; refresh your balances before you retry.",
+	WAIT_FINALITY: "Send and Unshield wait for finality: the reverted unshield must be final first (chain time). Refresh to check.",
+	TX_BUSY: "Wait for your last Aztec transaction to finish.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",
 }
 
 const KNOWN_CODES: ReadonlySet<string> = new Set(Object.keys(MESSAGES))
 
 export const messageOf = (code: UiCode): string => MESSAGES[code]
+
+/** Why a typed payee is refused, each with what to type instead. */
+export const PAYEE_MESSAGES: Record<PayeeRefusal, string> = {
+	format: "Enter an Ethereum address: 0x followed by 40 hex digits.",
+	checksum: "Type the address with its exact capitals (its checksum), so a typo cannot slip through. Copy it from your wallet.",
+	zero: "The zero address cannot receive an exit. Enter an address you control.",
+	portal: "The portal cannot receive an exit: the funds would be stranded. Enter an address you control.",
+}
+
+export const RECIPIENT_MESSAGE = "Enter an Aztec address: 0x followed by 64 hex digits."
 
 /** Which root an internal re-proof follows, in the page's words. */
 export const ROOT_NAMES: Record<StaleRootCode, string> = {

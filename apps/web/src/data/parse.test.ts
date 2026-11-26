@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import { BN254_P, parseAztecAddress, parseLabel, parseOrigin, parsePayee } from "./parse"
+import { BN254_P, parseAmount, parseAztecAddress, parseLabel, parseOrigin, parsePayee } from "./parse"
 
 const PORTAL = "0x9047a1000000000000000000000000000000b1d9"
 const hex64 = (n: bigint) => `0x${n.toString(16).padStart(64, "0")}`
@@ -38,5 +38,15 @@ describe("input parsers", () => {
 		expect(parseLabel(-1n)).toBeNull()
 		expect(parseLabel("0x")).toBeNull()
 		expect([parseOrigin(0), parseOrigin(1n), parseOrigin(2), parseOrigin("1")]).toEqual([0, 1, null, null])
+	})
+
+	test("a typed amount is plain decimal with at most the token's decimals", () => {
+		expect([parseAmount("70", 6), parseAmount(" 0.5 ", 6), parseAmount("1.", 6), parseAmount("0", 6)]).toEqual([
+			70_000_000n,
+			500_000n,
+			1_000_000n,
+			0n,
+		])
+		for (const bad of ["1.0000001", "-1", "1e6", "1,000", ".5", ""]) expect(parseAmount(bad, 6), bad).toBeNull()
 	})
 })

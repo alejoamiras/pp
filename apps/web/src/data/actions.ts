@@ -24,6 +24,17 @@ export function canDispatch(grant: Grant | null, action: AztecAction, stage: Sta
 	return requiredScopes(action, t).every((k) => grant.scopes.has(k))
 }
 
+/** Why `action` cannot be dispatched, for the disabled button's reason; `null` when it can. */
+export function dispatchRefusal(
+	grant: Grant | null,
+	action: AztecAction,
+	stage: Stage,
+	t: CapabilityTargets,
+): "STAGE_UNSUPPORTED" | "NOT_GRANTED" | null {
+	if (!inStage(action, stage)) return "STAGE_UNSUPPORTED"
+	return canDispatch(grant, action, stage, t) ? null : "NOT_GRANTED"
+}
+
 const PORT_ACTION: Record<keyof AztecPort, AztecAction> = {
 	balancesByLabel: "balances",
 	notesByLabel: "notes",
