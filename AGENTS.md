@@ -15,6 +15,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 | [`packages/labelled-token`](packages/labelled-token/README.md) | `@pp/labelled-token`: the labelled token's artifact (browser-safe root), its gate budgets, the hub's derivation vector and its two-device network suite. |
 | [`packages/local-stack`](packages/local-stack/README.md) | `@pp/local-stack`: `bun run demo`, one anvil carrying the Aztec local network and the pool, with its manifest and heartbeat. |
 | [`packages/asp-bot`](packages/asp-bot/README.md) | `@pp/asp-bot`: posts the ASP root to the Aztec registry and serves the snapshots, as a child process group. |
+| [`packages/pool-client`](packages/pool-client/README.md) | `@pp/pool-client`: Privacy Pools v2 notes and a checked one-input spend to a processor, in Node, Bun and the browser; never submits. `@pp/pool-client/testing` seeds a running `pp-env up`. |
 | [`scripts/`](scripts) | CI-gating tests (`scripts/ci-cd/`), the complexity baseline, the absolute-path guard. |
 | [`.github/`](.github) | PR workflows, each with a `changes` filter and an exact-state aggregator. |
 
@@ -63,10 +64,12 @@ with warm package and toolchain caches.
 | Local stack | `bun run demo` (`--keep` holds it up) | 44 s (ready in 40 s) |
 | Local stack integration | `bun run --cwd packages/local-stack test:integration` | — |
 | E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | 15 s |
+| Pool client, unit | `bun run --cwd packages/pool-client test` and `test:node` | 10 s |
+| Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |
 
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row
-the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml` and
-`actionlint.yml`.
+the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml`,
+`pool-client.yml` and `actionlint.yml`.
 
 ## Working in this repo
 
