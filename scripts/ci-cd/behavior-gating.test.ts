@@ -10,8 +10,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 
 const ROOT = join(import.meta.dir, "..", "..")
-// Deployable leaves live under apps/ (none yet), libraries under packages/.
-const APPS = new Set<string>()
+// Deployable leaves live under apps/, libraries under packages/.
+const APPS = new Set<string>(["web"])
 const dirOf = (pkg: string): string => (APPS.has(pkg) ? "apps" : "packages")
 
 /** Direct `@pp/*` workspace deps of a package (runtime + dev — what it's built/tested from). */
