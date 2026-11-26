@@ -30,7 +30,10 @@ export interface Stack {
 /** The attach variables make scaffold's harness reuse whatever chain they name, and the pool would then be deployed onto it. */
 export class AttachRefused extends Error {
 	constructor(names: string[]) {
-		super(`${names.join(" and ")} set: the stack always boots its own network; unset ${names.length > 1 ? "them" : "it"}`)
+		super(
+			`${names.join(" and ")} ${names.length > 1 ? "are" : "is"} set, as a kept stack prints them for scaffold-harness suites. ` +
+				"The stack always boots its own network: run `unset SANDBOX_L1_RPC SANDBOX_NODE_URL` first.",
+		)
 		this.name = "AttachRefused"
 	}
 }
