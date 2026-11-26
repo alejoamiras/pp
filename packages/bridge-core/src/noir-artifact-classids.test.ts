@@ -29,6 +29,12 @@ const PINS = [
 		path: join(CONTRACTS, "asp_registry", "target", "asp_registry-AspRootRegistry.json"),
 		classId: "0x0ebac6e8eedf910656c4c1d8be2359ff10f924e048017df79d3f081b3d2ac0eb",
 	},
+	{
+		// Test-only consumer of the registry's library; committed for the network suite, never exported.
+		name: "AspRegistryProbe",
+		path: join(CONTRACTS, "asp_registry_probe", "target", "asp_registry_probe-AspRegistryProbe.json"),
+		classId: "0x1fa71dd57410acc9b967772f271225c52d4b6ebaaf8a155d6970c727257a47bf",
+	},
 ] as const
 
 describe("committed bridge Noir artifacts — class-id tripwire (6.0.0)", () => {
