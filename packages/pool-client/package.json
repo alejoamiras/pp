@@ -27,7 +27,10 @@
 		"@0xbow/privacy-pools-v2-sdk": "1.0.2",
 		"buffer": "6.0.3",
 		"snarkjs": "0.7.5",
-		"viem": "2.45.3"
+		"viem": "2.57.1"
+	},
+	"overrides": {
+		"viem": "2.57.1"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.13",
