@@ -42,3 +42,30 @@ never a re-pin of a deployed hub.
   enforced statically by `scripts/check-sole-consumer.sh`.
 - **Keystone** content-hash / register-hash / claim-secret equality (Solidity ↔ Noir ↔ TS) pinned in
   `contracts/bridge/evm/test/Keystone.t.sol` + `packages/bridge-core/src/{content-hash,register-hash,claim-secret}.test.ts`.
+
+## ASP root registry — `asp_registry`
+
+`AspRootRegistry` holds the latest ASP roots on Aztec in one record: `pool_root` (Ethereum's ASP root
+at `l1_block`, comparable there by anyone), `birth_root` (labels born on Aztec), and `root_time`, the
+timestamp of the Ethereum block the poster read. `label_check` is how a token reads the record from a
+private function.
+
+Posting rules: exactly the next `sequence`; `pool_root != 0`; `l1_block` and `root_time` never go
+back; a repeated `l1_block` keeps its `root_time`; `root_time <= now`; `now - root_time <= 1800 s`.
+
+What each key can do:
+
+- **Poster.** Post records within those rules. It can approve any Aztec-born label (`birth_root`),
+  post a `pool_root` that differs from Ethereum's (visible to anyone who compares), pair an old root
+  with a fresh time, make in-flight unshields revert by changing a root, or stop posting, which stops
+  checked spends 30 minutes after the last `root_time`. It cannot change the poster, the admin or the
+  birth intake, and nothing here can mint, burn, move notes or block a claim or a ragequit.
+- **Admin.** Replace the poster (which clears the roots, the block and the time, and keeps the
+  sequence) and set the birth intake (zero pauses shields; a new intake receives later shields'
+  announcements). It cannot post unless it makes itself poster, and nobody can change the admin.
+
+Known limits: a lost or stolen admin key cannot be replaced on chain; recovery is a new registry and a
+new token generation. While one tree's root is zero, a successful checked spend shows which tree it
+used. A watcher outside this contract compares `pool_root` with Ethereum at `l1_block`.
+
+Tests: `scripts/run-txe-tests.sh --crate asp_registry` runs the names in `asp_registry/txe-manifest.txt`.
