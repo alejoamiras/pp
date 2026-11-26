@@ -1,9 +1,37 @@
 use crate::{
     LabelledToken,
     note::ORIGIN_POOL,
-    test::utils::{assert_labels, balance, K, L, mint, ragequit, setup, setup_with_registry, values},
+    test::{
+        paths::{BIRTH_ROOT, POOL_ROOT, SOLO_ROOT},
+        utils::{assert_labels, balance, K, L, mint, post_now, ragequit, setup, setup_with_registry, values},
+    },
 };
+use asp_registry::AspRootRegistry;
 use aztec::protocol::{address::AztecAddress, traits::FromField};
+
+// A poster change clears both roots; the exit burn reads neither.
+#[test]
+unconstrained fn burn_for_exit_after_roots_cleared() {
+    let s = setup();
+    mint(s, s.user, 100, L);
+    post_now(s, POOL_ROOT, BIRTH_ROOT);
+    s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(s.admin));
+    ragequit(s, s.user, 100, L);
+    assert_eq(balance(s, s.user), 0);
+}
+
+// A revoked label cannot be consolidated, so nine notes leave in two exact-chunk calls.
+#[test]
+unconstrained fn burn_for_exit_nine_notes_of_revoked_label_in_two_calls() {
+    let s = setup();
+    for v in 1..10 {
+        mint(s, s.user, v as u128, L);
+    }
+    post_now(s, SOLO_ROOT, BIRTH_ROOT);
+    ragequit(s, s.user, 44, L);
+    ragequit(s, s.user, 1, L);
+    assert_eq(balance(s, s.user), 0);
+}
 
 #[test]
 unconstrained fn burn_for_exit_keeps_label_and_origin_on_change() {

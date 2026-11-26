@@ -1,5 +1,5 @@
 use crate::LabelledToken;
-use asp_registry::AspRootRegistry;
+use asp_registry::{AspRootRegistry, label_check::LabelPath};
 use aztec::{protocol::address::AztecAddress, test::helpers::test_environment::TestEnvironment};
 use bridge_stub::BridgeStub;
 
@@ -51,6 +51,46 @@ unconstrained fn deploy_token(
     let init = LabelledToken::interface().constructor(NAME, SYMBOL, DECIMALS, stub, registry);
     let token = env.deploy("LabelledToken").with_public_initializer(admin, init);
     Setup { env, admin, poster, user, stub, registry, token }
+}
+
+/// A posting time far enough past genesis that any freshness window around it is in the future.
+pub unconstrained fn t0(s: Setup) -> u64 {
+    s.env.last_block_timestamp() + 100_000
+}
+
+/// The poster posts both roots at `now`, as read from an Ethereum block of that time.
+pub unconstrained fn post(s: Setup, now: u64, sequence: u64, pool_root: Field, birth_root: Field) {
+    s.env.set_next_block_timestamp(now);
+    s.env.call_public(
+        s.poster,
+        AspRootRegistry::at(s.registry).post_root(sequence, pool_root, birth_root, 100 + sequence, now),
+    );
+}
+
+/// Posts both roots at `t0` and anchors the next private call one second later.
+pub unconstrained fn post_now(s: Setup, pool_root: Field, birth_root: Field) {
+    let now = t0(s);
+    post(s, now, 1, pool_root, birth_root);
+    s.env.mine_block_at(now + 1);
+}
+
+pub unconstrained fn transfer(
+    s: Setup,
+    from: AztecAddress,
+    to: AztecAddress,
+    amount: u128,
+    label: Field,
+    path: LabelPath,
+) {
+    s.env.call_private(from, LabelledToken::at(s.token).transfer_private(to, amount, label, path));
+}
+
+pub unconstrained fn unshield(s: Setup, from: AztecAddress, amount: u128, label: Field, path: LabelPath) {
+    s.env.call_private(from, LabelledToken::at(s.token).unshield(amount, label, path));
+}
+
+pub unconstrained fn public_balance(s: Setup, owner: AztecAddress) -> u128 {
+    s.env.view_public(LabelledToken::at(s.token).balance_of_public(owner))
 }
 
 pub unconstrained fn mint(s: Setup, to: AztecAddress, amount: u128, label: Field) {

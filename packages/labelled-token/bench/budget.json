@@ -1,4 +1,6 @@
 {
 	"burn_for_exit": 70000,
-	"mint_from_bridge": 36000
+	"mint_from_bridge": 36000,
+	"transfer_private": 125000,
+	"unshield": 110000
 }
