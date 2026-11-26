@@ -16,7 +16,8 @@ const client = await openPoolClient({ pool, l1Address: address, signature, artif
 const [note] = (await client.notes()).filter((n) => n.status === "approved")
 const spend = await client.prepareSpend({ note: note.commitment, amount: 70n, processor, data })
 await client.assertFresh(spend)          // the proof's roots still pass at one pinned block
-// send `spend.proof`, `{ processor, data }` and `spend.noteData` unchanged: the proof's context binds them
+// send `spend.proof`, `{ processor: spend.processor, data: spend.data }` and `spend.noteData` unchanged:
+// the proof's context binds them
 ```
 
 **The signature is a private key.** It derives every pool key of the user, and the bridge's claim key too. Keep it in memory;
@@ -27,8 +28,9 @@ never log, store or send it. The client keeps it in a closure, and its errors ne
 `prepareSpend` returns a deep-frozen spend only after these checks pass, in order: its shape; the request as captured before the
 first await; the transact params; the public signals; the nullifier, re-derived from the signature; the change, decrypted
 from `noteData` and matched against the proof's output, label and value; the context hash. `assertRecoverable(spend)`
-repeats them all on a spend held elsewhere. A failed check throws `PoolClientError` with code `SPEND_CHECK_FAILED` and the
-check's name. `spendRevertCode(revertData)` maps the vault's three stale-root reverts to the codes `assertFresh` uses.
+re-runs them on a spend held elsewhere, against that spend's own processor, `data` and amount and the note this client
+owns: it proves the spend consistent and its change recoverable, not that it matches the request it was made for. A failed
+check throws `PoolClientError` with code `SPEND_CHECK_FAILED` and the check's name. `spendRevertCode(revertData)` maps the vault's three stale-root reverts to the codes `assertFresh` uses.
 
 Choosing a trusted processor is the caller's job: the proof binds the processor and `data`, not what the processor does.
 

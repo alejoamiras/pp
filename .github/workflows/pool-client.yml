@@ -39,12 +39,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations. pp-env whole: the suites run its CLI and import its
-          # sources and fixtures by path. The actions the jobs call; root install and test config.
+          # sources and fixtures by path. The actions the jobs call, and bridge-core's manifest, from
+          # which setup-aztec reads the Aztec version; root install and test config.
           # Pinned by scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             pool-client:
               - 'packages/pool-client/**'
               - 'packages/pp-env/**'
+              - 'packages/bridge-core/package.json'
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'

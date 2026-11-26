@@ -229,8 +229,17 @@ describe("CI behavior-gating guard", () => {
       .flatMap((job: { steps: { uses?: string }[] }) => job.steps.map((step) => step.uses))
       .filter((uses: string | undefined) => uses?.startsWith("./.github/actions/"))
     expect(calls.length).toBeGreaterThan(0)
-    // Its suites run pp-env's CLI and import pp-env's sources and fixtures by relative path.
-    const roots = ["packages/pp-env/**", "vitest.base.ts", "package.json", "bun.lock", "bunfig.toml", "patches/**"]
+    // Its suites run pp-env's CLI and import pp-env's sources and fixtures by relative path;
+    // setup-aztec reads the Aztec version from bridge-core's manifest.
+    const roots = [
+      "packages/pp-env/**",
+      "packages/bridge-core/package.json",
+      "vitest.base.ts",
+      "package.json",
+      "bun.lock",
+      "bunfig.toml",
+      "patches/**",
+    ]
     for (const p of [...calls.map((c) => `${c.slice(2)}/**`), ...roots]) {
       expect(poolClient, `pool-client must gate ${p}`).toContain(p)
     }
