@@ -15,6 +15,17 @@ export const WALLET_NAME_MAX = 48
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 
+/** Raster formats only: an SVG can carry script and links, and a remote URL would leave the page. */
+const ICON = /^data:image\/(?:png|webp);base64,[A-Za-z0-9+/]+={0,2}$/
+/** Longest accepted icon URI; a longer one is dropped, never cut. */
+export const WALLET_ICON_MAX = 64 * 1024
+
+/** A wallet-claimed icon as a `data:image/png` or `data:image/webp` URI, or `undefined`. */
+export function sanitizeWalletIcon(raw: unknown): string | undefined {
+	if (typeof raw !== "string" || raw.length > WALLET_ICON_MAX) return undefined
+	return ICON.test(raw) ? raw : undefined
+}
+
 /**
  * A wallet-claimed name bounded for display: invisible characters stripped, mark runs capped at four,
  * whitespace collapsed, then at most `max` graphemes and `max * 8` UTF-16 units, plus "…" when cut.

@@ -59,7 +59,7 @@ function EmojiCheck({ emoji, onAnswer }: { emoji: readonly string[]; onAnswer: P
 
 const WAITING: Partial<Record<ConnectStep["kind"], string>> = {
 	opening: "Opening a secure channel to the wallet…",
-	granting: "Approve the account request in your wallet.",
+	granting: "Approve the request in your wallet.",
 }
 
 function Body({ step, onChoose, onAnswer, onRetry }: Omit<Props, "onClose">) {
@@ -93,7 +93,7 @@ export function ConnectDialog(props: Props) {
 			open={open}
 			onOpenChange={(next) => !next && props.onClose()}
 			title="Connect an Aztec wallet"
-			description="This step asks only to see your account addresses."
+			description="This step asks to see your account addresses and to call the bridge and token contracts, nothing else."
 			data-testid="connect-dialog"
 			data-step={props.step.kind}
 		>

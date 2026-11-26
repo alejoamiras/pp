@@ -1,19 +1,10 @@
 import { describe, expect, test } from "vitest"
-import { connectManifest, grantedAccounts, MAX_GRANTED_ACCOUNTS } from "./grant"
+import { grantedAccounts, MAX_GRANTED_ACCOUNTS } from "./grant"
 
 const address = (n: number) => `0x${n.toString(16).padStart(64, "0")}`
 
-describe("the connect grant", () => {
-	test("asks for accounts only, without auth witnesses or any wildcard", () => {
-		expect(connectManifest()).toEqual({
-			version: "1.0",
-			metadata: { name: "pp", version: "0.1.0" },
-			capabilities: [{ type: "accounts", canGet: true, canCreateAuthWit: false }],
-		})
-		expect(JSON.stringify(connectManifest())).not.toContain("*")
-	})
-
-	test("reads the wallet's answer as untrusted input", () => {
+describe("the granted accounts", () => {
+	test("read the wallet's answer as untrusted input", () => {
 		const hostile = {
 			toString() {
 				throw new Error("hostile toString")
@@ -29,6 +20,7 @@ describe("the connect grant", () => {
 						null,
 						{ item: hostile },
 						{ item: "not an address" },
+						{ item: `0x${"f".repeat(64)}` },
 						{ item: address(1) },
 						{ item: { toString: () => address(2) } },
 					],

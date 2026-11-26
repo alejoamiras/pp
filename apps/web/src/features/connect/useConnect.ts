@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import type { WalletPort } from "../../data/ports"
 import type { DataSource } from "../../data/source"
-import { type AztecConnection, ConnectError, connectErrorMessage, type WalletConnector, type WalletOption } from "../../data/wallet/types"
+import { type AztecConnection, ConnectError, connectErrorMessage, type WalletOption } from "../../data/wallet/types"
 
 export type ConnectStep =
 	| { kind: "idle" }
@@ -15,13 +16,17 @@ const isSuperseded = (err: unknown) => err instanceof ConnectError && err.code =
 
 /**
  * The Connect flow over whichever connector the build's data source provides. Closing the dialog
- * disconnects first, so the connector drops any continuation still waiting on the wallet.
+ * disconnects first, so the connector drops any continuation still waiting on the wallet; a remote
+ * disconnect returns the panel to idle.
  */
 export function useConnect(source: DataSource) {
 	const [step, setStep] = useState<ConnectStep>({ kind: "idle" })
-	const connector = useRef<WalletConnector | null>(null)
+	const connector = useRef<WalletPort | null>(null)
 	const discovery = useRef<AbortController | null>(null)
 	const answer = useRef<((matches: boolean) => void) | null>(null)
+	const offDisconnect = useRef<(() => void) | null>(null)
+
+	useEffect(() => () => offDisconnect.current?.(), [])
 
 	const fail = useCallback((err: unknown) => {
 		console.error("[pp] connect failed", err)
@@ -41,7 +46,11 @@ export function useConnect(source: DataSource) {
 		setStep({ kind: "discovering", options: [], done: false })
 		const addOption = (o: WalletOption) => setStep((s) => (s.kind === "discovering" ? { ...s, options: [...s.options, o] } : s))
 		try {
-			connector.current ??= await source.wallet()
+			if (!connector.current) {
+				const c = await source.wallet()
+				connector.current = c
+				offDisconnect.current = c.onDisconnect(() => setStep({ kind: "idle" }))
+			}
 			await connector.current.discover(addOption, ac.signal)
 			setStep((s) => (s.kind === "discovering" ? { ...s, done: true } : s))
 		} catch (err) {

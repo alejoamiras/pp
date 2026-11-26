@@ -1,25 +1,29 @@
 /**
  * The real Aztec wallet connector over the wallet SDK: node check, discovery, secure channel, emoji
- * confirmation, then a grant of accounts only. One run counter orders every flow: each `connect` and
- * `disconnect` advances it, and a continuation that wakes up under a newer run drops its result and
- * undoes the channel it opened itself, never one a newer run owns.
+ * confirmation, then the stage's capability request. One run counter orders every flow: each
+ * `connect`, `disconnect` and remote disconnect advances it, and a continuation that wakes up under a
+ * newer run drops its result and undoes the channel it opened itself, never one a newer run owns.
  */
 import type { ChainInfo } from "@aztec-labs/aztec.js/account"
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import { Fr } from "@aztec-labs/aztec.js/fields"
-import type { Wallet } from "@aztec-labs/aztec.js/wallet"
+import type { AppCapabilities, Wallet } from "@aztec-labs/aztec.js/wallet"
 import { hashToEmoji } from "@aztec-labs/wallet-sdk/crypto"
 import { type PendingConnection, WalletManager, type WalletProvider } from "@aztec-labs/wallet-sdk/manager"
 import type { PublicTarget } from "../../build/target"
-import { sanitizeWalletName } from "./display"
-import { connectManifest, grantedAccounts } from "./grant"
+import type { FunctionScope, Manifest } from "../capabilities"
+import { isUserRejection, providerCode } from "../errors"
+import type { WalletPort } from "../ports"
+import { sanitizeWalletIcon, sanitizeWalletName } from "./display"
+import { parseGrant } from "./grant"
 import { assertNodeServesTarget } from "./node-check"
 import {
 	type AztecConnection,
 	type ConfirmEmoji,
 	ConnectError,
 	emojiMismatchError,
+	noAccountsError,
 	supersededError,
-	type WalletConnector,
 	type WalletOption,
 } from "./types"
 
@@ -34,74 +38,121 @@ export function emojiGrid(verificationHash: string): string[] {
 	return Array.from(graphemes.segment(hashToEmoji(verificationHash, EMOJI_CELLS)), (s) => s.segment).slice(0, EMOJI_CELLS)
 }
 
-/** Wallet rejections arrive as plain errors whose wording is the wallet's; only the category is kept. */
-function asConnectError(err: unknown): unknown {
+/** The SDK's discovery, narrowed to what the connector uses; tests pass their own. */
+export type Discover = (t: PublicTarget, chainInfo: ChainInfo) => { wallets: AsyncIterable<WalletProvider>; cancel(): void }
+
+const sdkDiscover: Discover = (t, chainInfo) =>
+	WalletManager.configure({
+		extensions: { enabled: true },
+		...(t.walletUrls.length > 0 ? { webWallets: { urls: [...t.walletUrls] } } : {}),
+	}).getAvailableWallets({ chainInfo, appId: APP_ID, timeout: DISCOVERY_TIMEOUT_MS })
+
+const CAPABILITY_DENIED = /capabilit\w* (?:denied|rejected)/i
+
+/** A wallet's failure as one of the categories the page has words for; its own wording is dropped. */
+export function asConnectError(err: unknown): unknown {
 	if (err instanceof ConnectError) return err
-	const text = err instanceof Error ? err.message : String(err)
-	if (/reject|denied|cancel/i.test(text))
-		return new ConnectError("rejected", "The wallet declined the request. Try again when you are ready.")
+	const text = err instanceof Error ? err.message : ""
+	if (CAPABILITY_DENIED.test(text))
+		return new ConnectError("denied", "You declined the permissions, so nothing was connected. Try again to allow them.")
+	if (isUserRejection(err)) return new ConnectError("rejected", "The wallet declined the request. Try again when you are ready.")
+	const code = providerCode(err)
+	if (code === 4100) return new ConnectError("unauthorized", "The wallet has not authorized this app. Unlock it, then try again.")
+	if (code === 4900 || code === 4901) return new ConnectError("disconnected", "The wallet disconnected. Open it, then try again.")
 	return err
 }
 
-export function createRealConnector(t: PublicTarget): WalletConnector {
-	let run = 0
-	let nextKey = 0
-	const providers = new Map<number, WalletProvider>()
-	/** The run that last opened a channel on each provider: only that run may tear it down. */
-	const owner = new Map<WalletProvider, number>()
-	let live: WalletProvider | null = null
+const scopes = (list: FunctionScope[]) => list.map((s) => ({ contract: AztecAddress.fromStringUnsafe(s.contract), function: s.function }))
 
-	const chainInfo = (): ChainInfo => ({ chainId: new Fr(BigInt(t.l1ChainId)), version: new Fr(BigInt(t.rollupVersion)) })
-	const assertCurrent = (mine: number) => {
-		if (mine !== run) throw supersededError()
+/** The same request with the SDK's address class in place of the hex the app carries. */
+export function toSdkManifest(m: Manifest): AppCapabilities {
+	const [accounts, contracts, simulation, transaction] = m.capabilities
+	return {
+		version: m.version,
+		metadata: { ...m.metadata },
+		capabilities: [
+			{ ...accounts },
+			{ ...contracts, contracts: contracts.contracts.map((c) => AztecAddress.fromStringUnsafe(c)) },
+			{
+				type: "simulation",
+				transactions: { scope: scopes(simulation.transactions.scope) },
+				utilities: { scope: scopes(simulation.utilities.scope) },
+			},
+			{ type: "transaction", scope: scopes(transaction.scope) },
+		],
 	}
-	const release = async (provider: WalletProvider, mine: number) => {
-		if (owner.get(provider) !== mine) return
-		owner.delete(provider)
-		if (live === provider) live = null
-		await provider.disconnect().catch(() => {})
-	}
+}
 
-	function admit(p: WalletProvider): WalletOption | null {
-		// The SDK passes an announcement's claimed fields through unchecked, whatever its types say.
-		const { id, name, type }: { id: unknown; name: unknown; type: unknown } = p
-		if (typeof id !== "string" || typeof name !== "string") return null
-		const option: WalletOption = {
-			key: nextKey++,
-			id,
-			name: sanitizeWalletName(name) || "Unnamed wallet",
-			kind: type === "web" ? "web" : "extension",
-		}
-		providers.set(option.key, p)
-		return option
-	}
-
-	async function discover(onOption: (o: WalletOption) => void, signal: AbortSignal): Promise<void> {
-		await assertNodeServesTarget(t, signal)
-		providers.clear()
-		const session = WalletManager.configure({
-			extensions: { enabled: true },
-			...(t.walletUrls.length > 0 ? { webWallets: { urls: [...t.walletUrls] } } : {}),
-		}).getAvailableWallets({ chainInfo: chainInfo(), appId: APP_ID, timeout: DISCOVERY_TIMEOUT_MS })
-		const stop = () => session.cancel()
-		signal.addEventListener("abort", stop, { once: true })
-		try {
-			for await (const p of session.wallets) {
-				// The SDK can yield buffered announcements after cancel.
-				if (signal.aborted) return
-				const option = admit(p)
-				if (option) onOption(option)
+/** Discovery, the run counter and channel ownership; `connect` and the grant live in `createRealConnector`. */
+function connectorState(t: PublicTarget, discover: Discover) {
+	const s = {
+		run: 0,
+		nextKey: 0,
+		providers: new Map<number, WalletProvider>(),
+		/** The run that last opened a channel on each provider: only that run may tear it down. */
+		owner: new Map<WalletProvider, number>(),
+		unsubscribe: new Map<WalletProvider, () => void>(),
+		live: null as WalletProvider | null,
+		listeners: new Set<() => void>(),
+		assertCurrent(mine: number) {
+			if (mine !== s.run) throw supersededError()
+		},
+		async release(provider: WalletProvider, mine: number) {
+			if (s.owner.get(provider) !== mine) return
+			s.owner.delete(provider)
+			s.unsubscribe.get(provider)?.()
+			s.unsubscribe.delete(provider)
+			if (s.live === provider) s.live = null
+			await provider.disconnect().catch(() => {})
+		},
+		async releaseLive() {
+			const current = s.live
+			if (current) await s.release(current, s.owner.get(current) ?? Number.NaN)
+		},
+		admit(p: WalletProvider): WalletOption | null {
+			// The SDK passes an announcement's claimed fields through unchecked, whatever its types say.
+			const { id, name, type, icon }: { id: unknown; name: unknown; type: unknown; icon?: unknown } = p
+			if (typeof id !== "string" || typeof name !== "string") return null
+			const option: WalletOption = {
+				key: s.nextKey++,
+				id,
+				name: sanitizeWalletName(name) || "Unnamed wallet",
+				kind: type === "web" ? "web" : "extension",
+				...(sanitizeWalletIcon(icon) ? { icon: sanitizeWalletIcon(icon) } : {}),
 			}
-		} finally {
-			signal.removeEventListener("abort", stop)
-		}
+			s.providers.set(option.key, p)
+			return option
+		},
+		async discover(onOption: (o: WalletOption) => void, signal: AbortSignal): Promise<void> {
+			await assertNodeServesTarget(t, signal)
+			s.providers.clear()
+			const chainInfo: ChainInfo = { chainId: new Fr(BigInt(t.l1ChainId)), version: new Fr(BigInt(t.rollupVersion)) }
+			const session = discover(t, chainInfo)
+			const stop = () => session.cancel()
+			signal.addEventListener("abort", stop, { once: true })
+			try {
+				for await (const p of session.wallets) {
+					// The SDK can yield buffered announcements after cancel.
+					if (signal.aborted) return
+					const option = s.admit(p)
+					if (option) onOption(option)
+				}
+			} finally {
+				signal.removeEventListener("abort", stop)
+			}
+		},
 	}
+	return s
+}
+
+export function createRealConnector(t: PublicTarget, manifest: Manifest, discover: Discover = sdkDiscover): WalletPort {
+	const s = connectorState(t, discover)
 
 	async function verify(mine: number, pending: PendingConnection, confirm: ConfirmEmoji): Promise<void> {
 		try {
-			assertCurrent(mine)
+			s.assertCurrent(mine)
 			const matches = await confirm(emojiGrid(pending.verificationHash))
-			assertCurrent(mine)
+			s.assertCurrent(mine)
 			if (!matches) throw emojiMismatchError()
 		} catch (err) {
 			pending.cancel()
@@ -109,52 +160,69 @@ export function createRealConnector(t: PublicTarget): WalletConnector {
 		}
 	}
 
-	async function grant(mine: number, provider: WalletProvider, wallet: Wallet, option: WalletOption): Promise<AztecConnection> {
-		try {
-			assertCurrent(mine)
-			const answer: unknown = await wallet.requestCapabilities(connectManifest())
-			assertCurrent(mine)
-			const accounts = grantedAccounts(answer)
-			if (accounts.length === 0)
-				throw new ConnectError("no-accounts", "The wallet granted no account. Allow at least one, then try again.")
-			live = provider
-			return { epoch: mine, walletName: option.name, accounts }
-		} catch (err) {
-			await release(provider, mine)
-			throw asConnectError(err)
-		}
+	/** Subscribed after confirm: before the wallet exists the SDK hands back a no-op unsubscriber. */
+	function watchDisconnect(mine: number, provider: WalletProvider): void {
+		const off = provider.onDisconnect(() => {
+			if (s.owner.get(provider) !== mine) return
+			s.owner.delete(provider)
+			s.unsubscribe.delete(provider)
+			off()
+			if (s.live === provider) s.live = null
+			if (mine === s.run) s.run++
+			for (const f of [...s.listeners]) f()
+		})
+		s.unsubscribe.set(provider, off)
 	}
 
 	async function openChannel(mine: number, provider: WalletProvider, confirm: ConfirmEmoji): Promise<Wallet> {
-		owner.set(provider, mine)
+		s.owner.set(provider, mine)
 		try {
 			const pending = await provider.establishSecureChannel(APP_ID)
 			await verify(mine, pending, confirm)
-			return await pending.confirm()
+			const wallet = await pending.confirm()
+			s.assertCurrent(mine)
+			watchDisconnect(mine, provider)
+			return wallet
 		} catch (err) {
-			await release(provider, mine)
+			await s.release(provider, mine)
 			throw asConnectError(err)
 		}
 	}
 
-	const releaseLive = async () => {
-		const current = live
-		if (current) await release(current, owner.get(current) ?? Number.NaN)
+	async function grant(mine: number, provider: WalletProvider, wallet: Wallet, option: WalletOption): Promise<AztecConnection> {
+		try {
+			s.assertCurrent(mine)
+			const answer: unknown = await wallet.requestCapabilities(toSdkManifest(manifest))
+			s.assertCurrent(mine)
+			const granted = parseGrant(manifest, answer)
+			if (granted.accounts.length === 0) throw noAccountsError()
+			s.live = provider
+			return { epoch: mine, walletName: option.name, accounts: granted.accounts, grant: granted }
+		} catch (err) {
+			await s.release(provider, mine)
+			throw asConnectError(err)
+		}
 	}
 
 	async function connect(option: WalletOption, confirm: ConfirmEmoji): Promise<AztecConnection> {
-		const mine = ++run
-		await releaseLive()
-		const provider = providers.get(option.key)
+		const mine = ++s.run
+		await s.releaseLive()
+		const provider = s.providers.get(option.key)
 		if (!provider) throw new ConnectError("no-wallet", "That wallet is no longer available. Search again.")
 		const wallet = await openChannel(mine, provider, confirm)
 		return grant(mine, provider, wallet, option)
 	}
 
-	async function disconnect(): Promise<void> {
-		run++
-		await releaseLive()
+	return {
+		discover: s.discover,
+		connect,
+		async disconnect() {
+			s.run++
+			await s.releaseLive()
+		},
+		onDisconnect(f) {
+			s.listeners.add(f)
+			return () => s.listeners.delete(f)
+		},
 	}
-
-	return { discover, connect, disconnect }
 }
