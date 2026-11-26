@@ -113,6 +113,21 @@ describe("startLocalNetwork", () => {
 		}
 	})
 
+	it("refuses a data directory it did not create", async () => {
+		const root = stubToolchain()
+		const runId = freshRunId("start-test")
+		const dir = join(SANDBOX_CACHE_DIR, runId)
+		mkdirSync(dir, { recursive: true })
+		try {
+			await expect(startLocalNetwork({ runId, toolchainRoot: root, signals: false })).rejects.toThrow(/already exists/)
+			expect(existsSync(dir)).toBe(true)
+			expect(runLeftovers({ runId, dirs: [], pgids: [] })).toEqual([])
+		} finally {
+			rmSync(root, { recursive: true, force: true })
+			rmSync(dir, { recursive: true, force: true })
+		}
+	})
+
 	it("refuses a run id that is not one path segment", async () => {
 		await expect(startLocalNetwork({ runId: "../escape" })).rejects.toThrow(/not a single path segment/)
 	})

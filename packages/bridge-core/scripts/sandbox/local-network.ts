@@ -372,6 +372,9 @@ export function own(child: ChildProcess): OwnedChild {
 			resolve()
 		})
 	})
+	// A failed spawn (a missing executable) is an asynchronous `error`; unhandled, it crashes the host
+	// past `stop`. The boot then fails on its health timeout and tears down normally.
+	child.on("error", (e) => console.error(`[sandbox] ${child.spawnfile}: ${e.message}`))
 	return { child, hasExited: () => done, exited }
 }
 
@@ -720,7 +723,10 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 		if (stopping) throw new Error("[sandbox] stopped while booting")
 	}
 	try {
-		for (const dir of [dataDir, tmpDir]) if (mkdirSync(dir, { recursive: true }) !== undefined) created.push(dir)
+		for (const dir of [dataDir, tmpDir]) {
+			if (mkdirSync(dir, { recursive: true }) === undefined) throw new Error(`${dir} already exists; a run owns only what it creates`)
+			created.push(dir)
+		}
 		console.log(`[sandbox] anvil ${anvilUrl}, aztec ${nodeUrl}, data ${dataDir}, tmp ${tmpDir}`)
 		const anvilLog = join(SANDBOX_LOG_DIR, `${opts.runId}-anvil.log`)
 		stillBooting()
@@ -730,6 +736,7 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 		stillBooting()
 		track(spawnNode(tool, { ports, anvilUrl, dirs: { data: dataDir, tmp: tmpDir } }), "aztec", nodeLog)
 		await waitHealthy(`aztec node at ${nodeUrl}`, () => rpcResponds(nodeUrl, "node_getNodeInfo"), 180_000)
+		stillBooting()
 		const listeners = groupListeners(pidsOf(spawned))
 		// Linux hosts and CI have both tools; elsewhere (macOS has no `ss`) the check is skipped.
 		if (!listeners && process.platform === "linux") throw new Error("cannot list this run's listeners: `ps` or `ss` failed")
