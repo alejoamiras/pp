@@ -11,6 +11,8 @@
 #   - Long TXE calls die on nargo's default foreign-call timeout; upstream CI raises it.
 #   - The server's dependency set is the committed mini-project in ../txe-server (frozen lockfile),
 #     never an ad-hoc `bun add` — its transitives are part of the supply chain.
+#   - `env.deploy` loads the crate's OWN contract from target/ too, not from the source `nargo test`
+#     compiles, so the crate is rebuilt first: a stale artifact would test old code.
 #
 # Usage: scripts/run-txe-tests.sh [--crate token_bridge_hub|asp_registry|asp_registry_probe|labelled_token] [nargo flags...] [-- test names...]
 #
@@ -75,7 +77,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# ── 1. Stage dependency artifacts into <crate>/target/ ──────────────────────────────
+# ── 1. Rebuild the crate, then stage dependency artifacts into <crate>/target/ ──────
+# The build is reproducible: an unchanged source leaves the committed artifact byte-identical.
+AZTEC_HOME="$AZTEC_HOME" bash "$here/scripts/compile.sh" "$crate"
 # Resolved through bridge-core's declared dependency, not $repo_root/node_modules: this repo
 # uses bun's isolated linker, so there is no hoisted root node_modules to look in.
 case "$crate" in
