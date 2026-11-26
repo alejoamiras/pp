@@ -36,11 +36,14 @@ jobs:
       - name: List the integration suites
         id: suites
         # One matrix leg per file on disk, so a new suite cannot go unrun. The names reach a shell, so
-        # anything but [a-z0-9-] fails here.
+        # anything but [a-z0-9-] fails here; files are counted without newlines, so a name holding one
+        # cannot split into valid lines.
         run: |
-          list=$(find packages/local-stack/test/integration -maxdepth 1 -name '*.integration.test.ts' -printf '%f\n' \
-            | sed 's/\.integration\.test\.ts$//' | sort)
-          if grep -qvE '^[a-z0-9-]+$' <<<"$list"; then echo "unexpected suite file name"; exit 1; fi
+          dir=packages/local-stack/test/integration
+          all=$(find "$dir" -maxdepth 1 -name '*.integration.test.ts' -printf x | wc -c)
+          list=$(find "$dir" -maxdepth 1 -regextype posix-extended -regex '.*/[a-z0-9-]+\.integration\.test\.ts' \
+            -printf '%f\n' | sed 's/\.integration\.test\.ts$//' | sort)
+          if [ "$all" -eq 0 ] || [ "$(grep -c . <<<"$list")" -ne "$all" ]; then echo "unexpected suite file name"; exit 1; fi
           echo "list=$(jq -Rnc '[inputs]' <<<"$list")" >> "$GITHUB_OUTPUT"
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
