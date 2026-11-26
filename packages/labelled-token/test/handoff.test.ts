@@ -1,0 +1,11 @@
+import { readFileSync } from "node:fs"
+import { expect, test } from "vitest"
+import { deriveHandoff, type Handoff, handoffPath } from "../scripts/handoff"
+
+// The hub lane pins its `derive_token` to this file, so it must follow every artifact change.
+test("bench/handoff.json matches a fresh derivation from the committed artifact", async () => {
+	const committed = JSON.parse(readFileSync(handoffPath, "utf8")) as Handoff
+	const fresh = await deriveHandoff()
+	expect(committed).toEqual(fresh)
+	expect(new Set(fresh.cases.map((c) => c.address)).size).toBe(fresh.cases.length)
+})

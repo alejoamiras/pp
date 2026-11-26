@@ -6,7 +6,8 @@ use aztec::macros::aztec;
 #[aztec]
 pub contract BridgeStub {
     use aztec::{
-        macros::functions::external,
+        macros::{events::event, functions::external},
+        messages::delivery::MessageDelivery,
         protocol::{
             abis::function_selector::FunctionSelector, address::AztecAddress, traits::ToField,
         },
@@ -17,6 +18,11 @@ pub contract BridgeStub {
         comptime { FunctionSelector::from_signature("mint_from_bridge((Field),u128,Field)") };
     global BURN_FOR_EXIT: FunctionSelector =
         comptime { FunctionSelector::from_signature("burn_for_exit((Field),u128,Field)") };
+
+    #[event]
+    struct HandshakeProbe {
+        value: Field,
+    }
 
     #[external("private")]
     fn mint(token: AztecAddress, to: AztecAddress, amount: u128, label: Field) {
@@ -35,5 +41,15 @@ pub contract BridgeStub {
             BURN_FOR_EXIT,
             [from.to_field(), amount as Field, label],
         );
+    }
+
+    /// Another app's message to the caller that opens the caller's self-pair handshake as an
+    /// interactive one. Handshakes are per (sender, recipient) and shared across apps, so the token's
+    /// later self-deliveries reuse it.
+    #[external("private")]
+    fn probe_interactive_handshake() {
+        let me = self.msg_sender();
+        let mut mode = MessageDelivery::onchain_constrained();
+        self.emit(HandshakeProbe { value: 1 }).deliver_to(me, mode.via_interactive_handshake());
     }
 }

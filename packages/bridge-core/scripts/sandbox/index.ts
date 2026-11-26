@@ -10,6 +10,7 @@ export * from "./handle"
 export * from "./l1"
 export * from "./l2"
 export {
+	assertNothingLeft,
 	type LocalNetwork,
 	type StartLocalNetworkOptions,
 	PortClaimConflict,
@@ -22,3 +23,4 @@ export * from "./manifest"
 export * from "./smoke"
 export * from "./forge"
 export * from "../../src/manifest-v2"
+export type { PxeHooks } from "../script-bootstrap"
