@@ -1,0 +1,3 @@
+# Supply-chain gate: refuse packages published in the last 7 days.
+[install]
+minimumReleaseAge = 604800

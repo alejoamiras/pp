@@ -1,0 +1,40 @@
+{
+	"name": "@pp/pool-client",
+	"version": "0.0.0",
+	"private": true,
+	"license": "Apache-2.0",
+	"description": "Read Privacy Pools v2 notes and prepare a one-input spend to a processor, in Node, Bun and the browser.",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"check": "bun run typecheck && bun run lint && bun run test:node && bun run test",
+		"test": "bun --bun vitest run --project unit",
+		"test:node": "vitest run --project unit",
+		"test:proof": "bun --bun vitest run --project proof",
+		"test:proof:node": "vitest run --project proof",
+		"test:integration": "bun --bun vitest run --project integration",
+		"test:integration:node": "vitest run --project integration",
+		"build:page": "vite build --config test/browser/vite.config.ts",
+		"test:browser": "bun run build:page && playwright test --project offline",
+		"test:browser:integration": "bun run build:page && playwright test --project spend"
+	},
+	"dependencies": {
+		"@0xbow/privacy-pools-v2-sdk": "1.0.2",
+		"buffer": "6.0.3",
+		"snarkjs": "0.7.5",
+		"viem": "2.45.3"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.13",
+		"@playwright/test": "1.63.0",
+		"@types/bun": "1.4.4",
+		"typescript": "6.0.3",
+		"vite": "8.2.1",
+		"vitest": "4.1.10"
+	}
+}
