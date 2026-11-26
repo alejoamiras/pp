@@ -65,6 +65,11 @@ describe("stack manifest", () => {
 		],
 		["https on chain 31337", { ...decoded(FULL), artifacts: { baseUrl: "https://127.0.0.1/a" } }, "artifacts.baseUrl: chain 31337"],
 		[
+			"a malformed nested URL",
+			{ ...decoded(POOL_ONLY), pool: { ...(decoded(POOL_ONLY).pool as object), aspApiUrl: "garbage" } },
+			"stack manifest failed strict validation — pool.aspApiUrl:",
+		],
+		[
 			"a 19-byte address",
 			{ ...decoded(POOL_ONLY), pool: { ...(decoded(POOL_ONLY).pool as object), poolVault: `0x${"ab".repeat(19)}` } },
 			"pool.poolVault:",

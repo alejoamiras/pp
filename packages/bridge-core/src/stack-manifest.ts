@@ -85,6 +85,8 @@ export const stackManifestSchema = z
 	.superRefine((m, ctx) => {
 		if (m.chainId !== LOCAL_CHAIN_ID) return
 		for (const { path, url } of urlsOf(m)) {
+			// The field's own check already reported a URL that does not parse.
+			if (!URL.canParse(url)) continue
 			const u = new URL(url)
 			if (u.protocol !== "http:" || !LOOPBACK_HOSTS.has(u.hostname))
 				ctx.addIssue({ code: "custom", path, message: `chain ${LOCAL_CHAIN_ID} needs a loopback http URL, got ${url}` })
