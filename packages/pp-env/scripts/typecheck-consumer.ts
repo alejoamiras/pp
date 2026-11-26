@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // Typechecks a throwaway dependent of @pp/pp-env that resolves it through package.json "exports",
 // with no path aliases, no Bun types and no `.ts` imports allowed: what a workspace package sees,
-// and proof that the public types need no pool checkout.
+// and proof that the public types need no pool checkout. Declarations are checked too, so one that
+// names an SDK type fails even when nothing uses it; viem's own typings need the DOM lib.
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -39,10 +40,10 @@ const TSCONFIG = {
 		target: "ESNext",
 		module: "ESNext",
 		moduleResolution: "Bundler",
-		lib: ["ESNext"],
+		lib: ["ESNext", "DOM"],
 		strict: true,
 		noEmit: true,
-		skipLibCheck: true,
+		skipLibCheck: false,
 		types: [],
 	},
 	include: ["consumer.ts"],
@@ -58,9 +59,8 @@ try {
 	await Bun.write(join(dir, "tsconfig.json"), JSON.stringify(TSCONFIG))
 	const tsc = Bun.resolveSync("typescript/bin/tsc", PACKAGE_DIR)
 	const proc = Bun.spawn(["bun", tsc, "-p", dir], { stdio: ["ignore", "inherit", "inherit"] })
-	const code = await proc.exited
-	if (code !== 0) console.error("a dependent cannot typecheck against @pp/pp-env's public types")
-	process.exit(code)
+	process.exitCode = await proc.exited
+	if (process.exitCode !== 0) console.error("a dependent cannot typecheck against @pp/pp-env's public types")
 } finally {
 	rmSync(dir, { recursive: true, force: true })
 }
