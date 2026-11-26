@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, isAbsolute, join } from "node:path"
 import {
 	CANONICAL_CODE_FIXTURE,
 	CIRCUITS_DIR,
@@ -11,6 +11,7 @@ import {
 	lfsPaths,
 	PPV2_COMMIT,
 	PPV2_REPO,
+	PPV2_TARBALL_BYTES,
 	PPV2_TARBALL_SHA256,
 	PROVING_CIRCUITS,
 	URL_PINNED_DEPS,
@@ -42,7 +43,9 @@ export function targetDir(): string {
 	return join(cacheParent(), `${PPV2_COMMIT}-r${FETCH_RECIPE}`)
 }
 
-// Every byte a later step consumes: Forge inputs and outputs, the code fixture, the SDK builds, the proving circuits.
+// Every byte a later step consumes: Forge inputs and outputs, the code fixture, the SDK builds, the
+// proving circuits, and (forgeInputs) each source Forge recorded compiling. The SDKs' runtime
+// dependencies under node_modules are left to pnpm's integrity check at install.
 const MANIFEST_ROOTS = [
 	`${CONTRACTS_DIR}/foundry.toml`,
 	`${CONTRACTS_DIR}/remappings.txt`,
@@ -57,6 +60,20 @@ const MANIFEST_ROOTS = [
 	...PROVING_CIRCUITS.map((c) => `${CIRCUITS_DIR}/${c}`),
 ]
 
+/**
+ * Forge's own record of what it compiled, dependencies and verifiers outside `src` included: a
+ * drifted one would make a later run recompile into the shared `out`.
+ */
+async function forgeInputs(src: string): Promise<string[]> {
+	const cache = join(src, CONTRACTS_DIR, "cache/solidity-files-cache.json")
+	const { files } = JSON.parse(await readFile(cache, "utf8")) as { files: Record<string, unknown> }
+	return Object.keys(files).map((f) => {
+		const rel = join(CONTRACTS_DIR, f)
+		if (isAbsolute(f) || rel.startsWith("..")) throw new Error(`forge input ${f} is outside the checkout`)
+		return rel
+	})
+}
+
 async function manifest(src: string): Promise<Record<string, string>> {
 	const files: Record<string, string> = {}
 	for (const root of MANIFEST_ROOTS) {
@@ -64,12 +81,14 @@ async function manifest(src: string): Promise<Record<string, string>> {
 		const rels = (await stat(abs)).isDirectory() ? (await listFiles(abs)).map((r) => join(root, r)) : [root]
 		for (const rel of rels) files[rel] = await sha256File(join(src, rel))
 	}
+	for (const rel of await forgeInputs(src)) files[rel] ??= await sha256File(join(src, rel))
 	return files
 }
 
 function manifestDigest(files: Record<string, string>): string {
 	return sha256Hex(
 		Object.entries(files)
+			.sort(([a], [b]) => (a < b ? -1 : 1))
 			.map(([p, h]) => `${p}\0${h}\n`)
 			.join(""),
 	)
@@ -90,12 +109,8 @@ function assertUrlPinned(got: Record<string, string>): void {
 }
 
 async function downloadTarball(dest: string): Promise<void> {
-	const res = await fetch(`https://codeload.github.com/${PPV2_REPO}/tar.gz/${PPV2_COMMIT}`)
-	if (!res.ok || !res.body) throw new Error(`tarball download failed: HTTP ${res.status}`)
-	const bytes = new Uint8Array(await res.arrayBuffer())
-	const got = sha256Hex(bytes)
-	if (got !== PPV2_TARBALL_SHA256) throw new Error(`tarball sha256 ${got} does not match the pin ${PPV2_TARBALL_SHA256}`)
-	await writeFile(dest, bytes)
+	const href = `https://codeload.github.com/${PPV2_REPO}/tar.gz/${PPV2_COMMIT}`
+	await writeFile(dest, await downloadVerified({ href }, { oid: PPV2_TARBALL_SHA256, size: PPV2_TARBALL_BYTES }))
 }
 
 async function hydrateLfs(src: string, log: Log): Promise<LfsRecord[]> {
@@ -218,6 +233,27 @@ function incomplete(target: string): Error {
 }
 
 /**
+ * Claims `target` with one rename of `staging` and runs `build` there. A failed build gives the
+ * target up, so a retry can claim it; a fetch that loses the rename to a finished one reuses it.
+ */
+export async function publish(staging: string, target: string, build: () => Promise<void>): Promise<{ fetched: boolean }> {
+	try {
+		await rename(staging, target)
+	} catch (err) {
+		await rm(staging, { recursive: true, force: true })
+		if (existsSync(join(target, "ready.json"))) return { fetched: false }
+		throw existsSync(target) ? incomplete(target) : err
+	}
+	try {
+		await build()
+	} catch (err) {
+		await rm(target, { recursive: true, force: true })
+		throw err
+	}
+	return { fetched: true }
+}
+
+/**
  * Stages sources privately, claims the target with one rename, builds the contracts there, and
  * writes ready.json last. Only a tree with ready.json is ever used.
  */
@@ -233,12 +269,11 @@ export async function fetchPpv2(log: Log = () => {}): Promise<{ target: string; 
 	let staged: Staged
 	try {
 		staged = await stageSources(staging, log)
-		await rename(staging, target)
 	} catch (err) {
 		await rm(staging, { recursive: true, force: true })
-		throw existsSync(target) ? incomplete(target) : err
+		throw err
 	}
-	await buildInPlace(target, staged, log)
+	const { fetched } = await publish(staging, target, () => buildInPlace(target, staged, log))
 	await verifyFetched(target)
-	return { target, fetched: true }
+	return { target, fetched }
 }

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { existsSync } from "node:fs"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { homedir } from "node:os"
 import { join } from "node:path"
 import { parseCeremonyTable } from "./ceremony.ts"
 import { sha256Hex, treeDigest } from "./digest.ts"
+import { publish } from "./index.ts"
 import { downloadVerified, type LfsPointer, parsePointer, requestBatch } from "./lfs.ts"
 
 const BODY = new TextEncoder().encode("verifier bytes")
@@ -43,6 +45,17 @@ describe("LFS batch response", () => {
 		]
 		await expect(requestBatch("o/r", [POINTER], batchFetch(objects))).rejects.toThrow("unrequested")
 	})
+
+	test("stops reading a response past its size cap", async () => {
+		const huge = new Uint8Array((1 << 20) + 1).fill(0x20)
+		await expect(
+			requestBatch(
+				"o/r",
+				[POINTER],
+				fakeFetch(() => new Response(huge)),
+			),
+		).rejects.toThrow("exceeds")
+	})
 })
 
 describe("verified download", () => {
@@ -66,7 +79,7 @@ describe("verified download", () => {
 				POINTER,
 				fakeFetch(() => new Response(tampered)),
 			),
-		).rejects.toThrow("does not match pointer")
+		).rejects.toThrow("does not match its pin")
 	})
 
 	test("stops a stream that exceeds the pointer size", async () => {
@@ -77,7 +90,7 @@ describe("verified download", () => {
 				POINTER,
 				fakeFetch(() => new Response(long)),
 			),
-		).rejects.toThrow("exceeds its pointer size")
+		).rejects.toThrow("exceeds")
 	})
 })
 
@@ -89,8 +102,45 @@ test("ceremony table parses rows and refuses duplicates", () => {
 	expect(() => parseCeremonyTable(`${row("deposit")}\n${row("deposit")}`)).toThrow("twice")
 })
 
+const scratch = () => mkdtemp(join(homedir(), ".cache/pp/pp-env/fetch-test-"))
+
+describe("publishing a staged tree", () => {
+	const staged = async () => {
+		const dir = await scratch()
+		await mkdir(join(dir, "staging"))
+		return { dir, staging: join(dir, "staging"), target: join(dir, "target") }
+	}
+
+	test("a failed build gives the target up, so a retry can claim it", async () => {
+		const { dir, staging, target } = await staged()
+		try {
+			await expect(publish(staging, target, () => Promise.reject(new Error("forge failed")))).rejects.toThrow("forge failed")
+			expect(existsSync(target)).toBe(false)
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+
+	test("a fetch that loses the rename to a finished one reuses it", async () => {
+		const { dir, staging, target } = await staged()
+		try {
+			await mkdir(target)
+			await writeFile(join(target, "ready.json"), "{}")
+			await writeFile(join(target, "other"), "")
+			let built = false
+			const build = async () => {
+				built = true
+			}
+			expect(await publish(staging, target, build)).toEqual({ fetched: false })
+			expect([built, existsSync(staging)]).toEqual([false, false])
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+})
+
 test("tree digest changes when a file's bytes or a symlink's target change", async () => {
-	const dir = await mkdtemp(join(tmpdir(), "pp-env-digest-"))
+	const dir = await scratch()
 	try {
 		await writeFile(join(dir, "a.sol"), "contract A {}")
 		await symlink("a.sol", join(dir, "link"))

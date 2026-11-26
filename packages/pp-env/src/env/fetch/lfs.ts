@@ -16,6 +16,26 @@ export function parsePointer(text: string): LfsPointer {
 
 type BatchResponse = { objects?: { oid: string; size: number; error?: { message: string }; actions?: { download?: LfsDownload } }[] }
 
+/** A batch for every pinned object fits in a few kilobytes. */
+const BATCH_RESPONSE_MAX = 1 << 20
+
+/** Reads a response body, cancelling the stream as soon as it passes `max` bytes. */
+export async function readCapped(res: Response, max: number, what: string): Promise<Uint8Array> {
+	if (!res.body) throw new Error(`${what}: empty response`)
+	const reader = res.body.getReader()
+	const chunks: Uint8Array[] = []
+	let n = 0
+	for (let r = await reader.read(); !r.done; r = await reader.read()) {
+		n += r.value.length
+		if (n > max) {
+			await reader.cancel()
+			throw new Error(`${what} exceeds ${max} bytes`)
+		}
+		chunks.push(r.value)
+	}
+	return Buffer.concat(chunks)
+}
+
 /** One batch request; the response must name exactly the requested oids, each with a download action. */
 export async function requestBatch(
 	repo: string,
@@ -30,7 +50,7 @@ export async function requestBatch(
 		body: JSON.stringify({ operation: "download", transfers: ["basic"], objects }),
 	})
 	if (!res.ok) throw new Error(`LFS batch request failed: HTTP ${res.status}`)
-	const body = (await res.json()) as BatchResponse
+	const body = JSON.parse(new TextDecoder().decode(await readCapped(res, BATCH_RESPONSE_MAX, "LFS batch response"))) as BatchResponse
 	const wanted = new Set(pointers.map((p) => p.oid))
 	const got = new Map<string, LfsDownload>()
 	for (const o of body.objects ?? []) {
@@ -42,21 +62,13 @@ export async function requestBatch(
 	return got
 }
 
-/** Streams one object, refusing more than `size` bytes, and checks length and sha256 against the pointer. */
-export async function downloadVerified(dl: LfsDownload, pointer: LfsPointer, fetchImpl: typeof fetch = fetch): Promise<Uint8Array> {
+/** Streams one pinned object, refusing more than its `size` bytes, and checks length and sha256 against the pin. */
+export async function downloadVerified(dl: LfsDownload, pin: LfsPointer, fetchImpl: typeof fetch = fetch): Promise<Uint8Array> {
 	const res = await fetchImpl(dl.href, { headers: dl.header })
-	if (!res.ok || !res.body) throw new Error(`LFS download failed: HTTP ${res.status}`)
-	const buf = new Uint8Array(pointer.size)
-	const hash = createHash("sha256")
-	let n = 0
-	for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
-		if (n + chunk.length > pointer.size) throw new Error(`LFS object ${pointer.oid} exceeds its pointer size ${pointer.size}`)
-		buf.set(chunk, n)
-		hash.update(chunk)
-		n += chunk.length
-	}
-	if (n !== pointer.size) throw new Error(`LFS object ${pointer.oid} is ${n} bytes, pointer says ${pointer.size}`)
-	const got = hash.digest("hex")
-	if (got !== pointer.oid) throw new Error(`LFS object sha256 ${got} does not match pointer ${pointer.oid}`)
-	return buf
+	if (!res.ok) throw new Error(`download of ${pin.oid} failed: HTTP ${res.status}`)
+	const bytes = await readCapped(res, pin.size, `object ${pin.oid}`)
+	if (bytes.length !== pin.size) throw new Error(`object ${pin.oid} is ${bytes.length} bytes, pinned at ${pin.size}`)
+	const got = createHash("sha256").update(bytes).digest("hex")
+	if (got !== pin.oid) throw new Error(`object sha256 ${got} does not match its pin ${pin.oid}`)
+	return bytes
 }

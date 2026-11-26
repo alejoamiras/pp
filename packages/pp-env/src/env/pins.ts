@@ -2,10 +2,11 @@
 
 export const PPV2_REPO = "0xbow-io/privacy-pools-v2-monorepo"
 export const PPV2_COMMIT = "61fac03acd1fc306164ddc234f7fac4147d04493"
-/** sha256 of codeload's tar.gz for PPV2_COMMIT. */
+/** sha256 of codeload's tar.gz for PPV2_COMMIT, and its exact size, which caps the download before hashing. */
 export const PPV2_TARBALL_SHA256 = "422019469ff0be63b562672b39497cb9e754d41daf92a43f4bb4f175b9ee3abb"
-/** Bump whenever the fetch would produce a different tree, so an old cache is never reused. */
-export const FETCH_RECIPE = 1
+export const PPV2_TARBALL_BYTES = 7_576_963
+/** Bump whenever the fetch would produce a different tree or manifest, so an old cache is never reused. */
+export const FETCH_RECIPE = 2
 
 export const PROVING_CIRCUITS = ["deposit", "transact_1x1"] as const
 
