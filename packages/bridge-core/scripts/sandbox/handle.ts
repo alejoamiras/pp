@@ -39,12 +39,7 @@ export const sandboxHandleSchema = z
 			actorSalt: z.string(),
 		}),
 		deployment: z.object({
-			feeJuice: address,
-			feeJuicePortal: address,
-			feeAssetHandler: address.optional(),
 			registry: address,
-			swapTarget: address,
-			quoter: address,
 			tokens: z.record(z.string(), address),
 		}),
 	})

@@ -7,7 +7,7 @@ import {
 } from "../../scripts/sandbox/flows"
 import { freshActor, INTEGRATION, sandbox } from "./sandbox"
 
-describe.skipIf(!INTEGRATION)("registration races and tampering (cell 33)", () => {
+describe.skipIf(!INTEGRATION)("registration races and tampering", () => {
 	it("the relayer registers first; the depositor's claim is a plain claim", async () => {
 		const a = await freshActor()
 		expect(await flowRelayerFirstRegister(a.s)).toContain("registered RLY first")
@@ -25,11 +25,8 @@ describe.skipIf(!INTEGRATION)("registration races and tampering (cell 33)", () =
 		expect(await flowPortalOnlyToken(a.s, pxo)).toContain("register+claim")
 	})
 
-	it.each(["sponsored", "fee-juice-claim", "private-fpc"] as const)(
-		"a tampered registration is rejected, then corrected, under the %s fee mode",
-		async (mode) => {
-			const a = await freshActor()
-			expect(await flowRejectedRegistration(a.s, mode)).toContain("tampered register rejected")
-		},
-	)
+	it("a tampered registration is rejected, then corrected", async () => {
+		const a = await freshActor()
+		expect(await flowRejectedRegistration(a.s)).toContain("tampered register rejected")
+	})
 })

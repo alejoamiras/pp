@@ -15,7 +15,7 @@ function isTmpfs(path: string): boolean {
 }
 
 /**
- * Where stores are created: the RAM-backed `shm` when it is a tmpfs, else `~/.cache/unleashed` only
+ * Where stores are created: the RAM-backed `shm` when it is a tmpfs, else `~/.cache/pp` only
  * when `allowDisk` says the store holds nothing but public sandbox keys.
  * @throws when `shm` is not a tmpfs and `allowDisk` is false: real keys never reach disk.
  */
@@ -27,7 +27,7 @@ export function storeRoot(opts: { allowDisk: boolean; shm?: string }): string {
 			`${shm} is not a tmpfs, and a wallet store holding real keys must not be written to disk; run this on a host with a RAM-backed /dev/shm`,
 		)
 	}
-	return join(homedir(), ".cache", "unleashed")
+	return join(homedir(), ".cache", "pp")
 }
 
 /** `mkdtemp` directly in the world-writable `/dev/shm`: a shared parent there could be pre-planted as
@@ -35,7 +35,7 @@ export function storeRoot(opts: { allowDisk: boolean; shm?: string }): string {
 function freshDir(label: string, allowDisk: boolean): string {
 	const root = storeRoot({ allowDisk })
 	if (root !== "/dev/shm") mkdirSync(root, { recursive: true, mode: 0o700 })
-	return mkdtempSync(join(root, `unleashed-${label}-`))
+	return mkdtempSync(join(root, `pp-${label}-`))
 }
 
 /**

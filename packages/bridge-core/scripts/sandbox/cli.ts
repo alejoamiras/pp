@@ -34,8 +34,7 @@ async function commandRun(): Promise<void> {
 	try {
 		const deployed = await deployEverything(net, { artifactsDir: flag("--artifacts") ?? DEFAULT_ARTIFACTS, mins })
 		if (process.argv.includes("--smoke")) {
-			const report = await runSmoke(deployed.clients, deployed.manifest, deployed.actor)
-			table = durationTable(report.results)
+			table = durationTable(await runSmoke(deployed.clients, deployed.manifest, deployed.actor))
 		}
 	} catch (e) {
 		failure = e
@@ -75,12 +74,12 @@ async function commandSmoke(): Promise<void> {
 	const manifest = readManifest(dir)
 	const clients = await openSandbox(handle)
 	const address = await actorAddress(clients.l2.wallet, handle.l2.actorSecret as `0x${string}`, BigInt(handle.l2.actorSalt))
-	const report = await runSmoke(clients, manifest, {
+	const results = await runSmoke(clients, manifest, {
 		secret: handle.l2.actorSecret as `0x${string}`,
 		salt: BigInt(handle.l2.actorSalt),
 		address,
 	})
-	console.log(`\n=== durations ===\n${durationTable(report.results)}`)
+	console.log(`\n=== durations ===\n${durationTable(results)}`)
 	console.log(`\n✅ smoke OK (${clients.mins()})`)
 }
 

@@ -14,7 +14,6 @@
       "name": "@pp/bridge-core",
       "version": "0.1.0",
       "dependencies": {
-        "@alejoamiras/private-fee-juice": "6.0.0",
         "@aztec-foundation/aztec-standards": "6.0.0",
         "@aztec-foundation/l1-artifacts": "6.0.0",
         "@aztec-labs/accounts": "6.0.0",
@@ -79,8 +78,6 @@
   },
   "packages": {
     "@adraffy/ens-normalize": ["@adraffy/ens-normalize@1.11.1", "", {}, "sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ=="],
-
-    "@alejoamiras/private-fee-juice": ["@alejoamiras/private-fee-juice@6.0.0", "", { "peerDependencies": { "@aztec-labs/aztec.js": "6.0.0", "@aztec-labs/protocol-contracts": "6.0.0", "@aztec-labs/stdlib": "6.0.0" } }, "sha512-HZkczvDOpirKDi7VV/i9FWtTmWooIhqhdz2DyS9GpeheIcKHF74ddvPJuc7t63GhJRW61gcLmTifWCx1vS1qUg=="],
 
     "@aws-sdk/checksums": ["@aws-sdk/checksums@3.1000.28", "", { "dependencies": { "@aws-sdk/core": "^3.977.8", "@aws-sdk/types": "^3.974.4", "@smithy/core": "^3.31.1", "@smithy/types": "^4.16.1", "tslib": "^2.6.2" } }, "sha512-VCpnmyHQ1IH49ni3LXnQj7DPr7rmcJmzYeiCkYdCcfgNtkvOj38cdcL9lapBWoItZWFACJPFJlymqC7/gem3Gw=="],
 

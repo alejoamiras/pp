@@ -24,17 +24,15 @@ const GUARDIAN = `0x${"0".repeat(61)}ab1`
 const TOKEN_CLASS_ID = "0x2ff0939914ff64bd3f7979926dbe8cf3332bc2fee55928bf3cc9ca802568ea9f"
 const NAME_WORD = "0x005465737420546f6b656e000000000000000000000000000000000000000000"
 const SYMBOL_WORD = "0x0054535400000000000000000000000000000000000000000000000000000000"
-const FEE_PORTAL = "0xb4a9f8eadc8ca944729d61e59a9f491faff237a3"
 const TX = `0x${"ab".repeat(32)}`
 
 /** A network with no bridge — a legal manifest, and the smallest thing the writer must accept. */
 const placeholder: ManifestV2 = {
 	schema: 2,
-	network: "mainnet",
+	network: "placeholder",
 	l1ChainId: 1,
 	walletChainId: 1,
 	bridge: null,
-	feeJuice: { portal: FEE_PORTAL, asset: "0x762c132040fda6183066fa3b14d985ee55aa3c18", minFj: "16000000000000000000" },
 	privateClaimMode: "salt-v2",
 }
 
@@ -56,10 +54,6 @@ async function withBridge(): Promise<ManifestV2> {
 				factory: FACTORY,
 				implementation: IMPL,
 				guardian: "0x0000000000000000000000000000000000000002",
-				router: "0x0000000000000000000000000000000000000003",
-				permit2: "0x000000000022d473030f116ddee9f6b43ac78ba3",
-				swapTarget: "0x0000000000000000000000000000000000000004",
-				feeJuicePortal: FEE_PORTAL,
 			},
 			l2: {
 				hub: {
@@ -106,8 +100,8 @@ describe("writeCandidateAtomically", () => {
 	it("accepts a placeholder network and overwrites an existing candidate atomically", () => {
 		const target = join(dir, "c.json")
 		writeCandidateAtomically(target, placeholder)
-		writeCandidateAtomically(target, { ...placeholder, network: "mainnet-2" })
-		expect(readCandidate(target)?.network).toBe("mainnet-2")
+		writeCandidateAtomically(target, { ...placeholder, network: "placeholder-2" })
+		expect(readCandidate(target)?.network).toBe("placeholder-2")
 	})
 
 	it("refuses an invalid manifest before anything reaches disk", async () => {
@@ -142,7 +136,6 @@ describe("deploy journal", () => {
 		expect(journal.has("hub-deployed")).toBe(false)
 		expect(journal.has("token-precreated", ERC20.toUpperCase().replace("0X", "0x"))).toBe(true)
 		expect(journal.has("token-precreated", "0x0000000000000000000000000000000000000009")).toBe(false)
-		expect(journal.has("pool-seeded", ERC20)).toBe(false)
 
 		// A fresh reader sees exactly the same history — the journal, not memory, is the resume authority.
 		const resumed = openDeployJournal(path)
@@ -157,7 +150,6 @@ describe("deploy journal", () => {
 			rollupVersion: 4,
 			deployer: "0x7777777777777777777777777777777777777777",
 			registry: "0x0000000000000000000000000000000000000001",
-			feeJuicePortal: FEE_PORTAL,
 		}
 		const journal = openDeployJournal(path, identity)
 		expect(journal.steps).toEqual([{ kind: "identity", ...identity }])
@@ -182,7 +174,6 @@ describe("deploy journal", () => {
 				rollupVersion: 1,
 				deployer: FACTORY,
 				registry: IMPL,
-				feeJuicePortal: FEE_PORTAL,
 			}),
 		).toThrow(/predates identity stamping/)
 	})

@@ -3,7 +3,6 @@ import { Fr } from "@aztec-labs/foundation/curves/bn254"
 import { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
 import { describe, expect, it } from "vitest"
 
-import { DOM_SEP__FPC_BRIDGE_SECRET } from "./private-fuel"
 import { DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET, deriveTokenClaimSecret, tokenClaimSecretHash } from "./claim-secret"
 
 /**
@@ -17,6 +16,8 @@ import { DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET, deriveTokenClaimSecret, tok
 describe("claim-secret keystone", () => {
 	// The protocol secret-hash separator computeSecretHash uses (DOM_SEP__SECRET_HASH) — our DS must differ.
 	const SECRET_HASH_SEP = 4199652938
+	// The PrivateFPC bridge-secret separator, a neighbouring protocol on the same network.
+	const FPC_BRIDGE_SECRET_SEP = 3952304070
 
 	it("DOM_SEP literal equals the runtime poseidon derivation + differs from the FPC/secret-hash separators", () => {
 		expect(DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET).toBe(2317478496)
@@ -24,8 +25,8 @@ describe("claim-secret keystone", () => {
 			poseidon2HashBytes(Buffer.from("unleashed_dom_sep__token_bridge_private_claim_secret")).toBigInt() & 0xffff_ffffn,
 		)
 		expect(DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET).toBe(derived)
-		// Cross-protocol-secret-reuse tripwire: distinct from the private-fuel derivation and the outer hash.
-		expect(DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET).not.toBe(DOM_SEP__FPC_BRIDGE_SECRET)
+		// Cross-protocol-secret-reuse tripwire: distinct from the FPC derivation and the outer hash.
+		expect(DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET).not.toBe(FPC_BRIDGE_SECRET_SEP)
 		expect(DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET).not.toBe(SECRET_HASH_SEP)
 	})
 

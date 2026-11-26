@@ -7,13 +7,12 @@ import type { ManifestV2 } from "../../src/manifest-v2"
 import { openDeployJournal, writeCandidateAtomically } from "../deploy-manifest"
 import { deployGeneration, preCreateToken } from "../generation"
 import { createL1Clients, stopwatch } from "../script-bootstrap"
-import { anvilKey, CHAIN_ID, HARNESS_INDEX, HARNESS_KEY, lc, PERMIT2, sandboxChain } from "./constants"
-import { deployDripFixture } from "./drip"
+import { anvilKey, CHAIN_ID, HARNESS_INDEX, HARNESS_KEY, lc, sandboxChain } from "./constants"
 import { ensureForgeArtifacts } from "./forge"
 import type { SandboxClients, SandboxHandle } from "./handle"
-import { copyCanonicalCode, deployL1Fixtures } from "./l1"
+import { deployL1Fixtures } from "./l1"
 import { type Actor, adoptGuardian, connectL2, createActor, l2CtxFor, SANDBOX_ACTOR_SALT, SANDBOX_ACTOR_SECRET } from "./l2"
-import { buildManifest, sandboxSwapBlock, type SwapBlock, writeArtifacts } from "./manifest"
+import { buildManifest, writeArtifacts } from "./manifest"
 
 export interface DeployedSandbox {
 	clients: SandboxClients
@@ -27,8 +26,6 @@ export interface DeployOptions {
 	artifactsDir: string
 	/** How many anvil actor keys (indices 1..n) the handle lists for browser spec files. */
 	actorKeys?: number
-	/** The `bridge.l1.swap` block; absent until a Quoter is deployed. */
-	swap?: (deployment: SandboxClients["deployment"]) => Promise<SwapBlock | undefined>
 	mins?: () => string
 }
 
@@ -45,25 +42,14 @@ export async function deployEverything(net: { anvilUrl: string; nodeUrl: string 
 	const l1: L1Ctx = { ...createL1Clients({ chain, rpcUrl: net.anvilUrl, account }), account }
 	const l1b: L1Ctx = { ...createL1Clients({ chain, rpcUrl: net.anvilUrl, account: second }), account: second }
 
-	await copyCanonicalCode(l1, "permit2")
-	await copyCanonicalCode(l1, "multicall3")
-
 	const l2base = await connectL2(net.nodeUrl)
 	const actor = await createActor(l2base.wallet, l2base.node, l2base.fee, SANDBOX_ACTOR_SECRET, SANDBOX_ACTOR_SALT)
 	await adoptGuardian(l2base, SANDBOX_ACTOR_SECRET, SANDBOX_ACTOR_SALT)
 	const l2 = l2CtxFor(l2base, actor.address)
 	const info = await l2.node.getNodeInfo()
-	const handler = info.l1ContractAddresses.feeAssetHandlerAddress
-	const addrs = {
-		feeJuice: lc(info.l1ContractAddresses.feeJuiceAddress.toString()),
-		feeJuicePortal: lc(info.l1ContractAddresses.feeJuicePortalAddress.toString()),
-		registry: lc(info.l1ContractAddresses.registryAddress.toString()),
-		...(handler && !handler.isZero() ? { feeAssetHandler: lc(handler.toString()) } : {}),
-	}
-	console.log(
-		`  node L1: registry ${addrs.registry}, feeJuice ${addrs.feeJuice}, feeJuicePortal ${addrs.feeJuicePortal}, feeAssetHandler ${addrs.feeAssetHandler ?? "none"}`,
-	)
-	const deployment = await deployL1Fixtures(l1, addrs)
+	const registry = lc(info.l1ContractAddresses.registryAddress.toString())
+	console.log(`  node L1 registry ${registry}`)
+	const deployment = await deployL1Fixtures(l1, { registry })
 
 	mkdirSync(opts.artifactsDir, { recursive: true })
 	// Keyed by the L1 genesis hash — anvil stamps its boot time into genesis, so a freshly booted
@@ -75,24 +61,10 @@ export async function deployEverything(net: { anvilUrl: string; nodeUrl: string 
 		l1ChainId: CHAIN_ID,
 		rollupVersion: Number(info.rollupVersion),
 		deployer: lc(l1.account.address),
-		registry: addrs.registry,
-		feeJuicePortal: addrs.feeJuicePortal,
+		registry,
 	})
 	console.log(`\n=== generation (${mins()}) ===`)
-	const gen = await deployGeneration(
-		l1,
-		l2,
-		{
-			registry: addrs.registry,
-			permit2: PERMIT2,
-			feeJuicePortal: addrs.feeJuicePortal,
-			feeJuice: addrs.feeJuice,
-			guardianL1: l1.account.address,
-			guardianL2: l2.from.toString(),
-			swapTarget: deployment.swapTarget,
-		},
-		journal,
-	)
+	const gen = await deployGeneration(l1, l2, { registry, guardianL1: l1.account.address, guardianL2: l2.from.toString() }, journal)
 
 	console.log(`\n=== tokens (${mins()}) ===`)
 	const tokens = [
@@ -100,10 +72,7 @@ export async function deployEverything(net: { anvilUrl: string; nodeUrl: string 
 		await preCreateToken(l1, l2, gen, deployment.tokens.usdt, journal, { maxWholePerTx: 1_000_000 }),
 		await preCreateToken(l1, l2, gen, deployment.tokens.pxo, journal, { register: false, maxWholePerTx: 1_000_000 }),
 	]
-	console.log(`\n=== faucet (${mins()}) ===`)
-	const drip = await deployDripFixture(l2)
-	const swap = opts.swap ? await opts.swap(deployment) : sandboxSwapBlock(deployment)
-	const manifest = buildManifest(gen, deployment, tokens, Number(info.rollupVersion), swap)
+	const manifest = buildManifest(gen, tokens, Number(info.rollupVersion))
 	const manifestPath = join(opts.artifactsDir, "manifest.json")
 	writeCandidateAtomically(manifestPath, manifest)
 	journal.append({ kind: "candidate-written", path: manifestPath })
@@ -120,7 +89,7 @@ export async function deployEverything(net: { anvilUrl: string; nodeUrl: string 
 		l2: { relayer: l2base.relayer.toString(), actorSecret: SANDBOX_ACTOR_SECRET, actorSalt: SANDBOX_ACTOR_SALT.toString() },
 		deployment,
 	}
-	writeArtifacts(opts.artifactsDir, { manifest, handle, deployments: drip })
+	writeArtifacts(opts.artifactsDir, { manifest, handle })
 	console.log(`\nwrote ${manifestPath} (${mins()})`)
 
 	const clients: SandboxClients = { handle, l1, l1b, l2: l2base, deployment, mins }

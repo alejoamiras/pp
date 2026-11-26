@@ -375,7 +375,19 @@ async function killGroup(owned: OwnedChild): Promise<void> {
 	}
 	signal("SIGTERM")
 	await exitedWithin(owned, 5_000)
-	if (!owned.hasExited()) signal("SIGKILL")
+	// The leader going down does not take its group with it: a member that ignores SIGTERM (the
+	// node's AVM simulator does) keeps running, and while it runs it keeps the group id reserved.
+	if (!owned.hasExited() || groupAlive(pid)) signal("SIGKILL")
+}
+
+/** Signal 0 probes without delivering: true while any process is still in the group. */
+function groupAlive(pgid: number): boolean {
+	try {
+		process.kill(-pgid, 0)
+		return true
+	} catch {
+		return false
+	}
 }
 
 /**
@@ -385,7 +397,25 @@ async function killGroup(owned: OwnedChild): Promise<void> {
  */
 /** The sandbox's home on real disk; each run owns one subdirectory. The CI workflows upload
  *  `logs/` from this same path. */
-export const SANDBOX_CACHE_DIR = join(homedir(), ".cache", "unleashed", "bridge-sandbox")
+export const SANDBOX_CACHE_DIR = join(homedir(), ".cache", "pp", "bridge-sandbox")
+
+/** Per-run `TMPDIR`s, kept short: the node binds Unix sockets under it (`cdb-ts-<pid>-<thread>-<n>.sock`)
+ *  and a path past the kernel's limit fails the bind, which leaves its AVM simulator retrying forever. */
+export const SANDBOX_TMP_ROOT = join(homedir(), ".cache", "pp", "t")
+
+/** `sun_path` holds 108 bytes including the terminating NUL. */
+const MAX_SOCKET_PATH = 107
+
+/** Refuses a temp dir the node's longest IPC socket name would not fit in (pid ≤ 2^22, counters ≤ 999). */
+export function assertSocketRoom(tmpDir: string): void {
+	const longest = join(tmpDir, "cdb-ts-4194304-999-999.sock")
+	const bytes = Buffer.byteLength(longest)
+	if (bytes > MAX_SOCKET_PATH) {
+		throw new Error(
+			`TMPDIR ${tmpDir} leaves no room for the node's IPC sockets (${bytes} > ${MAX_SOCKET_PATH} bytes); use a shorter home`,
+		)
+	}
+}
 
 /** Where a run's node and anvil output goes — outside the data directory, which teardown removes,
  *  so a failed CI run can still upload it. */
@@ -434,7 +464,7 @@ function spawnAnvil(tool: Toolchain, port: number, logFile: string): ChildProces
 	return child
 }
 
-function nodeEnv(tool: Toolchain, anvilUrl: string): NodeJS.ProcessEnv {
+function nodeEnv(tool: Toolchain, anvilUrl: string, dirs: { data: string; tmp: string }): NodeJS.ProcessEnv {
 	const forge = join(tool.internalBin, "forge")
 	const anvil = join(tool.internalBin, "anvil")
 	// A shell that disables or resets the admin key would override the hash below: the node reads
@@ -448,6 +478,11 @@ function nodeEnv(tool: Toolchain, anvilUrl: string): NodeJS.ProcessEnv {
 		// arrives, which is why the L1→L2 waits carry a `forceBlock`.
 		SEQ_MIN_TX_PER_BLOCK: "0",
 		ETHEREUM_HOSTS: anvilUrl,
+		// `start --local-network` builds the node's config from the environment and drops
+		// `--data-directory`; without DATA_DIRECTORY every store is a temp store under `os.tmpdir()`.
+		// Both are the run's own, so teardown removes everything the node wrote.
+		DATA_DIRECTORY: dirs.data,
+		TMPDIR: dirs.tmp,
 		// The admin listener stays authenticated, behind a key hash nothing matches: a key the node
 		// mints itself is PRINTED — into the log this run keeps and CI uploads — and disabling the key
 		// would leave the admin API open on every interface. Nothing here needs that API.
@@ -459,7 +494,10 @@ function nodeEnv(tool: Toolchain, anvilUrl: string): NodeJS.ProcessEnv {
 	}
 }
 
-function spawnNode(tool: Toolchain, p: { ports: SandboxPorts; anvilUrl: string; dataDir: string; logFile: string }): ChildProcess {
+function spawnNode(
+	tool: Toolchain,
+	p: { ports: SandboxPorts; anvilUrl: string; dirs: { data: string; tmp: string }; logFile: string },
+): ChildProcess {
 	const child = spawn(
 		tool.aztecBin,
 		[
@@ -473,10 +511,8 @@ function spawnNode(tool: Toolchain, p: { ports: SandboxPorts; anvilUrl: string; 
 			String(p.ports.aztecP2P),
 			"--l1-rpc-urls",
 			p.anvilUrl,
-			"--data-directory",
-			p.dataDir,
 		],
-		{ stdio: "pipe", detached: true, env: nodeEnv(tool, p.anvilUrl) },
+		{ stdio: "pipe", detached: true, env: nodeEnv(tool, p.anvilUrl, p.dirs) },
 	)
 	drainOutput(child, "aztec", p.logFile)
 	return child
@@ -540,7 +576,13 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 	const anvilUrl = `http://127.0.0.1:${ports.anvil}`
 	const nodeUrl = `http://127.0.0.1:${ports.aztec}`
 	const dataDir = join(SANDBOX_CACHE_DIR, opts.runId)
+	const tmpDir = join(SANDBOX_TMP_ROOT, randomBytes(4).toString("hex"))
+	assertSocketRoom(tmpDir)
 	mkdirSync(dataDir, { recursive: true })
+	mkdirSync(tmpDir, { recursive: true })
+	const removeDirs = () => {
+		for (const dir of [dataDir, tmpDir]) rmSync(dir, { recursive: true, force: true })
+	}
 	const spawned: OwnedChild[] = []
 	let stopping: Promise<void> | undefined
 	// Idempotent: a second signal while the first stop runs must not re-walk (and re-reverse) the list.
@@ -550,7 +592,7 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 			await releasePorts(opts.runId, ports)
 			// The store belongs to this network and nothing outlives it; removing it only after the
 			// holders are gone is what keeps the pages from staying pinned.
-			rmSync(dataDir, { recursive: true, force: true })
+			removeDirs()
 		})()
 		return stopping
 	}
@@ -565,13 +607,22 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 				process.kill(-owned.child.pid, "SIGKILL")
 			} catch {}
 		}
-		rmSync(dataDir, { recursive: true, force: true })
+		removeDirs()
 	})
 	try {
-		console.log(`[sandbox] anvil ${anvilUrl}, aztec ${nodeUrl}, data ${dataDir}`)
+		console.log(`[sandbox] anvil ${anvilUrl}, aztec ${nodeUrl}, data ${dataDir}, tmp ${tmpDir}`)
 		spawned.push(own(spawnAnvil(tool, ports.anvil, join(SANDBOX_LOG_DIR, `${opts.runId}-anvil.log`))))
 		await waitHealthy(`anvil at ${anvilUrl}`, () => rpcResponds(anvilUrl, "eth_chainId"), 60_000)
-		spawned.push(own(spawnNode(tool, { ports, anvilUrl, dataDir, logFile: join(SANDBOX_LOG_DIR, `${opts.runId}-aztec.log`) })))
+		spawned.push(
+			own(
+				spawnNode(tool, {
+					ports,
+					anvilUrl,
+					dirs: { data: dataDir, tmp: tmpDir },
+					logFile: join(SANDBOX_LOG_DIR, `${opts.runId}-aztec.log`),
+				}),
+			),
+		)
 		await waitHealthy(`aztec node at ${nodeUrl}`, () => rpcResponds(nodeUrl, "node_getNodeInfo"), 180_000)
 	} catch (e) {
 		await stop()

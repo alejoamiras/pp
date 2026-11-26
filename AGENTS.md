@@ -81,6 +81,8 @@ the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contr
 
 - `main` is the only long-lived branch. Work lands through squash-merged pull requests; the PR
   title becomes the commit subject, so write it as a Conventional Commit of at most 93 characters.
+- Pull-request workflows have no `branches:` filter, so CI runs whatever the base: `main`, an
+  integration branch or a lower PR in a stack. `scripts/ci-cd/behavior-gating.test.ts` pins this.
 - Required on `main`: `quality-status`, `bridge-contracts-status` and `actionlint-status`, each
   produced by an exact-state aggregator, plus signed commits.
 - Renaming an aggregator blocks every merge until the protection follows it. Record the old → new

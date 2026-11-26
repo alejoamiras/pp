@@ -29,7 +29,7 @@ describe("ownedWalletStore", () => {
 		const c = child("", "")
 		const dir = await storeOf(c.lines)
 		expect(await c.exited).toBe(0)
-		expect(dir).toMatch(/unleashed[-/\\]test-/)
+		expect(dir).toMatch(/pp[-/\\]test-/)
 		expect(existsSync(dir)).toBe(false)
 	})
 
@@ -61,6 +61,6 @@ describe("storeRoot", () => {
 	it("refuses a disk-backed root unless the keys are sandbox keys", () => {
 		const disk = import.meta.dirname
 		expect(() => storeRoot({ allowDisk: false, shm: disk })).toThrow(/not a tmpfs/)
-		expect(storeRoot({ allowDisk: true, shm: disk })).toBe(join(homedir(), ".cache", "unleashed"))
+		expect(storeRoot({ allowDisk: true, shm: disk })).toBe(join(homedir(), ".cache", "pp"))
 	})
 })

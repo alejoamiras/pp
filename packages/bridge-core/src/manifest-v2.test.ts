@@ -11,7 +11,6 @@ const ERC20 = "0x00000000000000000000000000000000000e2c20"
 const GUARDIAN = "0x0000000000000000000000000000000000000000000000000000000000000ab1"
 const NAME_WORD = "0x005465737420546f6b656e000000000000000000000000000000000000000000"
 const SYMBOL_WORD = "0x0054535400000000000000000000000000000000000000000000000000000000"
-const FEE_PORTAL = "0xb4a9f8eadc8ca944729d61e59a9f491faff237a3"
 const HUB_RECORD = {
 	salt: `0x${"0".repeat(24)}${FACTORY.slice(2)}`,
 	constructorArtifact: "constructor",
@@ -39,10 +38,6 @@ async function fixture() {
 				factory: FACTORY,
 				implementation: IMPL,
 				guardian: "0x0000000000000000000000000000000000000002",
-				router: "0x0000000000000000000000000000000000000003",
-				permit2: "0x000000000022d473030f116ddee9f6b43ac78ba3",
-				swapTarget: "0x0000000000000000000000000000000000000004",
-				feeJuicePortal: FEE_PORTAL,
 			},
 			l2: {
 				hub: { ...HUB_RECORD, address: HUB },
@@ -66,7 +61,6 @@ async function fixture() {
 				},
 			],
 		},
-		feeJuice: { portal: FEE_PORTAL, asset: "0x762c132040fda6183066fa3b14d985ee55aa3c18", minFj: "16000000000000000000" },
 		privateClaimMode: "salt-v2",
 	}
 }
@@ -112,17 +106,7 @@ describe("manifest v2 (strict, self-deriving)", () => {
 		expect(() => parseManifestV2(raw)).toThrow(/hub constructorArgs must be \[tokenClassId, factory, guardian\]/)
 	})
 
-	it("rejects hooked pools, a feeJuicePortal mismatch, duplicate tokens and unknown keys", async () => {
-		const hooked = await fixture()
-		;(hooked.bridge.tokens[0] as { pools?: unknown }).pools = {
-			weth: { fee: 3000, tickSpacing: 60, hooks: "0x0000000000000000000000000000000000000001" },
-		}
-		expect(() => parseManifestV2(hooked)).toThrow(/hooked pools are not routable/)
-
-		const mismatch = await fixture()
-		mismatch.bridge.l1.feeJuicePortal = "0x0000000000000000000000000000000000000009"
-		expect(() => parseManifestV2(mismatch)).toThrow(/must equal feeJuice\.portal/)
-
+	it("rejects duplicate tokens and unknown keys", async () => {
 		const dup = await fixture()
 		dup.bridge.tokens.push({ ...dup.bridge.tokens[0], erc20: ERC20.toUpperCase().replace("0X", "0x") })
 		expect(() => parseManifestV2(dup)).toThrow(/duplicate token/)

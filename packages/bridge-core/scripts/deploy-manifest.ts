@@ -20,7 +20,6 @@ import { evmAddressV2, type ManifestV2, parseManifestV2 } from "../src/manifest-
 const aztecAddress = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "expected a 32-byte 0x hex address")
 const bytes32 = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "expected a 32-byte 0x hex word")
 const txHash = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "expected a 32-byte 0x hex tx hash")
-const decimalString = z.string().regex(/^\d+$/, "expected a base-10 integer string")
 
 /**
  * One generation step. The two-line factory bracket is the write-ahead pair: the CREATE2 address is
@@ -36,7 +35,6 @@ export const deployStepSchema = z.discriminatedUnion("kind", [
 			rollupVersion: z.number().int().nonnegative(),
 			deployer: evmAddressV2,
 			registry: evmAddressV2,
-			feeJuicePortal: evmAddressV2,
 		})
 		.strict(),
 	z.object({ kind: z.literal("classes-published"), tokenClassId: bytes32, hubClassId: bytes32 }).strict(),
@@ -45,8 +43,6 @@ export const deployStepSchema = z.discriminatedUnion("kind", [
 	z
 		.object({ kind: z.literal("factory-deployed"), factory: evmAddressV2, implementation: evmAddressV2, txHash: txHash.optional() })
 		.strict(),
-	z.object({ kind: z.literal("swap-target-deployed"), address: evmAddressV2, txHash }).strict(),
-	z.object({ kind: z.literal("router-deployed"), router: evmAddressV2, txHash }).strict(),
 	z.object({ kind: z.literal("hub-deployed"), hub: aztecAddress, salt: bytes32, txHash: txHash.optional() }).strict(),
 	// `txHash` is the L1 createPortal; a portal that already existed has none (the call is idempotent).
 	// `registerTxHash` is the L2 register_token, absent when the deploy leaves it to the first claim.
@@ -59,8 +55,6 @@ export const deployStepSchema = z.discriminatedUnion("kind", [
 			registerTxHash: z.string().min(1).optional(),
 		})
 		.strict(),
-	z.object({ kind: z.literal("pool-seeded"), erc20: evmAddressV2, txHash: txHash.optional() }).strict(),
-	z.object({ kind: z.literal("calibrated"), fjPerTx: decimalString, fjRegister: decimalString }).strict(),
 	z.object({ kind: z.literal("candidate-written"), path: z.string().min(1) }).strict(),
 ])
 
@@ -70,7 +64,7 @@ export type DeployIdentityStep = Extract<DeployStep, { kind: "identity" }>
 export type DeployIdentity = Omit<DeployIdentityStep, "kind">
 
 /** Every identity field, so a new one cannot be added to the type and forgotten by the comparison. */
-const IDENTITY_FIELDS: readonly (keyof DeployIdentity)[] = ["l1ChainId", "rollupVersion", "deployer", "registry", "feeJuicePortal"]
+const IDENTITY_FIELDS: readonly (keyof DeployIdentity)[] = ["l1ChainId", "rollupVersion", "deployer", "registry"]
 
 const journalLineSchema = z.object({ ts: z.string().min(1), step: deployStepSchema }).strict()
 
