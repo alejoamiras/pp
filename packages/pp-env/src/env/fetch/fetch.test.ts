@@ -5,7 +5,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { parseCeremonyTable } from "./ceremony.ts"
 import { sha256Hex, treeDigest } from "./digest.ts"
-import { assertBuiltHere, publish } from "./index.ts"
+import { assertBuiltHere, cacheParent, publish } from "./index.ts"
 import { downloadVerified, type LfsPointer, parsePointer, requestBatch } from "./lfs.ts"
 
 const BODY = new TextEncoder().encode("verifier bytes")
@@ -108,8 +108,9 @@ const scratch = async () => {
 	return mkdtemp(join(parent, "fetch-test-"))
 }
 
-test("a tree whose Forge cache names paths outside it is refused", async () => {
-	const src = await scratch()
+test("a tree whose Forge cache names paths outside it is refused, whatever characters its own path holds", async () => {
+	const dir = await scratch()
+	const src = join(dir, 'tree "quoted"')
 	try {
 		const cache = join(src, "packages/contracts/cache")
 		await mkdir(cache, { recursive: true })
@@ -119,7 +120,18 @@ test("a tree whose Forge cache names paths outside it is refused", async () => {
 		await write("/elsewhere/packages/contracts/node_modules/p/PoseidonT3.sol")
 		await expect(assertBuiltHere(src)).rejects.toThrow("built at another path")
 	} finally {
-		await rm(src, { recursive: true, force: true })
+		await rm(dir, { recursive: true, force: true })
+	}
+})
+
+test("a relative PP_V2_DIR is refused", () => {
+	const saved = process.env.PP_V2_DIR
+	process.env.PP_V2_DIR = "cache/ppv2"
+	try {
+		expect(() => cacheParent()).toThrow("absolute")
+	} finally {
+		if (saved === undefined) delete process.env.PP_V2_DIR
+		else process.env.PP_V2_DIR = saved
 	}
 })
 

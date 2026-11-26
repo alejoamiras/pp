@@ -1,8 +1,9 @@
 name: ppv2-fetch
 description: >-
   Fetches Privacy Pools v2 at the commit packages/pp-env pins, verifies it, links it as
-  packages/pp-env/.ppv2 and builds pp-env's fixture contracts. A cached tree is re-verified
-  against its pins before use. Run actions/checkout and ./.github/actions/setup-bun first.
+  packages/pp-env/.ppv2, installs the pool's solc and builds pp-env's fixture contracts. A cached
+  tree is re-verified against its pins before use. Run actions/checkout and
+  ./.github/actions/setup-bun first, with a Node that ships corepack (setup-aztec's Node 24 does).
   Exports PP_FORGE (the pinned forge) to later steps.
 
 inputs:
@@ -34,8 +35,10 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
+        command -v corepack > /dev/null || { echo "::error::ppv2-fetch needs corepack (Node 24 ships it); none on PATH" >&2; exit 1; }
         forge_bin="$(command -v forge)"
-        "$forge_bin" --version | grep -q "1\.7\.1" || { echo "forge at $forge_bin is not 1.7.1" >&2; exit 1; }
+        forge_version="$("$forge_bin" --version | head -n 1)"
+        [ "$forge_version" = "forge Version: 1.7.1" ] || { echo "::error::$forge_bin reports '$forge_version', not 1.7.1" >&2; exit 1; }
         echo "PP_FORGE=$forge_bin" >> "$GITHUB_ENV"
         # The key names the commit, the fetch recipe and the absolute path: Forge's cache pins
         # library paths, so a tree restored elsewhere would fail verification.
@@ -66,8 +69,11 @@ runs:
         PATH="$shims:$PATH" bun run --cwd packages/pp-env fetch
 
     # Saved straight after a successful fetch, so a later failing step still leaves the cache warm.
+    # Never from a pull request: a PR's own cache entries are readable by its later revisions, and
+    # the tree holds executable code that its manifest alone cannot vouch for. PRs restore what a
+    # push or dispatch run saved.
     - name: Save the checkout
-      if: steps.restore.outputs.cache-hit != 'true'
+      if: steps.restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.paths.outputs.target }}

@@ -1,3 +1,4 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -38,6 +39,30 @@ export async function run(cmd: string[], opts: RunOptions = {}): Promise<{ stdou
 
 export function forgeEnv(extra: Record<string, string> = {}): Record<string, string> {
 	return cleanEnv({ FOUNDRY_PROFILE: "default", ...extra })
+}
+
+/**
+ * Puts the solc that `contractsRoot` is configured for into Foundry's compiler store by compiling an
+ * empty project online. Later `--offline` deploys need it, and a tree restored from a cache brings none.
+ */
+export async function installConfiguredSolc(contractsRoot: string): Promise<string> {
+	const { stdout } = await run([forgeBin(), "config", "--json", "--root", contractsRoot], { env: forgeEnv() })
+	const version = (JSON.parse(stdout) as { solc?: unknown }).solc
+	if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`${contractsRoot} pins no exact solc: ${version}`)
+	const parent = join(homedir(), ".cache/pp/pp-env")
+	await mkdir(parent, { recursive: true })
+	const dir = await mkdtemp(join(parent, "solc-"))
+	try {
+		await mkdir(join(dir, "src"))
+		await writeFile(
+			join(dir, "src/Empty.sol"),
+			`// SPDX-License-Identifier: UNLICENSED\npragma solidity ${version};\ncontract Empty {}\n`,
+		)
+		await run([forgeBin(), "build", "--root", dir, "--use", version], { env: forgeEnv() })
+	} finally {
+		await rm(dir, { recursive: true, force: true })
+	}
+	return version
 }
 
 /**

@@ -35,8 +35,11 @@ export type ReadyRecord = {
 }
 type Log = (line: string) => void
 
+/** `PP_V2_DIR` must be absolute: a relative one would name a different tree from each working directory. */
 export function cacheParent(): string {
-	return process.env.PP_V2_DIR ?? join(homedir(), ".cache/pp/ppv2")
+	const dir = process.env.PP_V2_DIR ?? join(homedir(), ".cache/pp/ppv2")
+	if (!isAbsolute(dir)) throw new Error(`PP_V2_DIR must be an absolute path, got ${JSON.stringify(dir)}`)
+	return dir
 }
 
 export function targetDir(): string {
@@ -79,10 +82,18 @@ async function forgeInputs(src: string): Promise<string[]> {
  * recompile on first use and write into the shared `out`.
  */
 export async function assertBuiltHere(src: string): Promise<void> {
-	const cache = await readFile(join(src, CONTRACTS_DIR, "cache/solidity-files-cache.json"), "utf8")
+	const cache: unknown = JSON.parse(await readFile(join(src, CONTRACTS_DIR, "cache/solidity-files-cache.json"), "utf8"))
 	const roots = [`${src}/`, `${await realpath(src)}/`]
-	for (const [, path = ""] of cache.matchAll(/"(\/[^"]*)"/g))
+	for (const path of absoluteStrings(cache))
 		if (!roots.some((r) => path.startsWith(r))) throw new Error(`${src} was built at another path (${path}); delete it and fetch again`)
+}
+
+/** Every decoded string, object keys included, that is an absolute path. */
+function absoluteStrings(v: unknown): string[] {
+	if (typeof v === "string") return isAbsolute(v) ? [v] : []
+	if (Array.isArray(v)) return v.flatMap(absoluteStrings)
+	if (v && typeof v === "object") return Object.entries(v).flatMap(([k, x]) => [...(isAbsolute(k) ? [k] : []), ...absoluteStrings(x)])
+	return []
 }
 
 async function manifest(src: string): Promise<Record<string, string>> {

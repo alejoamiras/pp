@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { withFileLock } from "./lock.ts"
@@ -39,6 +39,18 @@ test("a live holder that outlasts staleMs keeps its lock", async () => {
 		})
 	await Promise.all([hold(1_000), Bun.sleep(50).then(() => hold(10))])
 	expect(overlapped).toBe(false)
+})
+
+test("a holder whose lock was reclaimed neither renews nor removes the new one", async () => {
+	const lock = join(dir, "d.lock")
+	const old = (Date.now() - 60_000) / 1000
+	await withFileLock(lock, { staleMs: 300, waitMs: 1_000 }, async () => {
+		unlinkSync(lock)
+		writeFileSync(lock, "another holder")
+		utimesSync(lock, old, old)
+		await Bun.sleep(400)
+	})
+	expect(statSync(lock).mtimeMs).toBe(old * 1000)
 })
 
 test("a lock older than staleMs is reclaimed", async () => {
