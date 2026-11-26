@@ -291,9 +291,11 @@ describe("Noir crate manifest", () => {
     const jobs = workflow("_bridge-contracts.yml").jobs
     expect(jobs.parity.strategy.matrix.crate).toBe("${{ fromJSON(needs.crates.outputs.parity) }}")
     expect(jobs.txe.strategy.matrix.crate).toBe("${{ fromJSON(needs.crates.outputs.txe) }}")
-    const noir = jobs.noir.steps.map((step: { run?: string }) => step.run ?? "")
-    expect(noir).toContain("bun scripts/ci-cd/crates.ts nargo-test")
-    expect(noir).toContain("bun scripts/ci-cd/crates.ts check-pins")
+    const runs = (job: string) => jobs[job].steps.map((step: { run?: string }) => step.run ?? "")
+    expect(runs("noir")).toContain("bun scripts/ci-cd/crates.ts nargo-test")
+    // Each job that fetches Noir dependencies checks its own fetch against the pins.
+    for (const job of ["noir", "parity", "txe"])
+      expect(runs(job).some((run: string) => /^ *bun scripts\/ci-cd\/crates\.ts check-pins "/m.test(run)), job).toBe(true)
   })
 })
 

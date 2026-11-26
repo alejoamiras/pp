@@ -33,9 +33,14 @@ export NARGO="$AZTEC_HOME/bin/aztec-nargo"
 export BB="$AZTEC_HOME/node_modules/.bin/bb"
 
 # Puts the JSON moved aside into $committed back in $dir/target/, replacing whatever the build wrote.
+# Safe to run again: the build's output is deleted once, and a backup a failed move left stays put.
 restore_committed() {
 	local f
-	[ "$built" = 0 ] || rm -f "$dir"/target/*.json
+	[ -d "$committed" ] || return 0
+	if [ "$built" = 1 ]; then
+		rm -f "$dir"/target/*.json
+		built=0
+	fi
 	for f in "$committed"/*.json; do [ ! -e "$f" ] || mv -f "$f" "$dir/target/"; done
 	rmdir "$committed"
 }
@@ -64,6 +69,7 @@ for c in "${names[@]}"; do
 	# JSON is moved aside to force the build, inside target/ so each move is a rename that cannot
 	# half-copy. A failed move stops the script before the build; the trap deletes target/'s JSON only
 	# once every original is aside, then puts the originals back.
+	mkdir -p "$dir/target"
 	committed="$(mktemp -d "$dir/target/.committed.XXXXXX")"
 	built=0
 	trap 'restore_committed' EXIT

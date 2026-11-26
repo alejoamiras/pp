@@ -11,8 +11,9 @@
  *   bun scripts/ci-cd/crates.ts nargo-test [name...]      each crate's nargo gate (default: every crate with one):
  *                                                        `aztec-nargo test --force [filter]` with at least `floor`
  *                                                        passing, or its `check` script
- *   bun scripts/ci-cd/crates.ts check-pins [nargo-home]   the pins are exactly the git tags the crates reach through
- *                                                        nargo's cache, each fetched and at its recorded commit
+ *   bun scripts/ci-cd/crates.ts check-pins [name...]      every git tag the named crates reach through nargo's cache
+ *                                                        is pinned, fetched and at its recorded commit; with no
+ *                                                        name, the pins must be exactly what all crates reach
  */
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
@@ -183,7 +184,12 @@ function gitDepsAt(dir: string): { alias: string; repo: string; tag: string; dir
  * dependencies included), as `owner/name@tag`. A tag nargo has not fetched is listed in `unfetched`
  * and not walked.
  */
-export function reachableTags(m: Manifest, nargoHome: string, root = ROOT): { tags: Set<string>; unfetched: string[] } {
+export function reachableTags(
+	m: Manifest,
+	nargoHome: string,
+	root = ROOT,
+	from: Crate[] = m.crates,
+): { tags: Set<string>; unfetched: string[] } {
 	const tags = new Set<string>()
 	const unfetched: string[] = []
 	const seen = new Set<string>()
@@ -200,7 +206,7 @@ export function reachableTags(m: Manifest, nargoHome: string, root = ROOT): { ta
 			if (existsSync(fetched)) walk(join(fetched, directory))
 		}
 	}
-	for (const c of m.crates) walk(join(root, c.path))
+	for (const c of from) walk(join(root, c.path))
 	return { tags, unfetched }
 }
 
@@ -281,6 +287,26 @@ function field(m: Manifest, crate: Crate, key: string): string {
 	}
 }
 
+/**
+ * Each CI job fetches its own copy of every tag, so each checks the crates it built against the cache
+ * it used; a moved tag cannot slip in between jobs. Only a run over every crate can also name a pin
+ * that nothing reaches.
+ */
+function checkPins(m: Manifest, names: string[]): void {
+	const home = join(homedir(), "nargo")
+	const { tags, unfetched } = reachableTags(m, home, ROOT, names.length ? names.map((n) => crateNamed(m, n)) : m.crates)
+	const pinned = new Set(m.pins.map((p) => `${p.repo}@${p.tag}`))
+	const problems = [
+		...unfetched.map((t) => `${t} is not fetched; build a crate that uses it first`),
+		...[...tags].filter((t) => !pinned.has(t)).map((t) => `${t} is reached through the crates but not pinned in ${MANIFEST}`),
+		...(names.length ? [] : [...pinned].filter((t) => !tags.has(t)).map((t) => `${t} is pinned but no crate reaches it`)),
+		...pinProblems(m.pins.filter((p) => tags.has(`${p.repo}@${p.tag}`)), home),
+	]
+	for (const p of problems) console.error(`✖ ${p}`)
+	if (problems.length) process.exit(1)
+	console.log(`${tags.size} reached tags pinned at their recorded commits${names.length ? ` (${names.join(", ")})` : ""}`)
+}
+
 function gateArg(v: string | undefined): Gate {
 	return v === "parity" || v === "nargo" || v === "txe" ? v : fail("usage", `expected parity, nargo or txe, got ${v}`)
 }
@@ -296,20 +322,8 @@ function main(argv: string[]): void {
 		const names = a === undefined ? cratesWith(m, "nargo").map((c) => c.name) : [a, b, ...rest].filter(Boolean)
 		for (const name of names) nargoTest(m, name)
 	}
-	else if (cmd === "check-pins") {
-		const home = a ?? join(homedir(), "nargo")
-		const { tags, unfetched } = reachableTags(m, home)
-		const pinned = new Set(m.pins.map((p) => `${p.repo}@${p.tag}`))
-		const problems = [
-			...unfetched.map((t) => `${t} is not fetched; build a crate that uses it first`),
-			...[...tags].filter((t) => !pinned.has(t)).map((t) => `${t} is reached through the crates but not pinned in ${MANIFEST}`),
-			...[...pinned].filter((t) => !tags.has(t)).map((t) => `${t} is pinned but no crate reaches it`),
-			...pinProblems(m.pins.filter((p) => tags.has(`${p.repo}@${p.tag}`)), home),
-		]
-		for (const p of problems) console.error(`✖ ${p}`)
-		if (problems.length) process.exit(1)
-		console.log(`${m.pins.length} pinned tags, exactly the ones the crates reach, at their recorded commits`)
-	} else fail("usage", "see the header of scripts/ci-cd/crates.ts")
+	else if (cmd === "check-pins") checkPins(m, [a, b, ...rest].filter(Boolean))
+	else fail("usage", "see the header of scripts/ci-cd/crates.ts")
 }
 
 if (import.meta.main) {

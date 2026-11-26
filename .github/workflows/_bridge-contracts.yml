@@ -140,10 +140,13 @@ jobs:
       - name: Wire-format vector mutation (Noir)
         run: bun run --cwd packages/bridge-spec vectors:mutate -- --suite nr
 
-      # Nargo has no lockfile, so a moved tag would change a build silently. The tests above fetched
-      # every pinned tag; each must sit at the commit the manifest records.
+      # Nargo has no lockfile, so a moved tag would change a build silently. Every tag the tests above
+      # fetched must be pinned and sit at its recorded commit; each Noir job checks its own fetch.
       - name: pinned dependency commits
-        run: bun scripts/ci-cd/crates.ts check-pins
+        run: |
+          list="$(bun scripts/ci-cd/crates.ts list nargo)"
+          mapfile -t crates <<< "$list"
+          bun scripts/ci-cd/crates.ts check-pins "${crates[@]}"
 
   parity:
     name: artifact parity (${{ matrix.crate }})
@@ -175,6 +178,11 @@ jobs:
           CRATE: ${{ matrix.crate }}
         run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_VERSION" bash contracts/bridge/aztec/scripts/compile.sh --check "$CRATE"
 
+      - name: pinned dependency commits
+        env:
+          CRATE: ${{ matrix.crate }}
+        run: bun scripts/ci-cd/crates.ts check-pins "$CRATE"
+
   txe:
     name: TXE suite (${{ matrix.crate }})
     needs: crates
@@ -203,6 +211,15 @@ jobs:
           AZTEC_VERSION: ${{ needs.crates.outputs.aztec }}
           CRATE: ${{ matrix.crate }}
         run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_VERSION" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate "$CRATE"
+
+      - name: pinned dependency commits
+        env:
+          CRATE: ${{ matrix.crate }}
+        # The suite also built every crate whose artifact it stages.
+        run: |
+          list="$(bun scripts/ci-cd/crates.ts get "$CRATE" txe.build)"
+          mapfile -t crates <<< "$list"
+          bun scripts/ci-cd/crates.ts check-pins "${crates[@]}"
 
   token-gates:
     name: labelled token gates
