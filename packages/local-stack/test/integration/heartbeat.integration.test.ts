@@ -213,30 +213,33 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the heartbeat mines only for
 // Registered only on request, so an ordinary run reports no skipped case.
 if (process.env.PP_STACK_INTEGRATION && process.env.PP_STACK_LONG)
 	describe("a stack left alone", () => {
+		let stack: Stack | undefined
+		// A hook, not a `finally`: it still runs when the case times out.
+		afterAll(async () => {
+			await stack?.stop()
+		})
+
+		// Past the config's 30 min: boot, settling and 32 samples a minute apart.
 		test("long idle: 1920 s at the default cadence moves neither chain, and the stack still answers", async () => {
-			const stack = await startStack()
-			try {
-				const client = createPublicClient({ transport: http(stack.manifest.l1Rpc) })
-				const read = async () => ({
-					l1: await client.getBlockNumber({ cacheTime: 0 }),
-					aztec: (await nodeRpc<{ checkpointed: { block: { number: number } } }>(stack.manifest.aztecNode, "node_getChainTips"))
-						.checkpointed.block.number,
-				})
-				// The boot's owed beat lands on one of the first ticks.
-				await Bun.sleep(30_000)
-				const start = await read()
-				const samples: { s: number; l1: string; aztec: number }[] = []
-				for (let s = 60; s <= 1920; s += 60) {
-					await Bun.sleep(60_000)
-					const now = await read()
-					samples.push({ s, l1: now.l1.toString(), aztec: now.aztec })
-					expect(now).toEqual(start)
-				}
-				console.log(`[stack] long idle ${JSON.stringify(samples)}`)
-				expect((await fetch(new URL("/health", stack.manifest.pool.aspApiUrl))).ok).toBe(true)
-			} finally {
-				await stack.stop()
+			const s0 = await startStack()
+			stack = s0
+			const client = createPublicClient({ transport: http(s0.manifest.l1Rpc) })
+			const read = async () => ({
+				l1: await client.getBlockNumber({ cacheTime: 0 }),
+				aztec: (await nodeRpc<{ checkpointed: { block: { number: number } } }>(s0.manifest.aztecNode, "node_getChainTips"))
+					.checkpointed.block.number,
+			})
+			// The boot's owed beat lands on one of the first ticks.
+			await Bun.sleep(30_000)
+			const start = await read()
+			const samples: { s: number; l1: string; aztec: number }[] = []
+			for (let s = 60; s <= 1920; s += 60) {
+				await Bun.sleep(60_000)
+				const now = await read()
+				samples.push({ s, l1: now.l1.toString(), aztec: now.aztec })
+				expect(now).toEqual(start)
 			}
-			// Past the config's 30 min: boot, settling and 32 samples a minute apart.
+			console.log(`[stack] long idle ${JSON.stringify(samples)}`)
+			expect((await fetch(new URL("/health", s0.manifest.pool.aspApiUrl))).ok).toBe(true)
 		}, 2_400_000)
 	})
