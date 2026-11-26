@@ -97,5 +97,6 @@ where
         }
         i += PUBLIC_LOG_HEADER_LENGTH + length;
     }
+    assert_eq(i, logs.length);
     found
 }
