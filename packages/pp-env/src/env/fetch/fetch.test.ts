@@ -1,0 +1,187 @@
+import { describe, expect, test } from "bun:test"
+import { existsSync, readdirSync } from "node:fs"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { parseCeremonyTable } from "./ceremony.ts"
+import { sha256Hex, treeDigest } from "./digest.ts"
+import { assertBuiltHere, cacheParent, publish } from "./index.ts"
+import { downloadVerified, type LfsPointer, parsePointer, requestBatch } from "./lfs.ts"
+
+const BODY = new TextEncoder().encode("verifier bytes")
+const POINTER: LfsPointer = { oid: sha256Hex(BODY), size: BODY.length }
+const OTHER_OID = "0".repeat(64)
+
+function fakeFetch(respond: (url: string) => Response): typeof fetch {
+	return (async (input: string | URL | Request) => respond(String(input))) as typeof fetch
+}
+
+function batchFetch(objects: unknown[]): typeof fetch {
+	return fakeFetch(() => Response.json({ objects }))
+}
+
+describe("git-lfs pointer", () => {
+	test("parses oid and size", () => {
+		const text = `version https://git-lfs.github.com/spec/v1\noid sha256:${POINTER.oid}\nsize ${POINTER.size}\n`
+		expect(parsePointer(text)).toEqual(POINTER)
+	})
+
+	test("rejects a file that is not a pointer", () => {
+		expect(() => parsePointer("pragma solidity ^0.8.0;")).toThrow("not a git-lfs pointer")
+	})
+})
+
+describe("LFS batch response", () => {
+	const download = { actions: { download: { href: "https://lfs.example/o" } } }
+
+	test("rejects a response that omits a requested object", async () => {
+		await expect(requestBatch("o/r", [POINTER], batchFetch([]))).rejects.toThrow("omitted")
+	})
+
+	test("rejects a response that adds an unrequested object", async () => {
+		const objects = [
+			{ oid: POINTER.oid, ...download },
+			{ oid: OTHER_OID, ...download },
+		]
+		await expect(requestBatch("o/r", [POINTER], batchFetch(objects))).rejects.toThrow("unrequested")
+	})
+
+	test("stops reading a response past its size cap", async () => {
+		const huge = new Uint8Array((1 << 20) + 1).fill(0x20)
+		await expect(
+			requestBatch(
+				"o/r",
+				[POINTER],
+				fakeFetch(() => new Response(huge)),
+			),
+		).rejects.toThrow("exceeds")
+	})
+})
+
+describe("verified download", () => {
+	const dl = { href: "https://lfs.example/o" }
+
+	test("returns bytes that match the pointer", async () => {
+		const got = await downloadVerified(
+			dl,
+			POINTER,
+			fakeFetch(() => new Response(BODY)),
+		)
+		expect(sha256Hex(got)).toBe(POINTER.oid)
+	})
+
+	test("rejects tampered bytes of the right size", async () => {
+		const tampered = new Uint8Array(BODY)
+		tampered[0] = (tampered[0] ?? 0) ^ 1
+		await expect(
+			downloadVerified(
+				dl,
+				POINTER,
+				fakeFetch(() => new Response(tampered)),
+			),
+		).rejects.toThrow("does not match its pin")
+	})
+
+	test("stops a stream that exceeds the pointer size", async () => {
+		const long = new Uint8Array(BODY.length + 1)
+		await expect(
+			downloadVerified(
+				dl,
+				POINTER,
+				fakeFetch(() => new Response(long)),
+			),
+		).rejects.toThrow("exceeds")
+	})
+})
+
+test("ceremony table parses rows and refuses duplicates", () => {
+	const row = (c: string) => `| \`${c}\` | \`${POINTER.oid}\` |`
+	expect(parseCeremonyTable(`| Circuit | sha |\n|---|---|\n${row("deposit")}\n${row("transact_1x1")}`).get("transact_1x1")).toBe(
+		POINTER.oid,
+	)
+	expect(() => parseCeremonyTable(`${row("deposit")}\n${row("deposit")}`)).toThrow("twice")
+})
+
+const scratch = async () => {
+	const parent = join(homedir(), ".cache/pp/pp-env")
+	await mkdir(parent, { recursive: true })
+	return mkdtemp(join(parent, "fetch-test-"))
+}
+
+test("a tree whose Forge cache names paths outside it is refused, whatever characters its own path holds", async () => {
+	const dir = await scratch()
+	const src = join(dir, 'tree "quoted"')
+	try {
+		const cache = join(src, "packages/contracts/cache")
+		await mkdir(cache, { recursive: true })
+		const write = (lib: string) => writeFile(join(cache, "solidity-files-cache.json"), JSON.stringify({ libraries: { [lib]: {} } }))
+		await write(join(src, "packages/contracts/node_modules/p/PoseidonT3.sol"))
+		await assertBuiltHere(src)
+		await write("/elsewhere/packages/contracts/node_modules/p/PoseidonT3.sol")
+		await expect(assertBuiltHere(src)).rejects.toThrow("built at another path")
+	} finally {
+		await rm(dir, { recursive: true, force: true })
+	}
+})
+
+test("a relative PP_V2_DIR is refused", () => {
+	const saved = process.env.PP_V2_DIR
+	process.env.PP_V2_DIR = "cache/ppv2"
+	try {
+		expect(() => cacheParent()).toThrow("absolute")
+	} finally {
+		if (saved === undefined) delete process.env.PP_V2_DIR
+		else process.env.PP_V2_DIR = saved
+	}
+})
+
+describe("publishing a staged tree", () => {
+	const staged = async () => {
+		const dir = await scratch()
+		await mkdir(join(dir, "staging"))
+		return { dir, staging: join(dir, "staging"), target: join(dir, "target") }
+	}
+
+	test("a failed build gives the target up, so a retry can claim it", async () => {
+		const { dir, staging, target } = await staged()
+		try {
+			await expect(publish(staging, target, () => Promise.reject(new Error("forge failed")))).rejects.toThrow("forge failed")
+			expect(readdirSync(dir)).toEqual([])
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+
+	test("a fetch that loses the rename to a finished one reuses it", async () => {
+		const { dir, staging, target } = await staged()
+		try {
+			await mkdir(target)
+			await writeFile(join(target, "ready.json"), "{}")
+			await writeFile(join(target, "other"), "")
+			let built = false
+			const build = async () => {
+				built = true
+			}
+			expect(await publish(staging, target, build)).toEqual({ fetched: false })
+			expect([built, existsSync(staging)]).toEqual([false, false])
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+})
+
+test("tree digest changes when a file's bytes or a symlink's target change", async () => {
+	const dir = await scratch()
+	try {
+		await writeFile(join(dir, "a.sol"), "contract A {}")
+		await symlink("a.sol", join(dir, "link"))
+		const before = await treeDigest(dir)
+		await writeFile(join(dir, "a.sol"), "contract B {}")
+		const afterEdit = await treeDigest(dir)
+		await rm(join(dir, "link"))
+		await symlink("elsewhere.sol", join(dir, "link"))
+		expect(new Set([before, afterEdit, await treeDigest(dir)]).size).toBe(3)
+	} finally {
+		await rm(dir, { recursive: true, force: true })
+	}
+})

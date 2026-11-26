@@ -1,0 +1,80 @@
+name: ppv2-fetch
+description: >-
+  Fetches Privacy Pools v2 at the commit packages/pp-env pins, verifies it, links it as
+  packages/pp-env/.ppv2, installs the pool's solc and builds pp-env's fixture contracts. A cached
+  tree is re-verified against its pins before use. Run actions/checkout and
+  ./.github/actions/setup-bun first, with a Node that ships corepack (setup-aztec's Node 24 does).
+  Exports PP_FORGE (the pinned forge) to later steps.
+
+inputs:
+  working-directory:
+    description: Repository root, relative to the workspace.
+    required: false
+    default: "."
+
+outputs:
+  target:
+    description: Absolute path of the verified checkout.
+    value: ${{ steps.paths.outputs.target }}
+  cache-hit:
+    description: "'true' when the checkout was restored from the cache (and then re-verified)."
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # The repository's one Foundry pin. pp-env reads forge from PP_FORGE, never from PATH.
+    - name: Install Foundry 1.7.1
+      uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+      with:
+        version: "1.7.1"
+        cache: false
+
+    - name: Resolve the checkout path and cache key
+      id: paths
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        command -v corepack > /dev/null || { echo "::error::ppv2-fetch needs corepack (Node 24 ships it); none on PATH" >&2; exit 1; }
+        forge_bin="$(command -v forge)"
+        forge_version="$("$forge_bin" --version | head -n 1)"
+        [ "$forge_version" = "forge Version: 1.7.1" ] || { echo "::error::$forge_bin reports '$forge_version', not 1.7.1" >&2; exit 1; }
+        echo "PP_FORGE=$forge_bin" >> "$GITHUB_ENV"
+        # The key names the commit, the fetch recipe and the absolute path: Forge's cache pins
+        # library paths, so a tree restored elsewhere would fail verification.
+        bun -e '
+          const { targetDir } = await import("./packages/pp-env/src/env/fetch/index.ts")
+          const { PPV2_COMMIT, FETCH_RECIPE } = await import("./packages/pp-env/src/env/pins.ts")
+          const target = targetDir()
+          const where = new Bun.CryptoHasher("sha256").update(target).digest("hex").slice(0, 12)
+          console.log(`target=${target}`)
+          console.log(`key=ppv2-${process.platform}-${process.arch}-${PPV2_COMMIT}-r${FETCH_RECIPE}-${where}`)
+        ' >> "$GITHUB_OUTPUT"
+
+    - name: Restore the checkout
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.target }}
+        key: ${{ steps.paths.outputs.key }}
+
+    # pnpm comes from corepack, which installs the version upstream's packageManager field names.
+    - name: Fetch or verify, then build the fixtures
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        shims="$RUNNER_TEMP/ppv2-corepack"
+        mkdir -p "$shims"
+        corepack enable --install-directory "$shims" pnpm
+        PATH="$shims:$PATH" bun run --cwd packages/pp-env fetch
+
+    # Saved straight after a successful fetch, so a later failing step still leaves the cache warm.
+    # Never from a pull request: a PR's own cache entries are readable by its later revisions, and
+    # the tree holds executable code that its manifest alone cannot vouch for. PRs restore what a
+    # push or dispatch run saved.
+    - name: Save the checkout
+      if: steps.restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.target }}
+        key: ${{ steps.paths.outputs.key }}
