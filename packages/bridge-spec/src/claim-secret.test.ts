@@ -59,13 +59,10 @@ describe("claim-secret keystone", () => {
 })
 
 /**
- * PRIVACY INVARIANT tripwire: the private deposit's
- * `secret_hash` is L1-public and the amount is public, so recipient-privacy rests ENTIRELY on the salt
- * being full-entropy-random. These pin that (a) the salt genuinely varies the secret_hash — so two
- * random-salt deposits to the SAME recipient are unlinkable — and (b) the entropy MUST come from the
- * salt, since the derivation is otherwise deterministic in (salt, recipient). A future "deterministic /
- * recoverable salt" refactor (which would let an observer brute-force the recipient pre-claim) turns
- * the first test red.
+ * PRIVACY INVARIANT tripwire: the bridge's `secret_hash` is L1-public and the amount is public, so
+ * recipient privacy rests ENTIRELY on the salt being unpredictable. These pin that (a) the salt genuinely
+ * varies the secret_hash — so two bridges to the SAME recipient are unlinkable — and (b) the entropy MUST
+ * come from the salt, since the derivation is otherwise deterministic in (salt, recipient).
  */
 describe("claim-secret privacy invariant (salt entropy)", () => {
 	const recipient = AztecAddress.fromBigIntUnsafe(0xc0ffeen)

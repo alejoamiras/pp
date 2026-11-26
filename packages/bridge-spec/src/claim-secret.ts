@@ -2,13 +2,11 @@
  * Recipient-committed private-claim secret derivation — the TS mirror of the Noir
  * `claim_secret_lib::derive_claim_secret` (contracts/bridge/aztec/claim_secret/src/lib.nr).
  *
- * A PRIVATE token bridge deposits on L1 with `secretHash = computeSecretHash(deriveTokenClaimSecret(salt,
- * recipient))`; on L2 `claim_private(recipient, amount, salt, leaf)` re-derives the same secret from the
- * recipient ARGUMENT and consumes the message. A claim naming a different recipient derives a different
- * secret whose hash can't match — so a relayer holding (salt, recipient, amount, leaf) can submit the
- * claim FOR the user but can never redirect the funds. Security comes from there being no raw-secret
- * consumption path anywhere (sole-consumer invariant), NOT from the secret staying private — the relayer
- * necessarily learns it.
+ * The Inbox message of a bridge commits `secretHash = computeSecretHash(deriveTokenClaimSecret(salt,
+ * recipient))`; the hub's claim re-derives the secret from its own caller and consumes the message, so a
+ * claim from any other account derives a different secret whose hash can't match. Security comes from
+ * there being no raw-secret consumption path anywhere (sole-consumer invariant), not from the secret
+ * staying private.
  *
  * The derivation MUST byte-match the Noir side; the keystone (claim-secret.test.ts here + keystone/src/main.nr)
  * pins both toolchains against fixed vectors so an `@aztec` crypto change can never silently strand a deposit.
@@ -30,22 +28,16 @@ export const DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET = 2317478496
 
 /**
  * The claim secret a private token-bridge deposit binds to: `poseidon2([salt, recipient], DOM_SEP)`.
- * `claim_private` reconstructs it from its `recipient` argument, so a RANDOM secret would strand the
- * deposit — the flow MUST inject this for private token deposits (public deposits keep `Fr.random()`,
- * since `claim_public`'s content hash already binds the recipient).
+ * The claim reconstructs it from its caller, so a RANDOM secret would strand the bridge.
  *
- * PRIVACY INVARIANT — `salt` MUST be a full-entropy random field (`Fr.random()`), NEVER a deterministic
- * or low-entropy value. The private deposit's `secret_hash = computeSecretHash(deriveTokenClaimSecret(
- * salt, recipient))` is written to L1 IN THE CLEAR and the amount is public, so an observer who guesses
- * a small `salt` space can brute-force `(salt, recipient)` and DE-ANONYMIZE the recipient BEFORE the
- * claim — no salt leak required. `Fr.random()` (~254 bits) makes this infeasible; a "deterministic /
- * recoverable salt" convenience refactor would silently break recipient-privacy for EVERY private
- * deposit. This is distinct from the salt-LEAK → linkage risk (see the README). Pinned by
- * `claim-secret.test.ts` ("two private deposits to the same recipient yield different secret hashes").
+ * PRIVACY INVARIANT — `salt` MUST be unpredictable to observers: a full-entropy random field, or a PRF
+ * output under a secret key (`deriveClaimSalt`). The `secret_hash` is written to L1 IN THE CLEAR and the
+ * amount is public, so a guessable `salt` lets an observer brute-force `(salt, recipient)` and
+ * DE-ANONYMIZE the recipient BEFORE the claim — no salt leak required. Pinned by `claim-secret.test.ts`.
  */
 export const deriveTokenClaimSecret = (salt: Fr, recipient: AztecAddress): Fr =>
 	poseidon2HashWithSeparator([salt, recipient], DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET)
 
-/** The `secretHash` for the L1 `depositToAztecPrivate` call — `computeSecretHash` of the derived secret. */
+/** The Inbox message's `secretHash` — `computeSecretHash` of the derived secret. */
 export const tokenClaimSecretHash = (salt: Fr, recipient: AztecAddress): Promise<Fr> =>
 	computeSecretHash(deriveTokenClaimSecret(salt, recipient))
