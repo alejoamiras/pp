@@ -7,11 +7,15 @@ import {IPoolVaultMinimal} from "../src/IPoolVaultMinimal.sol";
 import {StubProcessor} from "../src/StubProcessor.sol";
 import {TestToken} from "../src/TestToken.sol";
 
-/// @dev Enforces the real vault's processor rule and pays `shortfall` less than amountOut.
+/// @dev Enforces the real vault's processor rule and pays `shortfall` less than amountOut. A test that
+///      must not reach it sets `forbidden`: a revert rolls back `calls`, so only a distinct error proves it.
 contract MockPoolVault is IPoolVaultMinimal {
     IERC20 public immutable TOKEN;
     uint256 public shortfall;
     uint256 public calls;
+    bool public forbidden;
+
+    error Reached();
 
     constructor(IERC20 token) {
         TOKEN = token;
@@ -21,7 +25,12 @@ contract MockPoolVault is IPoolVaultMinimal {
         shortfall = s;
     }
 
+    function forbid() external {
+        forbidden = true;
+    }
+
     function transact(TransactProof calldata proof, TransactParams calldata params, NoteData[] calldata) external {
+        if (forbidden) revert Reached();
         require(params.processor == msg.sender, "processor");
         ++calls;
         TOKEN.transfer(msg.sender, proof.pubSignals[5][0] - shortfall);
@@ -94,9 +103,9 @@ contract StubProcessorTest is Test {
 
     function test_RevertsOnOtherTokenBeforeCallingVault() public {
         uint256 other = uint256(uint160(makeAddr("other")));
+        vault.forbid();
         vm.expectRevert(abi.encodeWithSelector(StubProcessor.UnexpectedToken.selector, other));
         stub.spend(_proof(1, 1, other), _params(), new IPoolVaultMinimal.NoteData[](1));
-        assertEq(vault.calls(), 0);
     }
 
     function test_RevertsOnShortPayment() public {

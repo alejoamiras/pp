@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test"
 import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { buildFixtures, FIXTURES_DIR } from "../../src/env/deploy.ts"
+import { buildFixtures, FIXTURES_DIR, withFixtureLock } from "../../src/env/deploy.ts"
 
 const parent = join(homedir(), ".cache/pp/pp-env")
 mkdirSync(parent, { recursive: true })
@@ -32,3 +32,13 @@ test(
 	},
 	{ timeout: 120_000 },
 )
+
+test("the fixture CLI waits while another forge command holds the project", async () => {
+	const cli = await withFixtureLock(FIXTURES_DIR, async () => {
+		const proc = Bun.spawn(["bun", join(import.meta.dir, "../../scripts/forge-fixtures.ts"), "config"], { stdout: "ignore" })
+		await Bun.sleep(1_500)
+		expect(proc.exitCode).toBeNull()
+		return proc
+	})
+	expect(await cli.exited).toBe(0)
+})

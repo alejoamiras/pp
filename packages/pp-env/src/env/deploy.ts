@@ -207,16 +207,22 @@ export function fixtureForge(dir: string = FIXTURES_DIR): { args: string[]; env:
 }
 
 /**
- * Builds pp-env's own fixture contracts; `offline` refuses a solc download. Even a no-op forge build
- * rewrites its cache file, so concurrent builds are serialized on a lock.
+ * Runs `fn` holding the fixture project's lock. Even a no-op forge build rewrites its cache file, so
+ * every forge command on the project goes through here. The lock sits outside `cache` and `out`,
+ * where `forge clean` cannot remove it from under its holder.
  */
+export async function withFixtureLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+	const lock = join(dir, ".forge.lock")
+	const done = await withFileLock(lock, { staleMs: 300_000, waitMs: 300_000 }, fn)
+	if (!done) throw new Error(`${lock} stayed held; if no forge command is running, delete it`)
+	return done.value
+}
+
+/** Builds pp-env's own fixture contracts; `offline` refuses a solc download. */
 export async function buildFixtures(offline: boolean, dir: string = FIXTURES_DIR): Promise<void> {
 	const { args, env } = fixtureForge(dir)
 	const cmd = [forgeBin(), "build", ...args, ...(offline ? ["--offline"] : [])]
-	await mkdir(join(dir, "cache"), { recursive: true })
-	const lock = join(dir, "cache", "pp-env-build.lock")
-	const done = await withFileLock(lock, { staleMs: 300_000, waitMs: 300_000 }, () => run(cmd, { env }))
-	if (!done) throw new Error(`${lock} stayed held; if no build is running, delete it`)
+	await withFixtureLock(dir, () => run(cmd, { env }))
 }
 
 let fixturesReady: Promise<void> | undefined
