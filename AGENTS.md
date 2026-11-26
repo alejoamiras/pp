@@ -12,6 +12,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 | [`packages/bridge-spec`](packages/bridge-spec/README.md) | `@pp/bridge-spec`: the normative v1 wire format and hashes in TS, and the vectors that bind `BridgeMessageV1` (Solidity) and `bridge_message`/`pp_hash` (Noir) to it. |
 | [`packages/e2e-kit`](packages/e2e-kit/README.md) | `@pp/e2e-kit`: the Playwright kit a web app under `apps/` will use (test wallet, injected Ethereum wallet, egress fence, runner). |
 | [`packages/labelled-token`](packages/labelled-token/README.md) | `@pp/labelled-token`: the labelled token's artifact (browser-safe root), its gate budgets, the hub's derivation vector and its two-device network suite. |
+| [`packages/local-stack`](packages/local-stack/README.md) | `@pp/local-stack`: `bun run demo`, one anvil carrying the Aztec local network and the pool, with its manifest and heartbeat. |
 | [`scripts/`](scripts) | CI-gating tests (`scripts/ci-cd/`), the complexity baseline, the absolute-path guard. |
 | [`.github/`](.github) | PR workflows, each with a `changes` filter and an exact-state aggregator. |
 
@@ -56,6 +57,8 @@ with warm package and toolchain caches.
 | Integration (local network) | `bun run --cwd packages/bridge-core test:integration` | 10 min |
 | Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | 7.5 min |
 | Labelled token, two devices | `bun run --cwd packages/labelled-token test:net` | 3 min |
+| Local stack | `bun run demo` (`--keep` holds it up) | 44 s (ready in 40 s) |
+| Local stack integration | `bun run --cwd packages/local-stack test:integration` | — |
 | E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | 15 s |
 
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row
@@ -89,6 +92,8 @@ the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contr
 
 - `main` is the only long-lived branch. Work lands through squash-merged pull requests; the PR
   title becomes the commit subject, so write it as a Conventional Commit of at most 93 characters.
+  `commit-messages-status` lints "<title> (#<number>)" and the PR's own commits, never main's (a sync
+  carries those), and re-runs on a title edit or a retarget.
 - Pull-request workflows have no `branches:` filter, so CI runs whatever the base: `main`, an
   integration branch or a lower PR in a stack. `scripts/ci-cd/behavior-gating.test.ts` pins this.
 - Required on `main`: `quality-status`, `bridge-contracts-status` and `actionlint-status`, each

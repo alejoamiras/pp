@@ -43,6 +43,7 @@ Everything after `fetch` runs offline. Each start re-verifies the fetched tree a
 |---|---|---|
 | `test`, `typecheck` | no | unit tests; public types through the export map |
 | `typecheck:full`, `test:smoke` | yes | the implementation against the SDK; proving under Bun; both entries under native Node |
+| `test:vitest` | yes | the client under vite's module runner, as a vitest consumer loads it |
 | `test:contracts` | no (Forge) | fixture tests, fuzzed |
 | `test:integration` | yes | parallel envs, attach, teardown; a full spend through the stub and the pool's rejections |
 

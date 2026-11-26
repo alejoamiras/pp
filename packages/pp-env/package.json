@@ -33,6 +33,7 @@
 		"forge:fixtures": "bun scripts/forge-fixtures.ts",
 		"test:contracts": "bun scripts/forge-fixtures.ts test",
 		"test:smoke": "bun test test/smoke",
+		"test:vitest": "bun --bun vitest run",
 		"test:integration": "PP_ENV_INTEGRATION=1 bun test --timeout 600000 test/integration",
 		"up": "bun src/cli.ts up"
 	},
@@ -43,6 +44,7 @@
 		"@openzeppelin/contracts": "5.4.0",
 		"@types/bun": "1.4.4",
 		"forge-std": "github:foundry-rs/forge-std#v1.14.0",
-		"typescript": "6.0.3"
+		"typescript": "6.0.3",
+		"vitest": "^4.1.9"
 	}
 }
