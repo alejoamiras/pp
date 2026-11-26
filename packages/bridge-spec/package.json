@@ -1,0 +1,29 @@
+{
+	"name": "@pp/bridge-spec",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./claim-secret": "./src/claim-secret.ts",
+		"./birth": "./src/birth.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "bun --bun vitest run"
+	},
+	"dependencies": {
+		"@aztec-labs/aztec.js": "6.0.0",
+		"@aztec-labs/foundation": "6.0.0",
+		"@aztec-labs/stdlib": "6.0.0",
+		"@noble/hashes": "1.8.0",
+		"@zk-kit/lean-imt": "2.2.4",
+		"poseidon-lite": "0.3.0",
+		"viem": "2.57.1"
+	},
+	"devDependencies": {
+		"@types/node": "^24.13.2",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.9"
+	}
+}
