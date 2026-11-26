@@ -1,0 +1,22 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ESNext", "DOM"],
+		"strict": true,
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"esModuleInterop": true,
+		"isolatedModules": true,
+		"skipLibCheck": true,
+		"resolveJsonModule": true,
+		"types": ["bun", "node"],
+		"paths": {
+			"@ppv2/evm-sdk": ["../pp-env/.ppv2/packages/evm-sdk/dist/index"],
+			"@ppv2/mock-asp/evm": ["../pp-env/.ppv2/packages/mock-asp/dist/evm"]
+		}
+	},
+	"comment": "One tsc program spans pp-env's and bridge-core's sources, so the options must suit both; pp-env's @ppv2 aliases are mirrored until it ships a type entry free of them.",
+	"include": ["src/**/*.ts", "test/**/*.ts"]
+}

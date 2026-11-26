@@ -106,6 +106,20 @@
         "vitest": "^4.1.9",
       },
     },
+    "packages/local-stack": {
+      "name": "@pp/local-stack",
+      "version": "0.0.0",
+      "dependencies": {
+        "@pp/bridge-core": "workspace:*",
+        "@pp/pp-env": "workspace:*",
+        "viem": "2.57.1",
+      },
+      "devDependencies": {
+        "@types/bun": "1.4.4",
+        "@types/node": "^24.13.2",
+        "typescript": "^6.0.3",
+      },
+    },
     "packages/pp-env": {
       "name": "@pp/pp-env",
       "version": "0.0.0",
@@ -439,6 +453,8 @@
     "@pp/e2e-kit": ["@pp/e2e-kit@workspace:packages/e2e-kit"],
 
     "@pp/labelled-token": ["@pp/labelled-token@workspace:packages/labelled-token"],
+
+    "@pp/local-stack": ["@pp/local-stack@workspace:packages/local-stack"],
 
     "@pp/pp-env": ["@pp/pp-env@workspace:packages/pp-env"],
 
