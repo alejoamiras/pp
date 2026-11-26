@@ -54,8 +54,9 @@ impl LabelledBalanceSet<&mut PrivateContext> {
     }
 
     /// Nullifies up to `MAX_NOTES` notes of `label`, largest first, stopping once `amount` is covered.
-    /// Returns their total and their common origin; fails if the popped notes disagree on origin. The
-    /// total may fall short of `amount`; the caller decides.
+    /// The PXE picks the notes; the circuit checks only their label and that they descend. Returns
+    /// their total and their common origin; fails if they disagree on origin. The total may fall
+    /// short of `amount`; the caller decides.
     pub fn try_sub(self, label: Field, amount: u128) -> (u128, u8) {
         let options = NoteGetterOptions::with_preprocessor(preprocess_min_sum, amount)
             .select(LabelledNote::properties().label, Comparator.EQ, label)
@@ -95,7 +96,7 @@ impl LabelledBalanceSet<UtilityContext> {
     }
 
     /// `(label, origin, balance)` per distinct label, in first-seen order, from the `start`-th label.
-    /// Reads every note page; fails past `MAX_TRACKED_LABELS` distinct labels.
+    /// Reads every note page; past `MAX_TRACKED_LABELS` distinct (label, origin) pairs every page fails.
     pub unconstrained fn labels(
         self,
         start: u32,
@@ -153,7 +154,8 @@ impl LabelledBalanceSet<UtilityContext> {
 }
 
 /// Keeps notes, in retrieved (value-descending) order, until their sum reaches `min_sum`. It runs
-/// unconstrained: a prover that skips it only spends more notes than needed.
+/// unconstrained: a prover that bypasses it only chooses which of its own notes of the label to
+/// spend, and the caller still checks the total.
 pub fn preprocess_min_sum(
     notes: [Option<HintedNote<LabelledNote>>; MAX_NOTE_HASH_READ_REQUESTS_PER_CALL],
     min_sum: u128,

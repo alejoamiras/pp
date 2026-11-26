@@ -15,7 +15,8 @@ Stage A is the hold-and-leave surface:
 | `private_notes_by_label(owner, label, start)` | utility | One label's note values, largest first, 10 per page: the exact chunks a caller can burn. |
 
 Every balance note is delivered constrained under a non-interactive handshake (`balance_set.nr`,
-`delivery()`), so a recipient finds it from the chain with no registered sender.
+`delivery()`), so a recipient finds it from the chain with no registered sender, unless the pair
+already shares an interactive handshake (see below).
 
 ## Entries
 

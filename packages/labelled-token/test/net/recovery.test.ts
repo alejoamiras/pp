@@ -1,10 +1,5 @@
-/**
- * What a holder needs to leave from a device restored from its keys alone. Balance notes go out
- * constrained under a non-interactive handshake, which is announced on chain, but an existing
- * handshake for the same (sender, recipient) pair is reused whatever its kind. A handshake another
- * app opened interactively is never announced, so a restored device finds the notes tagged under it
- * only once it is given that handshake's ephemeral key back.
- */
+// A (sender, recipient) pair's handshake is shared by every app and reused whatever its kind, and a
+// restored device rediscovers only the announced, non-interactive ones.
 import type { Contract } from "@aztec-labs/aztec.js/contracts"
 import { actorAccount, connectL2, connectPeer, createActor, freshActorSecret, settled } from "@pp/bridge-core/sandbox"
 import { beforeAll, describe, expect, inject, test } from "vitest"

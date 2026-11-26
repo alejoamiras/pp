@@ -23,7 +23,6 @@ export interface Deployed {
 	token: ContractInstanceWithAddress
 }
 
-/** A device's view of one account: who it acts as and what it pays with. */
 export interface Device {
 	wallet: Wallet
 	from: AztecAddress
@@ -32,7 +31,6 @@ export interface Device {
 
 export const sendOpts = (d: Device) => ({ from: d.from, fee: d.fee, wait: { waitForStatus: TxStatus.PROPOSED } })
 
-/** The stub, then the token with the stub as minter and no registry, as stage A deploys it. */
 export async function deployStage(d: Device): Promise<Deployed> {
 	const opts = { from: d.from, fee: d.fee, wait: { waitForStatus: TxStatus.CHECKPOINTED } }
 	const stub = await Contract.deploy(d.wallet, stubArtifact, [], undefined).send(opts as never)
@@ -46,7 +44,6 @@ export async function deployStage(d: Device): Promise<Deployed> {
 	return { stub: stub.instance, token: token.instance }
 }
 
-/** Registers both contracts on `d`'s device and returns handles that act as `d`. */
 export async function attach(d: Device, deployed: Deployed): Promise<{ stub: Contract; token: Contract }> {
 	await d.wallet.registerContract(deployed.stub, stubArtifact)
 	await d.wallet.registerContract(deployed.token, labelledTokenArtifact)
