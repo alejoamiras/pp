@@ -620,6 +620,25 @@ export function assertNothingLeft(net: LocalNetwork): void {
 	throw new Error(`[sandbox] the stopped network left behind: ${left.join("; ")}`)
 }
 
+/**
+ * A vitest global teardown for `net`: stops it, runs `cleanup` whether or not the stop threw, then
+ * requires that nothing was left behind. Any failure marks the process as failed before it is
+ * rethrown, for the same vitest reason as {@link assertNothingLeft}.
+ */
+export async function teardownNetwork(net: LocalNetwork, cleanup?: () => void): Promise<void> {
+	try {
+		try {
+			await net.stop()
+		} finally {
+			cleanup?.()
+		}
+		assertNothingLeft(net)
+	} catch (e) {
+		process.exitCode = 1
+		throw e
+	}
+}
+
 /** Both env vars together mean "use the network already running"; one alone would boot a fresh
  *  network whose other half the operator pointed elsewhere, so it is refused rather than guessed. */
 function attachedNetwork(): LocalNetwork | undefined {

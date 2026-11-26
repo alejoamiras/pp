@@ -38,16 +38,25 @@ describe("assertSocketRoom", () => {
 	})
 })
 
-describe("assertNothingLeft", () => {
-	it("fails a vitest run whose global teardown finds leftovers", () => {
-		const config = join(import.meta.dirname, "fixtures/teardown-leftovers/vitest.config.ts")
+describe("teardownNetwork", () => {
+	const teardownRun = (env: Record<string, string> = {}) => {
+		const config = join(import.meta.dirname, "fixtures/failing-teardown/vitest.config.ts")
 		const run = spawnSync("bun", ["--bun", "vitest", "run", "--config", config], {
 			cwd: join(import.meta.dirname, "../.."),
 			encoding: "utf8",
+			env: { ...process.env, ...env },
 		})
 		// Not the error's message: under Bun about one run in 25 prints the error without it.
 		expect(run.stdout + run.stderr).toContain("error during close")
 		expect(run.status).toBe(1)
+	}
+
+	it("fails a vitest run whose global teardown finds leftovers", () => teardownRun())
+
+	it("fails the run and still cleans up when the stop itself throws", () => {
+		const marker = join(mkdtempSync(join(tmpdir(), "pp-teardown-")), "cleaned")
+		teardownRun({ TEARDOWN_CASE: "stop-throws", TEARDOWN_MARKER: marker })
+		expect(existsSync(marker)).toBe(true)
 	})
 })
 
