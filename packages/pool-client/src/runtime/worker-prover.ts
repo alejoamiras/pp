@@ -11,8 +11,8 @@ export type ProverPort = {
 	terminate?(): void
 }
 
-// Shared by every wrapper, so two wrappers on one port never claim each other's replies.
-let nextId = 0
+// One wrapper per port, so ids, pending calls and termination are one state however often it is wrapped.
+const wrappers = new WeakMap<ProverPort, WorkerProver>()
 
 export interface WorkerProver extends IGroth16Prover {
 	/** Stops the worker; pending and later calls reject. */
@@ -22,9 +22,13 @@ export interface WorkerProver extends IGroth16Prover {
 /**
  * An `IGroth16Prover` that proves in a worker serving `serveProver`, so the calling thread stays responsive.
  * Circuit files are copied to the worker on each call, never transferred: the artifact loader keeps them.
- * Once the worker reports an error, every pending and later call rejects with it.
+ * Once the worker reports an error, every pending and later call rejects with it. Wrapping the same
+ * port again returns the same prover.
  */
 export function workerProver(worker: ProverPort): WorkerProver {
+	const known = wrappers.get(worker)
+	if (known) return known
+	let next = 0
 	let dead: Error | undefined
 	const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
 	const fail = (err: Error) => {
@@ -48,11 +52,11 @@ export function workerProver(worker: ProverPort): WorkerProver {
 	const call = (op: Op, args: Call["args"]) =>
 		new Promise<unknown>((resolve, reject) => {
 			if (dead) return reject(dead)
-			const id = nextId++
+			const id = next++
 			worker.postMessage({ id, op, args })
 			pending.set(id, { resolve, reject })
 		})
-	return {
+	const prover: WorkerProver = {
 		fullProve: (...args) => call("fullProve", args) as ReturnType<IGroth16Prover["fullProve"]>,
 		verify: (...args) => call("verify", args) as ReturnType<IGroth16Prover["verify"]>,
 		terminate() {
@@ -60,6 +64,8 @@ export function workerProver(worker: ProverPort): WorkerProver {
 			fail(new Error("prover worker terminated"))
 		},
 	}
+	wrappers.set(worker, prover)
+	return prover
 }
 
 /** The worker side of `workerProver`: answers each call with `prover`. Errors cross as their message only. */

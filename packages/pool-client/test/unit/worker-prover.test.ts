@@ -4,7 +4,7 @@ import { type ProverPort, serveProver, workerProver } from "../../src/runtime/wo
 
 const PROOF = { proof: { pi_a: ["1"], pi_b: [["2"]], pi_c: ["3"], protocol: "groth16", curve: "bn128" }, publicSignals: ["7"] }
 
-it("routes each reply to its own call, across wrappers and out of order, and rejects a thrown error", async () => {
+it("routes each reply to its own call, out of order, and rejects a thrown error", async () => {
 	const { port1, port2 } = new MessageChannel()
 	// Each proof echoes its zkey's length; the shorter zkey answers later, so replies arrive out of order.
 	const fake = {
@@ -19,6 +19,7 @@ it("routes each reply to its own call, across wrappers and out of order, and rej
 	serveProver(port2 as unknown as ProverPort, fake)
 	const a = workerProver(port1 as unknown as ProverPort)
 	const b = workerProver(port1 as unknown as ProverPort)
+	expect(b).toBe(a)
 	port1.start()
 	port2.start()
 	try {

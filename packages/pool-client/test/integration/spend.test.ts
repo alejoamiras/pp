@@ -175,9 +175,9 @@ describe("pool-client against pp-env up", () => {
 				keystore.getViewingKeyPair().privateKey,
 			]
 		})
-		// JSON drops an Error's own fields, which are where a leaked secret would sit.
+		// JSON skips an Error's message, stack and cause (not enumerable), where a leaked secret would sit.
 		const logged = JSON.stringify(consoleCalls, (_k, v) =>
-			typeof v === "bigint" ? toHex(v) : v instanceof Error ? { message: v.message, stack: v.stack, cause: v.cause } : v,
+			typeof v === "bigint" ? toHex(v) : v instanceof Error ? { ...v, message: v.message, stack: v.stack, cause: v.cause } : v,
 		).toLowerCase()
 		for (const s of secrets) expect(logged).not.toContain(s.slice(2).toLowerCase())
 		expect(aspRequests.length).toBeGreaterThan(0)
