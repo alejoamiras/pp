@@ -12,8 +12,8 @@ Browser-safe helpers for checking a label against the ASP registry on Aztec. The
    sequence: read the latest record and retry.
 3. `parseAspSnapshot(await res.json())` recomputes both roots, so a path it yields is one the contract
    accepts, whoever served it. A matching root does not prove the leaves are complete: a subtree
-   collapsed into one node keeps the root. From an untrusted server, `ABSENT` is therefore a claim,
-   not a proof.
+   collapsed into one node keeps the root. `ABSENT` means not found in the snapshot this server gave
+   you; it is never proof that a label was revoked.
 4. `labelState(record, snapshot, label, origin, anchorTime)` gives `ACTIVE`, `ABSENT` or `STALE_ROOT`,
    by the same rules as the registry's `check_label`. Pass the anchor time plus your proving budget:
    `ACTIVE` at the exact age limit fails a proof anchored one block later.
