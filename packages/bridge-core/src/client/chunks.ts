@@ -7,9 +7,11 @@ export const MAX_NOTES_PER_BURN = 8
  * The amounts to burn, one `ragequit` call each, so that every call consumes whole notes and makes
  * no change note (a change note is a constrained self-send that a reverted send can block).
  *
- * `burn_for_exit` sorts the label's notes by value, largest first, and takes them until their sum
- * reaches the amount, so an amount burns exactly when it equals the sum of a descending prefix.
- * Each chunk is therefore the next ≤ 8 notes of the descending order.
+ * Assumes the standard note selection, which sorts the label's notes by value, largest first, and
+ * takes them until their sum reaches the amount: an amount then burns exactly when it equals the
+ * sum of a descending prefix, so each chunk is the next ≤ 8 notes of the descending order. The
+ * circuit enforces descending order among the notes it reads, not that they are the label's largest
+ * (an honest PXE picks those), so a caller re-reads the notes after every burn.
  *
  * @param noteValues the values of one label's notes (one origin), as `private_notes_by_label` returns them
  * @param amount the total to exit; omitted, the whole balance
