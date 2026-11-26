@@ -113,6 +113,7 @@ function sourceLoader(src: ArtifactSource, circuits: Readonly<Record<string, Pin
  */
 export function createArtifacts(src: ArtifactSource, opts: ArtifactOptions = {}): VerifiedArtifacts {
 	const circuits = opts.circuits ?? PINNED_CIRCUITS
+	const { kind } = src
 	const inner = sourceLoader(src, circuits, opts)
 	const loads = new Map<string, Promise<Loaded>>()
 
@@ -123,7 +124,7 @@ export function createArtifacts(src: ArtifactSource, opts: ArtifactOptions = {})
 		} catch (err) {
 			throw mismatch(circuit, file, err instanceof Error ? err.message : String(err))
 		}
-		if (src.kind === "gateway") return bytes
+		if (kind === "gateway") return bytes
 		if (bytes.byteLength !== pin.sizes[file]) throw mismatch(circuit, file, `${bytes.byteLength} bytes, pinned ${pin.sizes[file]}`)
 		const want = pin[`${file}Sha256`]?.toLowerCase().replace(/^0x/, "")
 		if (want === undefined || (await sha256Hex(bytes)) !== want) throw mismatch(circuit, file, "sha256 differs from the manifest")

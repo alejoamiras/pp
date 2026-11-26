@@ -4,29 +4,31 @@ import { type ProverPort, serveProver, workerProver } from "../../src/runtime/wo
 
 const PROOF = { proof: { pi_a: ["1"], pi_b: [["2"]], pi_c: ["3"], protocol: "groth16", curve: "bn128" }, publicSignals: ["7"] }
 
-it("answers each call from the worker side and turns a thrown error into a rejection", async () => {
+it("routes each reply to its own call, across wrappers and out of order, and rejects a thrown error", async () => {
 	const { port1, port2 } = new MessageChannel()
-	const seen: number[] = []
+	// Each proof echoes its zkey's length; the shorter zkey answers later, so replies arrive out of order.
 	const fake = {
-		fullProve: async (_input, wasm, zkey) => {
-			seen.push(wasm.byteLength, zkey.byteLength)
-			return PROOF
+		fullProve: async (_input, _wasm, zkey) => {
+			await new Promise((r) => setTimeout(r, 40 - zkey.byteLength))
+			return { ...PROOF, publicSignals: [String(zkey.byteLength)] }
 		},
 		verify: async () => {
 			throw new Error("bad vkey")
 		},
 	} as IGroth16Prover
 	serveProver(port2 as unknown as ProverPort, fake)
-	const prover = workerProver(port1 as unknown as ProverPort)
+	const a = workerProver(port1 as unknown as ProverPort)
+	const b = workerProver(port1 as unknown as ProverPort)
 	port1.start()
 	port2.start()
 	try {
 		const wasm = new Uint8Array(3)
-		const [a, b] = await Promise.all([prover.fullProve({}, wasm, new Uint8Array(5)), prover.fullProve({}, wasm, new Uint8Array(5))])
-		expect([a, b]).toEqual([PROOF, PROOF])
-		expect(seen).toEqual([3, 5, 3, 5])
+		const signals = await Promise.all(
+			[a.fullProve({}, wasm, new Uint8Array(5)), b.fullProve({}, wasm, new Uint8Array(30))].map(async (p) => (await p).publicSignals),
+		)
+		expect(signals).toEqual([["5"], ["30"]])
 		expect(wasm.byteLength).toBe(3)
-		await expect(prover.verify({} as never, [], PROOF.proof as never)).rejects.toThrow("prover worker: bad vkey")
+		await expect(a.verify({} as never, [], PROOF.proof as never)).rejects.toThrow("prover worker: bad vkey")
 	} finally {
 		port1.close()
 	}

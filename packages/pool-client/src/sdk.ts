@@ -1,4 +1,4 @@
-// The only module that imports values from the SDK. Its typings declare exports the 1.0.2 bundle lacks,
+// The only production module that imports values from the SDK. Its typings declare exports the 1.0.2 bundle lacks,
 // and some module loaders turn a missing export into `undefined` instead of a link error, so check here.
 import {
 	APP_IDENTIFIER,

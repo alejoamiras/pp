@@ -65,7 +65,10 @@ const REVERT_CODES: Readonly<Record<string, StaleRoot>> = {
 	PoolVault_InvalidASPRoot: "ASP_ROOT_STALE",
 }
 
-/** Maps a `transact` revert to the stale root that caused it, or `null` for any other revert. */
+/**
+ * Maps a `transact` revert to the stale root that caused it, or `null` for any other revert. It matches by
+ * selector, and a processor can revert with the same bytes: a hint to re-prove, not proof.
+ */
 export function spendRevertCode(revertData: Hex): StaleRoot | null {
 	try {
 		return REVERT_CODES[decodeErrorResult({ abi: POOL_VAULT_ERRORS_ABI, data: revertData }).errorName] ?? null

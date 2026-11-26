@@ -12,7 +12,9 @@ import {
 	erc20Abi,
 	type Hex,
 	http,
+	isAddressEqual,
 	parseAbi,
+	parseEventLogs,
 	toHex,
 } from "viem"
 import { foundry } from "viem/chains"
@@ -121,15 +123,18 @@ export function seeder(env: UpEnv) {
 				return { ok: false, errorName: revert.data?.errorName, raw: revert.raw }
 			}
 		},
-		async submit(stub: Address, spend: PreparedSpend, fromIndex: number): Promise<Hex> {
+		/** Sends the spend through `stub` and returns what the stub says it processed. */
+		async submit(stub: Address, spend: PreparedSpend, fromIndex: number) {
 			const hash = await walletOf(fromIndex).writeContract({
 				address: stub,
 				abi: SPEND_ABI,
 				functionName: "spend",
 				args: spendArgs(spend),
 			})
-			await mined(hash)
-			return hash
+			const logs = (await mined(hash)).logs.filter((l) => isAddressEqual(l.address, stub))
+			const [processed] = parseEventLogs({ abi: STUB_PROCESSOR_ABI, eventName: "Processed", logs })
+			if (processed === undefined) throw new Error(`${hash}: the stub emitted no Processed event`)
+			return processed.args
 		},
 		async stubState(stub: Address) {
 			return {

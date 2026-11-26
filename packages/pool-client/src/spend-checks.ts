@@ -2,7 +2,7 @@ import { type Address, type Hex, isAddressEqual } from "viem"
 import { PoolClientError, type SpendCheck } from "./errors.ts"
 import type { ChangeOpening, NoteData, PreparedSpend } from "./types.ts"
 
-/** What the caller asked for and the note it chose, captured before any await. */
+/** What the caller asked for (captured before the first await) and the note it chose (read after sync). */
 export type Expected = {
 	processor: Address
 	data: Hex

@@ -11,6 +11,9 @@ export type ProverPort = {
 	terminate?(): void
 }
 
+// Shared by every wrapper, so two wrappers on one port never claim each other's replies.
+let nextId = 0
+
 export interface WorkerProver extends IGroth16Prover {
 	/** Stops the worker; pending and later calls reject. */
 	terminate(): void
@@ -22,7 +25,6 @@ export interface WorkerProver extends IGroth16Prover {
  * Once the worker reports an error, every pending and later call rejects with it.
  */
 export function workerProver(worker: ProverPort): WorkerProver {
-	let next = 0
 	let dead: Error | undefined
 	const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
 	const fail = (err: Error) => {
@@ -46,9 +48,9 @@ export function workerProver(worker: ProverPort): WorkerProver {
 	const call = (op: Op, args: Call["args"]) =>
 		new Promise<unknown>((resolve, reject) => {
 			if (dead) return reject(dead)
-			const id = next++
-			pending.set(id, { resolve, reject })
+			const id = nextId++
 			worker.postMessage({ id, op, args })
+			pending.set(id, { resolve, reject })
 		})
 	return {
 		fullProve: (...args) => call("fullProve", args) as ReturnType<IGroth16Prover["fullProve"]>,

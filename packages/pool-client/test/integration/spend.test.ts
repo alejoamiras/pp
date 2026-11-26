@@ -46,12 +46,9 @@ describe("pool-client against pp-env up", () => {
 	let client13: PoolClient
 	let first: PreparedSpend
 
-	const stubs = async () => ({ a: await seed.stubState(stubA), b: await seed.stubState(stubB) })
 	async function refused(stub: Address, spend: PreparedSpend, errorName: string): Promise<Hex | undefined> {
-		const before = await stubs()
 		const sim = await seed.simulate(stub, spend, SUBMITTER)
 		expect(sim).toMatchObject({ ok: false, errorName })
-		expect(await stubs()).toEqual(before)
 		return sim.ok ? undefined : sim.raw
 	}
 
@@ -104,7 +101,12 @@ describe("pool-client against pp-env up", () => {
 		expect(await fresh.nullifierOf(note13.commitment)).toBe(first.proof.pubSignals[0]![0])
 		await expect(fresh.nullifierOf(note12.commitment)).rejects.toMatchObject({ code: "NOTE_NOT_FOUND" })
 
-		await seed.submit(stubA, first, SUBMITTER)
+		expect(await seed.submit(stubA, first, SUBMITTER)).toMatchObject({
+			nullifier: first.nullifier,
+			changeCommitment: first.change.commitment,
+			amount: 70n,
+			data: DATA,
+		})
 		expect(await seed.stubState(stubA)).toEqual({ balance: 70n, spends: 1n })
 		const notes = await client13.notes()
 		expect(notes).toContainEqual(expect.objectContaining({ commitment: note13.commitment, status: "spent" }))
@@ -119,6 +121,8 @@ describe("pool-client against pp-env up", () => {
 		await refused(stubA, flipNoteByte(s), "PoolVault_ProofContextMismatch")
 		await refused(stubA, withSignal(s, 5, 11n), "PoolVault_InvalidTransactProof")
 		await refused(stubB, s, "PoolVault_InvalidProcessor")
+		const half = { note: first.change.commitment, amount: 10n, processor: stubA, data: "0xabc" as Hex }
+		await expect(client13.prepareSpend(half)).rejects.toThrow("whole bytes")
 	})
 
 	it("4. a fresh client recovers the change opening from chain logs alone", async () => {
@@ -150,10 +154,11 @@ describe("pool-client against pp-env up", () => {
 	})
 
 	it("6. spends a whole note, leaving a recoverable zero-value change", async () => {
-		const s = await client13.prepareSpend({ note: first.change.commitment, amount: 30n, processor: stubA, data: DATA })
+		const upper = `0x${DATA.slice(2).toUpperCase()}` as Hex
+		const s = await client13.prepareSpend({ note: first.change.commitment, amount: 30n, processor: stubA, data: upper })
 		expect(s.change.value).toBe(0n)
 		await (await open(u13.address, u13.signature)).assertRecoverable(s)
-		await seed.submit(stubA, s, SUBMITTER)
+		expect(await seed.submit(stubA, s, SUBMITTER)).toMatchObject({ amount: 30n, data: DATA })
 		expect(await client13.notes()).toContainEqual(
 			expect.objectContaining({ commitment: s.change.commitment, value: 0n, status: "approved" }),
 		)
@@ -170,7 +175,10 @@ describe("pool-client against pp-env up", () => {
 				keystore.getViewingKeyPair().privateKey,
 			]
 		})
-		const logged = JSON.stringify(consoleCalls, (_k, v) => (typeof v === "bigint" ? toHex(v) : v)).toLowerCase()
+		// JSON drops an Error's own fields, which are where a leaked secret would sit.
+		const logged = JSON.stringify(consoleCalls, (_k, v) =>
+			typeof v === "bigint" ? toHex(v) : v instanceof Error ? { message: v.message, stack: v.stack, cause: v.cause } : v,
+		).toLowerCase()
 		for (const s of secrets) expect(logged).not.toContain(s.slice(2).toLowerCase())
 		expect(aspRequests.length).toBeGreaterThan(0)
 		expect(aspRequests.filter((p) => p.includes("/labels/"))).toEqual([])

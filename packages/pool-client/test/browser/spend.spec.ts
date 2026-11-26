@@ -48,6 +48,6 @@ test("prepares in Chromium a spend that the vault accepts", async ({ page }) => 
 	const out = decode<{ notes: PoolNoteView[]; spend: PreparedSpend; prepareMs: number }>(await probe(page).spend(encode(input)))
 	console.log(`[pool-client] prepareSpend in Chromium: ${Math.round(out.prepareMs)} ms`)
 	expect(out.notes).toContainEqual(expect.objectContaining({ commitment: note.commitment, value: 100n, status: "approved" }))
-	await seed.submit(stub, out.spend, SUBMITTER)
+	expect(await seed.submit(stub, out.spend, SUBMITTER)).toMatchObject({ nullifier: out.spend.nullifier, amount: 70n, data: DATA })
 	expect(await seed.stubState(stub)).toEqual({ balance: 70n, spends: 1n })
 })

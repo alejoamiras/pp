@@ -9,6 +9,7 @@ import {
 	type PublicClient,
 	parseEventLogs,
 	toHex,
+	type TransactionReceipt,
 } from "viem"
 import { POOL_VAULT_EVENTS_ABI } from "./abi.ts"
 import { PoolClientError } from "./errors.ts"
@@ -78,6 +79,7 @@ export function spendKeys(owner: Address, signature: Hex, notes: NoteComputation
 	return {
 		nullifierOf: (c) => BigInt(notes.computeNullifier(nullifying, word(c))),
 		open: (nd) => openNoteData(nd, { notes, crypto, viewingPrivateKey, owner }),
+		// The SDK returns the raw keccak; the vault reduces it mod p before comparing.
 		contextOf: (p, nd) => BigInt(context.computeTransactContext(p, [...nd])) % BN254_SCALAR_MODULUS,
 	}
 }
@@ -87,8 +89,8 @@ type Transact = readonly [TransactProof, TransactParams, readonly NoteData[]]
 function snapshotRequest(r: SpendRequest): SpendRequest {
 	const { note, amount, processor, data } = r
 	if (typeof note !== "bigint" || typeof amount !== "bigint") throw new TypeError("note and amount must be bigints")
-	if (!isHex(data)) throw new TypeError("data must be hex")
-	return { note, amount, processor: getAddress(processor), data }
+	if (!isHex(data) || data.length % 2 !== 0) throw new TypeError("data must be hex of whole bytes")
+	return { note, amount, processor: getAddress(processor), data: data.toLowerCase() as Hex }
 }
 
 function buildSpend(args: Transact, request: SpendRequest, change: ChangeOpening): PreparedSpend {
@@ -213,6 +215,24 @@ function client(
 	}
 }
 
+/**
+ * The change this receipt's own `Transacted` log published for `nullifier`, or `null`. Reading both from one
+ * receipt means a log list pointing at another of this client's spends cannot hand back that spend's change.
+ */
+export function changeInReceipt(receipt: TransactionReceipt, nullifier: bigint, pool: PoolConfig, keys: SpendKeys): ChangeOpening | null {
+	if (receipt.status !== "success") return null
+	const logs = receipt.logs.filter((l) => isAddressEqual(l.address, pool.poolVault))
+	const spend = parseEventLogs({ abi: POOL_VAULT_EVENTS_ABI, eventName: "Transacted", logs }).find((l) =>
+		l.args.nullifierHashes?.includes(nullifier),
+	)
+	const outputs = spend?.args.outputCommitments ?? []
+	for (const n of parseEventLogs({ abi: POOL_VAULT_EVENTS_ABI, eventName: "Note", logs })) {
+		const opened = keys.open({ hint: n.args.hint, data: n.args.data })
+		if (opened && outputs.includes(opened.opening.commitment)) return opened.opening
+	}
+	return null
+}
+
 async function changeOpeningOf(nullifier: bigint, pool: PoolConfig, publicClient: PublicClient, keys: SpendKeys): Promise<ChangeOpening> {
 	const latest = await publicClient.getBlockNumber()
 	for (let from = pool.deployBlock; from <= latest; from += LOG_WINDOW) {
@@ -221,15 +241,8 @@ async function changeOpeningOf(nullifier: bigint, pool: PoolConfig, publicClient
 		const hit = logs.find((l) => l.args.nullifierHashes?.includes(nullifier))
 		if (hit === undefined) continue
 		const receipt = await publicClient.getTransactionReceipt({ hash: hit.transactionHash })
-		const notes = parseEventLogs({
-			abi: POOL_VAULT_EVENTS_ABI,
-			eventName: "Note",
-			logs: receipt.logs.filter((l) => isAddressEqual(l.address, pool.poolVault)),
-		})
-		for (const n of notes) {
-			const opened = keys.open({ hint: n.args.hint, data: n.args.data })
-			if (opened && hit.args.outputCommitments?.includes(opened.opening.commitment)) return opened.opening
-		}
+		const opening = changeInReceipt(receipt, nullifier, pool, keys)
+		if (opening) return opening
 		throw new PoolClientError("NULLIFIER_NOT_FOUND", "the spend's change does not open to this client's keys")
 	}
 	throw new PoolClientError("NULLIFIER_NOT_FOUND", "no spend published this nullifier")
