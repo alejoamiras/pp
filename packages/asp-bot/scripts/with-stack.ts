@@ -1,5 +1,5 @@
 // bun packages/asp-bot/scripts/with-stack.ts [<demo args> --] <command…>
-// Runs the command against a fresh `bun run demo --keep`, with PP_STACK_MANIFEST set, and exits with its code.
+// Exits with the command's code, except that a stack which fails to stop turns a pass into 1.
 // Bun drops a `--` placed right after the script path, so a bare command needs no separator.
 import { spawn } from "node:child_process"
 import { createInterface } from "node:readline"
@@ -51,6 +51,8 @@ const manifest = await new Promise<string>((ok, fail) => {
 	}
 	void demoExit.then((code) => finishing ?? fail(new Error(`demo exited (${code}) before writing a manifest`)))
 })
+// A manifest printed after a signal started teardown must not launch the command.
+if (finishing) await finishing
 
 const code = await new Promise<number>((ok) => {
 	const child = spawn(cmd, args, { stdio: "inherit", env: { ...process.env, PP_STACK_MANIFEST: manifest } })

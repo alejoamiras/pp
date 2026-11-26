@@ -10,8 +10,9 @@ Browser-safe helpers for checking a label against the ASP registry on Aztec. The
    `AztecAddress.toString()` (`0x` and 64 lower-case hex digits).
 2. Fetch `GET <bot>/v1/snapshots/<record.sequence>`. A 404 means the server does not hold that
    sequence: read the latest record and retry.
-3. `parseAspSnapshot(await res.json())` recomputes both roots, so a path it yields is one the contract
-   accepts, whoever served it. A matching root does not prove the leaves are complete: a subtree
+3. `parseAspSnapshot(await res.json())` recomputes both roots, so a path verifies against the
+   snapshot's own roots, whoever served it; step 4 checks those roots against the record. A matching
+   root does not prove the leaves are complete: a subtree
    collapsed into one node keeps the root. `ABSENT` means not found in the snapshot this server gave
    you; it is never proof that a label was revoked.
 4. `labelState(record, snapshot, label, origin, anchorTime)` gives `ACTIVE`, `ABSENT` or `STALE_ROOT`,

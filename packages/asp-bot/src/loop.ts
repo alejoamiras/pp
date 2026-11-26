@@ -54,9 +54,10 @@ export class Poster {
 	private async run(postNow: boolean): Promise<TickResult> {
 		const p = this.ports
 		const tip = await p.tip()
-		const [record, poster] = await Promise.all([p.record(tip.hash), p.poster(tip.hash)])
-		// Before any early return: after `set_poster` clears the roots, `/latest` must stop serving.
+		const record = await p.record(tip.hash)
+		// Before any other read can fail: after `set_poster` clears the roots, `/latest` must stop serving.
 		this.book.setCurrent(record)
+		const poster = await p.poster(tip.hash)
 		if (poster !== this.opts.self) return this.halt("not_poster", { poster: `0x${poster.toString(16)}` })
 		const e = await p.selectL1(tip.time)
 		if (!e) return this.halt("no_l1_block", { aztecTime: tip.time })
