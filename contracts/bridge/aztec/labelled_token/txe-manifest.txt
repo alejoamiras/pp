@@ -1,0 +1,2 @@
+constructor_failure_zero_minter
+views_match_constructor

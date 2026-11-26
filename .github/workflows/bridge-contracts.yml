@@ -50,6 +50,7 @@ jobs:
               - 'packages/bridge-spec/src/**'
               - 'packages/bridge-spec/package.json'
               - 'packages/bridge-spec/vectors/**'
+              - 'packages/labelled-token/**'
               - 'vitest.base.ts'
               - 'package.json'
               - 'bun.lock'
