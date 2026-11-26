@@ -114,10 +114,11 @@ describe.skipIf(!process.env.BRIDGE_INTEGRATION)("ASP root registry on a local n
 	it("reverts the public re-check of a check proved before a new root", async () => {
 		await post(ROOT)
 		const proven = await prove(base, from, probe.methods.check_then_current(ORIGIN_POOL, LABEL, PATH))
-		// The node reports the revert without its message, so the same bytes passing before the post
-		// is what ties the revert to the new root.
-		expect((await base.node.simulatePublicCalls(proven.tx, true)).revertReason).toBeUndefined()
+		// The node reports an assertion without its message, so the same bytes passing, fees enforced,
+		// before the post and failing an assertion after it is what ties the revert to the new root.
+		expect((await base.node.simulatePublicCalls(proven.tx, false)).revertReason).toBeUndefined()
 		await post(OTHER_ROOT)
+		expect((await base.node.simulatePublicCalls(proven.tx, false)).revertReason?.message).toMatch(/^Assertion failed/)
 		expect(await land(proven)).toBe(TxExecutionResult.REVERTED)
 	})
 

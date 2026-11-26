@@ -19,7 +19,6 @@ fn tree4(labels: [Field; 4], i: u32) -> (Field, LabelPath) {
     (hash_2(pairs), LabelPath { index: i, depth: 2, siblings })
 }
 
-/// Posts both four-leaf trees as the current roots.
 unconstrained fn post_trees(s: Setup, now: u64, sequence: u64) -> (Field, Field) {
     let pool_root = tree4(POOL_LABELS, 0).0;
     let birth_root = tree4(BIRTH_LABELS, 0).0;
@@ -174,9 +173,8 @@ unconstrained fn check_then_current_accepts_unchanged() {
 }
 
 #[test(should_fail_with = "roots changed")]
-unconstrained fn check_then_current_rejects_changed_root() {
-    // TXE proves at its latest block, so the change lands between the private check and the public
-    // step; the network suite shows the same inside one transaction.
+unconstrained fn current_rejects_checked_roots_after_new_root() {
+    // A TXE transaction anchors at the latest block, so it cannot meet a newer record in public.
     let s = setup();
     let _ = post_trees(s, s.t0, 1);
     s.env.mine_block_at(s.t0 + 1);

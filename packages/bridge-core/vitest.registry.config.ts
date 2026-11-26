@@ -1,11 +1,8 @@
 import { defineConfig } from "vitest/config"
 import { sharedTest } from "../../vitest.base"
 
-/*
- * The ASP registry on a live local network: real anchors, a real public phase and the node's expiry
- * check, which TXE cannot show. Runs only from this config (`test:registry`); neither the unit nor
- * the bridge integration config collects it.
- */
+// What TXE cannot show: a proof's anchor older than the state its public phase meets, and the
+// node's expiry check.
 export default defineConfig({
 	test: {
 		...sharedTest,

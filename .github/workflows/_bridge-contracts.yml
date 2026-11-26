@@ -329,15 +329,8 @@ jobs:
 
       - uses: ./.github/actions/setup-bun
 
-      - name: Resolve bridge-core's Aztec pin
-        id: aztec-pin
-        run: |
-          VERSION=$(bun -e "const v=JSON.parse(require('fs').readFileSync('packages/bridge-core/package.json','utf8')).dependencies['@aztec-labs/aztec.js']; if(!v) throw new Error('bridge-core pins no @aztec-labs/aztec.js'); console.log(v)")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
+      # Defaults to bridge-core's @aztec-labs pin, the node the suite talks to.
       - uses: ./.github/actions/setup-aztec
-        with:
-          version: ${{ steps.aztec-pin.outputs.version }}
 
       # No forge build: the suite deploys only the committed registry and probe artifacts on L2.
       - name: Registry network suite

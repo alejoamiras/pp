@@ -1,4 +1,3 @@
-/** Boots a local network for the registry suite, or attaches to the one `SANDBOX_*` names. */
 import type { TestProject } from "vitest/node"
 import { assertNothingLeft, startLocalNetwork } from "../../../scripts/sandbox/local-network"
 
