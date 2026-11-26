@@ -1,5 +1,5 @@
-import { Dialog } from "radix-ui"
 import type { WalletOption } from "../../data/wallet/types"
+import { ActionButton, Callout, Modal } from "../../ui"
 import type { ConnectStep } from "./useConnect"
 
 interface Props {
@@ -9,8 +9,6 @@ interface Props {
 	onRetry(): void
 	onClose(): void
 }
-
-const button = "rounded-md px-4 py-2 font-semibold disabled:opacity-50"
 
 type Discovering = Extract<ConnectStep, { kind: "discovering" }>
 
@@ -23,18 +21,12 @@ function WalletList({ step, onChoose }: { step: Discovering; onChoose: Props["on
 	return (
 		<div className="flex flex-col gap-2">
 			{step.options.map((o) => (
-				<button
-					key={o.key}
-					type="button"
-					data-testid="wallet-option"
-					data-wallet-id={o.id}
-					className={`${button} border border-slate-300 text-left`}
-					onClick={() => onChoose(o)}
-				>
-					{o.name} <span className="text-sm font-normal text-slate-500">{o.kind === "web" ? "Web wallet" : "Extension"}</span>
-				</button>
+				<ActionButton key={o.key} block data-testid="wallet-option" data-wallet-id={o.id} onClick={() => onChoose(o)}>
+					{o.name}
+					<span className="font-normal text-ink-3">{o.kind === "web" ? "Web wallet" : "Extension"}</span>
+				</ActionButton>
 			))}
-			<p data-testid="discovery-status" data-done={step.done} className="text-sm text-slate-500">
+			<p data-testid="discovery-status" data-done={step.done} className="text-meta text-ink-3">
 				{discoveryNote(step)}
 			</p>
 		</div>
@@ -48,28 +40,18 @@ function EmojiCheck({ emoji, onAnswer }: { emoji: readonly string[]; onAnswer: P
 			<ol data-testid="emoji-grid" className="grid w-48 grid-cols-3 gap-2 text-3xl">
 				{emoji.map((e, i) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: the grid's order is its meaning, and symbols repeat.
-					<li key={i} data-testid="emoji-cell" className="text-center">
+					<li key={i} data-testid="emoji-cell" className="rounded-control border border-edge bg-glass-2 py-1 text-center">
 						{e}
 					</li>
 				))}
 			</ol>
 			<div className="flex gap-2">
-				<button
-					type="button"
-					data-testid="emoji-confirm"
-					className={`${button} bg-slate-900 text-white`}
-					onClick={() => onAnswer(true)}
-				>
+				<ActionButton variant="primary" data-testid="emoji-confirm" onClick={() => onAnswer(true)}>
 					They match
-				</button>
-				<button
-					type="button"
-					data-testid="emoji-reject"
-					className={`${button} border border-slate-300`}
-					onClick={() => onAnswer(false)}
-				>
+				</ActionButton>
+				<ActionButton data-testid="emoji-reject" onClick={() => onAnswer(false)}>
 					They differ
-				</button>
+				</ActionButton>
 			</div>
 		</div>
 	)
@@ -85,40 +67,42 @@ function Body({ step, onChoose, onAnswer, onRetry }: Omit<Props, "onClose">) {
 	if (step.kind === "verifying") return <EmojiCheck emoji={step.emoji} onAnswer={onAnswer} />
 	if (step.kind === "error") {
 		return (
-			<div className="flex flex-col gap-4">
-				<p data-testid="connect-error" role="alert">
-					{step.message}
-				</p>
-				<button type="button" data-testid="connect-retry" className={`${button} bg-slate-900 text-white`} onClick={onRetry}>
+			<div className="flex flex-col items-start gap-3">
+				<Callout tone="bad" title="The wallet did not connect">
+					<p data-testid="connect-error" role="alert">
+						{step.message}
+					</p>
+				</Callout>
+				<ActionButton variant="primary" data-testid="connect-retry" onClick={onRetry}>
 					Search again
-				</button>
+				</ActionButton>
 			</div>
 		)
 	}
-	return <p data-testid="connect-waiting">{WAITING[step.kind] ?? ""}</p>
+	return (
+		<Callout tone="wait" busy>
+			<p data-testid="connect-waiting">{WAITING[step.kind] ?? ""}</p>
+		</Callout>
+	)
 }
 
 export function ConnectDialog(props: Props) {
 	const open = props.step.kind !== "idle" && props.step.kind !== "connected"
 	return (
-		<Dialog.Root open={open} onOpenChange={(next) => !next && props.onClose()}>
-			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 bg-slate-900/40" />
-				<Dialog.Content
-					data-testid="connect-dialog"
-					data-step={props.step.kind}
-					className="fixed top-1/2 left-1/2 flex w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-lg bg-white p-6 shadow-lg"
-				>
-					<Dialog.Title className="text-lg font-bold">Connect an Aztec wallet</Dialog.Title>
-					<Dialog.Description className="text-sm text-slate-600">
-						This step asks only to see your account addresses.
-					</Dialog.Description>
-					<Body {...props} />
-					<Dialog.Close className={`${button} self-end border border-slate-300`} data-testid="connect-cancel">
-						Cancel
-					</Dialog.Close>
-				</Dialog.Content>
-			</Dialog.Portal>
-		</Dialog.Root>
+		<Modal
+			open={open}
+			onOpenChange={(next) => !next && props.onClose()}
+			title="Connect an Aztec wallet"
+			description="This step asks only to see your account addresses."
+			data-testid="connect-dialog"
+			data-step={props.step.kind}
+		>
+			<Body {...props} />
+			<div className="flex justify-end">
+				<ActionButton data-testid="connect-cancel" onClick={() => props.onClose()}>
+					Cancel
+				</ActionButton>
+			</div>
+		</Modal>
 	)
 }
