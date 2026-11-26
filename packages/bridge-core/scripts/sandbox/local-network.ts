@@ -329,13 +329,13 @@ async function waitHealthy(label: string, probe: () => Promise<boolean>, timeout
 
 /** A spawned child plus the one authority on whether it is still running: its own `exit` event.
  *  `killed` only records that a signal was sent, and an exited PID may already name someone else. */
-interface OwnedChild {
+export interface OwnedChild {
 	child: ChildProcess
 	hasExited: () => boolean
 	exited: Promise<void>
 }
 
-function own(child: ChildProcess): OwnedChild {
+export function own(child: ChildProcess): OwnedChild {
 	let done = false
 	const exited = new Promise<void>((resolve) => {
 		child.once("exit", () => {
@@ -357,13 +357,20 @@ function exitedWithin(owned: OwnedChild, ms: number): Promise<void> {
 	})
 }
 
-/** Signals the process GROUP this module created (`detached: true` makes the child a group leader),
- *  so the node's own children die with it, and nothing else on the machine is touched. A child that
- *  already exited is left alone: the kernel may have handed its PID — and so its group — to a
- *  stranger. */
-async function killGroup(owned: OwnedChild): Promise<void> {
+/** Whether `-pid` still names the group this module created. Once the leader has exited, a live
+ *  member keeps its number reserved, so a live group whose number names no process is ours; a process
+ *  holding the number got it after our group died and is a stranger. */
+function ownsGroup(owned: OwnedChild): boolean {
 	const pid = owned.child.pid
-	if (pid === undefined || owned.hasExited()) return
+	if (pid === undefined) return false
+	return !owned.hasExited() || (groupAlive(pid) && !processExists(pid))
+}
+
+/** Signals the process GROUP this module created (`detached: true` makes the child a group leader),
+ *  so the node's own children die with it, and nothing else on the machine is touched. */
+export async function killGroup(owned: OwnedChild): Promise<void> {
+	const pid = owned.child.pid
+	if (pid === undefined || !ownsGroup(owned)) return
 	const signal = (sig: NodeJS.Signals) => {
 		try {
 			process.kill(-pid, sig)
@@ -373,11 +380,13 @@ async function killGroup(owned: OwnedChild): Promise<void> {
 			} catch {}
 		}
 	}
-	signal("SIGTERM")
-	await exitedWithin(owned, 5_000)
+	if (!owned.hasExited()) {
+		signal("SIGTERM")
+		await exitedWithin(owned, 5_000)
+	}
 	// The leader going down does not take its group with it: a member that ignores SIGTERM (the
-	// node's AVM simulator does) keeps running, and while it runs it keeps the group id reserved.
-	if (!owned.hasExited() || groupAlive(pid)) signal("SIGKILL")
+	// node's AVM simulator does) keeps running.
+	if (ownsGroup(owned)) signal("SIGKILL")
 }
 
 /** Signal 0 probes without delivering: true while any process is still in the group. */
@@ -387,6 +396,16 @@ function groupAlive(pgid: number): boolean {
 		return true
 	} catch {
 		return false
+	}
+}
+
+/** EPERM still means the PID exists, held by another user. */
+function processExists(pid: number): boolean {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch (e) {
+		return (e as NodeJS.ErrnoException).code === "EPERM"
 	}
 }
 
@@ -568,6 +587,9 @@ export interface StartLocalNetworkOptions {
 	runId: string
 	/** Defaults to the installed toolchain matching this package's `@aztec-labs/aztec.js` pin. */
 	toolchainRoot?: string
+	/** Default true: SIGINT, SIGTERM and SIGHUP stop the network and exit 130. A host that owns other
+	 *  services passes false and calls `stop` in its own teardown order. */
+	signals?: boolean
 }
 
 /**
@@ -595,14 +617,13 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 		return attached
 	}
 	const tool = resolveToolchain(opts.toolchainRoot ?? join(homedir(), ".aztec", "versions", aztecPin()))
-	const ports = await claimSandboxPorts(opts.runId)
-	const anvilUrl = `http://127.0.0.1:${ports.anvil}`
-	const nodeUrl = `http://127.0.0.1:${ports.aztec}`
 	const dataDir = join(SANDBOX_CACHE_DIR, opts.runId)
 	const tmpDir = join(SANDBOX_TMP_ROOT, randomBytes(4).toString("hex"))
 	assertSocketRoom(tmpDir)
-	mkdirSync(dataDir, { recursive: true })
-	mkdirSync(tmpDir, { recursive: true })
+	// From the claim on, every failure must pass through `stop`, or the registry rows outlive the run.
+	const ports = await claimSandboxPorts(opts.runId)
+	const anvilUrl = `http://127.0.0.1:${ports.anvil}`
+	const nodeUrl = `http://127.0.0.1:${ports.aztec}`
 	const removeDirs = () => {
 		for (const dir of [dataDir, tmpDir]) rmSync(dir, { recursive: true, force: true })
 	}
@@ -619,13 +640,12 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 		})()
 		return stopping
 	}
-	reapOnSignals(stop)
+	if (opts.signals !== false) reapOnSignals(stop)
 	// A host that exits without waiting (vitest's own signal handling, an uncaught error) still must
 	// not orphan a node holding a multi-GB store: the last-resort reap is synchronous.
 	process.once("exit", () => {
-		// Only groups still alive: a pid that already exited may since belong to someone else's process.
 		for (const owned of spawned) {
-			if (owned.hasExited() || owned.child.pid === undefined) continue
+			if (owned.child.pid === undefined || !ownsGroup(owned)) continue
 			try {
 				process.kill(-owned.child.pid, "SIGKILL")
 			} catch {}
@@ -633,6 +653,8 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 		removeDirs()
 	})
 	try {
+		mkdirSync(dataDir, { recursive: true })
+		mkdirSync(tmpDir, { recursive: true })
 		console.log(`[sandbox] anvil ${anvilUrl}, aztec ${nodeUrl}, data ${dataDir}, tmp ${tmpDir}`)
 		spawned.push(own(spawnAnvil(tool, ports.anvil, join(SANDBOX_LOG_DIR, `${opts.runId}-anvil.log`))))
 		await waitHealthy(`anvil at ${anvilUrl}`, () => rpcResponds(anvilUrl, "eth_chainId"), 60_000)
