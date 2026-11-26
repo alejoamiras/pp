@@ -1,7 +1,11 @@
 // The package entry comes first, so its Buffer shim runs before the SDK's bundle evaluates.
-import { createArtifacts, createProver, PoolClientError } from "../../../src/index.ts"
+import { createArtifacts, createProver, openPoolClient, PoolClientError, type PoolConfig } from "../../../src/index.ts"
 import { ProofService } from "@0xbow/privacy-pools-v2-sdk"
+import type { Address, Hex } from "viem"
 import { offlineTransactWitness } from "../../support/offline-witness.ts"
+import { decode, encode } from "../../support/wire.ts"
+
+export type SpendInput = { pool: PoolConfig; address: Address; signature: Hex; note: bigint; amount: bigint; processor: Address; data: Hex }
 
 export type ProveResult = { loadMs: number; proveMs: number; verified: boolean; signals: string[] }
 export type EnsureResult = { ok: true } | { ok: false; code?: string; circuit?: string; file?: string; message: string }
@@ -33,4 +37,19 @@ async function ensure(gatewayPath: string): Promise<EnsureResult> {
 	}
 }
 
-;(globalThis as { probe?: unknown }).probe = { prove, ensure }
+/** Opens a client in the page, lists notes and prepares a spend; bigints cross as `wire.ts` JSON. */
+async function spend(input: string): Promise<string> {
+	const a = decode<SpendInput>(input)
+	const client = await openPoolClient({
+		pool: a.pool,
+		l1Address: a.address,
+		signature: a.signature,
+		artifacts: { kind: "gateway", urls: [`${location.origin}/ipfs`] },
+	})
+	const notes = await client.notes()
+	const t0 = performance.now()
+	const prepared = await client.prepareSpend({ note: a.note, amount: a.amount, processor: a.processor, data: a.data })
+	return encode({ notes, spend: prepared, prepareMs: performance.now() - t0 })
+}
+
+;(globalThis as { probe?: unknown }).probe = { prove, ensure, spend }

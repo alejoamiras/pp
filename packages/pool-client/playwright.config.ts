@@ -7,5 +7,8 @@ export default defineConfig({
 	workers: 1,
 	reporter: "list",
 	use: { browserName: "chromium", headless: true },
-	projects: [{ name: "offline", testMatch: /prove\.spec\.ts/ }],
+	projects: [
+		{ name: "offline", testMatch: /prove\.spec\.ts/ },
+		{ name: "spend", testMatch: /spend\.spec\.ts/ },
+	],
 })
