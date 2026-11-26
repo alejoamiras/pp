@@ -13,6 +13,11 @@ and `pp_hash` (circom Poseidon, label paths, birth hashes) implement the wire fo
 [`packages/bridge-spec`](../../../packages/bridge-spec/README.md) specifies; keystone runs its
 generated `src/vectors_v1.nr` against them.
 
+`labelled_token` is the token every note of which carries a deposit label and an origin; its stage-A
+surface, budgets and network suite are described in [`@pp/labelled-token`](../../../packages/labelled-token/README.md).
+`bridge_stub` is its test-only minter: the TXE suite and the network suite deploy it in the hub's
+place. The TXE runner deploys the committed `target/` artifact, so compile a crate before running its suite.
+
 ## Toolchain — the pinned 6.0.0 nargo
 
 The crates pin aztec-nr and `compressed_string` (`aztec-labs-eng/aztec-nr`) and the standards `token`
