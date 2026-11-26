@@ -13,6 +13,7 @@ pub contract TokenBridgeHub {
     use aztec::{
         hash::hash_args,
         macros::{
+            events::event,
             functions::{
                 external, initialization_utils::compute_initialization_hash, initializer, internal,
                 only_self, view,
@@ -26,12 +27,22 @@ pub contract TokenBridgeHub {
         publish_contract_instance::publish_contract_instance_for_public_execution,
         state_vars::{Map, PublicImmutable},
     };
-    use bridge_message::bridge_content_v1;
+    use bridge_message::{bridge_content_v1, ragequit_content_v1};
     use claim_secret_lib::derive_claim_secret;
     use compressed_string::FieldCompressedString;
     use labelled_token::LabelledToken;
     use pp_hash::hash_2;
     use register_hash_lib::{BIND_HARNESS_SECRET, get_register_content_hash, REGISTER_SECRET};
+
+    // The public half of a ragequit: enough to settle it on Ethereum from chain data alone. It names
+    // no Aztec account; the burn that backs it stays private.
+    #[event]
+    pub struct RagequitTicket {
+        token: AztecAddress,
+        payee: EthAddress,
+        amount: u128,
+        label: Field,
+    }
 
     #[storage]
     struct Storage<Context> {
@@ -176,9 +187,34 @@ pub contract TokenBridgeHub {
         self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label));
     }
 
+    // ── Ragequit ───────────────────────────────────────────────────────────────────────────
+
+    // Burns `amount` of the caller's `label` notes and sends the portal the message that pays
+    // `payee` on Ethereum. Every refusal (payee 0, the portal, a payee word ≥ 2^160, amount 0,
+    // label 0) comes before the burn, and the burn, the message and the ticket come from this one
+    // private call, so they land in one phase together or not at all. One `label` reaches all three.
+    #[external("private")]
+    fn ragequit(token: AztecAddress, payee: EthAddress, amount: u128, label: Field) {
+        let from = self.msg_sender();
+        let portal = self.storage.portal_of.at(token).read();
+        // The portal would pay the exit to itself and strand the funds.
+        assert(payee != portal, "exit payee is the portal");
+        let content = ragequit_content_v1(payee, amount, label);
+        self.call(LabelledToken::at(token).burn_for_exit(from, amount, label));
+        self.context.message_portal(portal, content);
+        self.enqueue_self._ragequit_ticket(token, payee, amount, label);
+    }
+
+    #[external("public")]
+    #[only_self]
+    fn _ragequit_ticket(token: AztecAddress, payee: EthAddress, amount: u128, label: Field) {
+        self.emit(RagequitTicket { token, payee, amount, label });
+    }
+
     // ── Discovery ──────────────────────────────────────────────────────────────────────────
 
-    // Zero when unregistered — discovery must not revert. Claims and exits use the hard-reverting read.
+    // Zero when unregistered — discovery must not revert. The claim and the ragequit use the
+    // hard-reverting read.
     #[external("public")]
     #[view]
     fn token_for(erc20: EthAddress) -> AztecAddress {

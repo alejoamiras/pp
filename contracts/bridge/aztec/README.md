@@ -5,7 +5,9 @@ at construction to `[token_class_id, l1_factory, registry]`. It consumes the fac
 message (sender-keyed to the factory, the portal inside the content), derives and publishes the
 token's L2 `LabelledToken` (`deployer = hub`, `salt = erc20`, minter = hub, the hub's ASP registry
 in its constructor) and mints into it from a pool withdrawal's bridge message (`claim_from_pool`:
-the claiming account is the recipient, and the note keeps the pool's label). `bind_token` is the
+the claiming account is the recipient, and the note keeps the pool's label). `ragequit` burns a
+label's notes and sends the portal the message that pays an Ethereum address, with a public
+`RagequitTicket` that names no Aztec account; every refusal comes before the burn. `bind_token` is the
 publish-free twin the TXE drives; on a real network no factory leaf can be spent through it
 (pinned). `claim_secret` and `register_hash` are the shared derivation libraries; `keystone` pins
 them against their TypeScript and Solidity mirrors. `bridge_message` (the v1 bridge contents)

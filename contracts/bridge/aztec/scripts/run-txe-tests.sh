@@ -31,7 +31,7 @@ if [ "${1:-}" = "--crate" ]; then
 fi
 # The floor lives here, not in the manifest, so one diff cannot drop tests and lower it together.
 case "$crate" in
-  token_bridge_hub) floor=32 ;;
+  token_bridge_hub) floor=44 ;;
   asp_registry) floor=49 ;;
   asp_registry_probe) floor=21 ;;
   labelled_token) floor=18 ;;
