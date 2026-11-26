@@ -5,13 +5,13 @@
 # the workflow parses.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=SCRIPTDIR/forge-ran.sh
+source scripts/forge-ran.sh
 export FOUNDRY_PROFILE=nightly
 
 mkdir -p out
-forge test --match-test '^testFuzz' --no-match-contract Fork 2>&1 | tee out/nightly-fuzz.log
-# forge exits 0 when nothing matches, so require at least one passing suite.
-grep -qE '^Suite result: ok\. [1-9]' out/nightly-fuzz.log || {
-	echo "::error::no fuzz test ran"
-	exit 1
-}
+log=$(mktemp out/nightly-fuzz.XXXXXX)
+trap 'rm -f "$log"' EXIT
+forge test --match-test '^testFuzz' --no-match-contract Fork 2>&1 | tee "$log"
+require_ran "$log" testFuzz
 bash scripts/check-invariant.sh
