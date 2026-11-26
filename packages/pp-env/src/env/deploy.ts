@@ -1,5 +1,6 @@
+import { realpathSync } from "node:fs"
 import { copyFile, mkdir, readFile } from "node:fs/promises"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { type Address, getAddress, type Hex, isAddress, maxUint256, type PublicClient, type WalletClient } from "viem"
 import { type Checkout, PACKAGE_DIR } from "./checkout.ts"
 import { withFileLock } from "./harness/lock.ts"
@@ -192,15 +193,39 @@ export async function enableAsset(wallet: WalletClient, client: PublicClient, en
 	if ((await client.waitForTransactionReceipt({ hash })).status !== "success") throw new Error("setAssetConfiguration failed")
 }
 
+/** The fixtures' Solidity imports: prefix, npm package, and the package subdirectory the prefix names. */
+const FIXTURE_DEPS = [
+	{ prefix: "@openzeppelin/contracts/", pkg: "@openzeppelin/contracts", sub: "" },
+	{ prefix: "forge-std/", pkg: "forge-std", sub: "src" },
+] as const
+
+/**
+ * A package manager may link a dependency from anywhere, such as an isolated store outside the
+ * package, and solc resolves imports to their real paths. So each dependency is found the way Bun
+ * finds it, then remapped to its real directory and allowed by name: nothing assumes a layout.
+ * Forge takes remappings as flags but allowed paths only from config, hence the env var.
+ */
+export function fixtureForge(dir: string = FIXTURES_DIR): { args: string[]; env: Record<string, string> } {
+	const deps = FIXTURE_DEPS.map(({ prefix, pkg, sub }) => {
+		const root = realpathSync(dirname(Bun.resolveSync(`${pkg}/package.json`, dir)))
+		return { root, remapping: `${prefix}=${join(root, sub)}/` }
+	})
+	return {
+		args: ["--root", dir, ...deps.flatMap((d) => ["--remappings", d.remapping])],
+		env: forgeEnv({ FOUNDRY_ALLOW_PATHS: JSON.stringify(deps.map((d) => d.root)) }),
+	}
+}
+
 /**
  * Builds pp-env's own fixture contracts; `offline` refuses a solc download. Even a no-op forge build
  * rewrites its cache file, so concurrent builds are serialized on a lock.
  */
-export async function buildFixtures(offline: boolean): Promise<void> {
-	const cmd = [forgeBin(), "build", "--root", FIXTURES_DIR, ...(offline ? ["--offline"] : [])]
-	await mkdir(join(FIXTURES_DIR, "cache"), { recursive: true })
-	const lock = join(FIXTURES_DIR, "cache", "pp-env-build.lock")
-	const done = await withFileLock(lock, { staleMs: 300_000, waitMs: 300_000 }, () => run(cmd, { env: forgeEnv() }))
+export async function buildFixtures(offline: boolean, dir: string = FIXTURES_DIR): Promise<void> {
+	const { args, env } = fixtureForge(dir)
+	const cmd = [forgeBin(), "build", ...args, ...(offline ? ["--offline"] : [])]
+	await mkdir(join(dir, "cache"), { recursive: true })
+	const lock = join(dir, "cache", "pp-env-build.lock")
+	const done = await withFileLock(lock, { staleMs: 300_000, waitMs: 300_000 }, () => run(cmd, { env }))
 	if (!done) throw new Error(`${lock} stayed held; if no build is running, delete it`)
 }
 

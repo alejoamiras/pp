@@ -19,7 +19,8 @@
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"check": "bun run typecheck && bun run lint && bun test src scripts",
-		"test:contracts": "bun scripts/forge.ts test --root contracts",
+		"forge:fixtures": "bun scripts/forge-fixtures.ts",
+		"test:contracts": "bun scripts/forge-fixtures.ts test",
 		"test:smoke": "bun test test/smoke",
 		"test:integration": "PP_ENV_INTEGRATION=1 bun test --timeout 600000 test/integration",
 		"up": "bun src/cli.ts up"
