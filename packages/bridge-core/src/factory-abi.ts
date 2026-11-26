@@ -84,6 +84,7 @@ const view = <const N extends string, const T extends string>(name: N, type: T) 
 export const PROCESSOR_PORTAL_ABI = [
 	view("underlying", "address"),
 	view("FACTORY", "address"),
+	view("L2_HUB", "bytes32"),
 	view("POOL", "address"),
 	view("LIFETIME_CAP", "uint256"),
 	view("grossAccepted", "uint256"),

@@ -91,6 +91,8 @@ function chainReads(
 		"factory.IMPLEMENTATION": chain.implementation(),
 		"factory.owner": inputs.guardianL1,
 		"factory.L2_HUB": chain.factoryHub(),
+		"implementation.FACTORY": chain.factory(),
+		"implementation.L2_HUB": chain.factoryHub(),
 		"implementation.POOL": inputs.pool,
 		"implementation.LIFETIME_CAP": inputs.lifetimeCap,
 		...overrides,
@@ -319,7 +321,9 @@ describe("deployGeneration — crash-resume at every journalled step", () => {
 
 		// A stranger's contract at the predicted address, bound to another hub, is refused.
 		const foreign = landed(`0x${"f".repeat(64)}`)
-		await expect(deployGeneration(foreign.chain.l1, foreign.chain.l2, inputs, foreign.journal)).rejects.toThrow(/landed factory L2_HUB/)
+		await expect(deployGeneration(foreign.chain.l1, foreign.chain.l2, inputs, foreign.journal)).rejects.toThrow(
+			/landed factory: factory\.L2_HUB/,
+		)
 		expect(foreign.chain.deployed).toHaveLength(0)
 	})
 
@@ -343,6 +347,8 @@ describe("deployGeneration — crash-resume at every journalled step", () => {
 			"factory.IMPLEMENTATION": stranger,
 			"factory.L2_HUB": `0x${"f".repeat(64)}`,
 			"factory.owner": stranger,
+			"implementation.FACTORY": stranger,
+			"implementation.L2_HUB": `0x${"f".repeat(64)}`,
 			"implementation.POOL": stranger,
 			"implementation.LIFETIME_CAP": inputs.lifetimeCap - 1n,
 		}
@@ -359,9 +365,8 @@ describe("deployGeneration — crash-resume at every journalled step", () => {
 			const journal = openDeployJournal(join(dir, `bindings-${c.label.split(" ")[0]}-${c.key}.jsonl`))
 			for (const step of c.steps) journal.append(step)
 			answerReads(chain, { [c.key]: wrong[c.key] })
-			const getter = c.key.split(".")[1]
-			await expect(deployGeneration(chain.l1, chain.l2, inputs, journal), `${c.label} ${getter}`).rejects.toThrow(
-				`${c.label} ${getter}`,
+			await expect(deployGeneration(chain.l1, chain.l2, inputs, journal), `${c.label} ${c.key}`).rejects.toThrow(
+				`${c.label}: ${c.key} is`,
 			)
 			expect(journal.steps.map((st) => st.kind)).toEqual(c.steps.map((st) => st.kind))
 		}
