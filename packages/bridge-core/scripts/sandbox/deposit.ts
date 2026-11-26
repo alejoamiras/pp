@@ -99,7 +99,8 @@ export function readPortalDeposit(
 
 /**
  * Creates the token's portal when the factory has none, approves it for `amount` and deposits.
- * Every check that can refuse runs before the first write.
+ * The input checks and the token derivation run before approval and deposit; `ensurePortal` may
+ * create the portal first.
  * @throws on a non-positive amount, an invalid recipient, a reverted transaction, or a deposit event
  *   that is missing, duplicated or disagrees with the call.
  */

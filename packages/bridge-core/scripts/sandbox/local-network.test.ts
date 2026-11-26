@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -104,6 +104,8 @@ describe("startLocalNetwork", () => {
 				await expect(startLocalNetwork({ runId, toolchainRoot: root, signals })).rejects.toThrow(/EEXIST|exists/)
 				expect(listeners()).toEqual(before)
 				expect(runLeftovers({ runId, dirs: [], pgids: [] })).toEqual([])
+				// The file that blocked the run was not the run's to delete.
+				expect(existsSync(join(SANDBOX_CACHE_DIR, runId))).toBe(true)
 			}
 		} finally {
 			rmSync(root, { recursive: true, force: true })

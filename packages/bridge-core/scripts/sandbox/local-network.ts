@@ -487,6 +487,8 @@ export const SANDBOX_LOG_DIR = join(SANDBOX_CACHE_DIR, "logs")
 function drainOutput(child: ChildProcess, label: string, logFile: string): void {
 	mkdirSync(dirname(logFile), { recursive: true })
 	const sink = createWriteStream(logFile, { flags: "a" })
+	// Open and write errors arrive asynchronously; unhandled, they would crash the host past `stop`.
+	sink.on("error", (e) => console.error(`[${label}] cannot write ${logFile}: ${e.message}`))
 	const report = (data: Buffer) => {
 		sink.write(data)
 		const line = data.toString().trim()
@@ -674,8 +676,10 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 	const ports = await claimSandboxPorts(opts.runId)
 	const anvilUrl = `http://127.0.0.1:${ports.anvil}`
 	const nodeUrl = `http://127.0.0.1:${ports.aztec}`
+	// Only what this run created: a path that already existed belongs to someone else.
+	const created: string[] = []
 	const removeDirs = () => {
-		for (const dir of [dataDir, tmpDir]) rmSync(dir, { recursive: true, force: true })
+		for (const dir of created) rmSync(dir, { recursive: true, force: true })
 	}
 	const spawned: OwnedChild[] = []
 	let stopping: Promise<void> | undefined
@@ -711,17 +715,24 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 		spawned.push(own(child))
 		drainOutput(child, label, logFile)
 	}
+	// `stop` reaps the children it sees when it starts; a signal mid-boot must not let one spawn after.
+	const stillBooting = () => {
+		if (stopping) throw new Error("[sandbox] stopped while booting")
+	}
 	try {
-		mkdirSync(dataDir, { recursive: true })
-		mkdirSync(tmpDir, { recursive: true })
+		for (const dir of [dataDir, tmpDir]) if (mkdirSync(dir, { recursive: true }) !== undefined) created.push(dir)
 		console.log(`[sandbox] anvil ${anvilUrl}, aztec ${nodeUrl}, data ${dataDir}, tmp ${tmpDir}`)
 		const anvilLog = join(SANDBOX_LOG_DIR, `${opts.runId}-anvil.log`)
+		stillBooting()
 		track(spawnAnvil(tool, ports.anvil), "anvil", anvilLog)
 		await waitHealthy(`anvil at ${anvilUrl}`, () => rpcResponds(anvilUrl, "eth_chainId"), 60_000)
 		const nodeLog = join(SANDBOX_LOG_DIR, `${opts.runId}-aztec.log`)
+		stillBooting()
 		track(spawnNode(tool, { ports, anvilUrl, dirs: { data: dataDir, tmp: tmpDir } }), "aztec", nodeLog)
 		await waitHealthy(`aztec node at ${nodeUrl}`, () => rpcResponds(nodeUrl, "node_getNodeInfo"), 180_000)
 		const listeners = groupListeners(pidsOf(spawned))
+		// Linux hosts and CI have both tools; elsewhere (macOS has no `ss`) the check is skipped.
+		if (!listeners && process.platform === "linux") throw new Error("cannot list this run's listeners: `ps` or `ss` failed")
 		console.log(
 			`[sandbox] local network ready — listening on ${listeners ? listeners.map((l) => l.address).join(" ") : "(ps or ss unavailable)"}`,
 		)
