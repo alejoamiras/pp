@@ -9,3 +9,5 @@ aztec = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", di
 token_portal_content_hash_lib = { path = "../token_portal_content_hash_lib" }
 claim_secret_lib = { path = "../claim_secret" }
 register_hash_lib = { path = "../register_hash" }
+pp_hash = { path = "../pp_hash" }
+bridge_message = { path = "../bridge_message" }

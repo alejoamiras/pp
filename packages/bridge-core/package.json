@@ -6,6 +6,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./artifacts": "./src/artifacts.ts",
+		"./asp-registry-artifact": "./src/asp-registry-artifact.ts",
 		"./sandbox": "./scripts/sandbox/index.ts"
 	},
 	"scripts": {
@@ -18,6 +19,7 @@
 		"test:integration": "BRIDGE_INTEGRATION=1 bun --bun vitest run --config vitest.integration.config.ts"
 	},
 	"dependencies": {
+		"@pp/bridge-spec": "workspace:*",
 		"@nulo-sh/resolve-asset": "0.3.0",
 		"@nulo-sh/wallet-crypto": "0.3.0",
 		"zod": "^4.4.3",
