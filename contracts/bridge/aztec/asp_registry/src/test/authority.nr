@@ -1,7 +1,7 @@
 use crate::AspRootRegistry::{self, BirthIntakeChanged, PosterChanged, RootPosted, RootRecord};
 use crate::test::utils::{current, event_logs, post_at, setup};
 use aztec::{
-    protocol::{address::AztecAddress, traits::Serialize},
+    protocol::{address::AztecAddress, traits::ToField},
     test::helpers::test_environment::TestEnvironment,
 };
 
@@ -107,10 +107,11 @@ unconstrained fn writes_preserve_admin() {
 unconstrained fn set_poster_emits_poster_changed() {
     let s = setup();
     post_at(s, s.poster, s.t0, 1, 100, s.t0);
-    s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(s.admin));
+    // The new poster differs from the caller and the old poster, so the payload shows which it carries.
+    s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(s.intake));
     let logs = event_logs::<PosterChanged, 2>(s);
     assert_eq(logs.len(), 1);
-    assert_eq(logs.get(0), PosterChanged { sequence: 1, poster: s.admin }.serialize());
+    assert_eq(logs.get(0), [1, s.intake.to_field()]);
     assert_eq(event_logs::<RootPosted, 5>(s).len(), 0);
 }
 
@@ -120,5 +121,5 @@ unconstrained fn set_birth_intake_emits_birth_intake_changed() {
     s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_birth_intake(s.poster));
     let logs = event_logs::<BirthIntakeChanged, 1>(s);
     assert_eq(logs.len(), 1);
-    assert_eq(logs.get(0), BirthIntakeChanged { intake: s.poster }.serialize());
+    assert_eq(logs.get(0), [s.poster.to_field()]);
 }
