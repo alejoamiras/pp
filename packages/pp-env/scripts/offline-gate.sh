@@ -38,6 +38,7 @@ inner() {
 	'
 	bun run --cwd packages/pp-env typecheck:full
 	bun run --cwd packages/pp-env test:smoke
+	bun run --cwd packages/pp-env test:vitest
 	bun run --cwd packages/pp-env test:contracts
 	bun run --cwd packages/pp-env test:integration
 }

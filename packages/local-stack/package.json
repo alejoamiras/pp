@@ -1,0 +1,28 @@
+{
+	"name": "@pp/local-stack",
+	"version": "0.0.0",
+	"private": true,
+	"license": "Apache-2.0",
+	"description": "One anvil carrying both the pool and the Aztec local network, booted and torn down as one stack.",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun --bun vitest run",
+		"test:integration": "PP_STACK_INTEGRATION=1 bun --bun vitest run --config vitest.integration.config.ts",
+		"test:integration:long": "PP_STACK_INTEGRATION=1 PP_STACK_LONG=1 bun --bun vitest run --config vitest.integration.config.ts test/integration/heartbeat.integration.test.ts -t 'long idle'"
+	},
+	"dependencies": {
+		"@pp/bridge-core": "workspace:*",
+		"@pp/pp-env": "workspace:*",
+		"viem": "2.57.1"
+	},
+	"devDependencies": {
+		"@types/bun": "1.4.4",
+		"@types/node": "^24.13.2",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.9"
+	}
+}

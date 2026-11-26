@@ -42,11 +42,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations. Whole-package for pp-env, which has no @pp/* deps; the
-          # actions the suites job calls; root install config. Pinned by
+          # actions the suites job calls; root install config; the shared vitest config. Pinned by
           # scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             pp-env:
               - 'packages/pp-env/**'
+              - 'vitest.base.ts'
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'

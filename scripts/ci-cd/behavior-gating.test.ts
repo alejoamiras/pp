@@ -60,7 +60,7 @@ function assertGraphCovered(patterns: string[], target: string, label: string) {
   }
 }
 
-const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml"]
+const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml", "local-stack.yml"]
 
 /**
  * The check-run each PR workflow's aggregator job produces. Branch protection matches these by
@@ -71,6 +71,7 @@ const AGGREGATOR_CHECKS: Record<string, string> = {
   "bridge-contracts.yml": "bridge-contracts-status",
   "actionlint.yml": "actionlint-status",
   "pp-env.yml": "pp-env-status",
+  "local-stack.yml": "local-stack-status",
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed-YAML shape is dynamic.
@@ -179,17 +180,44 @@ describe("CI behavior-gating guard", () => {
     }
   })
 
-  test("pp-env covers its package, its graph, and every action its suites job calls", () => {
+  test("pp-env covers its package, its graph, the shared vitest config, and every action its suites job calls", () => {
     const ppEnv = filtersOf("pp-env.yml")["pp-env"]
     assertGraphCovered(ppEnv, "pp-env", "pp-env")
     const calls: string[] = workflow("pp-env.yml")
       .jobs.suites.steps.map((step: { uses?: string }) => step.uses)
       .filter((uses: string | undefined) => uses?.startsWith("./.github/actions/"))
     expect(calls.length).toBeGreaterThan(0)
-    for (const p of [...calls.map((c) => `${c.slice(2)}/**`), "package.json", "bun.lock", "bunfig.toml", "patches/**"]) {
+    for (const p of [
+      ...calls.map((c) => `${c.slice(2)}/**`),
+      "vitest.base.ts",
+      "package.json",
+      "bun.lock",
+      "bunfig.toml",
+      "patches/**",
+    ]) {
       expect(ppEnv, `pp-env must gate ${p}`).toContain(p)
     }
     expect(workflow("pp-env.yml").jobs.suites.if).toBe("needs.changes.outputs.pp-env == 'true'")
+  })
+
+  // A job-level bound would also count setup and the pool fetch, which is cold on every run of a
+  // pull request that changes the pin.
+  test("local-stack bounds each integration suite on its step, under a 20 min job", () => {
+    const stack = workflow("local-stack.yml").jobs.stack
+    expect(stack["timeout-minutes"]).toBe(20)
+    const step = stack.steps.find((s: { name?: string }) => s.name === "Integration suite")
+    const map = /^\$\{\{ fromJSON\('(\{[^']+\})'\)\[matrix\.suite\] \|\| 20 \}\}$/.exec(step?.["timeout-minutes"])?.[1]
+    expect(map, "the suite step's bound comes from a suite → minutes map").toBeDefined()
+    const bounds: Record<string, number> = JSON.parse(map ?? "{}")
+    const suites = readdirSync(join(ROOT, "packages/local-stack/test/integration"))
+      .filter((f) => f.endsWith(".integration.test.ts"))
+      .map((f) => f.slice(0, -".integration.test.ts".length))
+      .sort()
+    expect(Object.keys(bounds).sort()).toEqual(suites)
+    for (const [suite, minutes] of Object.entries(bounds)) {
+      expect(minutes, suite).toBeGreaterThanOrEqual(2)
+      expect(minutes, suite).toBeLessThan(20)
+    }
   })
 })
 

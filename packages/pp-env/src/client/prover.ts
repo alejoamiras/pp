@@ -8,8 +8,9 @@ let snarkjs: Promise<Snarkjs> | undefined
 let curve: Promise<unknown> | undefined
 
 // Resolve snarkjs from the SDK's own directory so the curve comes from the copy the SDK proves with.
+// `dirname`, not Bun's `dir`: vite's module runner, which loads this under vitest, has only the former.
 function loadSnarkjs(): Promise<Snarkjs> {
-	snarkjs ??= import(Bun.resolveSync("snarkjs", dirname(Bun.resolveSync("#ppv2/evm-sdk", import.meta.dir))))
+	snarkjs ??= import(Bun.resolveSync("snarkjs", dirname(Bun.resolveSync("#ppv2/evm-sdk", import.meta.dirname))))
 	return snarkjs
 }
 

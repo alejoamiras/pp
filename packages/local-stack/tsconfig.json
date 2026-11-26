@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ESNext", "DOM"],
+		"strict": true,
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"esModuleInterop": true,
+		"isolatedModules": true,
+		"skipLibCheck": true,
+		"resolveJsonModule": true,
+		"types": ["bun", "node"]
+	},
+	"comment": "One tsc program spans bridge-core's sources and pp-env's type entry, so the options must suit both.",
+	"include": ["src/**/*.ts", "test/**/*.ts"]
+}
