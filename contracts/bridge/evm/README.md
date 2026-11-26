@@ -29,51 +29,53 @@ forge step generate it too.
 bun packages/bridge-core/scripts/gen-remappings.ts        # writes contracts/bridge/evm/remappings.txt
 (cd contracts/bridge/evm && forge build && forge test --no-match-contract Fork)
 bash contracts/bridge/evm/scripts/check-gas.sh             # .gas-snapshot within 2%, every case ran
-bash contracts/bridge/evm/scripts/check-halmos.sh          # the four proofs, by name
+bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by name
 ```
 
 ## Contracts
 
-- **`PortalFactory`** creates one storage-less **portal clone per ERC-20** (OZ `Clones` with the token
+- **`PortalFactory`** creates one **processor-portal clone per ERC-20** (OZ `Clones` with the token
   as an immutable arg, salt = the token address) and sends the L2 hub a `register` message carrying
   `(token, portal, nameWord, symbolWord, decimals)`. Idempotent and permissionless; the factory is
-  the message's L1 sender. Its owner is the **guardian**: two pause bits (deposits, withdrawals; a
-  delay, never a transfer of funds) behind `Ownable2Step`, renounce disabled.
-- **`TokenPortalImpl`** is the implementation every clone delegates to. Canonical `TokenPortal`
-  content hashes byte for byte (`ContentHash.t.sol` and the Noir keystone), plus guards that never
-  touch the hashed preimage: pause bits, `amount ≤ uint128.max`, exact-in (fee-on-transfer refused),
-  exact portal debit on withdraw, a transient reentrancy guard. No storage, no initializer.
+  the message's L1 sender. One generation binds one Privacy Pools vault and one per-clone lifetime
+  cap. Its owner is the **guardian**: one entry pause (a delay, never a transfer of funds) behind
+  `Ownable2Step`, renounce disabled. Entries start paused: nothing can sweep a clone, so a spend
+  accepted by a generation bound to the wrong hub or vault would be stuck for good, and the guardian
+  opens entries only once the bindings check out.
+- **`ProcessorPortalImpl`** is the implementation every clone delegates to: the vault, the cap and
+  the Aztec Inbox, Outbox and version are its immutables, and each clone's only storage is two
+  counters, `grossAccepted` and `totalPaid`. In this version it exposes no entry or exit yet.
+  `IPrivacyPoolVault` declares the vault's `transact`, its selector pinned to the pool's build.
 - `MintableERC20` / `TestUsdc` are capped-mint test tokens; the local network deploys
   `MintableERC20` (see INFO-1).
 
 ## Tests
 
-Hermetic forge tests (`forge test --no-match-contract Fork`), **4 halmos proofs**
-(`FormalFactoryTest 2 · FormalCloneTest 2`; each guard-shaped proof carries a forge canary showing
-the property fails without the guard), and a committed `.gas-snapshot` for `createPortal` on a
-fresh token, both deposits and `withdraw`.
+Hermetic forge tests (`forge test --no-match-contract Fork`), **2 halmos proofs**
+(`FormalFactoryTest`; each guard-shaped proof carries a forge canary showing the property fails
+without the guard), and a committed `.gas-snapshot` for `createPortal` on a fresh token.
 
 | Layer | Suites |
 |---|---|
-| unit | `PortalFactory`, `CloneWithdrawRealOutbox` (a clone against Aztec's real `Outbox`: replay, caller binding, cross-clone proofs; the other suites' capturing fake accepts anything), `Keystone` (3-way vectors with Noir and TS), `ContentHash`, `MintableERC20`, `TestUsdc` |
-| fuzz | `PortalFactoryFuzz`, `CloneRoundtripFuzz` |
+| unit | `PortalFactory`, `ProcessorPortal` (the vault selector), `Keystone` (3-way vectors with Noir and TS), `MintableERC20`, `TestUsdc` |
+| fuzz | `PortalFactoryFuzz` |
 | invariant | `PortalFactoryInvariant` |
-| symbolic | `FormalFactory`, `FormalClone`; see each header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |
+| symbolic | `FormalFactory`; see its header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |
 | adversarial | `BlackhatFactory` (F-1…F-9) |
 | gas | `PortalGas` |
 
 ## Threat model: the factory-bound portal
 
-What a clone trusts: the factory it was cloned from (immutable `FACTORY = msg.sender`, whose pause
-bits it reads), the Aztec registry the factory bound at construction (Inbox, Outbox and version are
+What a clone trusts: the factory it was cloned from (immutable `FACTORY = msg.sender`, whose entry
+pause it reads), the Aztec registry the factory bound at construction (Inbox, Outbox and version are
 implementation immutables), and its own token (an immutable arg in its bytecode: nothing to
 repoint, no initializer to front-run). What the factory reads from a token is sampled once,
 gas-capped and bounded: a hostile `name()`/`symbol()` can only poison the two cosmetic words
 (sanitized to printable ASCII, frozen at creation, never trusted for anything but display), a
 missing `decimals()` refuses the portal, and a front-runner creating a token's portal first produces
 the byte-identical portal, registration and message the honest caller would have (`BlackhatFactory`
-F-1…F-8). The remaining trust is the guardian: a pause is unbounded in time by design and can
-freeze deposits or withdrawals indefinitely, but never moves funds.
+F-1…F-8). The remaining trust is the guardian: the entry pause is unbounded in time by design and
+can keep entries closed indefinitely, but never moves funds and never blocks an exit.
 
 ## Value-token hard-blockers (must clear before any deployment with value)
 
@@ -81,5 +83,5 @@ freeze deposits or withdrawals indefinitely, but never moves funds.
   tx), and `MintableERC20` additionally treats every holder as having granted the canonical Permit2
   address an infinite allowance (`TestUsdc` does not). A value deployment must use a token with
   access-controlled mint and no forced allowance.
-- **Rebasing tokens are unsupported** (the clone's reserve accounting assumes a static balance);
-  fee-on-transfer tokens are refused on chain.
+- **Only plain ERC-20s are supported**: the clone's reserve accounting assumes exact transfers both
+  ways and a static balance, so rebasing and fee-on-transfer tokens are out.

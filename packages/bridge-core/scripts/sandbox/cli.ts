@@ -4,7 +4,7 @@
  *
  *   run   [--smoke] [--keep]        boot, deploy, optionally smoke, tear down (unless --keep)
  *   up    --artifacts <dir>         boot, deploy, write <dir>/{manifest,handle}.json, then hold until SIGTERM/SIGINT
- *   smoke --artifacts <dir>         attach to the network a handle names and run the battery on the base actor
+ *   smoke --artifacts <dir>         attach to the network a handle names and run the battery
  *
  * `SANDBOX_L1_RPC` + `SANDBOX_NODE_URL` (both) attach `run` to a network already up instead of booting one.
  */
@@ -13,7 +13,6 @@ import { fileURLToPath } from "node:url"
 import { stopwatch } from "../script-bootstrap"
 import { deployEverything } from "./deploy"
 import { openSandbox, readHandle, readManifest } from "./handle"
-import { actorAddress } from "./l2"
 import { assertNothingLeft, startLocalNetwork } from "./local-network"
 import { durationTable, runSmoke } from "./smoke"
 
@@ -34,7 +33,7 @@ async function commandRun(): Promise<void> {
 	try {
 		const deployed = await deployEverything(net, { artifactsDir: flag("--artifacts") ?? DEFAULT_ARTIFACTS, mins })
 		if (process.argv.includes("--smoke")) {
-			table = durationTable(await runSmoke(deployed.clients, deployed.manifest, deployed.actor))
+			table = durationTable(await runSmoke(deployed.clients, deployed.manifest))
 		}
 	} catch (e) {
 		failure = e
@@ -74,12 +73,7 @@ async function commandSmoke(): Promise<void> {
 	const handle = readHandle(dir)
 	const manifest = readManifest(dir)
 	const clients = await openSandbox(handle)
-	const address = await actorAddress(clients.l2.wallet, handle.l2.actorSecret as `0x${string}`, BigInt(handle.l2.actorSalt))
-	const results = await runSmoke(clients, manifest, {
-		secret: handle.l2.actorSecret as `0x${string}`,
-		salt: BigInt(handle.l2.actorSalt),
-		address,
-	})
+	const results = await runSmoke(clients, manifest)
 	console.log(`\n=== durations ===\n${durationTable(results)}`)
 	console.log(`\n✅ smoke OK (${clients.mins()})`)
 }

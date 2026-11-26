@@ -1,10 +1,15 @@
 /** Fixed values of the sandbox network the harness deploys onto. None is a credential. */
 import { GasFees } from "@aztec-labs/stdlib/gas"
-import { type Address, defineChain, type Hex } from "viem"
+import { type Address, defineChain, type Hex, maxUint256 } from "viem"
 import { mnemonicToAccount } from "viem/accounts"
 
 export const CHAIN_ID = 31337
 export const ZERO_L1 = "0x0000000000000000000000000000000000000000" as Address
+/** No Privacy Pools vault runs on the sandbox yet. Entries stay paused, so the generation binds an
+ *  address with no code, on which any entry that got through would revert. */
+export const SANDBOX_POOL = "0x000000000000000000000000000000000000dEaD" as Address
+/** No sandbox flow fills a portal, so its cap never binds. */
+export const SANDBOX_LIFETIME_CAP = maxUint256
 /** The local sequencer prices L2 gas orders of magnitude above the old default; a lower ceiling
  *  rejects every setup tx with "maxFeesPerGas.feePerL2Gas must be >= gasFees". */
 export const FEE_CEILING = { maxFeesPerGas: new GasFees(10n ** 13n, 10n ** 13n) }

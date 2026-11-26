@@ -6,7 +6,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 
 | Path | What it is |
 |---|---|
-| [`contracts/bridge/evm`](contracts/bridge/evm/README.md) | L1 contracts (Foundry): `PortalFactory` and the per-token `TokenPortalImpl` clones. |
+| [`contracts/bridge/evm`](contracts/bridge/evm/README.md) | L1 contracts (Foundry): `PortalFactory` and the per-token `ProcessorPortalImpl` clones, each a Privacy Pools processor that holds bridged funds. |
 | [`contracts/bridge/aztec`](contracts/bridge/aztec/README.md) | L2 contracts (Noir): `TokenBridgeHub`, its hashing libraries and the TXE runner. |
 | [`packages/bridge-core`](packages/bridge-core/README.md) | `@pp/bridge-core`: claim, exit and readiness logic over viem and aztec.js, and the local-network harness (`scripts/sandbox/`). |
 | [`packages/e2e-kit`](packages/e2e-kit/README.md) | `@pp/e2e-kit`: the Playwright kit a web app under `apps/` will use (test wallet, injected Ethereum wallet, egress fence, runner). |

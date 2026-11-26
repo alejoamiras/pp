@@ -6,13 +6,16 @@ import {IRegistry} from "@aztec/governance/interfaces/IRegistry.sol";
 import {Hash} from "@aztec/core/libraries/crypto/Hash.sol";
 
 import {PortalFactory} from "../src/PortalFactory.sol";
-import {TokenPortalImpl} from "../src/TokenPortalImpl.sol";
+import {ProcessorPortalImpl} from "../src/ProcessorPortalImpl.sol";
+import {IPrivacyPoolVault} from "../src/interfaces/IPrivacyPoolVault.sol";
 import {CapturingInbox, CapturingOutbox, FakeRegistry, FakeRollup} from "./mocks/AztecFakes.sol";
 import {WeirdDecimalsERC20} from "./mocks/MetadataERC20s.sol";
 
 /// Exposes the word sanitizer so its totality can be fuzzed directly.
 contract SanitizeHarness is PortalFactory {
-    constructor(IRegistry r, bytes32 hub, address g) PortalFactory(r, hub, g) {}
+    constructor(IRegistry r, bytes32 hub, address g)
+        PortalFactory(r, hub, IPrivacyPoolVault(address(0x9001)), type(uint256).max, g)
+    {}
 
     function sanitize(bytes32 raw, uint256 n) external pure returns (bytes32) {
         return _sanitize(raw, n);
@@ -82,7 +85,7 @@ contract PortalFactoryFuzzTest is Test {
         assertEq(pt, factory.predictPortal(address(t)));
         assertEq(factory.tokenOf(pt), address(t));
         assertEq(factory.registrationOf(address(t)).decimals, d);
-        assertEq(address(TokenPortalImpl(pt).underlying()), address(t));
+        assertEq(address(ProcessorPortalImpl(pt).underlying()), address(t));
 
         address pf = factory.createPortal(address(f));
         assertEq(pf, factory.predictPortal(address(f)));

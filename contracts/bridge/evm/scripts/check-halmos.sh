@@ -24,7 +24,6 @@ while read -r n contract; do
 	}
 done <<'EXPECTED'
 2 FormalFactoryTest
-2 FormalCloneTest
 EXPECTED
 
 while read -r proof; do
@@ -33,15 +32,13 @@ while read -r proof; do
 		fail=1
 	}
 done <<'PROOFS'
-check_deposit_revertsWhenPaused
 check_predictPortal_isCreate2OfInitcode
-check_setPaused_revertsForNonOwner
-check_withdraw_revertsWhenPaused
+check_setEntriesPaused_revertsForNonOwner
 PROOFS
 
 summaries=$(grep -c '^Symbolic test result: ' halmos.clean || true)
-if [ "$summaries" -ne 2 ]; then
-	echo "::error::expected 2 proof contracts to run, saw ${summaries}"
+if [ "$summaries" -ne 1 ]; then
+	echo "::error::expected 1 proof contract to run, saw ${summaries}"
 	fail=1
 fi
 if grep -qE '^Symbolic test result: [0-9]+ passed; [1-9]' halmos.clean; then

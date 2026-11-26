@@ -7,6 +7,7 @@ import {Ownable} from "@oz/access/Ownable.sol";
 
 import {PortalFactory} from "../src/PortalFactory.sol";
 import {IPortalFactory} from "../src/interfaces/IPortalFactory.sol";
+import {IPrivacyPoolVault} from "../src/interfaces/IPrivacyPoolVault.sol";
 import {CapturingInbox, CapturingOutbox, FakeRegistry, FakeRollup} from "./mocks/AztecFakes.sol";
 import {PlainERC20} from "./mocks/MetadataERC20s.sol";
 
@@ -14,7 +15,7 @@ import {PlainERC20} from "./mocks/MetadataERC20s.sol";
 /// so each check proves its property over the WHOLE input domain.
 ///
 ///   check_predictPortal_isCreate2OfInitcode — ∀ token, the prediction is the CREATE2 of the hand-built initcode
-///   check_setPaused_revertsForNonOwner     — no caller but the guardian can flip a pause bit
+///   check_setEntriesPaused_revertsForNonOwner — no caller but the guardian can flip the entry pause
 ///
 /// `createPortal` itself is out of halmos's reach: it hashes the 164-byte register preimage with
 /// sha256, and halmos 0.3.3's precompile stub declares that function with a mismatched Z3 sort
@@ -33,7 +34,9 @@ contract FormalFactoryTest is Test {
     function setUp() public {
         inbox = new CapturingInbox();
         FakeRegistry registry = new FakeRegistry(address(new FakeRollup(address(inbox), address(new CapturingOutbox()))));
-        factory = new PortalFactory(IRegistry(address(registry)), bytes32(uint256(0x4B)), GUARDIAN);
+        factory = new PortalFactory(
+            IRegistry(address(registry)), bytes32(uint256(0x4B)), IPrivacyPoolVault(address(0x9001)), type(uint256).max, GUARDIAN
+        );
         token = new PlainERC20("Tok", "TOK");
     }
 
@@ -55,26 +58,25 @@ contract FormalFactoryTest is Test {
         assertEq(factory.predictPortal(t), expected, "prediction is not the CREATE2 of the immutable-args initcode");
     }
 
-    /// ∀ caller ≠ guardian, ∀ bits: setPaused reverts with the Ownable error and leaves both bits false.
-    function check_setPaused_revertsForNonOwner(address caller, bool d, bool w) public {
+    /// ∀ caller ≠ guardian, ∀ value: setEntriesPaused reverts with the Ownable error and the pause stays on.
+    function check_setEntriesPaused_revertsForNonOwner(address caller, bool paused) public {
         vm.assume(caller != GUARDIAN);
         vm.prank(caller);
-        try factory.setPaused(d, w) {
-            assertTrue(false, "non-owner flipped a pause bit");
+        try factory.setEntriesPaused(paused) {
+            assertTrue(false, "non-owner flipped the entry pause");
         } catch (bytes memory reason) {
             assertEq(bytes4(reason), Ownable.OwnableUnauthorizedAccount.selector, "rejected for the wrong reason");
-            assertFalse(factory.depositsPaused(), "deposits bit changed");
-            assertFalse(factory.withdrawsPaused(), "withdraws bit changed");
+            assertTrue(factory.entriesPaused(), "entry pause changed");
         }
     }
 
     // ── Canaries (forge) — the complementary case must be observable ────────────────────
 
-    /// The guardian CAN pause: proves the harness is not blind to a successful setPaused.
-    function test_canary_guardianCanPause() public {
+    /// The guardian CAN flip it: proves the harness is not blind to a successful setEntriesPaused.
+    function test_canary_guardianCanUnpause() public {
         vm.prank(GUARDIAN);
-        factory.setPaused(true, false);
-        assertTrue(factory.depositsPaused());
+        factory.setEntriesPaused(false);
+        assertFalse(factory.entriesPaused());
     }
 
     /// A different token DOES change the portal: proves `assertEq(portal, predicted)` is not trivially true.

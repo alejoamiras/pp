@@ -12,19 +12,24 @@ import {DataStructures} from "@aztec/core/libraries/DataStructures.sol";
 import {Hash} from "@aztec/core/libraries/crypto/Hash.sol";
 
 import {IPortalFactory} from "./interfaces/IPortalFactory.sol";
-import {TokenPortalImpl} from "./TokenPortalImpl.sol";
+import {IPrivacyPoolVault} from "./interfaces/IPrivacyPoolVault.sol";
+import {ProcessorPortalImpl} from "./ProcessorPortalImpl.sol";
 
 /// @notice Creates one portal clone per ERC-20 and announces it to the L2 hub. The factory is the
 /// L1 sender of every `register` message and the portal address inside it is the one `Clones`
 /// just returned, so the hub learns the L1↔L2 pairing from the deployer of the clone itself — no
 /// party can pair a foreign portal with a real token. Metadata is read once, here, and frozen.
+/// One factory serves one PoolVault and one lifetime cap, both fixed in its implementation.
 ///
-/// The owner is the guardian: it can pause deposits and withdrawals (a delay, never a transfer of
-/// funds) and nothing else. Renouncing is disabled so the pause bits can never become unownable.
+/// The owner is the guardian: it can pause entries (a delay, never a transfer of funds) and nothing
+/// else; exits are never pausable. Entries start paused: nothing can sweep a clone, so a spend
+/// accepted by a generation bound to the wrong hub or vault would be stuck for good, and the guardian
+/// opens entries only once the bindings check out. Renouncing is disabled so the pause can never
+/// become unownable.
 contract PortalFactory is Ownable2Step, IPortalFactory {
     using SafeCast for uint256;
 
-    TokenPortalImpl private immutable _implementation;
+    ProcessorPortalImpl private immutable _implementation;
     IInbox public immutable INBOX;
     uint256 public immutable ROLLUP_VERSION;
     bytes32 public immutable L2_HUB;
@@ -40,11 +45,14 @@ contract PortalFactory is Ownable2Step, IPortalFactory {
     mapping(address token => Registration) private _registrations;
     mapping(address portal => address token) public tokenOf;
 
-    bool public depositsPaused;
-    bool public withdrawsPaused;
+    bool public entriesPaused = true;
 
-    constructor(IRegistry registry, bytes32 l2Hub, address guardian) Ownable(guardian) {
-        _implementation = new TokenPortalImpl(registry, l2Hub);
+    constructor(IRegistry registry, bytes32 l2Hub, IPrivacyPoolVault pool, uint256 lifetimeCap, address guardian)
+        Ownable(guardian)
+    {
+        if (address(pool) == address(0)) revert ZeroPool();
+        if (lifetimeCap == 0) revert ZeroCap();
+        _implementation = new ProcessorPortalImpl(registry, l2Hub, pool, lifetimeCap);
         IRollup rollup = IRollup(address(registry.getCanonicalRollup()));
         INBOX = rollup.getInbox();
         ROLLUP_VERSION = rollup.getVersion();
@@ -59,10 +67,9 @@ contract PortalFactory is Ownable2Step, IPortalFactory {
         revert RenounceDisabled();
     }
 
-    function setPaused(bool deposits, bool withdraws) external onlyOwner {
-        depositsPaused = deposits;
-        withdrawsPaused = withdraws;
-        emit PauseChanged(deposits, withdraws);
+    function setEntriesPaused(bool paused) external onlyOwner {
+        entriesPaused = paused;
+        emit EntriesPausedChanged(paused);
     }
 
     function salt(address token) public pure returns (bytes32) {

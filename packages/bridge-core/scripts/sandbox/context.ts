@@ -4,14 +4,11 @@ import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import type { ContractBase } from "@aztec-labs/aztec.js/contracts"
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import { EthAddress } from "@aztec-labs/foundation/eth-address"
-import type { Address } from "viem"
 import type { L1Ctx } from "../../src/flows"
-import { claimViaHub } from "../../src/hub-l2"
 import type { JournalTokenBlock } from "../../src/journal"
 import type { BridgeBlock, ManifestToken, ManifestV2 } from "../../src/manifest-v2"
-import { type L2Ctx, waitForL1ToL2Message } from "../generation"
-import { claimTokensUntilSynced, registerHub, registerHubToken } from "../script-l2"
-import { depositViaPortal, type PortalDepositResult } from "./deposit"
+import type { L2Ctx } from "../generation"
+import { registerHub, registerHubToken } from "../script-l2"
 import type { SandboxClients } from "./handle"
 import { l2CtxFor } from "./l2"
 
@@ -126,70 +123,4 @@ export async function balanceOf(contract: ContractBase, from: AztecAddress, kind
 	const call = kind === "public" ? contract.methods.balance_of_public(from) : contract.methods.balance_of_private(from)
 	const r = (await call.simulate({ from } as never)) as { result?: bigint } | bigint
 	return typeof r === "bigint" ? r : (r.result ?? 0n)
-}
-
-// ─── Deposits and claims ─────────────────────────────────────────────────────
-
-/** A direct portal deposit from `l1` (default: the harness) to `recipient`. */
-export function deposit(
-	s: SmokeContext,
-	p: { erc20: Address; amount: bigint; recipient: AztecAddress; isPrivate: boolean },
-	l1: L1Ctx = s.l1,
-): Promise<PortalDepositResult> {
-	return depositViaPortal(l1, {
-		factory: s.bridge.l1.factory as Address,
-		hub: s.bridge.l2.hub.address,
-		tokenClassId: s.bridge.l2.tokenClassId,
-		erc20: p.erc20,
-		amount: p.amount,
-		recipient: p.recipient.toString(),
-		isPrivate: p.isPrivate,
-	})
-}
-
-/** A public deposit of a token this run invented: to the actor from the harness, to the relayer from the second account. */
-export function depositFresh(s: SmokeContext, erc20: Address, amount: bigint, l1: L1Ctx = s.l1): Promise<PortalDepositResult> {
-	return deposit(s, { erc20, amount, recipient: l1 === s.l1 ? s.l2.from : s.relayer, isPrivate: false }, l1)
-}
-
-export interface ClaimPlan {
-	amount: bigint
-	isPrivate: boolean
-	recipient: AztecAddress
-	submitter?: "relayer"
-}
-
-/** The claim's token block always comes from the factory read-back the deposit returned — the
- *  manifest copy would be missing for a token this run just invented. */
-function claimInputs(s: SmokeContext, res: PortalDepositResult, p: ClaimPlan) {
-	const sendOpts = p.submitter === "relayer" ? s.relayerOpts : s.l2.sendOpts
-	return {
-		hub: s.hub,
-		claim: {
-			token: res.token,
-			recipient: p.recipient.toString(),
-			amount: p.amount,
-			claimValue: Fr.fromHexString(res.claimValueHex),
-			leafIndex: res.leafIndex,
-			isPrivate: p.isPrivate,
-			from: (sendOpts.from as AztecAddress).toString(),
-		},
-		sendOpts,
-	}
-}
-
-export async function claim(s: SmokeContext, res: PortalDepositResult, p: ClaimPlan) {
-	// A first claim registers the token, which enqueues the derived Token's constructor — the wallet
-	// has to hold that instance to build the transaction at all.
-	await s.l2TokenOf(res.token)
-	// Waiting for the deposit's own message first turns the retry loop into a fallback rather than
-	// the normal path, which keeps a genuinely-rejected claim from spending minutes in it.
-	await waitForL1ToL2Message(s.l2.node, res.messageHashHex, { forceBlock: s.l2.forceBlock })
-	return claimTokensUntilSynced({ ...claimInputs(s, res, p), attempts: 60, intervalMs: 3000 })
-}
-
-/** One attempt, no sync retry — for the claims that are SUPPOSED to fail. */
-export async function claimOnce(s: SmokeContext, res: PortalDepositResult, p: ClaimPlan) {
-	const { hub, claim: params, sendOpts } = claimInputs(s, res, p)
-	return claimViaHub(hub, params, sendOpts)
 }
