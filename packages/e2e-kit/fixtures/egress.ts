@@ -13,17 +13,15 @@ const isLoopback = (host: string) => host === "127.0.0.1" || host === "localhost
 
 export async function confineEgress(context: BrowserContext): Promise<Egress> {
 	const blocked: string[] = []
-	await context.route("**/*", (route) => {
-		const url = new URL(route.request().url())
-		if (isLoopback(url.hostname)) return route.continue()
-		blocked.push(url.href)
-		return route.abort("blockedbyclient")
-	})
-	// A redirect hop never reaches `route`, but every hop raises `request`: record what got past.
+	// Every HTTP hop raises `request`, redirects included; only the first hop reaches `route`. So
+	// `request` records and `route` blocks. A redirect from a loopback server is recorded, not stopped.
 	context.on("request", (request) => {
 		const url = new URL(request.url())
-		if (/^(https?|wss?):$/.test(url.protocol) && !isLoopback(url.hostname) && !blocked.includes(url.href)) blocked.push(url.href)
+		if (/^https?:$/.test(url.protocol) && !isLoopback(url.hostname)) blocked.push(url.href)
 	})
+	await context.route("**/*", (route) =>
+		isLoopback(new URL(route.request().url()).hostname) ? route.continue() : route.abort("blockedbyclient"),
+	)
 	// WebSockets never reach `route`; they have their own router.
 	await context.routeWebSocket(/.*/, (ws) => {
 		const url = new URL(ws.url())
