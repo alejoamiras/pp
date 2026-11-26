@@ -13,7 +13,9 @@ import { SANDBOX_LIFETIME_CAP, SANDBOX_POOL } from "./constants"
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
 /** The manifest's generation is bound to the sandbox's vault and cap and to the rollup `node`
- *  follows, every manifest token's portal exists and holds that token, and entries are still paused. */
+ *  follows, every manifest token's portal exists at its predicted address and holds that token, and
+ *  entries are still paused. With `flowHubRegistrations`, that ties each hub `portal_for` to
+ *  `predictPortal`. */
 export async function flowGenerationBindings(l1: L1Ctx, node: RollupInfoSource, bridge: BridgeBlock): Promise<string> {
 	const factory = bridge.l1.factory as Address
 	await assertGenerationBindings(
@@ -30,9 +32,18 @@ export async function flowGenerationBindings(l1: L1Ctx, node: RollupInfoSource, 
 		},
 		"sandbox generation",
 	)
+	for (const t of bridge.tokens) {
+		const predicted = await l1.pub.readContract({
+			address: factory,
+			abi: PORTAL_FACTORY_ABI,
+			functionName: "predictPortal",
+			args: [t.erc20 as Address],
+		})
+		if (!same(predicted, t.portal)) throw new Error(`${t.displaySymbol}: predictPortal is ${predicted}, the manifest says ${t.portal}`)
+	}
 	if (!(await l1.pub.readContract({ address: factory, abi: PORTAL_FACTORY_ABI, functionName: "entriesPaused" })))
 		throw new Error("entries are open on a generation whose vault is a placeholder")
-	return `vault ${SANDBOX_POOL}, entries paused, ${bridge.tokens.length} portals bound`
+	return `vault ${SANDBOX_POOL}, entries paused, ${bridge.tokens.length} portals bound at their predicted addresses`
 }
 
 /** An Aztec `EthAddress` return as hex, whichever shape the simulator decodes it to. */

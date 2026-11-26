@@ -46,6 +46,8 @@ with warm package and toolchain caches.
 | L1 build + hermetic tests | `forge build && forge test --no-match-contract Fork` in `contracts/bridge/evm` | 2 min |
 | L1 gas snapshot | `bash contracts/bridge/evm/scripts/check-gas.sh` | 1 s |
 | L1 symbolic proofs | `bash contracts/bridge/evm/scripts/check-halmos.sh` | 67 s |
+| L1 invariant campaigns, reach checked | `bash contracts/bridge/evm/scripts/check-invariant.sh` | 31 s |
+| L1 nightly profile (deep fuzz + invariants) | `bash contracts/bridge/evm/scripts/nightly.sh` | 2 min |
 | L2 artifact parity | `bash contracts/bridge/aztec/scripts/compile.sh --check` | 76 s |
 | L2 TXE suite | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh` | 3.5 min |
 | Labelled token TXE | `bash contracts/bridge/aztec/scripts/compile.sh labelled_token && bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | 3 min |
