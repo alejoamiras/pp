@@ -380,6 +380,11 @@ jobs:
       - name: Integration suite
         run: bun run --cwd packages/bridge-core test:integration
 
+      # Boots a local network of its own: the claim, the ragequit and its settlement count beats and
+      # the Outbox depth, which another client's transactions would change.
+      - name: Hub network suite
+        run: bun run --cwd packages/bridge-core test:hub
+
       - name: Upload sandbox logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

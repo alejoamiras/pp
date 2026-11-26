@@ -46,12 +46,16 @@ never a re-pin of a deployed hub.
   against a TXE server whose dependencies are the committed mini-project `txe-server/` (frozen
   lockfile — never an ad-hoc `bun add`). `token_bridge_hub/txe-ts-map.md` maps every cross-boundary
   property to its L1 / TS counterpart. The TXE cannot run the protocol registry publish
-  (`publish_contract_instance_for_public_execution`) — the sandbox smoke is that gate.
+  (`publish_contract_instance_for_public_execution`) and a TXE block carries no L2→L1 message, so
+  the hub network suite (`bun run --cwd packages/bridge-core test:hub`) is the gate for both.
 - **Sole-consumer invariant** (two consume sites, `_bind` and `claim_from_pool`, none in a path
   dependency; the claim's recipient, portal, commitment, secret and content are pinned) enforced
   statically by `scripts/check-sole-consumer.sh`.
-- **Keystone** content-hash / register-hash / claim-secret equality (Solidity ↔ Noir ↔ TS) pinned in
-  `contracts/bridge/evm/test/Keystone.t.sol` + `packages/bridge-core/src/{content-hash,register-hash,claim-secret}.test.ts`.
+- **Keystone**: the register hash (Solidity ↔ Noir ↔ TS) is pinned in
+  `contracts/bridge/evm/test/Keystone.t.sol`, the `keystone` crate and
+  `packages/bridge-core/src/register-hash.test.ts`; the claim secret (Noir ↔ TS) in the `keystone`
+  crate and `packages/bridge-spec/src/claim-secret.test.ts`. The v1 bridge, exit and ragequit
+  contents are bound by `packages/bridge-spec`'s vectors.
 
 ## ASP root registry — `asp_registry`
 

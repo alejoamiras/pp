@@ -11,7 +11,10 @@ so tests pre-register each LabelledToken instance through the raw deploy oracle 
 publish-free `bind_token`. It consumes with a HARNESS secret a real factory never commits to
 (`bind_cannot_consume_a_real_factory_leaf`); `register_token` consumes with the factory secret and
 then publishes — `register_token_reaches_the_publish` pins that it gets as far as the publish's
-class-nullifier read, and the local-network suite is the gate for the publish itself.
+class-nullifier read, and the hub's local-network suite
+(`packages/bridge-core/test/integration/hub/hub.network.test.ts`, cases N1–N3) is the gate for the
+publish itself. A TXE block carries no L2→L1 message, so that suite is also where the exit message is
+checked against the real Outbox.
 
 | Property | TXE (`src/test/`) | L1 / TS counterpart |
 |---|---|---|
@@ -21,6 +24,7 @@ class-nullifier read, and the local-network suite is the gate for the publish it
 | Wrong or swapped metadata fails in the private phase with no side effects (a correct retry afterwards is observable only on a network — a failed TXE call aborts the test) | `wrong_metadata_fails_before_any_side_effect`, `register_with_wrong_name_word_rejected`, `register_with_swapped_words_rejected` | `BlackhatFactory` F-4 (metadata frozen at creation) |
 | One registration per ERC-20, first wins (both the `token_of` and the `portal_of` branch); leaves cannot be replayed | `register_replay_of_same_leaf_rejected`, `second_factory_leaf_for_same_erc20_rejected`, `second_factory_leaf_with_same_words_different_portal_rejected` | `createPortal` idempotence (`PortalFactory.t.sol`, `PortalFactoryInvariant` I1) |
 | Anyone may register; the depositor's claim is unaffected | `relayer_registers_then_depositor_claims` | `BlackhatFactory` F-1 |
+| `register_token` publishes the derived token, and the claimed note reaches the claimer's own wallet | `register_token_reaches_the_publish` (up to the publish) | N1 |
 | Discovery never reverts | `discovery_reads_zero_for_unregistered` | `factory-abi.ts` `portalOf`/`tokenOf` (zero when unregistered) |
 | Every u8 decimals registers | `decimals_extremes_register` | `PortalFactory.t.sol` decimals 0/18/19/38/255 |
 | The in-circuit LabelledToken address equals bridge-core's derivation, registry included | `keystone_hub_token_address_matches_bridge_core`, `keystone_hub_token_address_binds_the_registry`, `keystone_oversized_word_is_rejected` | `hub-token.test.ts`; `noir-artifact-classids.test.ts` (LabelledToken + hub class ids) |
@@ -31,7 +35,7 @@ class-nullifier read, and the local-network suite is the gate for the publish it
 | An unregistered token dies on the uninitialized portal slot | `…_unregistered_token` | — (L2-only) |
 | Zero amount and zero label are refused by name before any consume | `…_zero_amount` (`AmountOutOfRange`, the encoder's), `…_zero_label` (`claim label is zero`, the hub's) | `BridgeMessageV1.t.sol` (`AmountOutOfRange`); `@pp/bridge-spec` `vectors/rejections.ts` |
 | A ragequit burns exactly `amount` of the caller's `label` notes and leaves its other labels | `ragequit.nr::ragequit_burns_exactly_with_no_registry`, `ragequit_keeps_other_labels` | the token's own `burn_for_exit` cases (`labelled_token/src/test/burn.nr`) |
-| The ticket is the transaction's only public log and carries the burn's token, payee, amount and label; nothing in it names the holder | `ragequit_ticket_matches_the_burn` | the local-network suite reads it back through `getPublicEvents` |
-| The exit message is `ragequit_content_v1(payee, amount, label)` to the token's portal | — (a TXE block carries no L2→L1 message) | `BridgeMessageV1.sol` + `BridgeMessageV1.t.sol`; `@pp/bridge-spec` `ragequitContentV1`; the local-network suite matches the transaction's message hash |
-| Every refusal comes before the burn, by name: a burn-first hub fails each with another message (the token's `Balance too low` or `zero amount`, or a missing token instance) | `…_zero_amount` (`AmountOutOfRange`), `…_zero_payee` (`ZeroPayee`), `…_wide_payee` (`PayeeOutOfRange`), `…_zero_label` (`LabelOutOfRange`), `…_portal_payee` (`exit payee is the portal`, the hub's), `…_unregistered_token`; controls `…_over_balance`, `…_other_label` | `BridgeMessageV1.t.sol` and `@pp/bridge-spec` `vectors/rejections.ts` (the shared names); the local-network suite reads the balance after each refusal |
+| The ticket is the transaction's only public log and carries the burn's token, payee, amount and label; nothing in it names the holder | `ragequit_ticket_matches_the_burn` | N2 reads it back through `getPublicEvents` and checks that no public log carries the holder |
+| The exit message is `ragequit_content_v1(payee, amount, label)` to the token's portal, and the portal settles it once, paying exactly | — (a TXE block carries no L2→L1 message) | `BridgeMessageV1.sol` + `BridgeMessageV1.t.sol`; `PortalVectors.t.sol::test_ragequit_isTheOutboxContentOfARagequit`; `ProcessorPortal.t.sol::test_settleRagequit_paysExactlyAndConsumesItsMessage`; `@pp/bridge-spec` `ragequitContentV1`; N2 matches the transaction's only message hash and consumes it on the real Outbox |
+| Every refusal comes before the burn, by name: a burn-first hub fails each with another message (the token's `Balance too low` or `zero amount`, or a missing token instance) | `…_zero_amount` (`AmountOutOfRange`), `…_zero_payee` (`ZeroPayee`), `…_wide_payee` (`PayeeOutOfRange`), `…_zero_label` (`LabelOutOfRange`), `…_portal_payee` (`exit payee is the portal`, the hub's), `…_unregistered_token`; controls `…_over_balance`, `…_other_label` | `BridgeMessageV1.t.sol` and `@pp/bridge-spec` `vectors/rejections.ts` (the shared names); the portal refuses the same payee and label at settle time (`ProcessorPortal.t.sol::test_settle_refusesBadPayeeOrLabel`, `FormalProcessorPortal.t.sol::check_settle_badPayeeOrLabel_reverts`); N3 sends each refusal through a wallet and reads the balance after it |
 | `_register` and `_ragequit_ticket` are only-self | `guards.nr` | — |
