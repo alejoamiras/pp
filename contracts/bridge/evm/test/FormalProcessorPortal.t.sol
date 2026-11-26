@@ -27,6 +27,8 @@ import {SymbolicVault} from "./mocks/SymbolicVault.sol";
 ///     refusal names its own error while the vault is a trap that reverts `VaultCalled` if reached
 ///   check_bridge_inexactPayment_reverts — a short, over or missing payment reverts, sending nothing
 ///   check_settle_aboveReserve_reverts — no settle above `grossAccepted - totalPaid`, paused or not
+///   Both settle proofs start from a symbolic earlier payout and donation (`_partlyPay`), so they
+///   cover every partly paid reserve, not only a fresh clone.
 ///   check_settle_badPayeeOrLabel_reverts — payee 0, the clone itself, or a ragequit label 0 or ≥ p
 ///
 /// halmos passes any path that reverts, so each success call sits in a try whose catch fails the
@@ -97,9 +99,16 @@ contract FormalProcessorPortalTest is Test {
         assert(inbox.lastContentHash() == _hash(BridgeMessageV1.bridgeContentPreimage(nullifier, change, amount)));
     }
 
-    function check_settle_anyPause_paysExactly(bool paused, bool ragequit, address payee, uint256 amount, uint256 label)
-        public
-    {
+    function check_settle_anyPause_paysExactly(
+        bool paused,
+        bool ragequit,
+        address payee,
+        uint256 amount,
+        uint256 label,
+        uint256 paidBefore,
+        uint256 donation
+    ) public {
+        _partlyPay(paidBefore, donation);
         vm.assume(payee != address(0) && payee != address(clone));
         vm.assume(amount > 0 && amount <= clone.grossAccepted() - clone.totalPaid());
         if (ragequit) vm.assume(label > 0 && label < P);
@@ -243,9 +252,16 @@ contract FormalProcessorPortalTest is Test {
         );
     }
 
-    function check_settle_aboveReserve_reverts(bool paused, bool ragequit, address payee, uint256 amount, uint256 label)
-        public
-    {
+    function check_settle_aboveReserve_reverts(
+        bool paused,
+        bool ragequit,
+        address payee,
+        uint256 amount,
+        uint256 label,
+        uint256 paidBefore,
+        uint256 donation
+    ) public {
+        _partlyPay(paidBefore, donation);
         vm.assume(payee != address(0) && payee != address(clone));
         vm.assume(amount > 0 && amount <= type(uint128).max);
         if (ragequit) vm.assume(label > 0 && label < P);
@@ -312,7 +328,15 @@ contract FormalProcessorPortalTest is Test {
     function test_canary_honestPaymentAndValidSettlesPass() public {
         (bool ok,) = _bridgeCall(_signals(1, 2, 1000, uint160(address(token))), bytes32(uint256(3)));
         assertTrue(ok, "an honest payment was refused");
+        _partlyPay(400, 50);
         uint256 outstanding = clone.grossAccepted() - clone.totalPaid();
+        _expectSettleRevert(
+            true,
+            address(0xBEEF),
+            outstanding + 1,
+            1,
+            abi.encodeWithSelector(ProcessorPortalImpl.ExceedsReserve.selector, outstanding, outstanding + 1)
+        );
         (ok,) = _settleCall(true, address(0xBEEF), outstanding, 1);
         assertTrue(ok, "a settle of exactly the reserve was refused");
         _expectSettleRevert(
@@ -331,6 +355,18 @@ contract FormalProcessorPortalTest is Test {
         vm.assume(nullifier < P && change < P);
         vm.assume(amount > 0 && amount <= type(uint128).max);
         vm.assume(uint256(secretHash) > 0 && uint256(secretHash) < P);
+    }
+
+    /// Leaves `0 < totalPaid < grossAccepted` and a donated surplus, so a reserve check that reads the
+    /// wrong counter or the balance cannot hide behind a fresh clone.
+    function _partlyPay(uint256 paid, uint256 donation) internal {
+        vm.assume(paid > 0 && paid < clone.grossAccepted());
+        vm.assume(donation <= SEED);
+        token.mint(address(clone), donation);
+        try clone.settlePublicExit(address(0xBEEF), paid, Epoch.wrap(1), 1, 0, new bytes32[](0)) {}
+        catch {
+            assert(false);
+        }
     }
 
     function _pause(bool paused) internal {

@@ -3,11 +3,13 @@
 `_contentHash`. Compares the two contracts' selectors and storage (as slot, offset, type: the raw
 layout names its contract and always differs), then reads the harness's AST: it must inherit the
 portal directly and declare only a constructor that passes its parameters on unchanged and the
-`_contentHash` override. Reads build artifacts only, so run it after
+`_contentHash` override, whose body is exactly HASH_BODY and names nothing but its parameter and
+builtins. Reads build artifacts only, so run it after
 `forge build --ast --extra-output storageLayout` in contracts/bridge/evm.
 """
 
 import json
+import re
 import sys
 
 PORTAL, HARNESS = "ProcessorPortalImpl", "ProcessorPortalHarness"
@@ -15,6 +17,8 @@ ARTIFACTS = {
     PORTAL: "out/ProcessorPortalImpl.sol/ProcessorPortalImpl.json",
     HARNESS: "out/ProcessorPortalHarness.sol/ProcessorPortalHarness.json",
 }
+# Whitespace-free: any other body could make the harness revert or diverge where no proof looks.
+HASH_BODY = "{returnbytes32(uint256(keccak256(preimage))&type(uint248).max);}"
 
 
 def artifact(name):
@@ -28,6 +32,32 @@ def layout(a):
 
 def describe(node):
     return f"{node['nodeType']} {node.get('kind') or ''} {node.get('name') or ''}".strip()
+
+
+def identifiers(node):
+    if isinstance(node, dict):
+        if node.get("nodeType") == "Identifier":
+            yield node
+        for v in node.values():
+            yield from identifiers(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from identifiers(v)
+
+
+def hash_body_errors(ast, fn):
+    start, length, _ = (int(x) for x in fn["body"]["src"].split(":"))
+    with open(ast["absolutePath"], "rb") as f:
+        body = f.read()[start : start + length].decode()
+    errors = []
+    if re.sub(r"\s+", "", body) != HASH_BODY:
+        errors.append(f"the harness _contentHash body is not exactly {HASH_BODY}")
+    params = [p["id"] for p in fn["parameters"]["parameters"]]
+    # Builtins have negative declaration ids, so a shadowing import or free function shows up here.
+    foreign = [i["name"] for i in identifiers(fn["body"]) if i["referencedDeclaration"] not in params and i["referencedDeclaration"] >= 0]
+    if foreign or fn["modifiers"] or fn["stateMutability"] != "pure":
+        errors.append(f"the harness _contentHash must be pure, unmodified and name only its parameter and builtins: {foreign}")
+    return errors
 
 
 def harness_shape_errors(ast):
@@ -49,6 +79,7 @@ def harness_shape_errors(ast):
     if len(ctors) != 1 or len(hashes) != 1:
         errors.append("the harness must declare exactly one constructor and one _contentHash")
         return errors
+    errors += hash_body_errors(ast, hashes[0])
     ctor = ctors[0]
     params = [p["name"] for p in ctor["parameters"]["parameters"]]
     mods = ctor["modifiers"]
