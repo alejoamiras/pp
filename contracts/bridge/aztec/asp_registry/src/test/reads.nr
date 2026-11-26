@@ -10,7 +10,6 @@ use aztec::{
     utils::WithHash,
 };
 
-/// Posts at `t0` with `root_time = t0 - age_at_post`, then mines an empty block at `anchor`.
 unconstrained fn posted_then_anchor(s: Setup, root_time: u64, anchor: u64) {
     post_at(s, s.poster, s.t0, 1, 100, root_time);
     s.env.mine_block_at(anchor);
@@ -77,7 +76,7 @@ unconstrained fn fresh_roots_rejects_zero_birth_root() {
 }
 
 #[test(should_fail_with = "root unset")]
-unconstrained fn fresh_roots_rejects_after_rotation() {
+unconstrained fn fresh_roots_rejects_anchor_after_rotation() {
     let s = setup();
     post_at(s, s.poster, s.t0, 1, 100, s.t0);
     s.env.set_next_block_timestamp(s.t0 + 1);

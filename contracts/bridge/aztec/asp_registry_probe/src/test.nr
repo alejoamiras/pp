@@ -35,7 +35,6 @@ unconstrained fn setup() -> Setup {
     Setup { env, admin, poster, registry, probe, t0 }
 }
 
-/// Posts sequence `sequence` at `now`, observed at `now` from Ethereum block `100 + sequence`.
 unconstrained fn post(s: Setup, now: u64, sequence: u64, pool_root: Field, birth_root: Field) {
     s.env.set_next_block_timestamp(now);
     s.env.call_public(
