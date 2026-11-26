@@ -52,15 +52,17 @@ describe("journal sealing", () => {
 		const keys = await deriveJournalKeys(KEY)
 		const store = memoryStore()
 		const journal = new Journal(store, keys, DEPLOYMENT)
-		await journal.write(record({ evicted: true }))
+		// Every field long enough that random ciphertext cannot contain it by chance.
+		const amount = 987_654_321_987_654_321_987n
+		await journal.write(record({ evicted: true, amount }))
 		const [[storageKey, value]] = [...store.map]
 		const id = storageKey?.slice(STORAGE_PREFIX.length) ?? ""
 		expect(id).toMatch(/^[A-Za-z0-9_-]{43}$/)
-		for (const field of [NULLIFIER.toString(), NULLIFIER.toString(16), RECIPIENT.slice(2), "70", H(1).slice(2)]) {
+		for (const field of [NULLIFIER.toString(), NULLIFIER.toString(16), RECIPIENT.slice(2), amount.toString(), H(1).slice(2)]) {
 			expect(storageKey).not.toContain(field)
 			expect(value).not.toContain(field)
 		}
-		expect((await journal.read(NULLIFIER)).record).toEqual(record({ evicted: true }))
+		expect((await journal.read(NULLIFIER)).record).toEqual(record({ evicted: true, amount }))
 	})
 
 	it("rejects a sealed plaintext with an extra field", async () => {
