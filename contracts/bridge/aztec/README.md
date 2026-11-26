@@ -8,7 +8,10 @@ it (`claim_public` / `claim_private` — the latter recipient-committed) and exi
 (`exit_to_l1_public` / `exit_to_l1_private`, burn before the withdraw message). The guardian can
 pause exits only. `bind_token` / `bind_and_claim_public` are the publish-free twins the TXE drives;
 on a real network no factory leaf can be spent through them (pinned). `claim_secret` and `register_hash` are the shared derivation libraries; `keystone`
-pins them against their TypeScript and Solidity mirrors.
+pins them against their TypeScript and Solidity mirrors. `bridge_message` (the v1 bridge contents)
+and `pp_hash` (circom Poseidon, label paths, birth hashes) implement the wire format that
+[`packages/bridge-spec`](../../../packages/bridge-spec/README.md) specifies; keystone runs its
+generated `src/vectors_v1.nr` against them.
 
 ## Toolchain — the pinned 6.0.0 nargo
 
