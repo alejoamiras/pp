@@ -17,7 +17,9 @@ const PAIRS: readonly (readonly [string, string, string])[] = [
 	["ink", "glass-2", "chip and row text"],
 	["ink-2", "glass-2", "neutral badge, event detail, no-label chip"],
 	["ink-3", "glass-2", "muted text in a row, a step still to come"],
-	["action-ink", "action", "primary button"],
+	["ink-2", "glass", "section tabs"],
+	["ink-3", "glass", "connection pill name"],
+	["action-ink", "action", "primary button, current tab"],
 	["id", "id-bg", "label glyph"],
 	...TONES.flatMap((t) => [
 		[`tone-${t}`, `tone-${t}-bg`, `${t} badge, step marker, callout eyebrow`] as const,

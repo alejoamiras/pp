@@ -25,6 +25,14 @@ function formatFixed(value: bigint, decimals: number, places: number): string {
 	return fraction ? `${whole}.${fraction}` : whole
 }
 
+/** The exact amount as plain decimal text, for an input: no grouping, trailing fraction zeros dropped. */
+export function plainAmount(value: bigint, decimals: number): string {
+	if (decimals === 0) return value.toString()
+	const divisor = 10n ** BigInt(decimals)
+	const fraction = (value % divisor).toString().padStart(decimals, "0").replace(/0+$/, "")
+	return fraction ? `${value / divisor}.${fraction}` : `${value / divisor}`
+}
+
 /** A field element as 32-byte hex: the one spelling the glyph is seeded from. */
 export function labelHex(label: bigint): string {
 	return `0x${label.toString(16).padStart(64, "0")}`

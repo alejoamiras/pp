@@ -16,15 +16,21 @@ type Props = Omit<ComponentPropsWithRef<"button">, "disabled" | "className" | "t
 	variant?: "primary" | "secondary"
 	/** Disables the button and says why in visible text tied to it by `aria-describedby`, never only in a tooltip. */
 	disabledReason?: string
+	/**
+	 * The id of visible text elsewhere that already says why, for buttons that share one reason; the
+	 * reason is then not repeated under this button.
+	 */
+	sharedReasonId?: string
 	/** A short marker after the text, such as "public" on an exit that reveals the label. */
 	tag?: string
 	/** Full width, for a list of choices. */
 	block?: boolean
 }
 
-export function ActionButton({ variant = "secondary", disabledReason, tag, block = false, children, ...rest }: Props) {
-	const reasonId = useId()
+export function ActionButton({ variant = "secondary", disabledReason, sharedReasonId, tag, block = false, children, ...rest }: Props) {
+	const ownId = useId()
 	const disabled = disabledReason !== undefined
+	const reasonId = sharedReasonId ?? ownId
 	const element = (
 		<button
 			type="button"
@@ -41,7 +47,7 @@ export function ActionButton({ variant = "secondary", disabledReason, tag, block
 			) : null}
 		</button>
 	)
-	if (!disabled) return element
+	if (!disabled || sharedReasonId) return element
 	return (
 		<span className="inline-flex flex-col items-start gap-1">
 			{element}
