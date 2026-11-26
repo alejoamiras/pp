@@ -105,8 +105,9 @@ describe("rejections never echo a secret", () => {
 		}
 	})
 
-	it("a malformed address is not secret and is reported", async () => {
-		const err = await code(() => deriveClaimKey(SIGNATURE, "0x1234"))
-		expect([err.code, err.value]).toEqual(["InvalidAddress", "0x1234"])
+	it("swapped arguments are refused without echoing the signature", async () => {
+		const err = await code(() => deriveClaimKey(account.address, SIGNATURE))
+		expect([err.code, err.value]).toEqual(["InvalidAddress", undefined])
+		for (const text of [err.message, String(err), JSON.stringify(err)]) expect(text).not.toContain(sigBody.slice(0, 16))
 	})
 })

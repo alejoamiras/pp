@@ -64,7 +64,8 @@ message. Checks run in argument order.
 | the path's root equals `root` | `NotMember` | ✓ | — | ✓ |
 
 TS also refuses any hash or tree input `≥ p` (`FieldOutOfRange`; `poseidon-lite` would reduce it
-silently), a tree above 2^18 leaves (`TreeTooLarge`), a path into an empty tree (`EmptyTree`), and a
+silently), a tree leaf of 0 (`FieldOutOfRange`; zk-kit treats a zero node as absent), a tree above
+2^18 leaves (`TreeTooLarge`), a path into an empty tree (`EmptyTree`), and a
 malformed signature, address or claim key (`InvalidSignature`, `InvalidAddress`, `InvalidKey`). For
 a secret input (signature, claim key, claim salt, spent commitment, birth secret) the error carries
 its code and field name only: no value, and no input bytes in its message or cause.

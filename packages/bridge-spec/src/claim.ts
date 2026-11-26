@@ -28,7 +28,8 @@ function signatureR(signature: Hex): Uint8Array {
  */
 export function deriveClaimKey(signature: Hex, l1Address: Address): Uint8Array {
 	const salt = hexBytes(l1Address, 20)
-	if (salt === undefined) throw new SpecRangeError("InvalidAddress", "l1Address", String(l1Address))
+	// No value: `Hex` and `Address` are one type, so swapped arguments would put the signature here.
+	if (salt === undefined) throw new SpecRangeError("InvalidAddress", "l1Address")
 	const r = signatureR(signature)
 	try {
 		return hkdf(sha256, r, salt, CLAIM_KEY_INFO, 32)

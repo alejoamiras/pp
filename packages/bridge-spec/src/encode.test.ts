@@ -32,6 +32,10 @@ const code = (f: () => unknown) => {
 }
 
 describe("tags", () => {
+	it("the exported tables cannot be reassigned at runtime", () => {
+		expect(Object.isFrozen(TAGS) && Object.isFrozen(TAG_STRINGS)).toBe(true)
+	})
+
 	it("each tag is its ASCII string read big-endian, below 2^248", () => {
 		for (const k of Object.keys(TAGS) as (keyof typeof TAGS)[]) {
 			expect(BigInt(TAGS[k])).toBe(tagWord(TAG_STRINGS[k]))

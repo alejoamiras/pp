@@ -37,7 +37,8 @@ const TARGET: Record<string, string> = {
 
 type Lang = "ts" | "sol" | "nr"
 type TestResult = { status: string; message: string }
-type Outcome = { tests: Map<string, TestResult>; error?: string }
+/** `exitCode` is the runner's own status: a report saying "passed" from a process that failed is no pass. */
+type Outcome = { tests: Map<string, TestResult>; exitCode: number | null; error?: string }
 type Suite = { lang: Lang; sections: readonly string[]; run(vectorsPath: string, runDir: string): Outcome }
 type Row = Record<string, unknown>
 type Mutation = { section: string; index: number }
@@ -78,20 +79,25 @@ function vitestSuite(): Suite {
 				timeout: TIMEOUT_MS,
 				encoding: "utf8",
 			})
-			if (proc.error || proc.signal) return { tests: new Map(), error: `vitest did not finish: ${proc.error ?? proc.signal}` }
+			if (proc.error || proc.signal)
+				return { tests: new Map(), exitCode: null, error: `vitest did not finish: ${proc.error ?? proc.signal}` }
 			let parsed: {
 				testResults?: { message?: string; assertionResults?: { title: string; status: string; failureMessages: string[] }[] }[]
 			}
 			try {
 				parsed = JSON.parse(readFileSync(report, "utf8"))
 			} catch {
-				return { tests: new Map(), error: `no vitest report:\n${proc.stdout}\n${proc.stderr}` }
+				return { tests: new Map(), exitCode: proc.status, error: `no vitest report:\n${proc.stdout}\n${proc.stderr}` }
 			}
 			const file = parsed.testResults?.[0]
 			const tests = new Map(
 				(file?.assertionResults ?? []).map((t) => [t.title, { status: t.status, message: t.failureMessages.join("\n") }]),
 			)
-			return { tests, error: tests.size === 0 ? `suite did not load: ${file?.message ?? proc.stderr}` : undefined }
+			return {
+				tests,
+				exitCode: proc.status,
+				error: tests.size === 0 ? `suite did not load: ${file?.message ?? proc.stderr}` : undefined,
+			}
 		},
 	}
 }
@@ -111,12 +117,17 @@ function forgeSuite(): Suite {
 				encoding: "utf8",
 				maxBuffer: 64 * 1024 * 1024,
 			})
-			if (proc.error || proc.signal) return { tests: new Map(), error: `forge did not finish: ${proc.error ?? proc.signal}` }
+			if (proc.error || proc.signal)
+				return { tests: new Map(), exitCode: null, error: `forge did not finish: ${proc.error ?? proc.signal}` }
 			let report: ForgeReport
 			try {
 				report = JSON.parse(proc.stdout.slice(proc.stdout.indexOf("{")))
 			} catch {
-				return { tests: new Map(), error: `no forge report:\n${proc.stdout.slice(-2000)}\n${proc.stderr.slice(-2000)}` }
+				return {
+					tests: new Map(),
+					exitCode: proc.status,
+					error: `no forge report:\n${proc.stdout.slice(-2000)}\n${proc.stderr.slice(-2000)}`,
+				}
 			}
 			const results = Object.values(report).flatMap((s) => Object.entries(s.test_results ?? {}))
 			// `test_in()` reports section `in`; fuzz tests keep their names and must pass in the control run.
@@ -126,7 +137,7 @@ function forgeSuite(): Suite {
 					{ status: r.status === "Success" ? "passed" : "failed", message: r.reason ?? "" },
 				]),
 			)
-			return { tests, error: tests.size === 0 ? `suite did not run:\n${proc.stderr.slice(-2000)}` : undefined }
+			return { tests, exitCode: proc.status, error: tests.size === 0 ? `suite did not run:\n${proc.stderr.slice(-2000)}` : undefined }
 		},
 	}
 }
@@ -156,15 +167,16 @@ function copyKeystone(into: string): string {
 	return join(into, "keystone")
 }
 
-/** Section tests by section; the one-per-vector rejection tests fold into `rejections`, each failure named `rejections[i]`. */
+/** Section tests by section; each per-vector rejection test is `rejections[i]` and folds into `rejections`. */
 function bySection(results: readonly NargoTest[]): Map<string, TestResult> {
 	const tests = new Map<string, TestResult>()
 	const failedRejections: string[] = []
 	for (const t of results) {
 		const status = t.event === "ok" ? "passed" : "failed"
 		const rejection = /^v1_rejection_(\d+)_/.exec(t.name)
-		if (rejection === null) tests.set(NR_SECTION_OF[t.name] ?? t.name, { status, message: t.message })
-		else if (status === "failed") failedRejections.push(`rejections[${Number(rejection[1])}] ${t.name}\n${t.message}`)
+		const key = rejection === null ? (NR_SECTION_OF[t.name] ?? t.name) : `rejections[${Number(rejection[1])}]`
+		tests.set(key, { status, message: t.message })
+		if (rejection !== null && status === "failed") failedRejections.push(`${key} ${t.name}\n${t.message}`)
 	}
 	tests.set("rejections", { status: failedRejections.length === 0 ? "passed" : "failed", message: failedRejections.join("\n") })
 	return tests
@@ -182,7 +194,7 @@ function nargoSuite(): Suite {
 				writeFileSync(join(keystone, "src", "vectors_v1.nr"), renderNoir(JSON.parse(readFileSync(vectorsPath, "utf8"))))
 				// Only the generated module: the mutation is in it, and the legacy keystone tests run in vectors:nargo.
 				const run = nargoTest(keystone, { filter: "vectors_v1::", timeoutMs: TIMEOUT_MS })
-				return run.error ? { tests: new Map(), error: run.error } : { tests: bySection(run.tests) }
+				return { tests: bySection(run.tests), exitCode: run.exitCode, error: run.error }
 			} finally {
 				rmSync(dir, { recursive: true, force: true })
 			}
@@ -194,6 +206,7 @@ const SUITES: Record<string, () => Suite> = { ts: vitestSuite, sol: forgeSuite, 
 
 function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	if (outcome.error) return [`control: ${outcome.error}`]
+	if (outcome.exitCode !== 0) return [`control: runner exited ${outcome.exitCode}`]
 	const problems = [...outcome.tests]
 		.filter(([, t]) => t.status !== "passed")
 		.map(([name, t]) => `control: ${name} ${t.status}\n${t.message}`)
@@ -201,15 +214,21 @@ function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	return problems
 }
 
+/** Every mutated section fails naming its vector, and nothing else fails. */
 function verifyMutant(mutations: Mutation[], outcome: Outcome): string[] {
 	if (outcome.error) return [`mutant: ${outcome.error}`]
-	return mutations.flatMap(({ section, index }) => {
+	const expected = new Set(mutations.flatMap(({ section, index }) => [section, `${section}[${index}]`]))
+	const unexpected = [...outcome.tests]
+		.filter(([name, t]) => t.status !== "passed" && !expected.has(name))
+		.map(([name, t]) => `mutant: ${name} ${t.status} with none of its vectors flipped\n${t.message.slice(0, 400)}`)
+	const caught = mutations.flatMap(({ section, index }) => {
 		const t = outcome.tests.get(section)
 		const name = `${section}[${index}]`
 		if (t === undefined) return [`mutant: no test for ${section}`]
 		if (t.status !== "failed") return [`mutant: ${section} ${t.status} despite ${name} flipped`]
 		return t.message.includes(name) ? [] : [`mutant: ${section} failed without naming ${name}:\n${t.message.slice(0, 400)}`]
 	})
+	return [...unexpected, ...caught]
 }
 
 function main(): number {

@@ -50,6 +50,17 @@ describe("LeanIMT", () => {
 		expect(code(() => buildLeanImt(Array<bigint>(2 ** MAX_DEPTH + 1).fill(1n)))).toBe("TreeTooLarge")
 	})
 
+	it("refuses a zero leaf, which zk-kit would treat as absent and give a root no path reproduces", () => {
+		expect(code(() => buildLeanImt([1n, 0n]))).toBe("FieldOutOfRange")
+	})
+
+	it("a built tree ignores later edits to the leaves array", () => {
+		const input = [aspLeaf(1n)]
+		const tree = buildLeanImt(input)
+		input.pop()
+		expect(leanImtRoot(aspLeaf(1n), tree.path(0))).toBe(tree.root)
+	})
+
 	const tree = buildLeanImt(leaves(5))
 	const leaf = leaves(5)[1] as bigint
 	const good = tree.path(1)
@@ -66,6 +77,7 @@ describe("LeanIMT", () => {
 		["an index bit at depth", () => leanImtRoot(leaf, withPath({ index: good.index | (1 << good.depth) })), "IndexOutOfRange"],
 		["fractional index", () => leanImtRoot(leaf, withPath({ index: 0.5 })), "IndexOutOfRange"],
 		["17 siblings", () => leanImtRoot(leaf, withPath({ siblings: good.siblings.slice(1) })), "SiblingOutOfRange"],
+		["a sparse siblings array", () => leanImtRoot(7n, { index: 0, depth: 0, siblings: Array<bigint>(MAX_DEPTH) }), "FieldOutOfRange"],
 		[
 			"a non-zero sibling past depth",
 			() =>

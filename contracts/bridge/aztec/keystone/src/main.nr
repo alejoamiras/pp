@@ -43,7 +43,7 @@ fn withdraw_matches_l1() {
 
 // ─── Recipient-committed private-claim secret derivation ─────────────
 // The keystone's second cross-toolchain boundary: derive_claim_secret + compute_secret_hash
-// must byte-match the TS mirror (packages/bridge-core/src/claim-secret.test.ts) for the SAME
+// must byte-match the TS mirror (packages/bridge-spec/src/claim-secret.test.ts) for the SAME
 // (salt, recipient) vectors — a drift strands every private deposit. The TS test asserts the
 // identical literals.
 

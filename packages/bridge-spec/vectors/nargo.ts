@@ -7,7 +7,7 @@ export const AZTEC_DIR = join(REPO, "contracts", "bridge", "aztec")
 const NARGO_SH = join(AZTEC_DIR, "scripts", "nargo.sh")
 
 export type NargoTest = { name: string; event: string; message: string }
-export type NargoRun = { tests: NargoTest[]; passed: number; failed: number; error?: string }
+export type NargoRun = { tests: NargoTest[]; passed: number; failed: number; exitCode: number | null; error?: string }
 
 type NargoEvent = { type?: string; event?: string; name?: string; passed?: number; failed?: number; stdout?: string; message?: string }
 
@@ -17,12 +17,10 @@ type NargoEvent = { type?: string; event?: string; name?: string; passed?: numbe
  */
 export function nargoTest(crateDir: string, opts: { filter?: string; timeoutMs?: number } = {}): NargoRun {
 	const args = [NARGO_SH, crateDir, "test", "--force", "--format", "json", ...(opts.filter ? [opts.filter] : [])]
-	const proc = spawnSync("bash", args, {
-		encoding: "utf8",
-		timeout: opts.timeoutMs ?? 900_000,
-		maxBuffer: 64 * 1024 * 1024,
-	})
-	if (proc.error || proc.signal) return { tests: [], passed: 0, failed: 0, error: `nargo did not finish: ${proc.error ?? proc.signal}` }
+	const proc = spawnSync("bash", args, { encoding: "utf8", timeout: opts.timeoutMs ?? 900_000, maxBuffer: 64 * 1024 * 1024 })
+	if (proc.error || proc.signal) {
+		return { tests: [], passed: 0, failed: 0, exitCode: null, error: `nargo did not finish: ${proc.error ?? proc.signal}` }
+	}
 	const events = proc.stdout.split("\n").flatMap((line): NargoEvent[] => {
 		try {
 			return line.startsWith("{") ? [JSON.parse(line)] : []
@@ -34,7 +32,9 @@ export function nargoTest(crateDir: string, opts: { filter?: string; timeoutMs?:
 	const tests = events
 		.filter((e) => e.type === "test" && e.event !== "started")
 		.map((e) => ({ name: (e.name ?? "").replace(/^.*::/, ""), event: e.event ?? "", message: `${e.stdout ?? ""}${e.message ?? ""}` }))
-	if (suite === undefined)
-		return { tests, passed: 0, failed: 0, error: `no suite result:\n${proc.stdout.slice(-3000)}\n${proc.stderr.slice(-3000)}` }
-	return { tests, passed: suite.passed ?? 0, failed: suite.failed ?? 0 }
+	const base = { tests, exitCode: proc.status }
+	if (suite === undefined) {
+		return { ...base, passed: 0, failed: 0, error: `no suite result:\n${proc.stdout.slice(-3000)}\n${proc.stderr.slice(-3000)}` }
+	}
+	return { ...base, passed: suite.passed ?? 0, failed: suite.failed ?? 0 }
 }

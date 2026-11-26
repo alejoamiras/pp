@@ -59,15 +59,14 @@ describe("claim-secret keystone", () => {
 })
 
 /**
- * PRIVACY INVARIANT tripwire: the bridge's `secret_hash` is L1-public and the amount is public, so
- * recipient privacy rests ENTIRELY on the salt being unpredictable. These pin that (a) the salt genuinely
- * varies the secret_hash — so two bridges to the SAME recipient are unlinkable — and (b) the entropy MUST
- * come from the salt, since the derivation is otherwise deterministic in (salt, recipient).
+ * The secret hash is public on L1 and the derivation is deterministic in (salt, recipient), so the
+ * salt is the only thing hiding the recipient: these pin that the salt moves the hash and that the
+ * derivation adds no randomness of its own.
  */
 describe("claim-secret privacy invariant (salt entropy)", () => {
 	const recipient = AztecAddress.fromBigIntUnsafe(0xc0ffeen)
 
-	it("two DIFFERENT salts → DIFFERENT secretHash for the same recipient (unlinkable with a random salt)", async () => {
+	it("two different salts give different secret hashes for the same recipient", async () => {
 		const a = await tokenClaimSecretHash(Fr.random(), recipient)
 		const b = await tokenClaimSecretHash(Fr.random(), recipient)
 		expect(a.toString()).not.toBe(b.toString())

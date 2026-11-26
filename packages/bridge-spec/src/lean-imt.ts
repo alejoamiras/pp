@@ -1,5 +1,5 @@
 import { LeanIMT } from "@zk-kit/lean-imt"
-import { assertField, SpecRangeError } from "./fields"
+import { assertField, assertRange, BN254_P, SpecRangeError } from "./fields"
 import { circomPoseidon2 } from "./hash"
 
 export const MAX_DEPTH = 18
@@ -13,18 +13,24 @@ export type LabelPath = { index: number; depth: number; siblings: readonly bigin
 
 export type LeanImt = { root: bigint; size: number; path(leafIndex: number): LabelPath }
 
-/** Up to 2^18 leaves: past that an old leaf can need depth 19, which the circuit refuses. Empty → root 0. */
+/**
+ * Up to 2^18 leaves (past that an old leaf can need depth 19, which the circuit refuses), each in
+ * [1, p): zk-kit's `insertMany` treats a zero node as absent, so a zero leaf would yield a root no
+ * path reproduces. Empty → root 0. The leaves are copied, so later edits to the array change nothing.
+ */
 export function buildLeanImt(leaves: readonly bigint[]): LeanImt {
 	if (leaves.length > 2 ** MAX_DEPTH) throw new SpecRangeError("TreeTooLarge", "leaves", String(leaves.length))
-	for (const [i, leaf] of leaves.entries()) assertField(leaf, `leaves[${i}]`)
+	const all = [...leaves]
+	for (const [i, leaf] of all.entries()) assertRange(leaf, 1n, BN254_P - 1n, "FieldOutOfRange", `leaves[${i}]`)
+	const size = all.length
 	const tree = new LeanIMT<bigint>(circomPoseidon2)
-	if (leaves.length > 0) tree.insertMany([...leaves])
+	if (size > 0) tree.insertMany(all)
 	return {
-		root: leaves.length === 0 ? 0n : tree.root,
-		size: leaves.length,
+		root: size === 0 ? 0n : tree.root,
+		size,
 		path(leafIndex: number): LabelPath {
-			if (leaves.length === 0) throw new SpecRangeError("EmptyTree", "leaves")
-			if (!Number.isInteger(leafIndex) || leafIndex < 0 || leafIndex >= leaves.length) {
+			if (size === 0) throw new SpecRangeError("EmptyTree", "leaves")
+			if (!Number.isInteger(leafIndex) || leafIndex < 0 || leafIndex >= size) {
 				throw new SpecRangeError("IndexOutOfRange", "leafIndex", String(leafIndex))
 			}
 			const proof = tree.generateProof(leafIndex)
@@ -45,10 +51,11 @@ function checkPath(path: LabelPath): void {
 		throw new SpecRangeError("IndexOutOfRange", "index", String(path.index))
 	}
 	if (path.siblings.length !== MAX_DEPTH) throw new SpecRangeError("SiblingOutOfRange", "siblings.length", String(path.siblings.length))
-	path.siblings.forEach((s, i) => {
-		assertField(s, `siblings[${i}]`)
+	// By index, not forEach: forEach skips the holes of a sparse array.
+	for (let i = 0; i < MAX_DEPTH; i++) {
+		const s = assertField(path.siblings[i] as bigint, `siblings[${i}]`)
 		if (i >= path.depth && s !== 0n) throw new SpecRangeError("SiblingOutOfRange", `siblings[${i}]`, String(s))
-	})
+	}
 }
 
 /** The root a path implies for `leaf`; the same rejections, in the same order, as Noir's `lean_imt_root`. */
