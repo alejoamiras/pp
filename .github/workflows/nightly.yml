@@ -36,13 +36,14 @@ jobs:
         env:
           WANTED: ${{ inputs.ref }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
-        # `--exit-code` exits 2 only when no branch matched; any other failure must not read as "absent".
+        # `--exit-code` exits 2 only when no ref matched; any other failure must not read as "absent".
+        # The full ref, since a bare `bridge-v1` pattern also matches `feature/bridge-v1`.
         run: |
           if [ -n "$WANTED" ]; then
             ref="$WANTED"
           else
             listed=0
-            git ls-remote --exit-code --heads "$REPO_URL" bridge-v1 > /dev/null || listed=$?
+            git ls-remote --exit-code "$REPO_URL" refs/heads/bridge-v1 > /dev/null || listed=$?
             case "$listed" in
               0) ref=bridge-v1 ;;
               2) ref=main ;;
