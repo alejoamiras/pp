@@ -40,8 +40,8 @@ jobs:
         # cannot split into valid lines.
         run: |
           dir=packages/local-stack/test/integration
-          all=$(find "$dir" -maxdepth 1 -name '*.integration.test.ts' -printf x | wc -c)
-          list=$(find "$dir" -maxdepth 1 -regextype posix-extended -regex '.*/[a-z0-9-]+\.integration\.test\.ts' \
+          all=$(find "$dir" -maxdepth 1 -type f -name '*.integration.test.ts' -printf x | wc -c)
+          list=$(find "$dir" -maxdepth 1 -type f -regextype posix-extended -regex '.*/[a-z0-9-]+\.integration\.test\.ts' \
             -printf '%f\n' | sed 's/\.integration\.test\.ts$//' | sort)
           if [ "$all" -eq 0 ] || [ "$(grep -c . <<<"$list")" -ne "$all" ]; then echo "unexpected suite file name"; exit 1; fi
           echo "list=$(jq -Rnc '[inputs]' <<<"$list")" >> "$GITHUB_OUTPUT"
@@ -76,9 +76,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.stack == 'true'
     runs-on: ubuntu-latest
-    # About 1.5 times each leg's measured job time, so a hang fails fast; a suite with no entry gets
-    # the 20 min ceiling.
-    timeout-minutes: ${{ fromJSON('{"heartbeat":10,"imports":3,"shared-anvil":10,"teardown":5}')[matrix.suite] || 20 }}
+    # The suite step carries the tight bound; this ceiling only catches a stuck setup.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -100,6 +99,11 @@ jobs:
         run: bun run --cwd packages/local-stack test
 
       - name: Integration suite
+        # Twice each suite's measured step time, rounded up to whole minutes (at least 2): a slow
+        # runner stays green and a hang fails well inside the job's ceiling. Setup and the pool fetch,
+        # cold on every run of a pull request that changes its pin, fall outside it.
+        # behavior-gating.test.ts requires an entry per suite file.
+        timeout-minutes: ${{ fromJSON('{"heartbeat":11,"imports":2,"shared-anvil":11,"teardown":6}')[matrix.suite] || 20 }}
         # A skipped or todo case is a gate that never ran, and the heartbeat's liveness case must pass by name.
         run: |
           start=$(date +%s)
