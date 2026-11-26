@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { type AuditReport, renderSummary } from "./audit-summary"
+import { type AuditReport, directDependencies, renderSummary } from "./audit-summary"
 
 const advisory = (severity: string, vulnerable_versions: string, title: string) => ({
 	severity,
@@ -31,4 +31,8 @@ test("the summary lists our own exposed copies first, then the rest by severity"
 	])
 	expect(renderSummary(report, declared, 1)).toContain("4 findings: 2 high, 1 moderate, 1 low.")
 	expect(renderSummary({}, declared, 0)).toContain("No known vulnerabilities.")
+})
+
+test("the root manifest's own dependencies count as declared", () => {
+	expect(directDependencies().get("@commitlint/cli")?.map((d) => d.workspace)).toContain("root")
 })

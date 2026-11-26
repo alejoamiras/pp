@@ -27,17 +27,19 @@ export interface Declared {
 	version: string
 }
 
-/** Every direct dependency of every workspace, keyed by the dependency's name. */
+/** Every direct dependency of the root and of every workspace, keyed by the dependency's name. */
 export function directDependencies(root = ROOT): Map<string, Declared[]> {
 	const read = (path: string) => JSON.parse(readFileSync(join(root, path), "utf8"))
 	const declared = new Map<string, Declared[]>()
 	const patterns: string[] = read("package.json").workspaces ?? []
-	for (const manifest of patterns.flatMap((p) => [...new Bun.Glob(`${p}/package.json`).scanSync({ cwd: root })])) {
+	const manifests = ["package.json", ...patterns.flatMap((p) => [...new Bun.Glob(`${p}/package.json`).scanSync({ cwd: root })])]
+	for (const manifest of manifests) {
 		const pkg = read(manifest)
+		const workspace = manifest === "package.json" ? "root" : pkg.name
 		for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })) {
 			const installed = join(dirname(manifest), "node_modules", dep, "package.json")
 			const version = existsSync(join(root, installed)) ? read(installed).version : "unknown"
-			declared.set(dep, [...(declared.get(dep) ?? []), { workspace: pkg.name, version }])
+			declared.set(dep, [...(declared.get(dep) ?? []), { workspace, version }])
 		}
 	}
 	return declared
