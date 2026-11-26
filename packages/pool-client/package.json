@@ -7,7 +7,11 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
-		"./prover-worker": "./src/prover-worker.ts"
+		"./prover-worker": "./src/prover-worker.ts",
+		"./testing": {
+			"browser": null,
+			"default": "./test/support/testing.ts"
+		}
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",

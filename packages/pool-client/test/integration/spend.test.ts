@@ -4,7 +4,7 @@ import { deriveKeys } from "../../src/keys.ts"
 import { openPoolClient, type PoolClient, type PreparedSpend, spendRevertCode } from "../../src/index.ts"
 import { poolConfig, type UpEnv } from "../support/env.ts"
 import { circuitsDir } from "../support/paths.ts"
-import { type Seeder, seeder } from "../support/seed.ts"
+import { type Seeder, seeder } from "@pp/pool-client/testing"
 
 const env = JSON.parse(inject("poolEnv")) as UpEnv
 const pool = poolConfig(env)
