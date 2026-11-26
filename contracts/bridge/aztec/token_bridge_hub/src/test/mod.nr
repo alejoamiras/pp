@@ -1,4 +1,5 @@
 pub mod utils;
-mod register;
+mod claim;
 mod guards;
 mod keystone;
+mod register;

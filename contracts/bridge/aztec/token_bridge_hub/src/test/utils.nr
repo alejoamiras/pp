@@ -13,7 +13,10 @@ use aztec::{
     },
     test::helpers::{test_environment::TestEnvironment, txe_oracles},
 };
+use bridge_message::bridge_content_v1;
+use claim_secret_lib::derive_claim_secret;
 use labelled_token::LabelledToken;
+use pp_hash::hash_2;
 use register_hash_lib::{BIND_HARNESS_SECRET, get_register_content_hash};
 
 /// The sibling crate's committed artifact, resolved by the TXE as `<dir>/target/<pkg>-<Name>.json`.
@@ -177,4 +180,72 @@ pub unconstrained fn register(
 
 pub unconstrained fn register_a(h: Hub) -> AztecAddress {
     register(h, ERC20_A, PORTAL_A, NAME_A, SYMBOL_A, DECIMALS)
+}
+
+// ── Pool deposits ──────────────────────────────────────────────────────────────────────────
+
+/// What a pool withdrawal hands the portal and the claimant: the claim takes every field back.
+pub struct Deposit {
+    pub amount: u128,
+    pub nullifier: Field,
+    pub change_precommitment: Field,
+    pub label: Field,
+    pub claim_salt: Field,
+}
+
+pub fn deposit() -> Deposit {
+    Deposit {
+        amount: 900,
+        nullifier: 0x4e11f1e7,
+        change_precommitment: 0x9c0a17,
+        label: 0x1abe1,
+        claim_salt: 0x5a17,
+    }
+}
+
+/// Injects the bridge message a portal sends for `d`, its secret bound to `recipient`.
+pub unconstrained fn send_bridge_message(
+    h: Hub,
+    portal: EthAddress,
+    recipient: AztecAddress,
+    d: Deposit,
+) -> Field {
+    let content =
+        bridge_content_v1(d.nullifier, hash_2([d.change_precommitment, d.label]), d.amount);
+    let secret_hash = compute_secret_hash([derive_claim_secret(d.claim_salt, recipient)]);
+    h.env.send_l1_to_l2_message_from_secret_hash(content, secret_hash, portal, h.hub)
+}
+
+pub unconstrained fn claim(h: Hub, caller: AztecAddress, token: AztecAddress, d: Deposit, leaf: Field) {
+    h.env.call_private(
+        caller,
+        TokenBridgeHub::at(h.hub).claim_from_pool(
+            token,
+            d.amount,
+            d.nullifier,
+            d.change_precommitment,
+            d.label,
+            d.claim_salt,
+            leaf,
+        ),
+    );
+}
+
+/// Bridges `d` from `portal` to `owner` and claims it.
+pub unconstrained fn fund(h: Hub, token: AztecAddress, portal: EthAddress, owner: AztecAddress, d: Deposit) {
+    let leaf = send_bridge_message(h, portal, owner, d);
+    claim(h, owner, token, d, leaf);
+}
+
+/// `owner`'s private balance of `label`; zero when it holds none.
+pub unconstrained fn label_balance(h: Hub, token: AztecAddress, owner: AztecAddress, label: Field) -> u128 {
+    let labels = h.env.execute_utility(LabelledToken::at(token).private_balances_by_label(owner, 0));
+    let mut total = 0 as u128;
+    for i in 0..labels.len() {
+        let (l, _, sum) = labels.get(i);
+        if l == label {
+            total += sum;
+        }
+    }
+    total
 }

@@ -26,8 +26,11 @@ pub contract TokenBridgeHub {
         publish_contract_instance::publish_contract_instance_for_public_execution,
         state_vars::{Map, PublicImmutable},
     };
+    use bridge_message::bridge_content_v1;
+    use claim_secret_lib::derive_claim_secret;
     use compressed_string::FieldCompressedString;
     use labelled_token::LabelledToken;
+    use pp_hash::hash_2;
     use register_hash_lib::{BIND_HARNESS_SECRET, get_register_content_hash, REGISTER_SECRET};
 
     #[storage]
@@ -144,6 +147,33 @@ pub contract TokenBridgeHub {
     fn _register(erc20: EthAddress, portal: EthAddress, token: AztecAddress) {
         self.storage.portal_of.at(token).initialize(portal);
         self.storage.token_of.at(erc20).initialize(token);
+    }
+
+    // ── Claim ──────────────────────────────────────────────────────────────────────────────
+
+    // The portal's message commits to (nullifier, hash_2([change_precommitment, label]), amount)
+    // under the secret hash of `derive_claim_secret(claim_salt, recipient)`. Re-deriving both here,
+    // with the caller as recipient, means only the bound account can claim, and the note's label is
+    // the one inside the pool's change commitment. INVARIANT: the only consumer of a bridge message;
+    // `check-sole-consumer.sh` pins this dataflow.
+    #[external("private")]
+    fn claim_from_pool(
+        token: AztecAddress,
+        amount: u128,
+        nullifier: Field,
+        change_precommitment: Field,
+        label: Field,
+        claim_salt: Field,
+        message_leaf_index: Field,
+    ) {
+        let recipient = self.msg_sender();
+        assert(label != 0, "claim label is zero");
+        let portal = self.storage.portal_of.at(token).read();
+        let commitment = hash_2([change_precommitment, label]);
+        let secret = derive_claim_secret(claim_salt, recipient);
+        let content = bridge_content_v1(nullifier, commitment, amount);
+        self.context.consume_l1_to_l2_message(content, [secret], portal, message_leaf_index);
+        self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label));
     }
 
     // ── Discovery ──────────────────────────────────────────────────────────────────────────

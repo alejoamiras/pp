@@ -1,7 +1,7 @@
 use crate::test::utils::{
-    DECIMALS, ERC20_A, ERC20_B, NAME_A, NAME_B, PORTAL_A, PORTAL_B, pre_register_token, register,
-    register_a, send_factory_register_message, send_register_message, send_register_message_from,
-    setup, SYMBOL_A, SYMBOL_B, word,
+    claim, DECIMALS, deposit, ERC20_A, ERC20_B, label_balance, NAME_A, NAME_B, PORTAL_A, PORTAL_B,
+    pre_register_token, register, register_a, send_bridge_message, send_factory_register_message,
+    send_register_message, send_register_message_from, setup, SYMBOL_A, SYMBOL_B, word,
 };
 use crate::TokenBridgeHub;
 use aztec::protocol::{address::{AztecAddress, EthAddress}, traits::FromField};
@@ -41,6 +41,27 @@ unconstrained fn bind_token_alone_registers() {
         TokenBridgeHub::at(h.hub).bind_token(ERC20, PORTAL, name_word, symbol_word, DECIMALS, reg_leaf),
     );
     assert(h.env.view_public(TokenBridgeHub::at(h.hub).token_for(ERC20)) == token);
+}
+
+// Anyone may register; the depositor's claim then succeeds unchanged.
+#[test]
+unconstrained fn relayer_registers_then_depositor_claims() {
+    let mut h = setup();
+    let stranger = h.env.create_light_account();
+    let depositor = h.env.create_light_account();
+    let token = pre_register_token(h, ERC20, NAME, SYMBOL, DECIMALS);
+    let (name_word, symbol_word) = (word(NAME), word(SYMBOL));
+    let leaf = send_register_message(h, ERC20, PORTAL, name_word, symbol_word, DECIMALS);
+    h.env.call_private(
+        stranger,
+        TokenBridgeHub::at(h.hub).bind_token(ERC20, PORTAL, name_word, symbol_word, DECIMALS, leaf),
+    );
+
+    let d = deposit();
+    let dep_leaf = send_bridge_message(h, PORTAL, depositor, d);
+    claim(h, depositor, token, d, dep_leaf);
+    assert_eq(label_balance(h, token, depositor, d.label), d.amount);
+    assert_eq(label_balance(h, token, stranger, d.label), 0);
 }
 
 // ── Sender, portal and replay guards ───────────────────────────────────────────────────────

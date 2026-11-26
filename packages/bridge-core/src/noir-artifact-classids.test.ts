@@ -22,7 +22,7 @@ const PINS = [
 		// `contracts/bridge/aztec/scripts/compile.sh --check` (a rebuild must derive this id).
 		name: "TokenBridgeHub",
 		path: join(CONTRACTS, "token_bridge_hub", "target", "token_bridge_hub_contract-TokenBridgeHub.json"),
-		classId: "0x06c1f32b9254d2cbeea6478d02e2d19ddbe3e909c32871df8d27bf681493682e",
+		classId: "0x21cbe1eb6ef419eb7bac3034d201d3f2d0e0b16edd03313f7253ad045ee2530c",
 	},
 	{
 		// The token class every hub derives; the hub's keystone vectors and the manifest pin it too.
