@@ -35,9 +35,6 @@
 		"snarkjs": "0.7.5",
 		"viem": "2.57.1"
 	},
-	"overrides": {
-		"viem": "2.57.1"
-	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.13",
 		"@playwright/test": "1.63.0",

@@ -5,17 +5,21 @@ import { PACKAGE_DIR } from "../support/paths.ts"
 
 // Vitest transforms every module, so neither failure below shows up in the other suites.
 
-it.skipIf("Bun" in globalThis)("loads the package entry by name in native Node", () => {
+it.skipIf("Bun" in globalThis)("loads the package entry and its testing subpath by name in native Node", () => {
 	const out = execFileSync(
 		"node",
-		["--input-type=module", "-e", 'console.log(typeof (await import("@pp/pool-client")).openPoolClient)'],
+		[
+			"--input-type=module",
+			"-e",
+			'const [a, b] = await Promise.all([import("@pp/pool-client"), import("@pp/pool-client/testing")]); console.log(typeof a.openPoolClient, typeof b.seeder)',
+		],
 		{
 			cwd: PACKAGE_DIR,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
 		},
 	)
-	expect(out.trim()).toBe("function")
+	expect(out.trim()).toBe("function function")
 })
 
 it("refuses the testing subpath in a browser build", async () => {

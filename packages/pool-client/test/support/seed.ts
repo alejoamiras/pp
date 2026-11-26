@@ -18,7 +18,7 @@ import {
 	toHex,
 } from "viem"
 import { foundry } from "viem/chains"
-import { STUB_PROCESSOR_ABI } from "../../../pp-env/src/env/stub-abi.ts"
+import { STUB_PROCESSOR_ABI } from "../../../pp-env/src/client/abi.ts"
 import { POOL_VAULT_ERRORS_ABI } from "../../src/abi.ts"
 import { deriveKeys } from "../../src/keys.ts"
 import { createArtifacts, PINNED_CIRCUITS, type PinnedCircuit } from "../../src/runtime/artifacts.ts"

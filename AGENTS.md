@@ -23,7 +23,8 @@ repository.
 
 ## Toolchain
 
-- **Bun 1.4.2** (`package.json#packageManager`, the `setup-bun` action). `bun.lock` is lockfile v2.
+- **Bun 1.4.2** (`package.json#packageManager`, the `setup-bun` action). `bun.lock` is lockfile v3, which the
+  scoped `overrides` entry needs.
 - **Aztec 6.0.0.** `@aztec-labs/*` and `@aztec-foundation/*` are exact-pinned; the CLI lives at
   `~/.aztec/versions/6.0.0/`. Call that path, never `~/.aztec/current`, which other tools repoint.
   [`UPDATE.md`](UPDATE.md) lists what a bump touches.
