@@ -6,8 +6,10 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {IRegistry} from "@aztec/governance/interfaces/IRegistry.sol";
 import {Outbox} from "@aztec/core/messagebridge/Outbox.sol";
 import {DataStructures} from "@aztec/core/libraries/DataStructures.sol";
+import {Errors} from "@aztec/core/libraries/Errors.sol";
 import {Hash} from "@aztec/core/libraries/crypto/Hash.sol";
 import {Epoch} from "@aztec/core/libraries/TimeLib.sol";
+import {ReentrancyGuardTransient} from "@oz/utils/ReentrancyGuardTransient.sol";
 
 import {PortalFactory} from "../src/PortalFactory.sol";
 import {ProcessorPortalImpl} from "../src/ProcessorPortalImpl.sol";
@@ -22,13 +24,15 @@ import {PlainERC20} from "./mocks/MetadataERC20s.sol";
 /// and replays settled tickets. Each forged root goes into a fresh epoch, so it never overwrites an
 /// honest one: a rollup that could do that is Aztec's trust boundary, not the portal's.
 ///
-/// Every property is checked on real balances. One invariant function means one campaign. Each run
-/// appends its counts in `afterInvariant`, and `scripts/check-invariant.sh` requires the campaign
-/// totals of replays, forged settles, cap hits and reserve hits to be non-zero, so a walk that never
-/// reaches a property cannot pass for one that holds it.
+/// Every property is checked on real balances, per payee. One invariant function means one campaign.
+/// Each run appends its counts in `afterInvariant`, and `scripts/check-invariant.sh` requires the
+/// campaign totals of Outbox-refused replays, landed forged payouts, cap hits and reserve hits to be
+/// non-zero, so a walk that never reaches a property cannot pass for one that holds it.
 contract ProcessorPortalInvariantTest is Test {
     string internal constant STATS_DIR = "out/invariant-stats";
     string internal constant STATS = "out/invariant-stats/ProcessorPortalInvariant.csv";
+    /// Lets a gate give each invocation its own file, so concurrent runs cannot lend each other counts.
+    string internal constant STATS_ENV = "PORTAL_INVARIANT_STATS";
 
     PortalHandler internal handler;
 
@@ -55,6 +59,9 @@ contract ProcessorPortalInvariantTest is Test {
             assertLe(gross, handler.CAP(), "accepted past the cap");
             assertEq(t.balanceOf(address(p)), gross - paid + handler.donated(i), "holdings drifted");
             assertEq(handler.receivedBy(i), paid, "payees and totalPaid disagree");
+            for (uint256 k; k < 3; ++k) {
+                assertEq(t.balanceOf(handler.payee(k)), handler.owed(i, k), "a payout reached the wrong payee");
+            }
             assertLe(
                 handler.receivedBy(i),
                 handler.VAULT_START() - t.balanceOf(address(handler.vault())),
@@ -63,12 +70,13 @@ contract ProcessorPortalInvariantTest is Test {
         }
         assertEq(handler.inbox().sent(), 2 + handler.bridges(), "messages and successful bridges disagree");
         assertEq(handler.doublePaid(), 0, "a ticket paid twice");
-        assertEq(handler.honestRefusedWhileClean(), 0, "an honest exit was refused with no forged payout landed");
+        assertEq(handler.honestRefusedUnexpectedly(), 0, "an honest exit was refused other than for a drained reserve");
+        assertEq(handler.reentryNotGuarded(), 0, "a reentrant settle got past the guard");
     }
 
     function afterInvariant() external {
         vm.createDir(STATS_DIR, true);
-        vm.writeLine(STATS, handler.statsLine());
+        vm.writeLine(vm.envOr(STATS_ENV, STATS), handler.statsLine());
     }
 }
 
@@ -103,16 +111,18 @@ contract PortalHandler is Test {
     uint256[2] public donated;
     uint256[2] internal honestPaid;
     uint256[2] internal forgedPaid;
+    uint256[3][2] public owed;
     uint256 internal nullifiers;
     uint256 internal epochs;
 
     uint256 public bridges;
     uint256 public doublePaid;
-    uint256 public honestRefusedWhileClean;
+    uint256 public honestRefusedUnexpectedly;
+    uint256 public reentryNotGuarded;
     uint256 internal calls;
     uint256 internal reverts;
     uint256 internal replays;
-    uint256 internal forgedSettles;
+    uint256 internal forgedLanded;
     uint256 internal capHits;
     uint256 internal reserveHits;
 
@@ -158,9 +168,12 @@ contract PortalHandler is Test {
         proof.pubSignals = _signals(n, n + 1, amount, uint160(address(tokens[i])), context);
         try clones[i].bridgeFromPool(proof, _notes(), SECRET_HASH) {
             bridges++;
+            if (m == MockPoolVault.Mode.Reenter) reentryNotGuarded++;
         } catch (bytes memory err) {
             reverts++;
-            if (bytes4(err) == ProcessorPortalImpl.CapExceeded.selector) capHits++;
+            bytes4 sel = bytes4(err);
+            if (sel == ProcessorPortalImpl.CapExceeded.selector) capHits++;
+            if (m == MockPoolVault.Mode.Reenter && !_refusedBeforeTheVaultOrGuarded(sel)) reentryNotGuarded++;
         }
         vault.setMode(MockPoolVault.Mode.Honest, 0);
     }
@@ -186,25 +199,31 @@ contract PortalHandler is Test {
         uint256 claimable = clones[i].grossAccepted() - honestPaid[i];
         if (claimable == 0) return;
         amount = bound(amount, 1, claimable);
-        (bool ok, bytes memory err) = _publishAndSettle(i, ragequit, payees[payeeSeed % 3], amount, label);
+        uint256 k = payeeSeed % 3;
+        (bool ok, bytes memory err) = _publishAndSettle(i, ragequit, payees[k], amount, label);
         if (ok) {
             honestPaid[i] += amount;
+            owed[i][k] += amount;
         } else {
             reverts++;
-            if (forgedPaid[i] == 0) honestRefusedWhileClean++;
-            else if (bytes4(err) == ProcessorPortalImpl.ExceedsReserve.selector) reserveHits++;
+            // Only a forged payout can take what an honest exit is owed, and only the reserve check may
+            // then refuse it.
+            if (forgedPaid[i] > 0 && bytes4(err) == ProcessorPortalImpl.ExceedsReserve.selector) reserveHits++;
+            else honestRefusedUnexpectedly++;
         }
     }
 
     /// An exit no bridge backs, under a root the handler forges as the rollup.
     function settleForged(uint256 seed, uint256 payeeSeed, uint256 amount, bool ragequit, uint256 label) external {
         calls++;
-        forgedSettles++;
         uint256 i = seed % 2;
         amount = bound(amount, 1, 2 * CAP);
-        (bool ok, bytes memory err) = _publishAndSettle(i, ragequit, payees[payeeSeed % 3], amount, label);
+        uint256 k = payeeSeed % 3;
+        (bool ok, bytes memory err) = _publishAndSettle(i, ragequit, payees[k], amount, label);
         if (ok) {
+            forgedLanded++;
             forgedPaid[i] += amount;
+            owed[i][k] += amount;
         } else {
             reverts++;
             if (bytes4(err) == ProcessorPortalImpl.ExceedsReserve.selector) reserveHits++;
@@ -214,11 +233,15 @@ contract PortalHandler is Test {
     function replay(uint256 seed) external {
         calls++;
         if (tickets.length == 0) return;
-        replays++;
         Ticket memory t = tickets[seed % tickets.length];
-        (bool ok,) = _settle(t);
-        if (ok) doublePaid++;
-        else reverts++;
+        (bool ok, bytes memory err) = _settle(t);
+        if (ok) {
+            doublePaid++;
+        } else {
+            reverts++;
+            // A drained reserve refuses first; only the Outbox's own refusal shows the ticket is spent.
+            if (bytes4(err) == Errors.Outbox__AlreadyNullified.selector) replays++;
+        }
     }
 
     function clone(uint256 i) external view returns (ProcessorPortalImpl) {
@@ -229,18 +252,22 @@ contract PortalHandler is Test {
         return tokens[i];
     }
 
+    function payee(uint256 k) external view returns (address) {
+        return payees[k];
+    }
+
     function receivedBy(uint256 i) external view returns (uint256 sum) {
         for (uint256 k; k < 3; ++k) {
             sum += tokens[i].balanceOf(payees[k]);
         }
     }
 
-    /// `replays,forgedSettles,capHits,reserveHits,calls,reverts`, one line per run.
+    /// `replays,forgedLanded,capHits,reserveHits,calls,reverts`, one line per run.
     function statsLine() external view returns (string memory) {
         return string.concat(
             vm.toString(replays),
             ",",
-            vm.toString(forgedSettles),
+            vm.toString(forgedLanded),
             ",",
             vm.toString(capHits),
             ",",
@@ -287,6 +314,12 @@ contract PortalHandler is Test {
                     )
                     : abi.encodeCall(ProcessorPortalImpl.settlePublicExit, (t.payee, t.amount, t.epoch, 1, 0, path))
             );
+    }
+
+    /// The reentrant settle runs only once the vault is reached; the pause and the cap refuse before it.
+    function _refusedBeforeTheVaultOrGuarded(bytes4 sel) internal pure returns (bool) {
+        return sel == ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector
+            || sel == ProcessorPortalImpl.EntriesPaused.selector || sel == ProcessorPortalImpl.CapExceeded.selector;
     }
 
     function _notes() internal pure returns (IPrivacyPoolVault.NoteData[] memory notes) {
