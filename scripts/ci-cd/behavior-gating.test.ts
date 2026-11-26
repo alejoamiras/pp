@@ -60,7 +60,7 @@ function assertGraphCovered(patterns: string[], target: string, label: string) {
   }
 }
 
-const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml"]
+const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml", "local-stack.yml"]
 
 /**
  * The check-run each PR workflow's aggregator job produces. Branch protection matches these by
@@ -71,6 +71,7 @@ const AGGREGATOR_CHECKS: Record<string, string> = {
   "bridge-contracts.yml": "bridge-contracts-status",
   "actionlint.yml": "actionlint-status",
   "pp-env.yml": "pp-env-status",
+  "local-stack.yml": "local-stack-status",
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed-YAML shape is dynamic.

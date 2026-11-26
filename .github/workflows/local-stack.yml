@@ -1,0 +1,115 @@
+name: Local stack
+
+# PR gate for `bun run demo`: one anvil carrying the Aztec local network and the pool.
+#
+# NO `branches:` filter, deliberately — see the long note in pr-quick.yml. That key filters
+# on the PR's BASE, so a stacked arc targeting its parent branch would get zero CI.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+concurrency:
+  group: local-stack-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      stack: ${{ steps.override.outputs.full || steps.filter.outputs.stack }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Positive-only. The stack boots bridge-core's harness and pp-env's pool, so both packages
+          # move it whole. Pinned by scripts/ci-cd/behavior-gating.test.ts.
+          filters: |
+            stack:
+              - 'packages/local-stack/**'
+              - 'packages/bridge-core/**'
+              - 'packages/pp-env/**'
+              - 'package.json'
+              - 'bun.lock'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - '.github/workflows/local-stack.yml'
+              - '.github/actions/setup-aztec/**'
+              - '.github/actions/setup-bun/**'
+              - '.github/actions/ppv2-fetch/**'
+      - name: Override for manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        id: override
+        run: echo "full=true" >> "$GITHUB_OUTPUT"
+
+  stack:
+    name: stack (demo, teardown, heartbeat, shared anvil)
+    needs: changes
+    if: needs.changes.outputs.stack == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: ./.github/actions/setup-aztec
+
+      - uses: ./.github/actions/ppv2-fetch
+
+      - name: Unit tests
+        run: bun run --cwd packages/local-stack test
+
+      - name: Integration suites
+        # bun test prints `N pass`, `N skip`, `N fail`; a skipped case here means a gate that never ran.
+        run: |
+          start=$(date +%s)
+          PP_STACK_INTEGRATION=1 bun test --timeout 1800000 packages/local-stack/test/integration 2>&1 | tee integration.log
+          status=${PIPESTATUS[0]}
+          echo "suite wall-clock: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$status" -eq 0 ] || exit "$status"
+          grep -Eq '^ 0 fail$' integration.log
+          if grep -Eq '^ [1-9][0-9]* skip$' integration.log; then echo "a gated case was skipped"; exit 1; fi
+          grep -Eq '^\(pass\) .*a lone Inbox message becomes consumable' integration.log
+
+      - name: Upload stack logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: local-stack-logs
+          path: |
+            integration.log
+            ~/.cache/pp/bridge-sandbox/logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  status:
+    name: local-stack-status
+    if: always()
+    needs: [changes, stack]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-cd/aggregate-status.sh
+          sparse-checkout-cone-mode: false
+      - name: Aggregate results
+        run: bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.stack.result }}"
