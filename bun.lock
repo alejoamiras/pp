@@ -86,6 +86,18 @@
         "vitest": "^4.1.9",
       },
     },
+    "packages/label-paths": {
+      "name": "@pp/label-paths",
+      "version": "0.1.0",
+      "dependencies": {
+        "@pp/bridge-spec": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.13.2",
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.9",
+      },
+    },
     "packages/labelled-token": {
       "name": "@pp/labelled-token",
       "version": "0.1.0",
@@ -453,6 +465,8 @@
     "@pp/bridge-spec": ["@pp/bridge-spec@workspace:packages/bridge-spec"],
 
     "@pp/e2e-kit": ["@pp/e2e-kit@workspace:packages/e2e-kit"],
+
+    "@pp/label-paths": ["@pp/label-paths@workspace:packages/label-paths"],
 
     "@pp/labelled-token": ["@pp/labelled-token@workspace:packages/labelled-token"],
 
