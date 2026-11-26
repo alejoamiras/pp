@@ -13,6 +13,7 @@ describe("gate budgets", () => {
 	test("the checks report what they should", () => {
 		expect(overBudget({ f: 11 }, { f: 10 })).toEqual(["f: 11 gates, budget 10"])
 		expect(overBudget({ f: 1 }, {})).toEqual(["f: no budget"])
+		expect(overBudget({}, { f: 1 })).toEqual(["f: budgeted, not measured"])
 		expect(drift({ f: 1 }, { g: 1 })).toHaveLength(2)
 		expect(drift({ f: 1 }, { f: 1 })).toEqual([])
 	})

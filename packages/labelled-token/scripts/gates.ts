@@ -44,13 +44,18 @@ export function profile(artifact: string): Gates {
 	}
 }
 
-/** Every function must have a budget and stay within it. */
+/**
+ * Every function must have a budget and stay within it, and every budget must be measured: the
+ * profiler skips a function flagged `is_unconstrained`, a flag the class id does not bind.
+ */
 export function overBudget(gates: Gates, budget: Gates): string[] {
-	return Object.entries(gates).flatMap(([fn, n]) => {
+	const measured = Object.entries(gates).flatMap(([fn, n]) => {
 		const cap = budget[fn]
 		if (cap === undefined) return [`${fn}: no budget`]
 		return n > cap ? [`${fn}: ${n} gates, budget ${cap}`] : []
 	})
+	const unmeasured = Object.keys(budget).filter((fn) => gates[fn] === undefined)
+	return [...measured, ...unmeasured.map((fn) => `${fn}: budgeted, not measured`)]
 }
 
 /** Differences between a fresh profile and the committed one, in both directions. */
