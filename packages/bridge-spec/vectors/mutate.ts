@@ -3,12 +3,15 @@
  * expected value flipped per section (a rejection's name swapped) must fail every section's test,
  * each failure naming that vector. Any other failure (compile, setup, read, timeout) fails the run.
  *
- * Usage: bun vectors/mutate.ts --suite ts
+ * Usage: bun vectors/mutate.ts --suite ts|sol|nr
  */
 import { spawnSync } from "node:child_process"
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { AZTEC_DIR, type NargoTest, nargoTest } from "./nargo"
+import { renderNoir } from "./render-nr"
 
 const PKG = fileURLToPath(new URL("..", import.meta.url))
 const VECTORS = join(PKG, "vectors", "v1.json")
@@ -128,7 +131,66 @@ function forgeSuite(): Suite {
 	}
 }
 
-const SUITES: Record<string, () => Suite> = { ts: vitestSuite, sol: forgeSuite }
+const NR_SECTION_OF: Record<string, string> = {
+	v1_tags: "tags",
+	v1_in: "in",
+	v1_out: "out",
+	v1_ragequit: "ragequit",
+	v1_hash1: "hash1",
+	v1_hash2: "hash2",
+	v1_commitment: "commitment",
+	v1_asp_leaf: "aspLeaf",
+	v1_lean_imt: "leanImt",
+	v1_claim_secret_hash: "claimSecretHash",
+	v1_birth: "birth",
+}
+
+/** Copies keystone and its path dependencies (no target/) so the generated module can be swapped. */
+function copyKeystone(into: string): string {
+	const deps = [...readFileSync(join(AZTEC_DIR, "keystone", "Nargo.toml"), "utf8").matchAll(/path = "\.\.\/([\w-]+)"/g)].map(
+		(m) => m[1] as string,
+	)
+	for (const crate of ["keystone", ...deps]) {
+		cpSync(join(AZTEC_DIR, crate), join(into, crate), { recursive: true, filter: (p) => !p.split(/[\\/]/).includes("target") })
+	}
+	return join(into, "keystone")
+}
+
+/** Section tests by section; the one-per-vector rejection tests fold into `rejections`, each failure named `rejections[i]`. */
+function bySection(results: readonly NargoTest[]): Map<string, TestResult> {
+	const tests = new Map<string, TestResult>()
+	const failedRejections: string[] = []
+	for (const t of results) {
+		const status = t.event === "ok" ? "passed" : "failed"
+		const rejection = /^v1_rejection_(\d+)_/.exec(t.name)
+		if (rejection === null) tests.set(NR_SECTION_OF[t.name] ?? t.name, { status, message: t.message })
+		else if (status === "failed") failedRejections.push(`rejections[${Number(rejection[1])}] ${t.name}\n${t.message}`)
+	}
+	tests.set("rejections", { status: failedRejections.length === 0 ? "passed" : "failed", message: failedRejections.join("\n") })
+	return tests
+}
+
+/** Each run gets a fresh copy under ~/.cache/pp/spec/mutate/; only that directory is removed. */
+function nargoSuite(): Suite {
+	return {
+		lang: "nr",
+		sections: [...Object.values(NR_SECTION_OF), "rejections"],
+		run(vectorsPath) {
+			const dir = join(homedir(), ".cache", "pp", "spec", "mutate", `${Date.now()}-${process.pid}`)
+			try {
+				const keystone = copyKeystone(dir)
+				writeFileSync(join(keystone, "src", "vectors_v1.nr"), renderNoir(JSON.parse(readFileSync(vectorsPath, "utf8"))))
+				// Only the generated module: the mutation is in it, and the legacy keystone tests run in vectors:nargo.
+				const run = nargoTest(keystone, { filter: "vectors_v1::", timeoutMs: TIMEOUT_MS })
+				return run.error ? { tests: new Map(), error: run.error } : { tests: bySection(run.tests) }
+			} finally {
+				rmSync(dir, { recursive: true, force: true })
+			}
+		},
+	}
+}
+
+const SUITES: Record<string, () => Suite> = { ts: vitestSuite, sol: forgeSuite, nr: nargoSuite }
 
 function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	if (outcome.error) return [`control: ${outcome.error}`]

@@ -13,7 +13,8 @@
 		"test": "bun --bun vitest run",
 		"vectors": "bun vectors/gen.ts",
 		"vectors:check": "bun vectors/gen.ts --check",
-		"vectors:mutate": "bun vectors/mutate.ts"
+		"vectors:mutate": "bun vectors/mutate.ts",
+		"vectors:nargo": "bun vectors/nargo-check.ts"
 	},
 	"dependencies": {
 		"@aztec-labs/aztec.js": "6.0.0",

@@ -13,6 +13,11 @@ use token_portal_content_hash_lib::{
     get_mint_to_private_content_hash, get_mint_to_public_content_hash, get_withdraw_content_hash,
 };
 
+// The v1 wire format, pool hashes, label paths, claim secret and birth hashes against
+// packages/bridge-spec/vectors/v1.json (generated; packages/bridge-spec/vectors/nargo-check.ts
+// requires every test by name).
+mod vectors_v1;
+
 fn main() {}
 
 #[test]

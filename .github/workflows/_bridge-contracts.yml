@@ -94,7 +94,7 @@ jobs:
           bun run --cwd packages/bridge-core test -- factory-abi
 
   noir:
-    name: nargo test (keystone)
+    name: nargo test (pure crates)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -130,9 +130,13 @@ jobs:
       # compiled nothing. The claim_secret crate is deliberately absent — it carries no #[test]
       # functions of its own, and its vectors are exercised through keystone; running it would
       # have been a step that always passes without asserting anything.
+      # Runs keystone once and requires each generated v1 test by name (a filter or a dropped test
+      # that runs nothing would otherwise pass), plus every legacy keystone test.
       - name: keystone vectors
-        working-directory: contracts/bridge/aztec/keystone
-        run: aztec-nargo test --force
+        run: bun run --cwd packages/bridge-spec vectors:nargo
+
+      - name: Wire-format vector mutation (Noir)
+        run: bun run --cwd packages/bridge-spec vectors:mutate -- --suite nr
 
       # nargo exits 0 when nothing runs, so the run must show a pass count.
       - name: pp_hash
