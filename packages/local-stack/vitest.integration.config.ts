@@ -11,5 +11,7 @@ export default defineConfig({
 		testTimeout: 1_800_000,
 		hookTimeout: 600_000,
 		reporters: ["verbose"],
+		// pp-env resolves `@ppv2/*` through its tsconfig paths, which only Bun's own loader reads.
+		server: { deps: { external: [/\/packages\/pp-env\//] } },
 	},
 })
