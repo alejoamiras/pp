@@ -62,20 +62,32 @@ contract SettleRealOutboxTest is PortalFixture {
     }
 
     /// A longer proof of the same epoch fills a padding leaf, so the same messages sit at the same
-    /// positions under a different root. A spent ticket stays spent under either.
+    /// positions under a second root, while the first root stays. Both share the epoch's nullifiers: a
+    /// ticket spent under either stays spent under both.
     function test_extendingRoot_doesNotReopenASpentTicket() public {
+        address carol = makeAddr("carol");
+        bytes32 alicePair = _parent(aliceLeaf, bobLeaf);
+        bytes32 carolLeaf = _leaf(portal, BridgeMessageV1.exitContentPreimage(carol, 50));
+        bytes32 grownPair = _parent(carolLeaf, 0);
+        bytes32 grownRoot = _parent(alicePair, grownPair);
         portal.settleRagequit(alice, 200, LABEL, EPOCH, CHECKPOINTS, 0, _path(bobLeaf, emptyPair));
-        bytes32 grownPair = _parent(_leaf(portal, BridgeMessageV1.exitContentPreimage(makeAddr("carol"), 50)), 0);
-        bytes32 grownRoot = _parent(_parent(aliceLeaf, bobLeaf), grownPair);
         _insert(EPOCH, CHECKPOINTS + 1, grownRoot);
+
+        // Bob's unspent ticket still settles under the first root; carol's exists only under the second.
+        portal.settlePublicExit(bob, 300, EPOCH, CHECKPOINTS, 1, _path(aliceLeaf, emptyPair));
+        portal.settlePublicExit(carol, 50, EPOCH, CHECKPOINTS + 1, 2, _path(bytes32(0), alicePair));
 
         vm.expectRevert(abi.encodeWithSelector(Errors.Outbox__AlreadyNullified.selector, EPOCH, 4));
         portal.settleRagequit(alice, 200, LABEL, EPOCH, CHECKPOINTS + 1, 0, _path(bobLeaf, grownPair));
-        // Bob's settle under the longer proof shows alice's replay path was a valid one.
-        portal.settlePublicExit(bob, 300, EPOCH, CHECKPOINTS + 1, 1, _path(aliceLeaf, grownPair));
         vm.expectRevert(abi.encodeWithSelector(Errors.Outbox__AlreadyNullified.selector, EPOCH, 5));
-        portal.settlePublicExit(bob, 300, EPOCH, CHECKPOINTS, 1, _path(aliceLeaf, emptyPair));
-        _assertPaid(200, 300);
+        portal.settlePublicExit(bob, 300, EPOCH, CHECKPOINTS + 1, 1, _path(aliceLeaf, grownPair));
+        vm.expectRevert(abi.encodeWithSelector(Errors.Outbox__AlreadyNullified.selector, EPOCH, 6));
+        portal.settlePublicExit(carol, 50, EPOCH, CHECKPOINTS + 1, 2, _path(bytes32(0), alicePair));
+        assertEq(token.balanceOf(carol), 50, "carol");
+        assertEq(token.balanceOf(alice), 200, "alice");
+        assertEq(token.balanceOf(bob), 300, "bob");
+        assertEq(portal.totalPaid(), 550, "totalPaid");
+        assertEq(token.balanceOf(address(portal)), RESERVE - 550, "reserve");
     }
 
     /// The same exit twice is two tickets, whether at two leaves of one epoch or in two epochs: each
