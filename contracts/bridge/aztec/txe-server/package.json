@@ -1,5 +1,5 @@
 {
-  "name": "@unleashed/txe-server",
+  "name": "@pp/txe-server",
   "private": true,
   "description": "Pinned TXE oracle server for the Noir contract suites; installed with --frozen-lockfile by scripts/run-txe-tests.sh.",
   "dependencies": {

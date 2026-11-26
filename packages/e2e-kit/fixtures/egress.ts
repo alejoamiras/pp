@@ -5,7 +5,7 @@
  */
 import { readFileSync } from "node:fs"
 import type { BrowserContext } from "@playwright/test"
-import { TOKEN_LIST_URL } from "@unleashed/bridge-core"
+import { TOKEN_LIST_URL } from "@pp/bridge-core"
 
 /** Which fixture answers the community token list: the well-formed one, or one with hostile entries. */
 export type TokenListFixture = "community" | "hostile"

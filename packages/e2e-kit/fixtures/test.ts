@@ -8,7 +8,7 @@
  * so the switcher lists the whole pool from the first connect. Two spares cover retries.
  */
 import { test as base, type BrowserContext, expect, type Page } from "@playwright/test"
-import { l2CtxFor, readHandle } from "@unleashed/bridge-core/sandbox"
+import { l2CtxFor, readHandle } from "@pp/bridge-core/sandbox"
 import { type RunEnv, runEnv } from "../env"
 import type { Seed } from "../test-wallet/profile"
 import { confineEgress, type Egress, type TokenListFixture } from "./egress"

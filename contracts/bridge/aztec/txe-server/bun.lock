@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@unleashed/txe-server",
+      "name": "@pp/txe-server",
       "dependencies": {
         "@aztec-labs/txe": "6.0.0",
       },

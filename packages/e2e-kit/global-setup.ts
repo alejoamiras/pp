@@ -5,7 +5,7 @@
  */
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { readHandle } from "@unleashed/bridge-core/sandbox"
+import { readHandle } from "@pp/bridge-core/sandbox"
 import { runEnv } from "./env"
 
 /** Key order made irrelevant at EVERY depth (a replacer array would whitelist the root's keys

@@ -4,7 +4,7 @@
  * the browser ever hears their seeds, so a fixture can fund an account the UI has not shown yet.
  */
 import type { ContractBase } from "@aztec-labs/aztec.js/contracts"
-import type { ManifestToken, ManifestV2 } from "@unleashed/bridge-core"
+import type { ManifestToken, ManifestV2 } from "@pp/bridge-core"
 import {
 	type Actor,
 	buildContext,
@@ -16,7 +16,7 @@ import {
 	type SandboxClients,
 	type SmokeContext,
 	tokenBlockOf,
-} from "@unleashed/bridge-core/sandbox"
+} from "@pp/bridge-core/sandbox"
 import { runEnv } from "../env"
 import type { Seed } from "../test-wallet/profile"
 

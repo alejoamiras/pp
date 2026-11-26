@@ -12,7 +12,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { join } from "node:path"
-import { PortClaimConflict, registerHostPorts, registeredPorts, releaseHostPorts } from "@unleashed/bridge-core/sandbox"
+import { PortClaimConflict, registerHostPorts, registeredPorts, releaseHostPorts } from "@pp/bridge-core/sandbox"
 
 const STATIC_LO = 10_000
 const FLOOR_GUARD = 512
