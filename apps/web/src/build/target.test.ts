@@ -34,9 +34,14 @@ afterAll(() => {
 	for (const d of dirs) rmSync(d, { recursive: true, force: true })
 })
 
-function artifacts(handle: unknown): string {
-	const dir = scratchDir("target")
+function disposable(label: string): string {
+	const dir = scratchDir(label)
 	dirs.push(dir)
+	return dir
+}
+
+function artifacts(handle: unknown): string {
+	const dir = disposable("target")
 	writeFileSync(join(dir, "handle.json"), JSON.stringify(handle))
 	return dir
 }
@@ -71,7 +76,7 @@ describe("the build target", () => {
 		const withHandle = (patch: object) => ({ ...ok, PP_SANDBOX_ARTIFACTS: artifacts({ ...HANDLE, ...patch }) })
 		const cases: [string, TargetEnv][] = [
 			["no artifacts", { PP_WEB_WALLETS: WALLETS[0] }],
-			["no handle.json", { ...ok, PP_SANDBOX_ARTIFACTS: scratchDir("empty") }],
+			["no handle.json", { ...ok, PP_SANDBOX_ARTIFACTS: disposable("empty") }],
 			["no wallets", { ...ok, PP_WEB_WALLETS: " , " }],
 			["a wallet URL with credentials", { ...ok, PP_WEB_WALLETS: "http://u:p@127.0.0.1:1/" }],
 			["two wallets on one origin", { ...ok, PP_WEB_WALLETS: "http://127.0.0.1:1/?a,http://127.0.0.1:1/?b" }],
@@ -81,7 +86,6 @@ describe("the build target", () => {
 			["a negative rollup version", withHandle({ rollupVersion: -1 })],
 			["an unknown data mode", { ...ok, PP_DATA: "mock" }],
 		]
-		dirs.push(ok.PP_SANDBOX_ARTIFACTS)
 		for (const [label, env] of cases) expect(() => local(env), label).toThrow(/build target/)
 		expect(() => resolveTarget({ local: false, env: { PP_DATA: "stack" }, committedHandle: "/x" })).toThrow(/real connector/)
 	})
