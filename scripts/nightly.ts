@@ -28,12 +28,13 @@ export const forgePassed = (output: string): number =>
 	[...output.matchAll(/Suite result: \w+\. (\d+) passed;/g)].reduce((n, m) => n + Number(m[1]), 0)
 
 export const SUITES: Suite[] = [
+	// contracts/bridge/evm owns the script and the Foundry `nightly` profile it runs; the libraries and
+	// remappings it assumes are prepared here, as the pull-request job prepares them.
 	{
-		name: "bridge-l1-fuzz",
+		name: "bridge-l1-fuzz-invariant",
 		prepare: [["bash", "contracts/bridge/evm/scripts/install-libs.sh"], ["bun", "packages/bridge-core/scripts/gen-remappings.ts"]],
-		cwd: "contracts/bridge/evm",
-		command: ["forge", "test", "--match-contract", "Fuzz|Invariant"],
-		env: { FOUNDRY_PROFILE: "nightly" },
+		cwd: ".",
+		command: ["bash", "contracts/bridge/evm/scripts/nightly.sh"],
 		passed: forgePassed,
 	},
 ]

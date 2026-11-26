@@ -3,8 +3,9 @@ name: Nightly
 # Suites too slow for a pull request: `bun run nightly`, as defined by the branch under test. A
 # scheduled workflow runs only from the default branch while lanes merge into bridge-v1, so this one
 # checks out bridge-v1 when it exists, else main. That puts integration-branch code in main's cache
-# scope, so every cache is restore-only, the toolchain actions come from this workflow's own commit
-# (the tested branch cannot switch a cache back to saving), and no secret is used.
+# scope, so the job may only read caches (`cache-mode`, which binds any code the job runs, not just
+# the cache actions), every cache action is restore-only, the toolchain actions come from this
+# workflow's own commit, and no secret is used.
 
 on:
   schedule:
@@ -28,19 +29,25 @@ jobs:
     name: nightly suites
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    cache-mode: read
     steps:
       - name: Resolve the ref under test
         id: ref
         env:
           WANTED: ${{ inputs.ref }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        # `--exit-code` exits 2 only when no branch matched; any other failure must not read as "absent".
         run: |
           if [ -n "$WANTED" ]; then
             ref="$WANTED"
-          elif git ls-remote --exit-code --heads "$REPO_URL" bridge-v1 > /dev/null; then
-            ref=bridge-v1
           else
-            ref=main
+            listed=0
+            git ls-remote --exit-code --heads "$REPO_URL" bridge-v1 > /dev/null || listed=$?
+            case "$listed" in
+              0) ref=bridge-v1 ;;
+              2) ref=main ;;
+              *) echo "::error::could not list the branches of $REPO_URL (exit $listed)"; exit 1 ;;
+            esac
           fi
           echo "testing $ref"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"

@@ -305,8 +305,9 @@ test("the nightly reads only: restore-only caches, this commit's actions, no cre
   expect(wf.permissions).toEqual({ contents: "read" })
   expect(text).not.toContain("secrets.")
   expect(Object.keys(wf.on).sort()).toEqual(["schedule", "workflow_dispatch"])
-  for (const [name, job] of Object.entries(wf.jobs) as [string, { "timeout-minutes"?: number; steps: { uses?: string; run?: string; with?: Record<string, unknown> }[] }][]) {
+  for (const [name, job] of Object.entries(wf.jobs) as [string, { "timeout-minutes"?: number; "cache-mode"?: string; steps: { uses?: string; run?: string; with?: Record<string, unknown> }[] }][]) {
     expect(job["timeout-minutes"], name).toBeGreaterThan(0)
+    expect(job["cache-mode"], `${name}: only reads caches`).toBe("read")
     for (const step of job.steps.filter((s) => s.uses)) {
       const uses = step.uses as string
       expect(uses, `${name}: actions/cache saves`).not.toMatch(/^actions\/cache@/)
