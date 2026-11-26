@@ -1,6 +1,6 @@
 // Compile-time only: the hand-written public entries in types/ must equal the implementation, export
 // for export, so dependents that typecheck against them see what runs.
-import type { NoteStatus } from "@ppv2/evm-sdk"
+import type { NoteStatus } from "#ppv2/evm-sdk"
 import type * as ClientImpl from "../../src/client/index.ts"
 import type { NoteStatusName } from "../../src/client/types.ts"
 import type * as Impl from "../../src/index.ts"

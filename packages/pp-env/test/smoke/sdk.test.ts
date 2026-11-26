@@ -7,8 +7,8 @@ import {
 	PoseidonHashService,
 	type Secret,
 	WitnessPreparationService,
-} from "@ppv2/evm-sdk"
-import { startEvmMockAsp } from "@ppv2/mock-asp/evm"
+} from "#ppv2/evm-sdk"
+import { startEvmMockAsp } from "#ppv2/mock-asp/evm"
 import { createProofService } from "../../src/client/prover.ts"
 import { checkout } from "../../src/env/checkout.ts"
 

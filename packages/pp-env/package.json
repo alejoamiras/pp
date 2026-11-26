@@ -15,6 +15,10 @@
 			"default": "./src/client/index.ts"
 		}
 	},
+	"imports": {
+		"#ppv2/evm-sdk": "./.ppv2/packages/evm-sdk/dist/index.js",
+		"#ppv2/mock-asp/evm": "./.ppv2/packages/mock-asp/dist/evm.js"
+	},
 	"bin": {
 		"pp-env": "./src/cli.ts"
 	},

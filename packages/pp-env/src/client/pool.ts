@@ -27,7 +27,7 @@ import {
 	ViemRPCInteractor,
 	ViemWalletInteractor,
 	WitnessPreparationService,
-} from "@ppv2/evm-sdk"
+} from "#ppv2/evm-sdk"
 import { type Address, createPublicClient, decodeFunctionData, getAddress, type Hex, http, keccak256, toHex, verifyTypedData } from "viem"
 import { POOL_VAULT_TRANSACT_ABI } from "./abi.ts"
 import { secretDerivationTypedData } from "./derivation.ts"

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import * as sdk from "@ppv2/evm-sdk"
+import * as sdk from "#ppv2/evm-sdk"
 import { createWalletClient, http } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { foundry } from "viem/chains"
@@ -41,7 +41,7 @@ test("our PoolVault ABI matches the compiled contract, and covers all of its err
 
 test("every SDK value the client uses is exported at runtime, not only in the typings", () => {
 	const source = readFileSync(join(import.meta.dir, "../../src/client/pool.ts"), "utf8")
-	const block = source.match(/import \{([^}]*)\} from "@ppv2\/evm-sdk"/)?.[1] ?? ""
+	const block = source.match(/import \{([^}]*)\} from "#ppv2\/evm-sdk"/)?.[1] ?? ""
 	const values = block
 		.split(",")
 		.map((s) => s.trim())

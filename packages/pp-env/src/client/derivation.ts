@@ -1,4 +1,4 @@
-import { APP_IDENTIFIER } from "@ppv2/evm-sdk"
+import { APP_IDENTIFIER } from "#ppv2/evm-sdk"
 import { type Address, keccak256, toHex, zeroAddress } from "viem"
 import type { SecretDerivationTypedData } from "./types.ts"
 

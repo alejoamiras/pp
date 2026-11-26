@@ -1,5 +1,5 @@
 import { dirname } from "node:path"
-import { Groth16Prover, type IGroth16Prover, LocalCircuitArtifacts, ProofService } from "@ppv2/evm-sdk"
+import { Groth16Prover, type IGroth16Prover, LocalCircuitArtifacts, ProofService } from "#ppv2/evm-sdk"
 
 type Snarkjs = { curves: { getCurveFromName(name: string, opts: { singleThread: boolean }): Promise<unknown> } }
 type CurveSlot = { curve_bn128?: unknown }
@@ -9,7 +9,7 @@ let curve: Promise<unknown> | undefined
 
 // Resolve snarkjs from the SDK's own directory so the curve comes from the copy the SDK proves with.
 function loadSnarkjs(): Promise<Snarkjs> {
-	snarkjs ??= import(Bun.resolveSync("snarkjs", dirname(Bun.resolveSync("@ppv2/evm-sdk", import.meta.dir))))
+	snarkjs ??= import(Bun.resolveSync("snarkjs", dirname(Bun.resolveSync("#ppv2/evm-sdk", import.meta.dir))))
 	return snarkjs
 }
 

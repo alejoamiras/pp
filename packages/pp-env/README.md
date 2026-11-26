@@ -25,6 +25,8 @@ await env.stop()
 
 `@pp/pp-env/client` holds the user-side helpers alone (key derivation from a wallet signature, the SDK wiring, spend proving), with no dependency on the environment.
 
+Both entries load under Bun and under native Node with type stripping on by default (22.18+ or 23.6+), since the SDK resolves through `package.json#imports` (`#ppv2/*`) rather than tsconfig paths. Proving and `startPoolEnv` still call Bun's APIs, so they run under Bun only.
+
 Everything after `fetch` runs offline. Each start re-verifies the fetched tree against its pins.
 
 ## Layout
@@ -40,7 +42,7 @@ Everything after `fetch` runs offline. Each start re-verifies the fetched tree a
 | Script | Needs the checkout | What |
 |---|---|---|
 | `test`, `typecheck` | no | unit tests; public types through the export map |
-| `typecheck:full`, `test:smoke` | yes | the implementation against the SDK; proving under Bun |
+| `typecheck:full`, `test:smoke` | yes | the implementation against the SDK; proving under Bun; both entries under native Node |
 | `test:contracts` | no (Forge) | fixture tests, fuzzed |
 | `test:integration` | yes | parallel envs, attach, teardown; a full spend through the stub and the pool's rejections |
 
