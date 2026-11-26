@@ -50,8 +50,10 @@ never a re-pin of a deployed hub.
 
 `AspRootRegistry` holds the latest ASP roots on Aztec in one record: `pool_root` (Ethereum's ASP root
 at `l1_block`, comparable there by anyone), `birth_root` (labels born on Aztec), and `root_time`, the
-timestamp of the Ethereum block the poster read. `label_check` is how a token reads the record from a
-private function.
+timestamp of the Ethereum block the poster read. A token checks a label with one private call,
+`label_check::check_label`: it reads the record at the transaction's anchor, applies the freshness
+rule and the expiry, and proves `hash_1([label])` is in the tree of the notes' origin with
+`pp_hash`'s LeanIMT path. An unshield then re-checks the roots in public with `assert_current`.
 
 Posting rules: exactly the next `sequence`; `pool_root != 0`; `l1_block` and `root_time` never go
 back; a repeated `l1_block` keeps its `root_time`; `root_time <= now`; `now - root_time <= 1800 s`.
@@ -92,4 +94,6 @@ a poster rotation, passes again. A lost or stolen admin key cannot be replaced
 on chain; recovery is a new registry and a new token generation. While one tree's root is zero, a
 successful checked spend shows which tree it used.
 
-Tests: `scripts/run-txe-tests.sh --crate asp_registry` runs the names in `asp_registry/txe-manifest.txt`.
+Tests: `scripts/run-txe-tests.sh --crate asp_registry` and `--crate asp_registry_probe` run the names
+in each crate's `txe-manifest.txt`. `asp_registry_probe` is a test-only contract that calls the
+library the way a token does.
