@@ -1,14 +1,13 @@
 export type L1Tx = { from: string; to: string | null }
+export type AztecTips = { checkpointed: { number: number; hash: string }; proven: number }
 
-/** The chain reads the policy needs. */
 export type ChainView = {
 	l1Head(): Promise<bigint>
 	/** Block `n`'s hash; a revert that replaces the block changes it. */
 	l1Hash(n: bigint): Promise<string>
 	/** Block `n`'s transactions as lower-case sender and target; empty for an empty block. */
 	l1Txs(n: bigint): Promise<readonly L1Tx[]>
-	/** Number of the newest checkpointed Aztec block. */
-	aztecTip(): Promise<number>
+	aztecTips(): Promise<AztecTips>
 	/** Whether Aztec block `n` carries any transaction. */
 	aztecHasTxs(n: number): Promise<boolean>
 }
@@ -23,12 +22,14 @@ export type ChainView = {
  *   block that finalizes it.
  * The node's own L1 blocks (each beat's propose and the empty proof block after it) owe nothing. A
  * node transaction is matched by sender and target together, so another actor sending from the
- * node's account still counts as work.
+ * node's account still counts as work. An owed beat waits until the newest block is proven: the
+ * node proves everything checkpointed in one L1 block, so a block proven together with its
+ * follow-up is not finalized by it.
  */
 export class BeatPolicy {
 	private scanned = 0n
 	private scannedHash = ""
-	private ownTip = 0
+	private ownTip = { number: 0, hash: "" }
 	private owed = 0
 
 	constructor(
@@ -39,17 +40,22 @@ export class BeatPolicy {
 
 	/** Call right after the readiness beat: the pool's deploy owes two beats and that was the first. */
 	async start(): Promise<void> {
-		await this.mark(await this.view.l1Head())
-		this.ownTip = await this.view.aztecTip()
+		this.scanned = await this.view.l1Head()
+		this.scannedHash = await this.view.l1Hash(this.scanned)
+		this.ownTip = (await this.view.aztecTips()).checkpointed
 		this.owed = 1
 	}
 
 	async due(): Promise<boolean> {
 		const head = await this.view.l1Head()
+		// Read before the scan, so a revert during it shows as a mismatch on the next tick.
+		const headHash = await this.view.l1Hash(head)
 		if ((await this.replaced(head)) || (await this.foreignSince(this.scanned, head))) this.owed = 2
-		await this.mark(head)
-		if ((await this.view.aztecTip()) !== this.ownTip) this.owed = Math.max(this.owed, 1)
-		return this.owed > 0
+		this.scanned = head
+		this.scannedHash = headHash
+		const tips = await this.view.aztecTips()
+		if (tips.checkpointed.hash !== this.ownTip.hash) this.owed = Math.max(this.owed, 1)
+		return this.owed > 0 && tips.proven >= tips.checkpointed.number
 	}
 
 	/**
@@ -58,17 +64,12 @@ export class BeatPolicy {
 	 * owed; a failed read leaves the debt as it was.
 	 */
 	async beat(mine: () => Promise<unknown>): Promise<void> {
-		const before = await this.view.aztecTip()
+		const before = (await this.view.aztecTips()).checkpointed.number
 		await mine()
-		const tip = await this.view.aztecTip()
-		const clean = tip === before + 1 && !(await this.view.aztecHasTxs(tip))
+		const tip = (await this.view.aztecTips()).checkpointed
+		const clean = tip.number === before + 1 && !(await this.view.aztecHasTxs(tip.number))
 		this.owed = clean ? Math.max(0, this.owed - 1) : Math.max(1, this.owed - 1)
 		this.ownTip = tip
-	}
-
-	private async mark(head: bigint): Promise<void> {
-		this.scannedHash = await this.view.l1Hash(head)
-		this.scanned = head
 	}
 
 	private async replaced(head: bigint): Promise<boolean> {

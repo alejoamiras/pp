@@ -4,11 +4,14 @@ import { createPublicClient, createWalletClient, type Hex, http, parseEventLogs,
 import { privateKeyToAccount } from "viem/accounts"
 import { foundry } from "viem/chains"
 import { nodeInfo, nodeRpc } from "../../src/node-rpc.ts"
-import { type Stack, startStack } from "../../src/stack.ts"
+import { HEARTBEAT_MS, type Stack, startStack } from "../../src/stack.ts"
 
-const TICK_MS = 10_000
-/** Eighteen ticks: a self-triggering guard would have mined within the first two. */
+/** Ninety ticks: a self-triggering guard would have mined within the first two. */
 const IDLE_MS = 180_000
+/** Owed beats land within this: each waits for the previous block's proof, a few seconds apart. */
+const BEATS_MS = 60_000
+/** How long a settled stack must then stay still. */
+const QUIET_MS = HEARTBEAT_MS * 10
 const SENDER_INDEX = 10
 
 const INBOX_ABI = [
@@ -70,7 +73,7 @@ const INBOX_ABI = [
 	},
 ] as const
 
-type Tips = { checkpointed: number; finalized: number }
+type Tips = { checkpointed: number; proven: number; finalized: number }
 type L1ToL2Index = string | number | null | undefined
 
 /** Polls `check` every second until it holds or `ms` passes; returns whether it held. */
@@ -87,19 +90,28 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the heartbeat mines only for
 	let stack: Stack
 	let client: PublicClient
 	const tips = async (): Promise<Tips> => {
-		const t = await nodeRpc<{ checkpointed: { block: { number: number } }; finalized: { block: { number: number } } }>(
-			stack.manifest.aztecNode,
-			"node_getChainTips",
-		)
-		return { checkpointed: t.checkpointed.block.number, finalized: t.finalized.block.number }
+		type Tip = { block: { number: number } }
+		const t = await nodeRpc<{ checkpointed: Tip; proven: Tip; finalized: Tip }>(stack.manifest.aztecNode, "node_getChainTips")
+		return { checkpointed: t.checkpointed.block.number, proven: t.proven.block.number, finalized: t.finalized.block.number }
 	}
 	const frozen = async () => ({ l1: await client.getBlockNumber({ cacheTime: 0 }), aztec: (await tips()).checkpointed })
+	/** Waits for the owed beats to land and the last block's proof block with them, then reads the chain. */
+	const settle = async (atLeast: number) => {
+		const landed = async () => {
+			const t = await tips()
+			return t.checkpointed >= atLeast && t.proven >= t.checkpointed
+		}
+		expect(await within(BEATS_MS, landed)).toBe(true)
+		await Bun.sleep(HEARTBEAT_MS * 2)
+		return frozen()
+	}
 
 	beforeAll(async () => {
-		stack = await startStack({ heartbeatMs: TICK_MS })
+		stack = await startStack()
 		client = createPublicClient({ transport: http(stack.manifest.l1Rpc) })
-		// The boot owes one beat after readiness's; let it land.
-		await Bun.sleep(TICK_MS * 2)
+		// The boot owes one beat after readiness's; let it land and be proven.
+		await Bun.sleep(BEATS_MS / 2)
+		await settle(0)
 	})
 
 	afterAll(async () => {
@@ -153,17 +165,16 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the heartbeat mines only for
 	let nonce = 0
 	/** The movement owes exactly two beats; once they have landed, nothing else is mined. */
 	const expectOwedBeatsThenFrozen = async (from: number) => {
-		await Bun.sleep(TICK_MS * 2)
-		const settled = await frozen()
+		const settled = await settle(from + 2)
 		expect(settled.aztec - from).toBe(2)
-		await Bun.sleep(TICK_MS * 3)
+		await Bun.sleep(QUIET_MS)
 		expect(await frozen()).toEqual(settled)
 	}
 
 	test("a lone Inbox message becomes consumable through beats alone, then the beats stop", async () => {
 		const before = await tips()
 		const leaf = await sendMessage()
-		expect(await within(TICK_MS * 4, () => consumableNow(leaf))).toBe(true)
+		expect(await within(BEATS_MS, () => consumableNow(leaf))).toBe(true)
 		const blocksTaken = (await tips()).checkpointed - before.checkpointed
 		console.log(`[stack] a lone L1→L2 message became consumable after ${blocksTaken} Aztec block(s)`)
 		expect(blocksTaken).toBeGreaterThanOrEqual(1)
@@ -176,26 +187,33 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the heartbeat mines only for
 		const leaf = await sendMessage(() => nodeRpc<null>(stack.manifest.aztecNode, "aztecDebug_mineBlock"))
 		const raced = await tips()
 		const missed = !(await consumableAt(leaf, raced.checkpointed))
-		expect(await within(TICK_MS * 4, () => consumableNow(leaf))).toBe(true)
+		expect(await within(BEATS_MS, () => consumableNow(leaf))).toBe(true)
 		const beats = (await tips()).checkpointed - raced.checkpointed
 		console.log(`[stack] the racing block ${missed ? "missed" : "carried"} the message; then ${beats} beat(s) to consumable`)
 		expect(beats).toBeLessThanOrEqual(2)
-		await expectOwedBeatsThenFrozen(raced.checkpointed)
+		// A tick can land between the message and the racing block and spend one of the two beats first.
+		const settled = await settle(raced.checkpointed + 1)
+		expect(settled.aztec - raced.checkpointed).toBeLessThanOrEqual(2)
+		await Bun.sleep(QUIET_MS)
+		expect(await frozen()).toEqual(settled)
 	})
 
 	test("a block the heartbeat did not mine gets finalized by one beat", async () => {
 		await nodeRpc<null>(stack.manifest.aztecNode, "aztecDebug_mineBlock")
 		const forced = await tips()
 		expect(forced.finalized).toBeLessThan(forced.checkpointed)
-		expect(await within(TICK_MS * 3, async () => (await tips()).finalized >= forced.checkpointed)).toBe(true)
-		expect((await tips()).checkpointed - forced.checkpointed).toBe(1)
+		expect(await within(BEATS_MS, async () => (await tips()).finalized >= forced.checkpointed)).toBe(true)
+		const settled = await settle(forced.checkpointed + 1)
+		expect(settled.aztec - forced.checkpointed).toBe(1)
+		await Bun.sleep(QUIET_MS)
+		expect(await frozen()).toEqual(settled)
 	})
 })
 
 // Registered only on request, so an ordinary run reports no skipped case.
 if (process.env.PP_STACK_INTEGRATION && process.env.PP_STACK_LONG)
 	describe("a stack left alone", () => {
-		test("long idle: 1900 s at the real cadence moves neither chain, and the stack still answers", async () => {
+		test("long idle: 1920 s at the default cadence moves neither chain, and the stack still answers", async () => {
 			const stack = await startStack()
 			try {
 				const client = createPublicClient({ transport: http(stack.manifest.l1Rpc) })
@@ -208,7 +226,7 @@ if (process.env.PP_STACK_INTEGRATION && process.env.PP_STACK_LONG)
 				await Bun.sleep(30_000)
 				const start = await read()
 				const samples: { s: number; l1: string; aztec: number }[] = []
-				for (let s = 60; s <= 1900; s += 60) {
+				for (let s = 60; s <= 1920; s += 60) {
 					await Bun.sleep(60_000)
 					const now = await read()
 					samples.push({ s, l1: now.l1.toString(), aztec: now.aztec })

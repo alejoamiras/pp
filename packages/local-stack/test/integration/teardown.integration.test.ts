@@ -9,31 +9,34 @@ import { AttachRefused } from "../../src/attach.ts"
 import { nodeInfo } from "../../src/node-rpc.ts"
 import { newRunId } from "../../src/run-dir.ts"
 import { startStack } from "../../src/stack.ts"
-import { groupAlive, portsOwnedBy, processTree, registryRows, residueOf, sampleTree } from "./residue.ts"
+import { portsOwnedBy, processTree, registryRows, residueOf, sampleTree } from "./residue.ts"
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..")
 const BOOT_MS = 600_000
 type Run = ReturnType<typeof launch>
-type Reapable = { child: ChildProcess; tree: { pgids: ReadonlySet<number> }; stopSampling(): void }
+type Reapable = { child: ChildProcess; tree: { ownedAlive(): number[] }; stopSampling(): void }
 /** Every CLI this file starts, so a failed assertion cannot leave one running. */
 const launched: Reapable[] = []
 
 /**
- * The reap of a run a failed test left up: SIGINT, then SIGKILL after 90 s to every group it was
- * seen with, since the harnesses' children run in groups of their own.
+ * The reap of a run a failed test left up: SIGINT, then SIGKILL to every group it owned that is
+ * still alive, after 90 s or once the CLI is gone, since the harnesses' children run in groups of
+ * their own and can outlive it.
  */
 async function reap(run: Reapable): Promise<void> {
+	const kill = () => {
+		for (const g of run.tree.ownedAlive()) process.kill(-g, "SIGKILL")
+	}
 	const { child } = run
 	if (child.exitCode === null && child.signalCode === null) {
 		const gone = new Promise<void>((resolve) => child.once("exit", () => resolve()))
 		child.kill("SIGINT")
-		const timer = setTimeout(() => {
-			for (const g of run.tree.pgids) if (groupAlive(g)) process.kill(-g, "SIGKILL")
-		}, 90_000)
+		const timer = setTimeout(kill, 90_000)
 		await gone
 		clearTimeout(timer)
 	}
 	run.stopSampling()
+	kill()
 }
 
 /** One CLI run in its own process group, with its output, its sampled tree and the ports it claimed. */
@@ -161,16 +164,19 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("a stack tears down exactly w
 		const portTimer = setInterval(() => {
 			for (const p of portsOwnedBy(runId)) ports.add(p)
 		}, 250)
-		await expect(
-			startStack({
-				runId,
-				onStep: ({ step }) => {
-					if (step === "pool") throw new Error("injected after the pool")
-				},
-			}),
-		).rejects.toThrow("injected after the pool")
-		tree.stop()
-		clearInterval(portTimer)
+		try {
+			await expect(
+				startStack({
+					runId,
+					onStep: ({ step }) => {
+						if (step === "pool") throw new Error("injected after the pool")
+					},
+				}),
+			).rejects.toThrow("injected after the pool")
+		} finally {
+			tree.stop()
+			clearInterval(portTimer)
+		}
 		expect(ports.size).toBeGreaterThan(0)
 		expect(await residueOf({ runId, pgids: tree.pgids, ports })).toEqual([])
 		await expectSiblingIntact()

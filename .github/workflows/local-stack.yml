@@ -88,7 +88,10 @@ jobs:
           set -e
           echo "suite wall-clock: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
           [ "$status" -eq 0 ] || exit "$status"
+          # Every suite file must have run and passed, so a narrowed include glob cannot pass quietly.
           jq -e '.success and .numFailedTests == 0 and .numPendingTests == 0 and .numTodoTests == 0
+            and ([.testResults[] | select(.status == "passed") | .name | split("/") | last] | sort)
+              == ["heartbeat.integration.test.ts", "imports.integration.test.ts", "shared-anvil.integration.test.ts", "teardown.integration.test.ts"]
             and ([.testResults[].assertionResults[] | select(.title | startswith("a lone Inbox message becomes consumable")) | .status] == ["passed"])' \
             integration.json
 

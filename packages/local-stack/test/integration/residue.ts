@@ -33,12 +33,33 @@ export function processTree(root: number): Proc[] {
  */
 export function sampleTree(root: number, ignorePgids: ReadonlySet<number> = new Set(), everyMs = 500) {
 	const pgids = new Set<number>()
+	const leaders = new Map<number, string>()
 	const take = () => {
-		for (const p of processTree(root)) if (!ignorePgids.has(p.pgid)) pgids.add(p.pgid)
+		for (const p of processTree(root)) {
+			if (ignorePgids.has(p.pgid)) continue
+			pgids.add(p.pgid)
+			const started = p.pid === p.pgid ? startTime(p.pid) : undefined
+			if (started) leaders.set(p.pgid, started)
+		}
 	}
 	take()
 	const timer = setInterval(take, everyMs)
-	return { pgids, stop: () => clearInterval(timer) }
+	return {
+		pgids,
+		/** Live groups whose leader is still the process sampled, so a recycled pgid is never signalled. */
+		ownedAlive: () => [...leaders].filter(([g, started]) => groupAlive(g) && startTime(g) === started).map(([g]) => g),
+		stop: () => clearInterval(timer),
+	}
+}
+
+/** Field 22 of `/proc/<pid>/stat`, in ticks since boot; a reused pid gets a different one. */
+function startTime(pid: number): string | undefined {
+	try {
+		const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+		return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]
+	} catch {
+		return undefined
+	}
 }
 
 export function groupAlive(pgid: number): boolean {

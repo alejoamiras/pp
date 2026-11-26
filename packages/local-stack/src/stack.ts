@@ -23,6 +23,7 @@ const POOL_DEPLOYER_INDEX = 14
 export type StepName = "network" | "pool" | "manifest" | "heartbeat"
 
 export type StartStackOptions = {
+	/** Defaults to a fresh `stack-<pid>-<time>`; a chosen one must be unique on the host (see the README's teardown notes). */
 	runId?: string
 	/** Parent of the run directory; defaults to `~/.cache/pp/runs`. */
 	runsDir?: string
@@ -95,11 +96,16 @@ async function assertReady(client: PublicClient, nodeUrl: string, pool: PoolEnv,
 	if (!asp.ok) throw new Error(`mock ASP at ${health} answered HTTP ${asp.status}`)
 }
 
-type ChainTips = { checkpointed: { block: { number: number } } }
+type NodeTips = { checkpointed: { block: { number: number; hash: string } }; proven: { block: { number: number } } }
 type BlockData = { header: { totalManaUsed: string } }
 
-/** viem's transport bounds every L1 read; `signal` bounds the node's, which have no timeout. */
+/** viem's default transport timeout, so a stalled node read fails like a stalled L1 read and the next tick retries. */
+const NODE_READ_MS = 10_000
+
+/** `signal` also cuts the node reads short; mining stays outside, since the node keeps a request the client gave up on. */
 function chainView(client: PublicClient, nodeUrl: string, signal?: AbortSignal): ChainView {
+	const read = <T>(method: string, params: unknown[] = []) =>
+		nodeRpc<T>(nodeUrl, method, params, AbortSignal.any([AbortSignal.timeout(NODE_READ_MS), ...(signal ? [signal] : [])]))
 	return {
 		l1Head: () => client.getBlockNumber({ cacheTime: 0 }),
 		l1Hash: async (n) => (await client.getBlock({ blockNumber: n })).hash,
@@ -108,9 +114,12 @@ function chainView(client: PublicClient, nodeUrl: string, signal?: AbortSignal):
 				from: t.from.toLowerCase(),
 				to: t.to?.toLowerCase() ?? null,
 			})),
-		aztecTip: async () => (await nodeRpc<ChainTips>(nodeUrl, "node_getChainTips", [], signal)).checkpointed.block.number,
+		aztecTips: async () => {
+			const t = await read<NodeTips>("node_getChainTips")
+			return { checkpointed: t.checkpointed.block, proven: t.proven.block.number }
+		},
 		// Every transaction spends mana, so an empty block is exactly one with none used.
-		aztecHasTxs: async (n) => BigInt((await nodeRpc<BlockData>(nodeUrl, "node_getBlockData", [n], signal)).header.totalManaUsed) > 0n,
+		aztecHasTxs: async (n) => BigInt((await read<BlockData>("node_getBlockData", [n])).header.totalManaUsed) > 0n,
 	}
 }
 
@@ -122,9 +131,10 @@ const mineBlock = (nodeUrl: string, signal?: AbortSignal) => nodeRpc<null>(nodeU
  */
 async function firstBeat(client: PublicClient, nodeUrl: string, signal?: AbortSignal): Promise<BeatPolicy> {
 	const view = chainView(client, nodeUrl, signal)
-	const [head, tip] = [await view.l1Head(), await view.aztecTip()]
+	const tip = async () => (await view.aztecTips()).checkpointed.number
+	const [head, before] = [await view.l1Head(), await tip()]
 	await mineBlock(nodeUrl, signal)
-	if ((await view.aztecTip()) <= tip) throw new Error("aztecDebug_mineBlock returned without a new checkpointed block")
+	if ((await tip()) <= before) throw new Error("aztecDebug_mineBlock returned without a new checkpointed block")
 	const txs = new Map<string, L1Tx>()
 	for (let n = head + 1n, last = await view.l1Head(); n <= last; n++) for (const t of await view.l1Txs(n)) txs.set(`${t.from}>${t.to}`, t)
 	const [nodeTx, ...others] = txs.values()

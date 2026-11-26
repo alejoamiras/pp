@@ -49,12 +49,15 @@ marks a crashed stack, a live one may be recycled.
 
 Teardown is exact and ordered: heartbeat, manifest, pool, network, run directory. Every step is
 attempted, and failures are reported together. Only the process groups, ports (from the shared
-registry) and directories this run created are touched. SIGKILL skips teardown; the harnesses'
-last-resort exit hooks still reap what they can.
+registry) and directories this run created are touched. A process that exits without teardown
+(an uncaught error) still runs the harnesses' exit hooks, which kill their groups; SIGKILL skips
+both, and the groups outlive it.
 
 A run id owns its run directory, which is created exclusively, so a second stack with the same id
 is refused. No run id may end in `-pool`: both harnesses release registry rows by owner id, and
-the pool runs as `<runId>-pool`.
+the pool runs as `<runId>-pool`. A run id chosen by the caller must be unique on the host: reusing
+one from another `runsDir`, or while the process that last used it is alive, shares the harnesses'
+registry rows and data directory with it.
 
 ## Clocks: think in blocks, not minutes
 
@@ -88,6 +91,9 @@ tick never ages the chain. It owes:
   node's read of it);
 - **one beat** after any Aztec block it did not mine, or one of its own that picked up a pending
   user transaction (so that block finalizes).
+
+An owed beat waits until the newest block is proven: the node proves everything checkpointed in
+one L1 block, so a block proven together with its follow-up would not be finalized by it.
 
 The node's propose is matched by sender and target together, learned from the first beat, which is
 part of readiness: a node without the debug method fails the boot. A tick that finds a beat still
