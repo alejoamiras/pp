@@ -1,6 +1,7 @@
-use crate::AspRootRegistry::{self, RootRecord};
+use crate::AspRootRegistry::{self, RootPosted, RootRecord};
 use crate::label_check::MAX_OBSERVATION_LAG;
-use crate::test::utils::{BIRTH_ROOT, current, POOL_ROOT, post_at, post_roots_at, setup};
+use crate::test::utils::{BIRTH_ROOT, current, POOL_ROOT, post_at, post_roots_at, event_logs, setup};
+use aztec::protocol::traits::Serialize;
 
 #[test]
 unconstrained fn post_root_accepts_first_post() {
@@ -122,4 +123,17 @@ unconstrained fn views_return_constructor_values() {
     assert_eq(s.env.view_public(r.get_poster()), s.poster);
     assert_eq(s.env.view_public(r.get_birth_intake()), s.intake);
     assert_eq(current(s), RootRecord { sequence: 0, pool_root: 0, birth_root: 0, l1_block: 0, root_time: 0 });
+}
+
+#[test]
+unconstrained fn post_root_emits_root_posted() {
+    let s = setup();
+    post_roots_at(s, s.poster, s.t0, 1, 0xa1, 0xb2, 0xc3, s.t0 - 4);
+    let logs = event_logs::<RootPosted, 5>(s);
+    assert_eq(logs.len(), 1);
+    assert_eq(
+        logs.get(0),
+        RootPosted { sequence: 1, pool_root: 0xa1, birth_root: 0xb2, l1_block: 0xc3, root_time: s.t0 - 4 }
+            .serialize(),
+    );
 }

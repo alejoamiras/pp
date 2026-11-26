@@ -1,6 +1,9 @@
-use crate::AspRootRegistry::{self, RootRecord};
-use crate::test::utils::{current, post_at, setup};
-use aztec::{protocol::address::AztecAddress, test::helpers::test_environment::TestEnvironment};
+use crate::AspRootRegistry::{self, BirthIntakeChanged, PosterChanged, RootPosted, RootRecord};
+use crate::test::utils::{current, event_logs, post_at, setup};
+use aztec::{
+    protocol::{address::AztecAddress, traits::Serialize},
+    test::helpers::test_environment::TestEnvironment,
+};
 
 #[test(should_fail_with = "zero admin")]
 unconstrained fn constructor_rejects_zero_admin() {
@@ -98,4 +101,24 @@ unconstrained fn writes_preserve_admin() {
     s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_birth_intake(next));
     s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(next));
     assert_eq(s.env.view_public(AspRootRegistry::at(s.registry).get_admin()), s.admin);
+}
+
+#[test]
+unconstrained fn set_poster_emits_poster_changed() {
+    let s = setup();
+    post_at(s, s.poster, s.t0, 1, 100, s.t0);
+    s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(s.admin));
+    let logs = event_logs::<PosterChanged, 2>(s);
+    assert_eq(logs.len(), 1);
+    assert_eq(logs.get(0), PosterChanged { sequence: 1, poster: s.admin }.serialize());
+    assert_eq(event_logs::<RootPosted, 5>(s).len(), 0);
+}
+
+#[test]
+unconstrained fn set_birth_intake_emits_birth_intake_changed() {
+    let s = setup();
+    s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_birth_intake(s.poster));
+    let logs = event_logs::<BirthIntakeChanged, 1>(s);
+    assert_eq(logs.len(), 1);
+    assert_eq(logs.get(0), BirthIntakeChanged { intake: s.poster }.serialize());
 }

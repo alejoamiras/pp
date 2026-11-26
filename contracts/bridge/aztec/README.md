@@ -68,6 +68,11 @@ What each key can do:
   until its transaction expires. It cannot post unless it makes itself poster, and nobody can change
   the admin.
 
+Events: `post_root` emits `RootPosted` (the record's five fields), `set_poster` emits
+`PosterChanged` (the kept sequence and the new poster) and `set_birth_intake` emits
+`BirthIntakeChanged`. They keep the order of several updates in one block for a watcher; storage
+stays the authority, and nothing on chain reads them.
+
 Freshness: a checked spend's anchor may be at most 30 minutes past `root_time` (inclusive), and the
 spend expires 30 minutes after its anchor, so it lands at most 60 minutes past `root_time`. If posts
 stop, checked spends anchored more than 30 minutes after the last `root_time` fail; claims and
