@@ -52,20 +52,36 @@ private function.
 
 Posting rules: exactly the next `sequence`; `pool_root != 0`; `l1_block` and `root_time` never go
 back; a repeated `l1_block` keeps its `root_time`; `root_time <= now`; `now - root_time <= 1800 s`.
+The repeated-block rule catches a bot bug, not a dishonest poster, which can raise the block instead.
+It also means block 0 can never be posted, first or after a reset, and that after an Ethereum reorg
+the replacement block must still carry a time no earlier than the last post's.
 
 What each key can do:
 
 - **Poster.** Post records within those rules. It can approve any Aztec-born label (`birth_root`),
   post a `pool_root` that differs from Ethereum's (visible to anyone who compares), pair an old root
-  with a fresh time, make in-flight unshields revert by changing a root, or stop posting, which stops
-  checked spends 30 minutes after the last `root_time`. It cannot change the poster, the admin or the
-  birth intake, and nothing here can mint, burn, move notes or block a claim or a ragequit.
-- **Admin.** Replace the poster (which clears the roots, the block and the time, and keeps the
-  sequence) and set the birth intake (zero pauses shields; a new intake receives later shields'
-  announcements). It cannot post unless it makes itself poster, and nobody can change the admin.
+  with a fresh time, or stop posting. It cannot change the poster, the admin or the birth intake,
+  and nothing here can mint, burn, move notes or block a claim or a ragequit.
+- **Admin.** Replace the poster (which clears the roots, the block and the time for later anchors,
+  and keeps the sequence) and set the birth intake (zero pauses shields). A new or zero intake
+  applies to shields anchored after it: a shield anchored earlier still announces to the old intake
+  until its transaction expires. It cannot post unless it makes itself poster, and nobody can change
+  the admin.
 
-Known limits: a lost or stolen admin key cannot be replaced on chain; recovery is a new registry and a
-new token generation. While one tree's root is zero, a successful checked spend shows which tree it
-used. A watcher outside this contract compares `pool_root` with Ethereum at `l1_block`.
+Freshness: a checked spend's anchor may be at most 30 minutes past `root_time` (inclusive), and the
+spend expires 30 minutes after its anchor, so it lands at most 60 minutes past `root_time`. If posts
+stop, checked spends anchored more than 30 minutes after the last `root_time` fail; claims and
+ragequits never read the registry. A record observed from an Ethereum block `L` s old and included `I` s later is
+usable for new anchors for `1800 - L - I` s: about 11-17 minutes on Sepolia's finalized tag
+(`L` = 768-1152 s), which bounds how often the poster must land a post.
+
+Known limits: nothing outside this contract can check `birth_root`; only `pool_root` has an Ethereum
+counterpart, which a watcher outside this contract compares, with `root_time`, at `l1_block`. Any post
+that changes a root, honest or not, reverts every unshield proved before it and not yet included,
+whichever tree it used: a new birth approval also reverts pool-origin unshields. The unshield's public
+check compares only the current pair, so an unshield proved under a pair that was replaced and then
+restored, even across a poster rotation, still lands. A lost or stolen admin key cannot be replaced
+on chain; recovery is a new registry and a new token generation. While one tree's root is zero, a
+successful checked spend shows which tree it used.
 
 Tests: `scripts/run-txe-tests.sh --crate asp_registry` runs the names in `asp_registry/txe-manifest.txt`.

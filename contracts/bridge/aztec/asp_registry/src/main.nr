@@ -1,10 +1,9 @@
 pub mod label_check;
 mod test;
 
-// The latest ASP roots on Aztec. `pool_root` mirrors Ethereum's ASP root at `l1_block`, so anyone can
-// compare it there; `birth_root` approves labels born on Aztec. One poster writes the record. The admin
-// can only replace the poster, which clears the record, and the birth intake. Tokens read the record in
-// private through `label_check`.
+// The latest ASP roots on Aztec, attested by one poster: `pool_root` is Ethereum's ASP root at
+// `l1_block` (checkable there), `birth_root` approves labels born on Aztec (checkable nowhere). The
+// admin can only replace the poster, which clears the record, and set the birth intake.
 
 use aztec::macros::aztec;
 
@@ -50,12 +49,12 @@ pub contract AspRootRegistry {
     fn post_root(sequence: u64, pool_root: Field, birth_root: Field, l1_block: u64, root_time: u64) {
         assert(self.msg_sender() == self.storage.poster.read(), "not poster");
         let current = self.storage.current.read().get_value();
-        // Exactly the next sequence: a retried or stale post fails instead of overwriting a newer one.
+        // A retried or stale post fails instead of overwriting a newer one.
         assert(sequence == current.sequence + 1, "sequence not next");
         assert(pool_root != 0, "zero pool root");
         assert(l1_block >= current.l1_block, "l1 block regressed");
         assert(root_time >= current.root_time, "root time regressed");
-        // A repeated block is the same observation; a new time on it would keep a stalled root fresh.
+        // Guards a bot that reposts a stalled block with its own clock: reposting cannot renew freshness.
         assert((l1_block > current.l1_block) | (root_time == current.root_time), "new time on same block");
         let now = self.context.timestamp();
         assert(root_time <= now, "root time in the future");
