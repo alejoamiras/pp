@@ -11,7 +11,6 @@ export type PostNowReply = { event: "post-now"; id: number } & (
 )
 export type PostNowCommand = { cmd: "post-now"; id: number }
 
-/** One JSON line, bigints as decimal strings. */
 export const line = (value: object): string => `${JSON.stringify(value, (_, v) => (typeof v === "bigint" ? v.toString() : v))}\n`
 
 const FIELDS = ["sequence", "poolRoot", "birthRoot", "l1Block", "rootTime"] as const

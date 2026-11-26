@@ -63,7 +63,8 @@ function treeOf(s: AspSnapshot, origin: Origin): { leaves: readonly bigint[]; ro
 
 /**
  * The label's path in its origin's tree only, or `null` when its leaf is not there. The index is found
- * by value, since a revocation shifts every later leaf. Throws if the tree does not rebuild to its root.
+ * by value, since a revocation shifts every later leaf. Once the leaf is found, throws if the tree does not
+ * rebuild to its root.
  */
 export function pathFor(s: AspSnapshot, label: bigint, origin: Origin): LabelPath | null {
 	const { leaves, root, field } = treeOf(s, origin)

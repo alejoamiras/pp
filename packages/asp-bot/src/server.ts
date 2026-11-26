@@ -9,7 +9,7 @@ export class SnapshotBook {
 	private readonly held = new Map<bigint, Held>()
 	private current: bigint | null = null
 
-	/** Serialises once; `serializeAspSnapshot` refuses a snapshot whose roots do not rebuild. */
+	/** Throws if the snapshot's roots do not rebuild. */
 	hold(s: AspSnapshot): void {
 		this.held.set(s.sequence, { poolRoot: s.poolRoot, birthRoot: s.birthRoot, body: serializeAspSnapshot(s) })
 	}

@@ -55,6 +55,8 @@ export class Poster {
 		const p = this.ports
 		const tip = await p.tip()
 		const [record, poster] = await Promise.all([p.record(tip.hash), p.poster(tip.hash)])
+		// Before any early return: after `set_poster` clears the roots, `/latest` must stop serving.
+		this.book.setCurrent(record)
 		if (poster !== this.opts.self) return this.halt("not_poster", { poster: `0x${poster.toString(16)}` })
 		const e = await p.selectL1(tip.time)
 		if (!e) return this.halt("no_l1_block", { aztecTime: tip.time })
@@ -88,7 +90,6 @@ export class Poster {
 		return d
 	}
 
-	/** The leaves for the chain's `root`: kept from memory, or fetched and kept only if they hash to it. */
 	private async poolFor(root: bigint): Promise<Pool | null> {
 		if (this.pool?.root === root) return this.pool
 		const leaves = await this.ports.aspLeaves()

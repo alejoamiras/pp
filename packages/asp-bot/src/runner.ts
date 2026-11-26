@@ -14,7 +14,7 @@ export type RunnerDeps = {
 	now(): number
 }
 
-/** Schedules ticks one at a time; the caller calls `step` in a loop. */
+/** Schedules ticks. `step` must not be called again before its previous call settles. */
 export class Runner {
 	private lastBlock = -1
 	private lastTick = Number.NEGATIVE_INFINITY

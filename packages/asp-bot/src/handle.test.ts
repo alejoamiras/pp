@@ -58,6 +58,7 @@ describe("startBot", () => {
 
 		await Promise.all([bot.stop(), bot.stop()])
 		expect(groupAlive(bot.pgid)).toBe(false)
+		await expect(bot.postNow()).rejects.toThrow("asp-bot stopped")
 		expect(released).toEqual([c.runId])
 		expect(existsSync(c.dataDir as string)).toBe(false)
 	})

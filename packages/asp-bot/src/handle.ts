@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
-import type { Hex, RootRecord } from "@pp/label-paths"
+import { type Hex, MAX_OBSERVATION_LAG, type RootRecord } from "@pp/label-paths"
 import type { L1Tag } from "./l1"
 import { decodeRecord, line, type PostNowReply, parseLine, type ReadyEvent } from "./protocol"
 
@@ -31,7 +31,7 @@ export interface BotHandle {
 	birthIntake: Hex
 	runId: string
 	pgid: number
-	/** Resolves with the record a post sent after this call landed; rejects with the bot's reason otherwise. */
+	/** Resolves with the record a post sent after this call landed; rejects with the bot's reason, or at once after exit or `stop()`. */
 	postNow(timeoutMs?: number): Promise<RootRecord>
 	/** Stops the whole process group, releases the run's port rows, and removes `dataDir` when asked. Idempotent. */
 	stop(): Promise<void>
@@ -87,11 +87,51 @@ async function killGroup(child: ChildProcess, pgid: number, killAfterMs: number)
 	}
 }
 
+/** Matches post-now replies to requests by id. Once closed, pending and later requests reject at once. */
+function postNowChannel(child: ChildProcess) {
+	const pending = new Map<number, { ok: (r: RootRecord) => void; fail: (e: Error) => void }>()
+	let nextId = 1
+	let closed: string | undefined
+	const close = (why: string) => {
+		closed ??= why
+		for (const p of pending.values()) p.fail(new Error(closed))
+		pending.clear()
+	}
+	const deliver = (r: PostNowReply) => {
+		const p = pending.get(r.id)
+		pending.delete(r.id)
+		if (p) r.ok ? p.ok(decodeRecord(r.record)) : p.fail(new Error(r.reason))
+	}
+	const postNow = (timeoutMs = 120_000) =>
+		new Promise<RootRecord>((ok, fail) => {
+			if (closed) return fail(new Error(closed))
+			const id = nextId++
+			const timer = setTimeout(() => {
+				pending.delete(id)
+				fail(new Error("timeout"))
+			}, timeoutMs)
+			const settled =
+				<T>(f: (v: T) => void) =>
+				(v: T) => {
+					clearTimeout(timer)
+					f(v)
+				}
+			pending.set(id, { ok: settled(ok), fail: settled(fail) })
+			child.stdin?.write(line({ cmd: "post-now", id }))
+		})
+	return { postNow, deliver, close }
+}
+
 /**
  * Starts the bot and its embedded PXE in a child process in its own process group, and resolves on
  * its `ready` line, which it prints once `/latest` serves. A start that fails cleans up as `stop()` does.
  */
 export async function startBot(c: BotConfig, o: StartOptions = {}): Promise<BotHandle> {
+	// Ports are released by owner id, so a shared id would release the stack's rows too.
+	if (c.runId === c.stackRunId) throw new Error(`runId must differ from stackRunId (${c.stackRunId})`)
+	const margin = c.inclusionMarginSec
+	if (!Number.isSafeInteger(margin) || margin < 0 || BigInt(margin) >= MAX_OBSERVATION_LAG)
+		throw new RangeError(`inclusionMarginSec must be in [0, ${MAX_OBSERVATION_LAG}): ${margin}`)
 	const dataDir = c.dataDir ?? join(CACHE, "runs", c.runId)
 	mkdirSync(join(dataDir, "tmp"), { recursive: true })
 	mkdirSync(join(CACHE, "logs"), { recursive: true })
@@ -112,17 +152,19 @@ export async function startBot(c: BotConfig, o: StartOptions = {}): Promise<BotH
 	const pgid = child.pid as number
 	child.stderr?.pipe(log, { end: false })
 
-	const replies = new Map<number, (r: PostNowReply) => void>()
+	const channel = postNowChannel(child)
+	child.once("exit", (code, signal) => channel.close(`asp-bot exited (${signal ?? code}); log: ${logPath}`))
 	let onReady: ((e: ReadyEvent) => void) | undefined
 	createInterface({ input: child.stdout as NodeJS.ReadableStream }).on("line", (text) => {
 		log.write(`${text}\n`)
 		const e = parseLine(text)
 		if (e?.event === "ready") onReady?.(e as ReadyEvent)
-		if (e?.event === "post-now") replies.get(e.id as number)?.(e as PostNowReply)
+		if (e?.event === "post-now") channel.deliver(e as PostNowReply)
 	})
 
 	let stopping: Promise<void> | undefined
 	const stop = () => {
+		channel.close("asp-bot stopped")
 		stopping ??= (async () => {
 			await killGroup(child, pgid, o.killAfterMs ?? 30_000)
 			await (o.releasePorts ?? releaseByRunId)(c.runId)
@@ -157,21 +199,13 @@ export async function startBot(c: BotConfig, o: StartOptions = {}): Promise<BotH
 		throw e
 	}
 
-	let nextId = 1
-	const postNow = (timeoutMs = 120_000) =>
-		new Promise<RootRecord>((ok, fail) => {
-			const id = nextId++
-			const timer = setTimeout(() => {
-				replies.delete(id)
-				fail(new Error("timeout"))
-			}, timeoutMs)
-			replies.set(id, (r) => {
-				clearTimeout(timer)
-				replies.delete(id)
-				r.ok ? ok(decodeRecord(r.record)) : fail(new Error(r.reason))
-			})
-			child.stdin?.write(line({ cmd: "post-now", id }))
-		})
-
-	return { url: ready.url, poster: ready.poster as Hex, birthIntake: ready.birthIntake as Hex, runId: c.runId, pgid, postNow, stop }
+	return {
+		url: ready.url,
+		poster: ready.poster as Hex,
+		birthIntake: ready.birthIntake as Hex,
+		runId: c.runId,
+		pgid,
+		postNow: channel.postNow,
+		stop,
+	}
 }

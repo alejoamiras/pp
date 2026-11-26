@@ -64,8 +64,13 @@ describe("a tick", () => {
 		expect((await bot.tick()).post).toBe(true)
 		expect(book.body(3n)).toBeDefined()
 
+		// `set_poster` keeps only the sequence; the old poster must stop serving `/latest` at once.
+		const posted = s.record
 		s.poster = 0xdeadn
+		s.record = { ...posted, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n }
 		expect(await bot.tick()).toEqual({ post: false, reason: "not_poster" })
+		expect(book.body("latest")).toBeUndefined()
+		s.record = posted
 		ports.selectL1 = async () => {
 			throw new Error("anvil down")
 		}

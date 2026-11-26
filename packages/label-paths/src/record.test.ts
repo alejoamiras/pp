@@ -82,7 +82,7 @@ describe("readRootRecord", () => {
 	})
 })
 
-/** Every module specifier in `file`, `import type` included: a type-only import still puts the package in a bundle's graph. */
+/** Every module specifier in `file`, `import type` included: TypeScript resolves it, so a consumer's typecheck needs the package. */
 function specifiers(file: string): string[] {
 	const out: string[] = []
 	const visit = (n: ts.Node) => {

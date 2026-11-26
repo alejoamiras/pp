@@ -23,7 +23,8 @@ build a label path. Demo grade: snapshots live in memory, and a restart serves o
 
 Bodies are the `@pp/label-paths` wire format. Every answer is `cache-control: no-store` with no ETag,
 because a sequence the bot no longer holds must never be served from a cache. Any method but `GET`
-gets 405. `@pp/label-paths` recomputes both roots on parse, so a client never trusts the server.
+gets 405. `@pp/label-paths` recomputes both roots on parse, so the server cannot forge a path. It can
+still leave a label out (see that package's README).
 
 ## Running it
 

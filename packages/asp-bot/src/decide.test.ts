@@ -48,8 +48,10 @@ describe("decide", () => {
 		expect(reasonOf({ poolRoot: 12n, e: { ...base.e, number: 100n, timestamp: 5_000n } })).toBe("post")
 	})
 
-	it("postNow posts on a newer Ethereum block and otherwise says why not", () => {
+	it("postNow posts a changed root or a newer Ethereum block, and otherwise says why not", () => {
 		expect(reasonOf({ postNow: true, lastReadTime: base.aztecTime })).toBe("post")
-		expect(reasonOf({ postNow: true, e: { ...base.e, number: 100n, timestamp: 5_000n } })).toBe("no_newer_block")
+		const sameBlock = { ...base.e, number: 100n, timestamp: 5_000n }
+		expect(reasonOf({ postNow: true, e: sameBlock })).toBe("no_newer_block")
+		expect(reasonOf({ postNow: true, e: sameBlock, poolRoot: 12n })).toBe("post")
 	})
 })

@@ -20,11 +20,14 @@ const U64_LIMIT = 2n ** 64n
 
 type Reply<T> = { result?: T; error?: { message: string } }
 
+const RPC_TIMEOUT_MS = 10_000
+
 async function rpc<T>(url: string, method: string, params: unknown[]): Promise<T> {
 	const res = await fetch(url, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+		signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
 	})
 	if (!res.ok) throw new Error(`${method}: HTTP ${res.status}`)
 	const reply = (await res.json()) as Reply<T>

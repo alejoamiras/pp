@@ -42,15 +42,18 @@ const skip = (reason: SkipReason): Decision => ({ post: false, reason })
 
 /** Whether to post, by the roots and by chain time; never by wall time, which a frozen local chain ignores. */
 function wanted(i: DecideInput): Decision | null {
+	if (i.poolRoot !== i.record.poolRoot || i.birthRoot !== i.record.birthRoot) return null
 	const newer = i.e.number > i.record.l1Block
 	if (i.postNow) return newer ? null : skip("no_newer_block")
-	if (i.poolRoot !== i.record.poolRoot || i.birthRoot !== i.record.birthRoot) return null
 	// A heartbeat on the same Ethereum block keeps `root_time`, so it would refresh nothing.
 	const due = i.lastReadTime === null || i.aztecTime - i.lastReadTime >= HEARTBEAT_SEC
 	return newer && due ? null : skip("unchanged")
 }
 
-/** The registry's `post_root` assertions (`asp_registry/src/main.nr`), so a post never reverts for a reason checked here. */
+/**
+ * The registry's `post_root` assertions (`asp_registry/src/main.nr`), checked against the record as read and an
+ * inclusion `inclusionMarginSec` after it; a competing post or a slower inclusion can still revert one.
+ */
 function refused(i: DecideInput): SkipReason | null {
 	const { record: r, e } = i
 	if (r.sequence + 1n >= U64_LIMIT) return "sequence_overflow"

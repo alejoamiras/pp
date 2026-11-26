@@ -61,7 +61,6 @@ async function walletFor(c: BotConfig, node: Node) {
 	return { wallet, fee, registry: await Contract.at(registry, aspRootRegistryArtifact, wallet) }
 }
 
-/** The live ports: viem for Ethereum, the Aztec node and the bot's embedded wallet, the ASP's HTTP API. */
 export async function livePorts(c: BotConfig, log: Ports["log"]): Promise<Live> {
 	const node = createAztecNodeClient(c.manifest.aztecNode)
 	const { wallet, fee, registry } = await walletFor(c, node)
@@ -88,7 +87,9 @@ export async function livePorts(c: BotConfig, log: Ports["log"]): Promise<Live> 
 					address: c.manifest.pool.aspRegistry,
 					abi: ASP_REGISTRY_ABI,
 					functionName: "latestASPRoot",
-					blockNumber: e.number,
+					// By hash: a reorg after selection must fail the read, not pair `e`'s time with another block's root.
+					blockHash: e.hash,
+					requireCanonical: true,
 				})
 			} catch (err) {
 				const revert = err instanceof BaseError ? err.walk((x) => x instanceof ContractFunctionRevertedError) : null
