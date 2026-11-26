@@ -46,7 +46,7 @@ imports `@pp/pool-client/prover-worker`. The worker keeps a page responsive; `te
 | Node | 1.4–2.0 s | |
 | Bun (single-thread curve) | 9.5–10.8 s | |
 | Chromium, main thread | 2–5 s, with main-thread stalls up to about 370 ms | 5.1 s |
-| Chromium, worker | 2–4 s, longest main-thread stall under 50 ms | 2.8–4.7 s |
+| Chromium, worker | 2–4 s, longest main-thread stall under 50 ms | 2.8–5.4 s |
 
 ## Tests
 
