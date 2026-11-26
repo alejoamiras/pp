@@ -1,5 +1,5 @@
 name: Setup Aztec
-description: Install the Aztec CLI matching the @aztec-labs/aztec.js version declared in apps/tools. Cached by version. The CLI installer provisions its own version-pinned Foundry (forge/anvil) into internal-bin with built-in retry.
+description: Install the Aztec CLI matching the @aztec-labs/aztec.js version declared in packages/bridge-core. Cached by version. The CLI installer provisions its own version-pinned Foundry (forge/anvil) into internal-bin with built-in retry.
 
 inputs:
   skip_cli:
@@ -8,7 +8,7 @@ inputs:
     default: "false"
   version:
     description: >
-      Override the detected Aztec version. Leave empty to derive it from apps/tools's
+      Override the detected Aztec version. Leave empty to derive it from packages/bridge-core's
       @aztec-labs/aztec.js, which is what every caller wants. The bridge contracts are the exception:
       their Nargo.toml pins aztec-nr to its own tag, and compiling that tag's aztec-nr with
       a newer nargo fails inside upstream's own macros.
@@ -29,8 +29,8 @@ runs:
           VERSION="$OVERRIDE"
           echo "Aztec version: $VERSION (caller override)"
         else
-          VERSION=$(bun -e "const v=JSON.parse(require('fs').readFileSync('apps/tools/package.json','utf8')).dependencies['@aztec-labs/aztec.js']; if(!v) throw new Error('apps/tools pins no @aztec-labs/aztec.js'); console.log(v)")
-          echo "Aztec version: $VERSION (from apps/tools)"
+          VERSION=$(bun -e "const v=JSON.parse(require('fs').readFileSync('packages/bridge-core/package.json','utf8')).dependencies['@aztec-labs/aztec.js']; if(!v) throw new Error('packages/bridge-core pins no @aztec-labs/aztec.js'); console.log(v)")
+          echo "Aztec version: $VERSION (from packages/bridge-core)"
         fi
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 

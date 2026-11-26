@@ -30,6 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history: paths-filter needs the merge-base with the comparison branch; a
           # shallow clone falls back to a `fetch --deepen` loop that races on long branches.
           fetch-depth: 0
@@ -38,17 +39,15 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations — the dorny `some`-quantifier footgun. Whole-package for
-          # the contracts and for bridge-core (its scripts ARE the sandbox harness); the deployed
-          # manifests, because the integration suite is the closest local proof that the frontend's
-          # adopted generation still round-trips. The npm packages bridge-core imports move with
+          # the contracts and for bridge-core (its scripts ARE the sandbox harness); vitest.base.ts,
+          # which the integration config imports. The npm packages bridge-core imports move with
           # bun.lock.
           # Pinned by scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             contracts:
               - 'contracts/bridge/**'
               - 'packages/bridge-core/**'
-              - 'apps/tools/public/testnet-bridge.json'
-              - 'apps/tools/public/mainnet-bridge.json'
+              - 'vitest.base.ts'
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'
@@ -77,6 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           sparse-checkout: scripts/ci-cd/aggregate-status.sh
           sparse-checkout-cone-mode: false
       - name: Aggregate results

@@ -57,7 +57,7 @@ test("the matcher catches every spelling of a keyed URL and passes the keyless e
 })
 
 test("no file in the tree holds a dRPC key", () => {
-	expect(files.length).toBeGreaterThan(500)
+	expect(files.length).toBeGreaterThan(180)
 	const hits = files.flatMap((path) => {
 		const count = keyedUrls(textOf(path) ?? "")
 		return count > 0 ? [`${path}: ${count}`] : []

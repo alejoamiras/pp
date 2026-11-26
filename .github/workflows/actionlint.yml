@@ -28,6 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
@@ -39,7 +40,8 @@ jobs:
               - '.github/actions/**'
             shell:
               - 'scripts/**/*.sh'
-              - 'apps/tools/scripts/**/*.sh'
+              - 'packages/e2e-kit/scripts/**/*.sh'
+              - 'contracts/bridge/evm/scripts/**/*.sh'
               - 'contracts/bridge/aztec/scripts/**/*.sh'
               - '.githooks/**'
       - name: Override for manual dispatch
@@ -55,6 +57,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: reviewdog/action-actionlint@8b682e1e7e512151d73a6b9449cbff173846226e # v1.74.0
         with:
           fail_on_error: true
@@ -67,11 +71,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The hooks carry no extension, so they are listed by directory rather than by name.
       - name: Run shellcheck
         shell: bash
         run: |
-          mapfile -t FILES < <(find scripts apps/tools/scripts contracts/bridge/aztec/scripts -type f -name '*.sh'; find .githooks -type f)
+          mapfile -t FILES < <(find scripts packages/e2e-kit/scripts contracts/bridge/aztec/scripts contracts/bridge/evm/scripts -type f -name '*.sh'; find .githooks -type f)
           if [ ${#FILES[@]} -eq 0 ]; then
             echo "::error::no shell files found; the paths above have moved"
             exit 1

@@ -31,35 +31,28 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      needs-tools-build: ${{ steps.compute.outputs.needs-tools-build }}
-      needs-landing-build: ${{ steps.compute.outputs.needs-landing-build }}
+      needs-kit-build: ${{ steps.compute.outputs.needs-kit-build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history: paths-filter needs the merge-base with the comparison branch; a
           # shallow clone falls back to a `fetch --deepen` loop that races on long branches.
           fetch-depth: 0
+          persist-credentials: false
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
-          # Positive-only, no `!` negations (dorny's `some`-quantifier footgun). The built target
-          # whole; its workspace libraries by src + manifest; the hub artifact bridge-core bundles
+          # Positive-only, no `!` negations (dorny's `some`-quantifier footgun). The kit whole; the
+          # bridge-core sources and sandbox harness it imports; the hub artifact bridge-core bundles
           # from contracts/. Pinned by scripts/ci-cd/behavior-gating.test.ts.
           filters: |
-            tools:
-              - 'apps/tools/**'
+            kit:
+              - 'packages/e2e-kit/**'
               - 'packages/bridge-core/src/**'
+              - 'packages/bridge-core/scripts/**'
               - 'packages/bridge-core/package.json'
-              - 'packages/design/src/**'
-              - 'packages/design/package.json'
               - 'contracts/bridge/aztec/token_bridge_hub/target/**'
-              - '.github/workflows/_build-tools.yml'
-            landing:
-              - 'apps/landing/**'
-              - 'packages/design/src/**'
-              - 'packages/design/package.json'
-              - '.github/workflows/_build-landing.yml'
             workflows:
               - '.github/workflows/**'
               - '.github/actions/**'
@@ -77,20 +70,14 @@ jobs:
         id: compute
         env:
           DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
-          TOOLS: ${{ steps.filter.outputs.tools }}
-          LANDING: ${{ steps.filter.outputs.landing }}
+          KIT: ${{ steps.filter.outputs.kit }}
           WORKFLOWS: ${{ steps.filter.outputs.workflows }}
           ROOT: ${{ steps.filter.outputs.root-config }}
         run: |
-          if [ "$DISPATCH" = "true" ] || [ "$TOOLS" = "true" ] || [ "$WORKFLOWS" = "true" ] || [ "$ROOT" = "true" ]; then
-            echo "needs-tools-build=true" >> "$GITHUB_OUTPUT"
+          if [ "$DISPATCH" = "true" ] || [ "$KIT" = "true" ] || [ "$WORKFLOWS" = "true" ] || [ "$ROOT" = "true" ]; then
+            echo "needs-kit-build=true" >> "$GITHUB_OUTPUT"
           else
-            echo "needs-tools-build=false" >> "$GITHUB_OUTPUT"
-          fi
-          if [ "$DISPATCH" = "true" ] || [ "$LANDING" = "true" ] || [ "$WORKFLOWS" = "true" ] || [ "$ROOT" = "true" ]; then
-            echo "needs-landing-build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "needs-landing-build=false" >> "$GITHUB_OUTPUT"
+            echo "needs-kit-build=false" >> "$GITHUB_OUTPUT"
           fi
 
   commitlint:
@@ -103,6 +90,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Lint PR commits
         env:
@@ -124,45 +112,42 @@ jobs:
     with:
       ref: ${{ github.event.pull_request.head.sha || github.ref }}
 
-  build-tools:
-    name: Build Tools (${{ matrix.target }})
+  build-e2e-kit:
+    name: Build E2E kit
     needs: changes
-    if: needs.changes.outputs.needs-tools-build == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [testnet, mainnet]
-    uses: ./.github/workflows/_build-tools.yml
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.ref }}
-      target: ${{ matrix.target }}
-
-  build-landing:
-    name: Build Landing
-    needs: changes
-    if: needs.changes.outputs.needs-landing-build == 'true'
-    uses: ./.github/workflows/_build-landing.yml
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.ref }}
+    if: needs.changes.outputs.needs-kit-build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bun
+      # Build-only: the fixture handle and placeholder origin stand in for a live sandbox, whose
+      # real values the runner bakes in on every local run.
+      - name: Build the test wallet
+        env:
+          PP_E2E_HANDLE: fixtures/build-handle.json
+          PP_APP_ORIGIN: http://127.0.0.1:4173
+        run: bun run --cwd packages/e2e-kit build:test-wallet
 
   status:
     name: quality-status
     if: always()
-    needs: [changes, commitlint, lint-and-typecheck, unit-tests, build-tools, build-landing]
+    needs: [changes, commitlint, lint-and-typecheck, unit-tests, build-e2e-kit]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Aggregate results
         env:
           EVENT: ${{ github.event_name }}
-          NEEDS_TOOLS_BUILD: ${{ needs.changes.outputs.needs-tools-build }}
+          NEEDS_KIT_BUILD: ${{ needs.changes.outputs.needs-kit-build }}
           CHANGES: ${{ needs.changes.result }}
           COMMITLINT: ${{ needs.commitlint.result }}
           LINT: ${{ needs.lint-and-typecheck.result }}
           UNIT: ${{ needs.unit-tests.result }}
-          BUILD_TOOLS: ${{ needs.build-tools.result }}
-          NEEDS_LANDING_BUILD: ${{ needs.changes.outputs.needs-landing-build }}
-          BUILD_LANDING: ${{ needs.build-landing.result }}
+          BUILD_KIT: ${{ needs.build-e2e-kit.result }}
         run: |
           # Exact states, not a failure denylist: a job that never ran must not read as green.
           fail=0
@@ -180,14 +165,9 @@ jobs:
           else
             expect Commitlint "$COMMITLINT" skipped
           fi
-          case "$NEEDS_TOOLS_BUILD" in
-            true) expect "Build Tools" "$BUILD_TOOLS" success ;;
-            false) expect "Build Tools" "$BUILD_TOOLS" skipped ;;
-            *) echo "::error::needs-tools-build is not true/false: '$NEEDS_TOOLS_BUILD'"; fail=1 ;;
-          esac
-          case "$NEEDS_LANDING_BUILD" in
-            true) expect "Build Landing" "$BUILD_LANDING" success ;;
-            false) expect "Build Landing" "$BUILD_LANDING" skipped ;;
-            *) echo "::error::needs-landing-build is not true/false: '$NEEDS_LANDING_BUILD'"; fail=1 ;;
+          case "$NEEDS_KIT_BUILD" in
+            true) expect "Build E2E kit" "$BUILD_KIT" success ;;
+            false) expect "Build E2E kit" "$BUILD_KIT" skipped ;;
+            *) echo "::error::needs-kit-build is not true/false: '$NEEDS_KIT_BUILD'"; fail=1 ;;
           esac
           exit "$fail"

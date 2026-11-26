@@ -11,7 +11,7 @@ const ROOT = join(import.meta.dir, "..", "..")
 const EXACT = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/
 
 const CONSUMERS: Record<string, string[]> = {
-	"apps/tools": [
+	"packages/e2e-kit": [
 		"@nulo-sh/resolve-asset",
 		"@nulo-sh/wallet-crypto",
 		"@nulo-sh/wallet-sdk-schema-patch",

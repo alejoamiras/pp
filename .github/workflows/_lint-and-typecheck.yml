@@ -21,12 +21,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-bun
 
       # Biome and the complexity baseline.
       - name: Lint
         run: bun run lint
+
+      # The pre-commit hook runs this too, but a hook can be skipped; CI cannot.
+      - name: No absolute local paths
+        run: bash scripts/check-no-local-paths.sh
 
       - name: Typecheck all packages
         run: bun run typecheck:all

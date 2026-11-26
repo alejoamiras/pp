@@ -3,10 +3,8 @@ import { readFileSync } from "node:fs"
 import { dirname, join, posix } from "node:path"
 
 /**
- * Every relative link in an operational doc resolves to a file or directory in this repository. The
- * archived plans and the audit reports are history and keep their links as written; the curated
- * files at the root of implementations-plan/ and the archive index are operational. Untracked files
- * that git does not ignore count, so a doc can be checked before its first commit.
+ * Every relative link in a Markdown doc resolves to a file or directory in this repository.
+ * Untracked files that git does not ignore count, so a doc can be checked before its first commit.
  */
 const ROOT = join(import.meta.dir, "..", "..")
 
@@ -16,8 +14,7 @@ const files = Bun.spawnSync(["git", "ls-files", "-z", "--cached", "--others", "-
 	.filter(Boolean)
 const paths = new Set(files.flatMap((f) => f.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"))))
 
-const operational = (f: string) =>
-	f.endsWith(".md") && !f.startsWith("audit/") && (!f.startsWith("implementations-plan/") || /^implementations-plan\/(archive\/)?[^/]+\.md$/.test(f))
+const operational = (f: string) => f.endsWith(".md")
 
 const INLINE = /\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g
 const REFERENCE = /^\s*\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)/gm
@@ -39,10 +36,10 @@ function links(doc: string): string[] {
 }
 
 test("resolveLink skips URLs and anchors and resolves the rest from the doc's directory", () => {
-	expect(resolveLink("apps/tools/README.md", "https://example.com/a")).toBeNull()
-	expect(resolveLink("apps/tools/README.md", "#quick-start")).toBeNull()
-	expect(resolveLink("apps/tools/README.md", "../../AGENTS.md#plans")).toBe("AGENTS.md")
-	expect(resolveLink("apps/tools/README.md", "./tests/browser/")).toBe("apps/tools/tests/browser")
+	expect(resolveLink("apps/web/README.md", "https://example.com/a")).toBeNull()
+	expect(resolveLink("apps/web/README.md", "#quick-start")).toBeNull()
+	expect(resolveLink("apps/web/README.md", "../../AGENTS.md#plans")).toBe("AGENTS.md")
+	expect(resolveLink("apps/web/README.md", "./tests/browser/")).toBe("apps/web/tests/browser")
 	expect(resolveLink("README.md", "/UPDATE.md")).toBe("UPDATE.md")
 	expect(resolveLink("README.md", "a%20b.md")).toBe("a b.md")
 })
@@ -52,7 +49,7 @@ test("every relative link in an operational doc resolves", () => {
 	const found = docs.flatMap((doc) => links(doc).map((target) => ({ doc, target, path: resolveLink(doc, target) })))
 	const relative = found.filter((l) => l.path !== null)
 	expect(docs).toContain("AGENTS.md")
-	expect(relative.length).toBeGreaterThan(40)
+	expect(relative.length).toBeGreaterThan(22)
 	expect(relative.filter((l) => !paths.has(l.path as string)).map((l) => `${l.doc}: ${l.target}`)).toEqual([])
 })
 

@@ -38,9 +38,11 @@ describe("aggregate-status.sh", () => {
 		expect(aggregate("", "false", "skipped")).toBe(1)
 	})
 
-	test("the tools e2e status job runs this script with the three results", () => {
-		const wf = readFileSync(join(ROOT, ".github/workflows/pr-tools-e2e.yml"), "utf8")
+	test("the bridge-contracts status job runs this script with the three results", () => {
+		const wf = readFileSync(join(ROOT, ".github/workflows/bridge-contracts.yml"), "utf8")
 		expect(wf).toContain("scripts/ci-cd/aggregate-status.sh")
-		expect(wf).toMatch(/aggregate-status\.sh "\$\{\{ needs\.changes\.result \}\}" "\$\{\{ needs\.changes\.outputs\.run \}\}" "\$\{\{ needs\.shards\.result \}\}"/)
+		expect(wf).toMatch(
+			/aggregate-status\.sh "\$\{\{ needs\.changes\.result \}\}" "\$\{\{ needs\.changes\.outputs\.contracts \}\}" "\$\{\{ needs\.suites\.result \}\}"/,
+		)
 	})
 })

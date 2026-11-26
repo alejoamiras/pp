@@ -13,7 +13,7 @@
  *   required-checks.sh print --branch main [--json]           # read-only; save the JSON as the snapshot
  *   required-checks.sh --apply --branch main --expect <file>   # rename per RENAMES, verify, print rollback
  *   required-checks.sh --add a,b --branch main --expect <file> # append checks (app_id = GitHub Actions)
- *   required-checks.sh labels                                 # create/update the e2e:* labels (idempotent)
+ *   required-checks.sh labels                                 # create/update the force-run labels (idempotent)
  */
 import { parseArgs } from "node:util"
 
@@ -27,9 +27,7 @@ export const GITHUB_ACTIONS_APP_ID = 15368
 export const RENAMES: Readonly<Record<string, string>> = {}
 
 /** The force-run labels the PR gates honor; `labels` creates them so a PR can carry them. */
-export const LABELS: readonly { name: string; description: string; color: string }[] = [
-	{ name: "e2e:tools", description: "Force the tools browser e2e suite on this PR", color: "0e8a16" },
-]
+export const LABELS: readonly { name: string; description: string; color: string }[] = []
 
 const byContext = (a: Check, b: Check) => a.context.localeCompare(b.context) || a.app_id - b.app_id
 

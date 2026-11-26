@@ -1,6 +1,6 @@
 /**
  * Anti-drift guard for the CI paths-filter gates. Each gate's target graph is recomputed from the
- * workspace manifests and the live filter must still cover it, so a new `@unleashed/*` dependency
+ * workspace manifests and the live filter must still cover it, so a new `@pp/*` dependency
  * added without gating it, or a `!` negation (dorny's some-quantifier footgun), fails here. The
  * npm packages the workspaces import sit outside that graph: a bump moves `bun.lock`, which every
  * gate covers. The unit-test workflow runs this file on every PR; the last test pins that.
@@ -10,19 +10,19 @@ import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 
 const ROOT = join(import.meta.dir, "..", "..")
-// Deployable leaves live under apps/, libraries under packages/.
-const APPS = new Set(["tools", "landing"])
+// Deployable leaves live under apps/ (none yet), libraries under packages/.
+const APPS = new Set<string>()
 const dirOf = (pkg: string): string => (APPS.has(pkg) ? "apps" : "packages")
 
-/** Direct `@unleashed/*` workspace deps of a package (runtime + dev — what it's built/tested from). */
+/** Direct `@pp/*` workspace deps of a package (runtime + dev — what it's built/tested from). */
 function directDeps(pkg: string): string[] {
   const p = JSON.parse(readFileSync(join(ROOT, dirOf(pkg), pkg, "package.json"), "utf8"))
   return Object.keys({ ...p.dependencies, ...p.devDependencies })
-    .filter((k) => k.startsWith("@unleashed/"))
-    .map((k) => k.slice("@unleashed/".length))
+    .filter((k) => k.startsWith("@pp/"))
+    .map((k) => k.slice("@pp/".length))
 }
 
-/** Transitive `@unleashed/*` dependency closure of a target (EXCLUDING the target itself). */
+/** Transitive `@pp/*` dependency closure of a target (EXCLUDING the target itself). */
 function transitiveDeps(target: string): string[] {
   const seen = new Set<string>()
   const walk = (pkg: string) => {
@@ -60,7 +60,7 @@ function assertGraphCovered(patterns: string[], target: string, label: string) {
   }
 }
 
-const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "pr-tools-e2e.yml", "actionlint.yml"]
+const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml"]
 
 /**
  * The check-run each PR workflow's aggregator job produces. Branch protection matches these by
@@ -69,7 +69,6 @@ const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "pr-tools-e2e.
 const AGGREGATOR_CHECKS: Record<string, string> = {
   "pr-quick.yml": "quality-status",
   "bridge-contracts.yml": "bridge-contracts-status",
-  "pr-tools-e2e.yml": "tools-e2e-status",
   "actionlint.yml": "actionlint-status",
 }
 
@@ -147,61 +146,34 @@ describe("CI behavior-gating guard", () => {
     }
   })
 
-  test("the tools build covers the tools graph, the files bridge-core bundles from outside it, and its workflow", () => {
-    const tools = filtersOf("pr-quick.yml")["tools"]
-    assertGraphCovered(tools, "tools", "tools")
+  test("the e2e kit build covers the kit graph, the sandbox harness it imports, and the files bridge-core bundles", () => {
+    const kit = filtersOf("pr-quick.yml")["kit"]
+    assertGraphCovered(kit, "e2e-kit", "kit")
+    expect(kit, "the kit imports @pp/bridge-core/sandbox, which lives in scripts/").toContain("packages/bridge-core/scripts/**")
     const outside = importsOutside("bridge-core")
     expect(outside.length, "bridge-core bundles the hub artifact from contracts/").toBeGreaterThan(0)
     for (const path of outside) {
-      expect(tools.some((pattern) => new Bun.Glob(pattern).match(path)), `tools must gate ${path}`).toBe(true)
+      expect(kit.some((pattern) => new Bun.Glob(pattern).match(path)), `kit must gate ${path}`).toBe(true)
     }
-    expect(tools).toContain(".github/workflows/_build-tools.yml")
     const wf = workflow("pr-quick.yml")
-    expect(wf.jobs.changes.outputs["needs-tools-build"]).toBe("${{ steps.compute.outputs.needs-tools-build }}")
-    expect(wf.jobs["build-tools"].if).toBe("needs.changes.outputs.needs-tools-build == 'true'")
+    expect(wf.jobs.changes.outputs["needs-kit-build"]).toBe("${{ steps.compute.outputs.needs-kit-build }}")
+    expect(wf.jobs["build-e2e-kit"].if).toBe("needs.changes.outputs.needs-kit-build == 'true'")
   })
 
-  test("the landing build covers the landing graph and its workflow, and shares the tools app's Playwright", () => {
-    const landing = filtersOf("pr-quick.yml")["landing"]
-    assertGraphCovered(landing, "landing", "landing")
-    expect(landing).toContain(".github/workflows/_build-landing.yml")
-    const wf = workflow("pr-quick.yml")
-    expect(wf.jobs.changes.outputs["needs-landing-build"]).toBe("${{ steps.compute.outputs.needs-landing-build }}")
-    expect(wf.jobs["build-landing"].if).toBe("needs.changes.outputs.needs-landing-build == 'true'")
-    // setup-playwright installs Chromium with the tools app's Playwright binary.
-    const pin = (app: string) => JSON.parse(readFileSync(join(ROOT, "apps", app, "package.json"), "utf8")).devDependencies["@playwright/test"]
-    expect(pin("landing")).toBe(pin("tools"))
-  })
-
-  test("bridge-contracts covers the contracts, the harness package, its graph, and the adopted manifests", () => {
+  test("bridge-contracts covers the contracts, the harness package, its graph, and the shared vitest config", () => {
     const contracts = filtersOf("bridge-contracts.yml")["contracts"]
     expect(contracts, "the Solidity + Noir sources").toContain("contracts/bridge/**")
     assertGraphCovered(contracts, "bridge-core", "bridge-contracts")
-    for (const manifest of ["apps/tools/public/testnet-bridge.json", "apps/tools/public/mainnet-bridge.json"]) {
-      expect(contracts, "a manifest bump is the frontend adopting a generation — the round trips must re-run").toContain(manifest)
-    }
-    for (const p of ["package.json", "bun.lock", "bunfig.toml", "patches/**", ".github/actions/setup-aztec/**", ".github/actions/setup-bun/**"]) {
-      expect(contracts, `bridge-contracts must gate ${p}`).toContain(p)
-    }
-  })
-
-  test("tools-e2e covers the tools graph, the bridge contracts, the harness package, and its own pipeline", () => {
-    const filter = filtersOf("pr-tools-e2e.yml")["tools-e2e"]
-    assertGraphCovered(filter, "tools", "tools-e2e")
-    expect(filter, "the sandbox deploys the contracts the UI bridges through").toContain("contracts/bridge/**")
-    expect(filter, "bridge-core's scripts ARE the sandbox harness").toContain("packages/bridge-core/**")
     for (const p of [
+      "vitest.base.ts",
       "package.json",
       "bun.lock",
       "bunfig.toml",
       "patches/**",
-      ".github/workflows/pr-tools-e2e.yml",
-      ".github/workflows/_tools-e2e.yml",
       ".github/actions/setup-aztec/**",
       ".github/actions/setup-bun/**",
-      ".github/actions/setup-playwright/**",
     ]) {
-      expect(filter, `tools-e2e must gate ${p}`).toContain(p)
+      expect(contracts, `bridge-contracts must gate ${p}`).toContain(p)
     }
   })
 })
