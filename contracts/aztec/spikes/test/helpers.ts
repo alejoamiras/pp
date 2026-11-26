@@ -73,7 +73,7 @@ export interface ProvenOnly {
 	anchorTimestamp: bigint
 	/** As the kernel set it; the PXE may round the contract's request down. */
 	expirationTimestamp: bigint
-	/** Return values of the called function (the account entrypoint's first nested call). */
+	/** Return values of the called private function (the account entrypoint's first nested call); empty for a public one. */
 	returnValues: bigint[]
 }
 
@@ -86,11 +86,10 @@ export async function proveOnly(who: Actor, interaction: ContractFunctionInterac
 	const req = await w.createTxExecutionRequestFromPayloadAndFee(payload, who.address, fee)
 	const proven = await w.pxe.proveTx(req, { scopes: [who.address], senderForTags: who.address })
 	const nested = proven.privateExecutionResult.entrypoint.nestedExecutionResults[0]
-	if (!nested) throw new Error("no nested call under the account entrypoint")
 	return {
 		tx: await proven.toTx(),
 		anchorTimestamp: proven.publicInputs.constants.anchorBlockHeader.globalVariables.timestamp,
 		expirationTimestamp: proven.publicInputs.expirationTimestamp,
-		returnValues: nested.returnValues.map((f) => f.toBigInt()),
+		returnValues: nested?.returnValues.map((f) => f.toBigInt()) ?? [],
 	}
 }

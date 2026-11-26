@@ -72,6 +72,60 @@ unconstrained fn transfer_failure_other_label_cannot_cover() {
     env.call_private(bob, LabelToken::at(token).transfer_private(carol, L1, 11));
 }
 
+#[test]
+unconstrained fn completed_partial_carries_its_label_and_spends_under_it() {
+    let (mut env, token, minter, bob) = setup();
+    let carol = env.create_light_account();
+    env.call_public(minter, LabelToken::at(token).mint_public(minter, 100));
+    let commitment = env.call_private(bob, LabelToken::at(token).prepare_partial(bob, L1, minter));
+    env.call_public(minter, LabelToken::at(token).complete_partial(commitment, 40));
+
+    assert_eq(env.view_public(LabelToken::at(token).balance_of_public(minter)), 60);
+    assert_eq(balance(env, token, bob, L1), 40);
+    assert_eq(balance(env, token, bob, L2), 0);
+    env.call_private(bob, LabelToken::at(token).transfer_private(carol, L1, 40));
+    assert_eq(balance(env, token, carol, L1), 40);
+}
+
+#[test]
+unconstrained fn third_party_prepares_for_the_owner() {
+    let (mut env, token, minter, bob) = setup();
+    let carol = env.create_light_account();
+    env.call_public(minter, LabelToken::at(token).mint_public(minter, 100));
+    let commitment =
+        env.call_private(carol, LabelToken::at(token).prepare_partial(bob, L1, minter));
+    env.call_public(minter, LabelToken::at(token).complete_partial(commitment, 25));
+    assert_eq(balance(env, token, bob, L1), 25);
+}
+
+// The revert undoes the second debit and the second note hash with the rest of the public call.
+#[test(should_fail_with = "Attempted to emit duplicate nullifier")]
+unconstrained fn complete_failure_second_completion() {
+    let (env, token, minter, bob) = setup();
+    env.call_public(minter, LabelToken::at(token).mint_public(minter, 100));
+    let commitment = env.call_private(bob, LabelToken::at(token).prepare_partial(bob, L1, minter));
+    env.call_public(minter, LabelToken::at(token).complete_partial(commitment, 10));
+    env.call_public(minter, LabelToken::at(token).complete_partial(commitment, 10));
+}
+
+#[test(should_fail_with = "invalid partial note or completer")]
+unconstrained fn complete_failure_wrong_completer() {
+    let (mut env, token, minter, bob) = setup();
+    let carol = env.create_light_account();
+    env.call_public(minter, LabelToken::at(token).mint_public(carol, 100));
+    let commitment = env.call_private(bob, LabelToken::at(token).prepare_partial(bob, L1, minter));
+    env.call_public(carol, LabelToken::at(token).complete_partial(commitment, 10));
+}
+
+#[test]
+unconstrained fn shield_debits_the_shielder() {
+    let (env, token, minter, bob) = setup();
+    env.call_public(minter, LabelToken::at(token).mint_public(bob, 50));
+    env.call_private(bob, LabelToken::at(token).shield(L1, 20));
+    assert_eq(env.view_public(LabelToken::at(token).balance_of_public(bob)), 30);
+    assert_eq(balance(env, token, bob, L1), 20);
+}
+
 #[test(should_fail_with = "caller is not the minter")]
 unconstrained fn mint_failure_not_minter() {
     let (env, token, _minter, bob) = setup();
