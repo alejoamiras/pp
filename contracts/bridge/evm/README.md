@@ -41,7 +41,10 @@ bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by nam
   cap. Its owner is the **guardian**: one entry pause (a delay, never a transfer of funds) behind
   `Ownable2Step`, renounce disabled. Entries start paused: nothing can sweep a clone, so a spend
   accepted by a generation bound to the wrong hub or vault would be stuck for good, and the guardian
-  opens entries only once the bindings check out.
+  opens entries only once the bindings check out (bridge-core's `assertGenerationBindings`, with the
+  rollup endpoints from `rollupEndpointsOf`) **and** the hub at `L2_HUB` is deployed from the v1 hub
+  artifact. A hub that claims only the legacy messages cannot credit a v1 bridge, so its spend would
+  be stuck the same way.
 - **`ProcessorPortalImpl`** is the implementation every clone delegates to: the vault, the cap and
   the Aztec Inbox, Outbox and version are its immutables, and each clone's only storage is two
   counters, `grossAccepted` and `totalPaid`. `bridgeFromPool` spends one pool note into the clone

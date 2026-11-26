@@ -26,6 +26,8 @@ function chain(overrides: Record<string, unknown> = {}) {
 		[`${expected.factory}.IMPLEMENTATION`]: expected.implementation.toUpperCase().replace("0X", "0x"),
 		[`${expected.factory}.L2_HUB`]: expected.hub,
 		[`${expected.factory}.owner`]: expected.guardian,
+		[`${expected.factory}.INBOX`]: expected.inbox,
+		[`${expected.factory}.ROLLUP_VERSION`]: expected.rollupVersion,
 		[`${expected.implementation}.FACTORY`]: expected.factory,
 		[`${expected.implementation}.L2_HUB`]: expected.hub,
 		[`${expected.implementation}.INBOX`]: expected.inbox,
@@ -57,13 +59,14 @@ describe("assertGenerationBindings", () => {
 	it("passes a generation whose every binding agrees, case-insensitively", async () => {
 		const { client, reads } = chain()
 		await expect(assertGenerationBindings(client, expected)).resolves.toBeUndefined()
-		expect(reads).toHaveLength(10 + 2 * expected.portals.length)
+		expect(reads).toHaveLength(12 + 2 * expected.portals.length)
 	})
 
 	it("names the first binding that disagrees, and reads no implementation the factory does not point at", async () => {
 		const stranger = addr(0x5555)
 		const [first, second] = expected.portals
 		const cases: [string, unknown][] = [
+			[`${expected.factory}.INBOX`, stranger],
 			[`${expected.implementation}.FACTORY`, stranger],
 			[`${expected.implementation}.OUTBOX`, stranger],
 			[`${expected.implementation}.ROLLUP_VERSION`, expected.rollupVersion + 1n],

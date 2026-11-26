@@ -110,7 +110,7 @@ contract FormalProcessorPortalTest is Test {
     ) public {
         _partlyPay(paidBefore, donation);
         vm.assume(payee != address(0) && payee != address(clone));
-        vm.assume(amount > 0 && amount <= clone.grossAccepted() - clone.totalPaid());
+        vm.assume(amount > 0 && amount <= SEED - paidBefore);
         if (ragequit) vm.assume(label > 0 && label < P);
         vm.prank(GUARDIAN);
         factory.setEntriesPaused(paused);
@@ -265,7 +265,7 @@ contract FormalProcessorPortalTest is Test {
         vm.assume(payee != address(0) && payee != address(clone));
         vm.assume(amount > 0 && amount <= type(uint128).max);
         if (ragequit) vm.assume(label > 0 && label < P);
-        uint256 outstanding = clone.grossAccepted() - clone.totalPaid();
+        uint256 outstanding = SEED - paidBefore;
         vm.assume(amount > outstanding);
         _pause(paused);
         _assertSettleRefused(
@@ -326,9 +326,9 @@ contract FormalProcessorPortalTest is Test {
     }
 
     function test_canary_honestPaymentAndValidSettlesPass() public {
+        _partlyPay(400, 50);
         (bool ok,) = _bridgeCall(_signals(1, 2, 1000, uint160(address(token))), bytes32(uint256(3)));
         assertTrue(ok, "an honest payment was refused");
-        _partlyPay(400, 50);
         uint256 outstanding = clone.grossAccepted() - clone.totalPaid();
         _expectSettleRevert(
             true,
@@ -358,15 +358,19 @@ contract FormalProcessorPortalTest is Test {
     }
 
     /// Leaves `0 < totalPaid < grossAccepted` and a donated surplus, so a reserve check that reads the
-    /// wrong counter or the balance cannot hide behind a fresh clone.
+    /// wrong counter or the balance cannot hide behind a fresh clone. The payout consumes epoch 0's
+    /// ticket, never the epoch 1 ticket the proofs then settle, and its own accounting is asserted,
+    /// so the proofs can take the reserve from `paid` rather than from the counters under test.
     function _partlyPay(uint256 paid, uint256 donation) internal {
-        vm.assume(paid > 0 && paid < clone.grossAccepted());
+        vm.assume(paid > 0 && paid < SEED);
         vm.assume(donation <= SEED);
         token.mint(address(clone), donation);
-        try clone.settlePublicExit(address(0xBEEF), paid, Epoch.wrap(1), 1, 0, new bytes32[](0)) {}
+        try clone.settlePublicExit(address(0xBEEF), paid, Epoch.wrap(0), 1, 0, new bytes32[](0)) {}
         catch {
             assert(false);
         }
+        assert(clone.grossAccepted() == SEED && clone.totalPaid() == paid);
+        assert(token.balanceOf(address(clone)) == SEED + donation - paid);
     }
 
     function _pause(bool paused) internal {

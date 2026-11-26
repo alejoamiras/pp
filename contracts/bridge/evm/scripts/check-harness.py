@@ -13,6 +13,7 @@ import re
 import sys
 
 PORTAL, HARNESS = "ProcessorPortalImpl", "ProcessorPortalHarness"
+PORTAL_SOURCE = "src/ProcessorPortalImpl.sol"
 ARTIFACTS = {
     PORTAL: "out/ProcessorPortalImpl.sol/ProcessorPortalImpl.json",
     HARNESS: "out/ProcessorPortalHarness.sol/ProcessorPortalHarness.json",
@@ -63,9 +64,17 @@ def hash_body_errors(ast, fn):
 def harness_shape_errors(ast):
     [contract] = [n for n in ast["nodes"] if n.get("nodeType") == "ContractDefinition" and n["name"] == HARNESS]
     errors = []
-    bases = [b["baseName"]["name"] for b in contract["baseContracts"]]
-    if bases != [PORTAL]:
-        errors.append(f"the harness inherits {bases}, not exactly [{PORTAL}]")
+    bases = [b["baseName"] for b in contract["baseContracts"]]
+    # A name can be rebound by a different import, so the base must resolve to the portal's own file.
+    portal_ids = {
+        alias["foreign"]["referencedDeclaration"]
+        for n in ast["nodes"]
+        if n["nodeType"] == "ImportDirective" and n["absolutePath"] == PORTAL_SOURCE
+        for alias in n["symbolAliases"]
+        if alias["foreign"]["name"] == PORTAL
+    }
+    if [b["name"] for b in bases] != [PORTAL] or bases[0]["referencedDeclaration"] not in portal_ids:
+        errors.append(f"the harness must inherit exactly {PORTAL}, imported from {PORTAL_SOURCE}")
     members = contract["nodes"]
     ctors = [m for m in members if m["nodeType"] == "FunctionDefinition" and m["kind"] == "constructor"]
     hashes = [

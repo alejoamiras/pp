@@ -58,7 +58,8 @@ export async function rollupEndpointsOf(node: RollupInfoSource): Promise<Pick<Ex
 }
 
 /**
- * Reads the factory's `IMPLEMENTATION`, `L2_HUB` and `owner`; the implementation's `FACTORY`,
+ * Reads the factory's `IMPLEMENTATION`, `L2_HUB`, `owner`, `INBOX` (where `createPortal` registers)
+ * and `ROLLUP_VERSION`; the implementation's `FACTORY`,
  * `L2_HUB`, `INBOX`, `OUTBOX`, `ROLLUP_VERSION`, `POOL` and `LIFETIME_CAP`; and for each expected
  * portal, `portalOf(token)` and the clone's `underlying()`. The implementation is read only after the factory is shown to point at it.
  * Says nothing about the entry pause: opening it is the caller's next step.
@@ -77,6 +78,8 @@ export async function assertGenerationBindings(client: BindingsClient, expected:
 	check("factory.IMPLEMENTATION", await client.readContract({ ...factory, functionName: "IMPLEMENTATION" }), expected.implementation)
 	check("factory.L2_HUB", await client.readContract({ ...factory, functionName: "L2_HUB" }), expected.hub)
 	check("factory.owner", await client.readContract({ ...factory, functionName: "owner" }), expected.guardian)
+	check("factory.INBOX", await client.readContract({ ...factory, functionName: "INBOX" }), expected.inbox)
+	check("factory.ROLLUP_VERSION", await client.readContract({ ...factory, functionName: "ROLLUP_VERSION" }), expected.rollupVersion)
 	check("implementation.FACTORY", await client.readContract({ ...implementation, functionName: "FACTORY" }), expected.factory)
 	check("implementation.L2_HUB", await client.readContract({ ...implementation, functionName: "L2_HUB" }), expected.hub)
 	check("implementation.INBOX", await client.readContract({ ...implementation, functionName: "INBOX" }), expected.inbox)

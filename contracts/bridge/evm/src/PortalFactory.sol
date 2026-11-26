@@ -67,6 +67,10 @@ contract PortalFactory is Ownable2Step, IPortalFactory {
         revert RenounceDisabled();
     }
 
+    /// @notice Opens or closes entries for every portal of this generation; settles are never paused.
+    /// Open only once the bindings check out and the hub this factory names is deployed with the v1
+    /// claim: a spend accepted while no hub can claim its message is stuck, since nothing can sweep a
+    /// clone.
     function setEntriesPaused(bool paused) external onlyOwner {
         entriesPaused = paused;
         emit EntriesPausedChanged(paused);
