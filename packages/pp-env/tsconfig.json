@@ -1,0 +1,21 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ESNext"],
+		"strict": true,
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"noUncheckedIndexedAccess": true,
+		"isolatedModules": true,
+		"skipLibCheck": true,
+		"resolveJsonModule": true,
+		"types": ["bun"],
+		"paths": {
+			"@ppv2/evm-sdk": ["./.ppv2/packages/evm-sdk/dist/index"],
+			"@ppv2/mock-asp/evm": ["./.ppv2/packages/mock-asp/dist/evm"]
+		}
+	},
+	"include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+}
