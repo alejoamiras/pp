@@ -1,2 +1,4 @@
-SwapBridgeRouterTest:test_gas_bridge_firstTime() (gas: 655910)
-SwapBridgeRouterTest:test_gas_bridge_known() (gas: 240769)
+PortalGasTest:test_gas_createPortal_freshToken() (gas: 295368)
+PortalGasTest:test_gas_depositToAztecPrivate() (gas: 91190)
+PortalGasTest:test_gas_depositToAztecPublic() (gas: 92148)
+PortalGasTest:test_gas_withdraw() (gas: 186823)
