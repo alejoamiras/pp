@@ -68,7 +68,7 @@ for c in "${crates[@]}"; do
 			fresh="$here/$c/target/$name"
 			# Only a contract crate has a class id to bind; decided from the manifest, never from the
 			# artifact under test (a truncated artifact must not skip its own check).
-			grep -qE '^type *= *"contract"' "$here/$c/Nargo.toml" || { echo "· $c: not a contract crate, nothing to bind"; continue; }
+			grep -qE "^type *= *[\"']contract[\"']" "$here/$c/Nargo.toml" || { echo "· $c: not a contract crate, nothing to bind"; continue; }
 			if [ ! -f "$fresh" ]; then
 				echo "✖ $c: the source no longer produces $name" >&2
 				drift=1
