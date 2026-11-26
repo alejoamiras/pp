@@ -17,14 +17,17 @@ const isSuperseded = (err: unknown) => err instanceof ConnectError && err.code =
 /**
  * The Connect flow over whichever connector the build's data source provides. Closing the dialog
  * disconnects first, so the connector drops any continuation still waiting on the wallet; a remote
- * disconnect returns the panel to idle.
+ * disconnect returns the panel to idle. `onConnection` hears every change of the live connection
+ * synchronously, before React renders it, and hears `null` as soon as a new attempt starts.
  */
-export function useConnect(source: DataSource) {
+export function useConnect(source: DataSource, onConnection: (c: AztecConnection | null) => void = () => {}) {
 	const [step, setStep] = useState<ConnectStep>({ kind: "idle" })
 	const connector = useRef<WalletPort | null>(null)
 	const discovery = useRef<AbortController | null>(null)
 	const answer = useRef<((matches: boolean) => void) | null>(null)
 	const offDisconnect = useRef<(() => void) | null>(null)
+	const notify = useRef(onConnection)
+	notify.current = onConnection
 
 	useEffect(() => () => offDisconnect.current?.(), [])
 
@@ -49,7 +52,10 @@ export function useConnect(source: DataSource) {
 			if (!connector.current) {
 				const c = await source.wallet()
 				connector.current = c
-				offDisconnect.current = c.onDisconnect(() => setStep({ kind: "idle" }))
+				offDisconnect.current = c.onDisconnect(() => {
+					notify.current(null)
+					setStep({ kind: "idle" })
+				})
 			}
 			await connector.current.discover(addOption, ac.signal)
 			setStep((s) => (s.kind === "discovering" ? { ...s, done: true } : s))
@@ -75,9 +81,12 @@ export function useConnect(source: DataSource) {
 			const c = connector.current
 			if (!c) return
 			discovery.current?.abort()
+			notify.current(null)
 			setStep({ kind: "opening" })
 			try {
-				setStep({ kind: "connected", connection: await c.connect(option, confirm) })
+				const connection = await c.connect(option, confirm)
+				notify.current(connection)
+				setStep({ kind: "connected", connection })
 			} catch (err) {
 				if (!isSuperseded(err)) fail(err)
 			}
@@ -87,6 +96,7 @@ export function useConnect(source: DataSource) {
 
 	const close = useCallback(async () => {
 		discovery.current?.abort()
+		notify.current(null)
 		setStep({ kind: "idle" })
 		await connector.current?.disconnect()
 		settleEmoji(false)
@@ -94,3 +104,5 @@ export function useConnect(source: DataSource) {
 
 	return { step, start, choose, answerEmoji: settleEmoji, close }
 }
+
+export type Connect = ReturnType<typeof useConnect>

@@ -1,8 +1,7 @@
-import type { DataSource } from "../../data/source"
+import { useApp } from "../../app/context"
 import type { AztecConnection } from "../../data/wallet/types"
-import { ActionButton, Panel } from "../../ui"
+import { ActionButton } from "../../ui"
 import { ConnectDialog } from "./ConnectDialog"
-import { useConnect } from "./useConnect"
 
 function Connected({ connection, onDisconnect }: { connection: AztecConnection; onDisconnect(): void }) {
 	return (
@@ -32,25 +31,28 @@ function Connected({ connection, onDisconnect }: { connection: AztecConnection; 
 	)
 }
 
-export function ConnectPanel({ source }: { source: DataSource }) {
-	const { step, start, choose, answerEmoji, close } = useConnect(source)
-	const connected = step.kind === "connected" ? step.connection : null
+/** The Aztec wallet: a connect button, or the connected wallet and its accounts; the dialog runs the flow. */
+export function AztecConnect() {
+	const { connect, connection } = useApp()
 	return (
-		<Panel data-testid="connect-panel" data-state={step.kind} title="Aztec" subtitle="Private balances, by label.">
-			{connected ? (
-				<Connected connection={connected} onDisconnect={() => void close()} />
+		<>
+			{connection ? (
+				<Connected connection={connection} onDisconnect={() => void connect.close()} />
 			) : (
-				<ActionButton variant="primary" data-testid="connect-button" onClick={() => void start()}>
-					Connect Aztec wallet
-				</ActionButton>
+				<div className="grid justify-items-start gap-3">
+					<p className="text-ink-2">Connect the Aztec wallet that will hold your bridged funds.</p>
+					<ActionButton variant="primary" data-testid="connect-button" onClick={() => void connect.start()}>
+						Connect Aztec wallet
+					</ActionButton>
+				</div>
 			)}
 			<ConnectDialog
-				step={step}
-				onChoose={(o) => void choose(o)}
-				onAnswer={answerEmoji}
-				onRetry={() => void start()}
-				onClose={() => void close()}
+				step={connect.step}
+				onChoose={(o) => void connect.choose(o)}
+				onAnswer={connect.answerEmoji}
+				onRetry={() => void connect.start()}
+				onClose={() => void connect.close()}
 			/>
-		</Panel>
+		</>
 	)
 }
