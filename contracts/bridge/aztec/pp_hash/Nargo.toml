@@ -1,0 +1,11 @@
+[package]
+name = "pp_hash"
+type = "lib"
+authors = [""]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+# The same aztec-nr spelling as every crate, so `LabelPath`'s Serialize/Deserialize are the
+# traits a contract argument needs. The only crate that names poseidon: v0.3.0 is aztec-nr's pin.
+aztec = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", directory = "aztec" }
+poseidon = { git = "https://github.com/noir-lang/poseidon", tag = "v0.3.0" }
