@@ -93,7 +93,42 @@ function vitestSuite(): Suite {
 	}
 }
 
-const SUITES: Record<string, () => Suite> = { ts: vitestSuite }
+type ForgeReport = Record<string, { test_results?: Record<string, { status: string; reason: string | null }> }>
+
+/** Needs the pinned forge on PATH; the mutant lives under vectors/, inside foundry.toml's read grant. */
+function forgeSuite(): Suite {
+	return {
+		lang: "sol",
+		sections: ["tags", "data", "in", "out", "ragequit", "rejections"],
+		run(vectorsPath) {
+			const proc = spawnSync("forge", ["test", "--match-contract", "BridgeMessageV1Test", "--json"], {
+				cwd: join(PKG, "..", "..", "contracts", "bridge", "evm"),
+				env: { ...process.env, BRIDGE_SPEC_VECTORS: vectorsPath },
+				timeout: TIMEOUT_MS,
+				encoding: "utf8",
+				maxBuffer: 64 * 1024 * 1024,
+			})
+			if (proc.error || proc.signal) return { tests: new Map(), error: `forge did not finish: ${proc.error ?? proc.signal}` }
+			let report: ForgeReport
+			try {
+				report = JSON.parse(proc.stdout.slice(proc.stdout.indexOf("{")))
+			} catch {
+				return { tests: new Map(), error: `no forge report:\n${proc.stdout.slice(-2000)}\n${proc.stderr.slice(-2000)}` }
+			}
+			const results = Object.values(report).flatMap((s) => Object.entries(s.test_results ?? {}))
+			// `test_in()` reports section `in`; fuzz tests keep their names and must pass in the control run.
+			const tests = new Map(
+				results.map(([name, r]) => [
+					name.replace(/^test_(\w+)\(\)$/, "$1"),
+					{ status: r.status === "Success" ? "passed" : "failed", message: r.reason ?? "" },
+				]),
+			)
+			return { tests, error: tests.size === 0 ? `suite did not run:\n${proc.stderr.slice(-2000)}` : undefined }
+		},
+	}
+}
+
+const SUITES: Record<string, () => Suite> = { ts: vitestSuite, sol: forgeSuite }
 
 function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	if (outcome.error) return [`control: ${outcome.error}`]
