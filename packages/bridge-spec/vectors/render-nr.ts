@@ -9,7 +9,10 @@ const tuple = (xs: readonly string[]) => `(${xs.join(", ")})`
 const path = (p: { index: number; depth: number; siblings: readonly string[] }) =>
 	`LabelPath { index: ${p.index}, depth: ${p.depth}, siblings: [${p.siblings.map(n).join(", ")}] }`
 
-// Unconstrained: the same functions run as Brillig, so section loops need no unrolling.
+// Unconstrained: the same functions run as Brillig, so section loops need no unrolling. The loop runs
+// to `cases.len()`, never a literal, so it covers every row; nargo-check.ts requires that bound.
+const NOIR_LOOP = "    for i in 0..cases.len() {"
+
 function sectionTest(name: string, type: string, rows: readonly string[], body: string): string {
 	return [
 		"#[test]",
@@ -17,7 +20,7 @@ function sectionTest(name: string, type: string, rows: readonly string[], body: 
 		`    let cases: [${type}; ${rows.length}] = [`,
 		...rows.map((r) => `        ${r},`),
 		"    ];",
-		`    for i in 0..${rows.length} {`,
+		NOIR_LOOP,
 		body,
 		"    }",
 		"}",

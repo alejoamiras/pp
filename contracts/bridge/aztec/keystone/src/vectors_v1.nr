@@ -96,7 +96,7 @@ unconstrained fn v1_in() {
         (0x14efa4fd36d8c6666f4071e4a6a38b42ef795a31e0dfba72c1f7eafbe4cad9da, 0x2ec9993a5dbf77cbd9e06d6c7b626c4b4fbc26beb37d97ce77886679972d7600, 0x470f489d90c610321ff7af89ec4389c1, 0xe99752e232b500640cbf042c1cf4d25dac05c283a600023ec809416d6d59a4),
         (0x2d7b5de5b1f8b962b5c5ebb2dd26001b498b24a6dcf9f25f23b3a1573264c200, 0x7ae174c714df2d28a835963d9829837a427c905f004fb848495e680c46ea93c, 0x373dad66b22c034aa9f110fb1c7a53d, 0x3d4f4aab8754c57562d29d93d1397e19663b92f5f80bb70248ddb3becdda3c),
     ];
-    for i in 0..73 {
+    for i in 0..cases.len() {
         let (nullifier, change, amount, content) = cases[i];
         assert(bridge_content_v1(nullifier, change, amount) == content, f"in[{i}]");
     }
@@ -175,7 +175,7 @@ unconstrained fn v1_out() {
         (0xc515d4eb815bc26f82782ac9f89dfdd92d00a090, 0xacc86b69eb39ddf1849bb3e8aa2294f3, 0x3638de10eedaff1122aecd4abbb9c1f653cd0bc58f229fb826ce4eb792f800),
         (0x75af5336769776f9f8d0b98d47b3268eff0486fd, 0x5aebf06a3350cb49ad5aa36b23e57f19, 0x925d8e6ae9acd91c3f7b6d1fe5522a61f222751f1edcf4548556e73db18b55),
     ];
-    for i in 0..69 {
+    for i in 0..cases.len() {
         let (payee, amount, content) = cases[i];
         assert(exit_content_v1(EthAddress::from_field(payee), amount) == content, f"out[{i}]");
     }
@@ -256,7 +256,7 @@ unconstrained fn v1_ragequit() {
         (0x14747e790eda480c2548dc53874b85df7f9ccbf0, 0xea58a5b46bb8a063c3588cf0560763ba, 0x9e5bf33c511d455ddee54e7a073ca48c7e4d1bbe1ec1f3cd20425989b948086, 0x166bb4390b9dbe84890d7fff0b496fb309229dc92038fec91446ccdb10f747),
         (0x3fa4b3fc9b2e54913de19c613647e2211f6648a, 0x5c9480cd6c525941c5473a49face8933, 0x5a34e6a2264c758a6af4bf7b2ced0b953398f137bac95de6ef888ea3906b49c, 0x476e9aaf384caf0ae12967e19634e540d186eb3c23d537beb28d278cbd0f53),
     ];
-    for i in 0..71 {
+    for i in 0..cases.len() {
         let (payee, amount, label, content) = cases[i];
         assert(ragequit_content_v1(EthAddress::from_field(payee), amount, label) == content, f"ragequit[{i}]");
     }
@@ -286,7 +286,7 @@ unconstrained fn v1_hash1() {
         (0x2e3a7fd62f22269079df69b59cd155b02c943636f5a3e21f9f1e2e766b96b25f, 0xf1a240fbf9669cd57bebbfc129ef4f3322aab3cd942ef4bdf6f95fcc2742740),
         (0x123c16cdb238159092bfc2b946554736cb43d30eda2bfe04e4e0aa2ae6c0d344, 0x50d83578a293427747c99d784c48d497aeaa1338248f59a292f0bac287a35b4),
     ];
-    for i in 0..20 {
+    for i in 0..cases.len() {
         let (x, out) = cases[i];
         assert(hash_1([x]) == out, f"hash1[{i}]");
     }
@@ -315,7 +315,7 @@ unconstrained fn v1_hash2() {
         (0x19d781726b3a3894751eacc4cc8d19e3512183248d0a8f1f56d2ffc72a325074, 0x9651d0a229175e8d533a5de3d34f23dcbae7902007e94e3b308e48236fbe6e6, 0x2787b548d9ee112ec28bdcd958f1fb54561bb53fccd658ef443ce83631b02adb),
         (0x2f45b86038890bc36e8683995ff1f73d0640b6eea9a0897df3d4cbad9fce6ad0, 0x39db9cd7a998b2bc8063e1a2d4581a0979d4f7aa1a8043087fd1b3db570d820, 0xfc7e3d2595b2b38121a1e53aeafb6abe600a9dcb43219fdfee638d25b44975f),
     ];
-    for i in 0..19 {
+    for i in 0..cases.len() {
         let (a, b, out) = cases[i];
         assert(hash_2([a, b]) == out, f"hash2[{i}]");
     }
@@ -342,7 +342,7 @@ unconstrained fn v1_commitment() {
         (0x2175b2a426018b57c1fa111589874490df1ccbc5fd445e2e778a2d3f9e5a3e, 0x17ceb451ae0d54b0e968f1d66445356c6085e8423014373ee30d65b93dddc853, 0x283505e361b02345d023de5798078eec492f41ea3511f3dbe62ffd499bd03a0),
         (0x403d068232149d3788a5267b9212aa60e32ad58b54174a33bb85edb0b43e4de, 0x1278b8df3abd878b0a7530e3c6a1c39fcf36de184d26b05de13a2c4fe7c6bc56, 0x11e42ef1278c8fb3727c8a9b1749421247b1d3673b0e843929774ea51ceddada),
     ];
-    for i in 0..17 {
+    for i in 0..cases.len() {
         let (precommitment, label, commitment) = cases[i];
         assert(hash_2([precommitment, label]) == commitment, f"commitment[{i}]");
     }
@@ -369,7 +369,7 @@ unconstrained fn v1_asp_leaf() {
         (0x2dcf17f6b5590b2ba7320968f5710778266f266f1283e30e7549b250d43972c2, 0xe171289ad6978dd0ecda4894c238b748c47dba5c7a052cbc9f697f806f3ec7b),
         (0xd743e549723d9256618b0d145c5840cdbf0ebb0303b70ee8ea89b88d181c133, 0x17658d303d5688309d899ce0b5ef0e9d2337c76d8a75fa576392a74d70a09d40),
     ];
-    for i in 0..17 {
+    for i in 0..cases.len() {
         let (label, leaf) = cases[i];
         assert(hash_1([label]) == leaf, f"aspLeaf[{i}]");
     }
@@ -410,7 +410,7 @@ unconstrained fn v1_lean_imt() {
         (0x27e41b3246bec9b16e398115, 0x11db74c1dbdfb2ae9b9eef1411be924846849a0bfb6361f76f287c2df06d1f0b, 0x2ad4f687b3ba533fc05c3d3722ce1db5592af0561d40ff24505d86dd3119ffdd, LabelPath { index: 0, depth: 18, siblings: [0x904609b9f95cbe482038bed9c5d139ed2d1ad937bf015c4d4b129ca145929da, 0x1c0594e6b9d5c137783d38516ba87ac596bfeeb05a0fb9326753aad1406e03ee, 0x2092a3f868ff8f5dbbd76ec36d01cb90f83eee595cdede3b1e2abb74f75f5ff7, 0xb066886380695e4d3b055d26456d6cae1f88f0356d500aebef6c5b1318a0509, 0x29cd782a2b848bfa1f68737df346fac9058a2c7a0089eabfb867200c34f3cc13, 0x14b18ad1f90aa19ff95a76a1ea33f87755cbc4f869c96a6dcb7652c3707896d1, 0x1dc2304a49d2a380e4cea388698839df58397a166864598f73411fe9e0a607d4, 0x71ffe34bdfd496daf1e04f77e2d51d047d9e3f279267ffdaa02a3d831457a17, 0x278d1a7d6bd3d6e5ca0a082f2ffabf9e77b5daf405d9ea8150ab286c569e9626, 0x1183a69dd1f5ac068e301a96fb65a349bb1dc869d35cc32bc3bf17d1fe3ac0e3, 0x174150060c7b85b7e62ba729f0ae38939128e3efa35e1a43310d316aaf12c679, 0x5525fc42b746cc2a60ce825b823817076e23df1045e67283db77c1ad0fb89b1, 0x2e0a0bf0e9b3f7a2467e06e2d03e00db38afe8da528aeca2f9d1e0e1fbee03f5, 0x2bbbde17feffb0555ec1d21fe3b37cff69ff3c6e405ff2e6e419dadc2d988537, 0xb0f285aab66114d770d83048d35f24eead76ae42a083b954ff2ce517bfe2c36, 0x2a2889bab5d1da2b593034cfecea6c5e081fe18f7df2832a61ca26e1d3ebbe9, 0x23d2b8d2bee56df8cb52df746c56dcaba7f147d282e0690795256025c8b159b3, 0x20dda15ebef32992b6d2c2c5ed26993bf2f5c7fb79d52919359629f2971b506a] }),
         (0x2a625ce56b2ab64c851d19265, 0x20dda15ebef32992b6d2c2c5ed26993bf2f5c7fb79d52919359629f2971b506a, 0x2ad4f687b3ba533fc05c3d3722ce1db5592af0561d40ff24505d86dd3119ffdd, LabelPath { index: 1, depth: 1, siblings: [0x1196a230a81107e137964a33e90f736c6c7eb750f5906c4637406aa3cf06aa4d, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0] }),
     ];
-    for i in 0..31 {
+    for i in 0..cases.len() {
         let (label, leaf, root, path) = cases[i];
         assert(hash_1([label]) == leaf, f"leanImt[{i}]");
         assert(lean_imt_root(leaf, path) == root, f"leanImt[{i}]");
@@ -430,7 +430,7 @@ unconstrained fn v1_claim_secret_hash() {
         (0xc7e978d0caf29f9433a4c15be70222d440b790017b30351a9c9b0e7d06c1246, 0x79f426bb3c8d2f16a51618e1d8e97728c8cf2db7c5de2fcb77eff5bb9c95fb6, 0x294dd6d005c3b6e942cd37ee72f18627a9b898f3d45b1966a0adc3263646a625, 0x2599144a5e7ba239ba165ec8e04cf507dbb5b1f6b5b1e6e7c2b788eefcdab318),
         (0x9ef39284f32dc90c9e2034cea60b7f080990cb970a8cb56155f482155b0efd4, 0x2db3189b5311c0c729affd7bc624d525f271b8cd7180d8ee397549bd9098e0a8, 0x12355c2abd2b16ffc16a7fd9331af0980fff6a4d04a2e852b41f96f072daa7dd, 0x29ccb0056719c50f3f7b2754c6db8c5f838bc37774321c9c61db9b9ca718045c),
     ];
-    for i in 0..8 {
+    for i in 0..cases.len() {
         let (salt, recipient, secret, secret_hash) = cases[i];
         assert(derive_claim_secret(salt, AztecAddress::from_field(recipient)) == secret, f"claimSecretHash[{i}]");
         assert(compute_secret_hash([secret]) == secret_hash, f"claimSecretHash[{i}]");
@@ -453,7 +453,7 @@ unconstrained fn v1_birth() {
         (0xe7ab8270ad21e35507468f2d5fdbaaca060e65ff8978cc406d3c17b2eb1381, 0x2fbb828b63874312f5ff274b2cd205e5b711f50dc2ac92db43b25a6fcf89615a, 0xdedc5aaf1e854a9c5b933ed16afd6723, 0x2fc8b8a6f655d1a966cb546289fe440281aec04bba9d036f0d17cb25c2f355b2, 0x67165c23e88fabd7126dee2017f14884c50dd29865e331561b0334fbcc81e3d, 0x23e0d0aa04cbd3cb029055aa8ada19c4a0d827012b321c00fbce1e3c614bd714, 0x152d5f740575d2d83045573d1cae14efcc2285937d3e5c9fc7a47e05c2765945, 0x1b3e654f781bd3dd0fa0a1b57d20d393e4b00ad4e22b471afe1c8a1e95f5ca6e),
         (0x1709a1a28c9117c79fe1efba76ace78a4af39f446611fdae5819c5fc376f1, 0xe683d64dc9423e996cec2454f3f36d1c886643ea477a05f8f8dff6051c806ef, 0x3c138237151923be50f740a397a023df, 0x12585fc0563755d6eeb120617b296dac130455b4429d9b08c56432922620b2a8, 0x2a4047c62535ad279dda05a950197d1fda1b18980f9c04e04565b9327d10e69d, 0x227aa11453d76b526bd0cc30d32d09e90b8aad1f28783955c23d2fc1a8c14331, 0x2dc1c2990297d3fe696e0e363417078bcd34f17dccf0d917482cef6a6308780, 0xc6530db4d4cafe6d3d8c44dfc69469d1c3f161362042fcd62f31fc4353480b5),
     ];
-    for i in 0..12 {
+    for i in 0..cases.len() {
         let (token, owner, amount, secret, label, nullifier, siloed, id) = cases[i];
         let (token, owner) = (AztecAddress::from_field(token), AztecAddress::from_field(owner));
         assert(birth_label(token, owner, amount, secret) == label, f"birth[{i}]");

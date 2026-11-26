@@ -50,7 +50,7 @@ describe("LeanIMT", () => {
 		expect(code(() => buildLeanImt(Array<bigint>(2 ** MAX_DEPTH + 1).fill(1n)))).toBe("TreeTooLarge")
 	})
 
-	it("refuses a zero leaf, which zk-kit would treat as absent and give a root no path reproduces", () => {
+	it("refuses a zero leaf, which zk-kit would treat as an absent right child", () => {
 		expect(code(() => buildLeanImt([1n, 0n]))).toBe("FieldOutOfRange")
 	})
 

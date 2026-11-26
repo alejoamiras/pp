@@ -214,9 +214,11 @@ function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	return problems
 }
 
-/** Every mutated section fails naming its vector, and nothing else fails. */
-function verifyMutant(mutations: Mutation[], outcome: Outcome): string[] {
+/** The runner fails, every control test runs, each mutated section fails naming its vector, and nothing else fails. */
+function verifyMutant(mutations: Mutation[], outcome: Outcome, control: Outcome): string[] {
 	if (outcome.error) return [`mutant: ${outcome.error}`]
+	if (outcome.exitCode === 0) return ["mutant: runner exited 0 although vectors were flipped"]
+	const missing = [...control.tests.keys()].filter((name) => !outcome.tests.has(name)).map((name) => `mutant: ${name} did not run`)
 	const expected = new Set(mutations.flatMap(({ section, index }) => [section, `${section}[${index}]`]))
 	const unexpected = [...outcome.tests]
 		.filter(([name, t]) => t.status !== "passed" && !expected.has(name))
@@ -228,7 +230,7 @@ function verifyMutant(mutations: Mutation[], outcome: Outcome): string[] {
 		if (t.status !== "failed") return [`mutant: ${section} ${t.status} despite ${name} flipped`]
 		return t.message.includes(name) ? [] : [`mutant: ${section} failed without naming ${name}:\n${t.message.slice(0, 400)}`]
 	})
-	return [...unexpected, ...caught]
+	return [...missing, ...unexpected, ...caught]
 }
 
 function main(): number {
@@ -244,13 +246,14 @@ function main(): number {
 	try {
 		const control = join(runDir, "control.json")
 		copyFileSync(VECTORS, control)
-		const problems = verifyControl(suite, suite.run(control, runDir))
+		const controlOutcome = suite.run(control, runDir)
+		const problems = verifyControl(suite, controlOutcome)
 		if (problems.length === 0) {
 			const vectors = JSON.parse(readFileSync(VECTORS, "utf8")) as Record<string, Row[]>
 			const mutations = mutate(vectors, suite)
 			const mutant = join(runDir, "mutant.json")
 			writeFileSync(mutant, JSON.stringify(vectors, null, "\t"))
-			problems.push(...verifyMutant(mutations, suite.run(mutant, runDir)))
+			problems.push(...verifyMutant(mutations, suite.run(mutant, runDir), controlOutcome))
 		}
 		for (const p of problems) console.error(p)
 		console.log(

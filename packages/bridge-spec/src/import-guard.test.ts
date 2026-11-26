@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { dirname, resolve, sep } from "node:path"
 import ts from "typescript"
 import { describe, expect, it } from "vitest"
 
@@ -7,11 +7,12 @@ import { describe, expect, it } from "vitest"
  * The root entry is the browser-safe surface: `@aztec-labs/*` initialises Barretenberg on import.
  * Walks the runtime graph from `src/index.ts`. Only clause-level `import type` / `export type` is
  * erased (`import { type X }` can survive as a side-effect import); `require()` counts as static, and
- * so does an `import()` outside a function body, which runs at load.
+ * so does every `import()` except those inside `claimSecretHash`, which run only when it is called.
  */
 type Graph = { files: Set<string>; bare: Set<string>; lazy: Set<string> }
 
 const NON_LITERAL = "<non-literal module specifier>"
+const DEFERRED_IN = "claimSecretHash"
 
 /** `import(…)` or `require(…)`, with its literal specifier when it has one. */
 function moduleCall(node: ts.Node): { kind: "import" | "require"; spec?: string } | undefined {
@@ -40,14 +41,17 @@ function visit(file: string, graph: Graph): void {
 	graph.files.add(file)
 	const src = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true)
 	const follow = (spec: string) => (spec.startsWith(".") ? visit(resolve(dirname(file), `${spec}.ts`), graph) : graph.bare.add(spec))
-	const walk = (node: ts.Node, inFunction: boolean) => {
+	const deferredHere = file.endsWith(`${sep}claim.ts`)
+	const walk = (node: ts.Node, fn: string | undefined) => {
 		const call = moduleCall(node)
+		const deferred = call?.kind === "import" && deferredHere && fn === DEFERRED_IN
 		if (call?.spec === undefined && call !== undefined) graph.bare.add(NON_LITERAL)
-		else if (call?.spec !== undefined) call.kind === "import" && inFunction ? graph.lazy.add(call.spec) : follow(call.spec)
-		ts.forEachChild(node, (child) => walk(child, inFunction || ts.isFunctionLike(node)))
+		else if (call?.spec !== undefined) deferred ? graph.lazy.add(call.spec) : follow(call.spec)
+		const inner = ts.isFunctionDeclaration(node) && node.name ? node.name.text : fn
+		ts.forEachChild(node, (child) => walk(child, inner))
 	}
 	for (const spec of staticSpecs(src)) follow(spec)
-	walk(src, false)
+	walk(src, undefined)
 }
 
 describe("root entry import guard", () => {

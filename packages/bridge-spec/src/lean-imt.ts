@@ -15,8 +15,8 @@ export type LeanImt = { root: bigint; size: number; path(leafIndex: number): Lab
 
 /**
  * Up to 2^18 leaves (past that an old leaf can need depth 19, which the circuit refuses), each in
- * [1, p): zk-kit's `insertMany` treats a zero node as absent, so a zero leaf would yield a root no
- * path reproduces. Empty → root 0. The leaves are copied, so later edits to the array change nothing.
+ * [1, p): zk-kit's `insertMany` treats a zero right child as absent, so a zero leaf could yield a
+ * root no path reproduces. Empty → root 0. The leaves are copied, so later edits to the array change nothing.
  */
 export function buildLeanImt(leaves: readonly bigint[]): LeanImt {
 	if (leaves.length > 2 ** MAX_DEPTH) throw new SpecRangeError("TreeTooLarge", "leaves", String(leaves.length))

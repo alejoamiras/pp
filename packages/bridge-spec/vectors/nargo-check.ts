@@ -93,8 +93,17 @@ function requirementProblems(status: Map<string, string>): string[] {
 /** A renderer that drops a row keeps every test green, so the table sizes are checked here. */
 function rowProblems(source: string): string[] {
 	const problems = Object.entries(NOIR_ROWS).flatMap(([test, rows]) => {
-		const size = new RegExp(`fn ${test}\\(\\) \\{\\n\\s*let cases: \\[[^\\n]*; (\\d+)\\] = \\[`).exec(source)?.[1]
-		return Number(size) === rows ? [] : [`${test}: table holds ${size ?? "no"} rows, expected ${rows}`]
+		const start = source.indexOf(`fn ${test}() {`)
+		const body = start < 0 ? "" : source.slice(start, source.indexOf("\n}\n", start))
+		const size = /let cases: \[[^\n]*; (\d+)\] = \[/.exec(body)?.[1]
+		const loops = body.match(/for i in 0\.\.[^ ]+ \{/g) ?? []
+		return [
+			...(Number(size) === rows ? [] : [`${test}: table holds ${size ?? "no"} rows, expected ${rows}`]),
+			// A literal bound below the table size would skip rows and still pass.
+			...(loops.length === 1 && loops[0] === "for i in 0..cases.len() {"
+				? []
+				: [`${test}: loop must be \`for i in 0..cases.len()\``]),
+		]
 	})
 	const tags = /fn v1_tags\(\) \{([^}]*)\}/.exec(source)?.[1] ?? ""
 	if ((tags.match(/assert\(PP_BRIDGE_/g) ?? []).length !== 3) problems.push("v1_tags: expected three tag assertions")
