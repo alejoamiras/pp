@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { mkdir, rm, rmdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -49,22 +50,52 @@ async function stopAsp(asp: { url: string; stop(): Promise<void> }): Promise<voi
 	}
 }
 
+const alive = (pid: number): boolean => {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "EPERM"
+	}
+}
+
+/**
+ * Two live environments sharing a run ID would tear down each other's ports and files, so the run
+ * directory is created exclusively; one left behind by a dead process is taken over.
+ */
+function reserveRunDir(runId: string, runDir: string): void {
+	mkdirSync(RUNS_DIR, { recursive: true })
+	try {
+		mkdirSync(runDir)
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err
+		const owner = Number.parseInt(existsSync(join(runDir, "owner")) ? readFileSync(join(runDir, "owner"), "utf8") : "", 10)
+		if (Number.isInteger(owner) && alive(owner)) throw new Error(`runId ${runId} is in use by process ${owner}`)
+		rmSync(runDir, { recursive: true, force: true })
+		mkdirSync(runDir)
+	}
+	writeFileSync(join(runDir, "owner"), String(process.pid))
+}
+
 /** Brings up the pool on a local anvil; anything started is torn down again if a later step fails. */
 export async function startPoolEnv(o: StartPoolEnvOptions = {}): Promise<PoolEnv> {
 	const runId = o.runId ?? `pp-env-${process.pid}-${randomBytes(3).toString("hex")}`
 	if (!RUN_ID.test(runId)) throw new Error(`runId ${JSON.stringify(runId)} must match ${RUN_ID}`)
 	const runDir = join(RUNS_DIR, runId)
 	const forgeDir = join(runDir, "forge")
+	reserveRunDir(runId, runDir)
 	const cleanup = new CleanupStack({ signals: o.signals })
-	cleanup.push(() => releasePorts(runId))
 	cleanup.push(async () => {
 		await rm(forgeDir, { recursive: true, force: true })
+		await rm(join(runDir, "owner"), { force: true })
+		// Kept when a caller left files in it, such as measurements.
 		await rmdir(runDir).catch(() => {})
 	})
+	cleanup.push(() => releasePorts(runId))
 	try {
 		const co = checkout()
 		await verifyFetched(co.target)
-		await mkdir(forgeDir, { recursive: true })
+		await mkdir(forgeDir)
 		await ensureFixtures()
 		const rpcUrl = o.rpcUrl ? await attachAnvil(o.rpcUrl) : await startAnvil(runId, cleanup)
 		const deployerIndex = o.deployerIndex ?? DEPLOYER_INDEX

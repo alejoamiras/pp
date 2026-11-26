@@ -17,11 +17,14 @@ export type PoolDeployment = {
 }
 
 export type StartPoolEnvOptions = {
-	/** Attach to this loopback anvil instead of starting one; stop() then leaves it running. */
+	/**
+	 * Attach to this loopback anvil instead of starting one; stop() then leaves it running. Envs started
+	 * concurrently on one anvil need distinct `deployerIndex`es, or their deploys race for one nonce.
+	 */
 	rpcUrl?: string
 	/** Anvil index of the deployer, who is also the ASP postman. */
 	deployerIndex?: number
-	/** Names the run's port rows, logs and run dir; defaults to a fresh id. */
+	/** Names the run's port rows, logs and run dir; defaults to a fresh id. A live env's id is refused. */
 	runId?: string
 	/**
 	 * Default true: SIGINT and SIGTERM run stop() and then re-raise. Pass false when the caller

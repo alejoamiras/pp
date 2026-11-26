@@ -45,7 +45,7 @@ export async function startAnvil(runId: string, cleanup: CleanupStack): Promise<
 	const anvil = spawnOwned(anvilBin(), args, join(LOG_DIR, `${runId}-anvil.log`), cleanEnv())
 	cleanup.push(() => killGroup(anvil))
 	const rpcUrl = `http://127.0.0.1:${port}`
-	await waitFor("anvil", async () => (await rpc<string>(rpcUrl, "eth_chainId")) !== "", 30_000, anvil.hasExited)
+	await waitFor("anvil", async () => (await rpc<string>(rpcUrl, "eth_chainId")) !== "", 30_000, anvil.exitReason)
 	return rpcUrl
 }
 

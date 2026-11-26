@@ -87,6 +87,11 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("pool env", () => {
 		expect(rowsOwnedBy(b.runId)).toBe(2)
 	})
 
+	test("a run ID already in use is refused, and the live env keeps its ports", async () => {
+		await expect(startPoolEnv({ runId: b.runId })).rejects.toThrow(/in use/)
+		expect(rowsOwnedBy(b.runId)).toBe(2)
+	})
+
 	test("a failed start releases its ports and kills its anvil, leaving other envs up", async () => {
 		const runId = `pp-env-fail-${process.pid}`
 		// Index 40 is past anvil's 16 funded accounts, so the deploy broadcast fails after anvil is up.

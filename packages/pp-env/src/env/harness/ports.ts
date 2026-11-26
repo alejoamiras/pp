@@ -46,6 +46,9 @@ const portOf = (line: string): number | undefined => {
 	return Number.isInteger(port) ? port : undefined
 }
 
+/** Only the owner column: a run ID can equal another row's service name. */
+const ownedBy = (line: string, runId: string): boolean => portOf(line) !== undefined && line.split("|")[3]?.trim() === runId
+
 /** Every port the registry lists, whoever claimed it. */
 export function registeredPorts(): Set<number> {
 	const ports = new Set<number>()
@@ -105,7 +108,7 @@ export async function claimPort(runId: string, service: string): Promise<number>
 
 /** Drops every row `runId` owns; throws if a live holder kept the registry locked throughout. */
 export async function releasePorts(runId: string): Promise<void> {
-	if (await withRegistry((lines) => lines.filter((l) => !l.includes(`| ${runId} |`)))) return
+	if (await withRegistry((lines) => lines.filter((l) => !ownedBy(l, runId)))) return
 	throw new Error(`${registryPath()} stayed locked; the rows owned by ${runId} are still there`)
 }
 
@@ -113,5 +116,5 @@ export function rowsOwnedBy(runId: string): number {
 	if (!existsSync(registryPath())) return 0
 	return readFileSync(registryPath(), "utf8")
 		.split("\n")
-		.filter((l) => l.includes(`| ${runId} |`)).length
+		.filter((l) => ownedBy(l, runId)).length
 }

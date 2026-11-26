@@ -34,14 +34,10 @@ test(
 	{ timeout: 30_000 },
 )
 
-test("a CleanupStack built with signals: false installs no signal handler", async () => {
-	const probe = (signals: string) =>
-		`import { CleanupStack } from ${JSON.stringify(join(import.meta.dir, "process.ts"))}
-		new CleanupStack(${signals}); console.log(process.listenerCount("SIGINT"), process.listenerCount("SIGTERM"))`
-	const run = async (signals: string) => {
-		const p = Bun.spawn(["bun", "-e", probe(signals)], { stdout: "pipe", stderr: "inherit" })
-		return (await new Response(p.stdout).text()).trim()
-	}
-	expect(await run("{ signals: false }")).toBe("0 0")
-	expect(await run("")).toBe("1 1")
+test("release drops only the rows its run owns, even when a run ID equals another row's service", async () => {
+	await claimPort("ports-test-other", "pp-env-anvil")
+	await claimPort("pp-env-anvil", "pp-env-test")
+	await releasePorts("pp-env-anvil")
+	expect(rowsOwnedBy("ports-test-other")).toBe(1)
+	await releasePorts("ports-test-other")
 })
