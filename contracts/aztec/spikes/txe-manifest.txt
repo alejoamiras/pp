@@ -17,3 +17,11 @@ labels_stay_apart
 spend_selects_only_its_label
 transfer_failure_other_label_cannot_cover
 mint_failure_not_minter
+# Q3 registry read
+historical_reads_equal_the_posted_record
+freshness_passes_at_equality
+check_failure_one_second_past_freshness
+check_failure_empty_registry
+post_failure_stale_sequence
+post_failure_zero_root
+check_current_passes_when_unchanged

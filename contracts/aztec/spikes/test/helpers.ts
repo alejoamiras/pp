@@ -6,7 +6,8 @@ import type { ContractArtifact } from "@aztec-labs/aztec.js/abi"
 import { loadContractArtifact } from "@aztec-labs/aztec.js/abi"
 import type { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import { createAztecNodeClient, type AztecNode } from "@aztec-labs/aztec.js/node"
-import type { TxProfileResult } from "@aztec-labs/stdlib/tx"
+import type { ContractFunctionInteraction } from "@aztec-labs/aztec.js/contracts"
+import type { Tx, TxExecutionRequest, TxProfileResult, TxProvingResult } from "@aztec-labs/stdlib/tx"
 import { EmbeddedWallet } from "@aztec-labs/wallets/embedded"
 import { createFundedInitializerlessAccounts } from "@aztec-labs/wallets/testing"
 
@@ -37,7 +38,10 @@ export function artifact(file: string): ContractArtifact {
 
 /** One line per measurement, grep-able from the test log and copied into the findings. */
 export function record(name: string, data: Record<string, unknown>): void {
-	console.log(`MEASURE ${name} ${JSON.stringify({ ...data, cores: cpus().length, hardwareConcurrency: process.env.HARDWARE_CONCURRENCY ?? null })}`)
+	const line = JSON.stringify({ ...data, cores: cpus().length, hardwareConcurrency: process.env.HARDWARE_CONCURRENCY ?? null }, (_, v) =>
+		typeof v === "bigint" ? v.toString() : v,
+	)
+	console.log(`MEASURE ${name} ${line}`)
 }
 
 /** Per-circuit gates of a whole transaction (app functions and kernels) plus the client proving time. */
@@ -48,5 +52,45 @@ export function summarizeProfile(p: TxProfileResult) {
 		provingMs: p.stats.timings.proving ?? null,
 		witgenMs: p.stats.timings.perFunction.reduce((n, f) => n + f.time, 0),
 		totalMs: p.stats.timings.total,
+	}
+}
+
+/**
+ * Protected BaseWallet and PXE members needed to prove now and send later. Not part of the public Wallet API, so
+ * these signatures must be re-checked on every @aztec-labs bump.
+ */
+interface WalletInternals {
+	completeFeeOptions(config: { from: AztecAddress; feePayer?: AztecAddress }): Promise<unknown>
+	createTxExecutionRequestFromPayloadAndFee(payload: unknown, from: AztecAddress, fee: unknown): Promise<TxExecutionRequest>
+	pxe: {
+		sync(): Promise<void>
+		proveTx(req: TxExecutionRequest, opts: { scopes: AztecAddress[]; senderForTags?: AztecAddress }): Promise<TxProvingResult>
+	}
+}
+
+export interface ProvenOnly {
+	tx: Tx
+	anchorTimestamp: bigint
+	/** As the kernel set it; the PXE may round the contract's request down. */
+	expirationTimestamp: bigint
+	/** Return values of the called function (the account entrypoint's first nested call). */
+	returnValues: bigint[]
+}
+
+/** Proves `interaction` as `who` without sending it, so a test can change chain state before submitting the same bytes. */
+export async function proveOnly(who: Actor, interaction: ContractFunctionInteraction): Promise<ProvenOnly> {
+	const w = who.wallet as unknown as WalletInternals
+	await w.pxe.sync()
+	const payload = await interaction.request()
+	const fee = await w.completeFeeOptions({ from: who.address, feePayer: payload.feePayer })
+	const req = await w.createTxExecutionRequestFromPayloadAndFee(payload, who.address, fee)
+	const proven = await w.pxe.proveTx(req, { scopes: [who.address], senderForTags: who.address })
+	const nested = proven.privateExecutionResult.entrypoint.nestedExecutionResults[0]
+	if (!nested) throw new Error("no nested call under the account entrypoint")
+	return {
+		tx: await proven.toTx(),
+		anchorTimestamp: proven.publicInputs.constants.anchorBlockHeader.globalVariables.timestamp,
+		expirationTimestamp: proven.publicInputs.expirationTimestamp,
+		returnValues: nested.returnValues.map((f) => f.toBigInt()),
 	}
 }
