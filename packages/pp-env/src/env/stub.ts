@@ -1,6 +1,6 @@
 import { type Address, type Hex, isAddressEqual, type PublicClient, parseEventLogs } from "viem"
 import type { LocalWallet, PreparedSpend } from "../client/types.ts"
-import { STUB_PROCESSOR_ABI } from "./stub-abi.ts"
+import { STUB_PROCESSOR_ABI } from "../client/abi.ts"
 
 export { STUB_PROCESSOR_ABI }
 

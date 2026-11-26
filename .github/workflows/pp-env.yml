@@ -83,7 +83,7 @@ jobs:
       # `lo` up: anything that still reaches for the network fails here.
       - name: Post-fetch gate, loopback only
         run: |
-          gate_path="$(dirname "$(command -v bun)"):/usr/bin:/bin"
+          gate_path="$(dirname "$(command -v bun)"):$(dirname "$(command -v node)"):/usr/bin:/bin"
           sudo unshare --net -- bash packages/pp-env/scripts/offline-gate.sh outer \
             "$(id -u)" "$(id -g)" "$HOME" "$gate_path" "$PP_FORGE"
 

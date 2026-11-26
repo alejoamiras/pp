@@ -6,7 +6,7 @@ import type { LocalChainId, PoolEnv, StartPoolEnvOptions } from "../src/env/type
 
 export * from "./client.js"
 export type { LocalChainId, PoolDeployment, PoolEnv, StartPoolEnvOptions } from "../src/env/types.js"
-export { STUB_PROCESSOR_ABI } from "../src/env/stub-abi.js"
+export { STUB_PROCESSOR_ABI } from "../src/client/abi.js"
 
 export declare const CHAIN_ID: LocalChainId
 /** Anvil account that deploys the pool and posts ASP roots. */

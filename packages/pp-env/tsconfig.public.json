@@ -8,7 +8,6 @@
 		"src/client/abi.ts",
 		"src/client/types.ts",
 		"src/env/types.ts",
-		"src/env/stub-abi.ts",
 		"src/env/checkout.ts",
 		"src/env/deploy.ts",
 		"src/env/pins.ts",
