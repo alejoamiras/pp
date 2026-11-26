@@ -1,25 +1,36 @@
 /**
- * The test wallet's build: a page tools frames on the local target only. Its identity (node URL,
- * chain, the one origin allowed to frame it) comes from the sandbox run's artifacts, the same way
- * the local tools build reads them — nothing here is committed or shared between runs.
+ * The test wallet's build: a page the app frames on the local target only. Its identity (node URL,
+ * chain, the one origin allowed to frame it) comes from the sandbox run's handle; a build-only run
+ * points at the committed fixture handle instead.
  *
- *   UNLEASHED_SANDBOX_ARTIFACTS=<dir>  UNLEASHED_TOOLS_ORIGIN=http://127.0.0.1:<port>  vite build|preview --config …
+ *   PP_SANDBOX_ARTIFACTS=<dir with handle.json>  PP_APP_ORIGIN=http://127.0.0.1:<port>  vite build|preview --config …
  */
 import { readFileSync, realpathSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { defineConfig, type Plugin } from "vite"
 import { nodePolyfills } from "vite-plugin-node-polyfills"
 import { resolveExportedAsset, resolvePackageAsset, resolvePackageRoot } from "@nulo-sh/resolve-asset"
-import { loadLocalRunFromEnv } from "../../../src/lib/local-target-loader"
+import type { TestWalletIdentity } from "./profile"
 
 const here = dirname(fileURLToPath(import.meta.url))
+const SANDBOX_L1_CHAIN_ID = 31337
 
-function identity() {
-	const run = loadLocalRunFromEnv()
-	const toolsOrigin = process.env.UNLEASHED_TOOLS_ORIGIN
-	if (!toolsOrigin) throw new Error("the test wallet needs UNLEASHED_TOOLS_ORIGIN=<the tools preview origin it may be framed by>")
-	return { nodeUrl: run.config.nodeUrl, l1ChainId: 31337, rollupVersion: run.config.rollupVersion, toolsOrigin }
+/** Reads the handle by hand: Node evaluates this config and cannot load bridge-core's TypeScript
+ *  sources, whose imports carry no extensions. */
+function identity(): TestWalletIdentity {
+	const artifacts = process.env.PP_SANDBOX_ARTIFACTS
+	if (!artifacts) throw new Error("the test wallet needs PP_SANDBOX_ARTIFACTS=<the directory holding the run's handle.json>")
+	const appOrigin = process.env.PP_APP_ORIGIN
+	if (!appOrigin) throw new Error("the test wallet needs PP_APP_ORIGIN=<the app preview origin it may be framed by>")
+	const handle: unknown = JSON.parse(readFileSync(join(resolve(artifacts), "handle.json"), "utf8"))
+	const { nodeUrl, l1ChainId, rollupVersion } = (handle ?? {}) as Record<string, unknown>
+	if (typeof nodeUrl !== "string" || !URL.canParse(nodeUrl)) throw new Error("handle.json: nodeUrl is not a URL")
+	if (l1ChainId !== SANDBOX_L1_CHAIN_ID)
+		throw new Error(`handle.json names L1 chain ${String(l1ChainId)}, expected ${SANDBOX_L1_CHAIN_ID}`)
+	if (!Number.isSafeInteger(rollupVersion) || (rollupVersion as number) < 0)
+		throw new Error("handle.json: rollupVersion is not a non-negative integer")
+	return { nodeUrl, l1ChainId, rollupVersion: rollupVersion as number, appOrigin: new URL(appOrigin).origin }
 }
 
 /** The encrypted SQLite-OPFS store's worker resolves `sqlite3.wasm` at runtime through emscripten's
@@ -49,7 +60,7 @@ function sqliteWasmEmit(): Plugin {
 
 const id = identity()
 const nodeOrigin = new URL(id.nodeUrl).origin
-/** Framed by tools only; talks to itself and the sandbox node only. */
+/** Framed by the app only; talks to itself and the sandbox node only. */
 const csp = [
 	"default-src 'self'",
 	"script-src 'self' 'wasm-unsafe-eval'",
@@ -58,13 +69,13 @@ const csp = [
 	`connect-src 'self' ${nodeOrigin} data: blob:`,
 	"object-src 'none'",
 	"base-uri 'self'",
-	`frame-ancestors ${id.toolsOrigin}`,
+	`frame-ancestors ${id.appOrigin}`,
 ].join("; ")
 
 export default defineConfig({
 	root: here,
 	base: "/",
-	build: { outDir: process.env.UNLEASHED_TEST_WALLET_OUT_DIR ?? join(here, "dist"), emptyOutDir: true, target: "esnext" },
+	build: { outDir: process.env.PP_TEST_WALLET_OUT_DIR ?? join(here, "dist"), emptyOutDir: true, target: "esnext" },
 	worker: { format: "es" },
 	preview: {
 		headers: {

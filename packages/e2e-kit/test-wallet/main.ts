@@ -1,10 +1,10 @@
 /**
- * The page tools frames. The connection handler starts synchronously so the SDK's discovery probe
+ * The page the app frames. The connection handler starts synchronously so the SDK's discovery probe
  * (10 s) always finds it; the wallet itself — a PXE — is created on the first secure message.
  */
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import { IframeConnectionHandler } from "@aztec-labs/wallet-sdk/iframe/handlers"
-import { parseProfile, type Seed, TOOLS_APP_ID } from "./profile"
+import { APP_ID, parseProfile, type Seed } from "./profile"
 import type { TestWallet } from "./wallet"
 
 const identity = __TEST_WALLET__
@@ -30,7 +30,7 @@ function boot(): Promise<TestWallet> {
 		if (profile !== "plain") await import("@nulo-sh/wallet-sdk-schema-patch/register")
 		const { TestWallet } = await import("./wallet")
 		const wallet = await TestWallet.createFor(profile, identity)
-		for (const seed of window.__unleashedTestWalletSeeds ?? []) line("info", `imported ${(await wallet.importSeed(seed)).toString()}`)
+		for (const seed of window.__ppTestWalletSeeds ?? []) line("info", `imported ${(await wallet.importSeed(seed)).toString()}`)
 		return wallet
 	})()
 	return booting
@@ -126,13 +126,13 @@ const handler = new IframeConnectionHandler(
 		walletId: `test-wallet-${profile}`,
 		walletName: `Test wallet (${profile})`,
 		walletVersion: "0.0.0",
-		allowedOrigins: [identity.toolsOrigin],
+		allowedOrigins: [identity.appOrigin],
 		logger,
 	},
 	{
 		onPendingDiscovery: (session) => handler.approveDiscovery(session.requestId),
 		getWallet: (appId, chainInfo) => {
-			if (appId !== TOOLS_APP_ID) throw new Error(`test wallet: app "${appId}" is not tools`)
+			if (appId !== APP_ID) throw new Error(`test wallet: app "${appId}" is not ${APP_ID}`)
 			assertSandboxChain(chainInfo)
 			return boot().then(traced)
 		},
@@ -141,7 +141,7 @@ const handler = new IframeConnectionHandler(
 handler.start()
 document.getElementById("profile")!.textContent = profile
 
-window.__unleashedTestWallet = {
+window.__ppTestWallet = {
 	profile,
 	ready: () => boot().then(() => undefined),
 	addAccount: async (secret, salt = "1") => (await boot()).importSeed({ secret, salt } as Seed).then((a) => a.toString()),

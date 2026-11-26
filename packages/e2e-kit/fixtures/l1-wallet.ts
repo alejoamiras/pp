@@ -1,5 +1,5 @@
 /**
- * An injected EIP-1193 wallet for the tools page, answered from Node: the page's `window.ethereum`
+ * An injected EIP-1193 wallet for the app page, answered from Node: the page's `window.ethereum`
  * forwards every request through an exposed function to a viem wallet client over the sandbox's
  * anvil, which signs with the run's actor key. Wrong-chain, account-change and rejection cells
  * drive it through the control it returns.
@@ -16,29 +16,15 @@ export interface L1WalletOptions {
 
 export type RejectKind = "signature" | "transaction"
 
-/** Narrows a hold to one transaction target — the deposit's router, not the ERC-20 approval before it. */
+/** Narrows a hold to one transaction target — the deposit's portal, not the ERC-20 approval before it. */
 export interface HoldMatch {
 	to?: Address
-}
-
-/** One Permit2 `PermitWitnessTransferFrom` the page asked the wallet to sign, as signed, with the wallet's clock. */
-export interface SignedPermit {
-	signedAt: number
-	domain: { name?: string; chainId?: number; verifyingContract?: string }
-	primaryType: string
-	permitted: { token: string; amount: bigint }
-	spender: string
-	nonce: bigint
-	deadline: bigint
-	witness: Record<string, unknown>
 }
 
 export interface L1WalletControl {
 	address: Address
 	/** Everything the page has had signed so far — typed data, transactions, messages. */
 	readonly signatures: number
-	/** Every Permit2 permit signed so far, in order (other typed data is not a permit and is not listed). */
-	permits(): SignedPermit[]
 	/** How often the page asked for one wallet-side method (`eth_sendTransaction`,
 	 *  `eth_signTypedData_v4`, `personal_sign`), held and refused calls included. */
 	calls(method: string): number
@@ -112,28 +98,7 @@ export async function installL1Wallet(context: BrowserContext, o: L1WalletOption
 	const swallows: Array<{ match?: HoldMatch }> = []
 	const parked: Array<{ perform: () => Promise<unknown>; resolve: (v: unknown) => void; reject: (e: unknown) => void }> = []
 	const counts: Record<string, number> = {}
-	const permits: SignedPermit[] = []
 	let signed = 0
-	const recordPermit = (typed: ReturnType<typeof typedDataOf>) => {
-		if (typed.primaryType !== "PermitWitnessTransferFrom") return
-		const m = typed.message as {
-			permitted: { token: string; amount: bigint }
-			spender: string
-			nonce: bigint
-			deadline: bigint
-			witness: Record<string, unknown>
-		}
-		permits.push({
-			signedAt: Math.floor(Date.now() / 1000),
-			domain: typed.domain as SignedPermit["domain"],
-			primaryType: typed.primaryType,
-			permitted: m.permitted,
-			spender: m.spender,
-			nonce: m.nonce,
-			deadline: m.deadline,
-			witness: m.witness,
-		})
-	}
 	const takeRejection = (kind: RejectKind) => rejections.delete(kind)
 	/** A matching hold is consumed and the call parks until `release()` (or forever); a hold for
 	 *  another target stays armed. */
@@ -155,7 +120,7 @@ export async function installL1Wallet(context: BrowserContext, o: L1WalletOption
 
 	const emit = (event: string, payload: unknown) =>
 		Promise.all(
-			context.pages().map((p) => p.evaluate(([e, v]) => window.__unleashedL1Emit?.(e, v), [event, payload] as const).catch(() => {})),
+			context.pages().map((p) => p.evaluate(([e, v]) => window.__ppL1Emit?.(e, v), [event, payload] as const).catch(() => {})),
 		)
 
 	const switchChain = async (id: number) => {
@@ -200,9 +165,7 @@ export async function installL1Wallet(context: BrowserContext, o: L1WalletOption
 			refuse("signature")
 			const sign = () => {
 				signed++
-				const typed = typedDataOf(params[1] as string)
-				recordPermit(typed)
-				return account.signTypedData(typed)
+				return account.signTypedData(typedDataOf(params[1] as string))
 			}
 			const held = takeHold("signature", undefined, sign)
 			if (held) return held
@@ -226,9 +189,9 @@ export async function installL1Wallet(context: BrowserContext, o: L1WalletOption
 		return method ? method(params) : client.request({ method: rpc.method, params } as never)
 	}
 
-	// UNLEASHED_E2E_TRACE_L1=1 prints every request and its outcome to the runner's stdout.
-	const trace = process.env.UNLEASHED_E2E_TRACE_L1 === "1" ? (line: string) => console.log(`[l1] ${line}`) : () => {}
-	await context.exposeFunction("__unleashedL1Request", async (json: string) => {
+	// PP_E2E_TRACE_L1=1 prints every request and its outcome to the runner's stdout.
+	const trace = process.env.PP_E2E_TRACE_L1 === "1" ? (line: string) => console.log(`[l1] ${line}`) : () => {}
+	await context.exposeFunction("__ppL1Request", async (json: string) => {
 		const rpc = JSON.parse(json) as Rpc
 		try {
 			const result = await handle(rpc)
@@ -244,7 +207,7 @@ export async function installL1Wallet(context: BrowserContext, o: L1WalletOption
 		const listeners = new Map<string, Set<(v: unknown) => void>>()
 		const provider = {
 			async request(args: { method: string; params?: unknown[] }) {
-				const reply = JSON.parse(await window.__unleashedL1Request(JSON.stringify(args))) as {
+				const reply = JSON.parse(await window.__ppL1Request(JSON.stringify(args))) as {
 					result?: unknown
 					error?: { code: number; message: string }
 				}
@@ -260,7 +223,7 @@ export async function installL1Wallet(context: BrowserContext, o: L1WalletOption
 				return provider
 			},
 		}
-		window.__unleashedL1Emit = (event, value) => {
+		window.__ppL1Emit = (event, value) => {
 			for (const fn of listeners.get(event) ?? []) fn(value)
 		}
 		Object.defineProperty(window, "ethereum", { value: provider, configurable: true, writable: false })
@@ -274,7 +237,6 @@ export async function installL1Wallet(context: BrowserContext, o: L1WalletOption
 			return signed
 		},
 		calls: (method) => counts[method] ?? 0,
-		permits: () => [...permits],
 		setChainId: switchChain,
 		async setAccount(privateKey) {
 			account = privateKeyToAccount(privateKey)
@@ -313,7 +275,7 @@ function originOf(url: string): string {
 
 declare global {
 	interface Window {
-		__unleashedL1Request: (json: string) => Promise<string>
-		__unleashedL1Emit?: (event: string, value: unknown) => void
+		__ppL1Request: (json: string) => Promise<string>
+		__ppL1Emit?: (event: string, value: unknown) => void
 	}
 }

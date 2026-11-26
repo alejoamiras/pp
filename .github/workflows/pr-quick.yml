@@ -124,11 +124,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           persist-credentials: false
       - uses: ./.github/actions/setup-bun
-      # Build-only: the fixture handle and placeholder origin stand in for a live sandbox, whose
-      # real values the runner bakes in on every local run.
+      # Build-only: the placeholder handle and origin stand in for a live sandbox, whose real values
+      # the runner bakes in on every local run.
       - name: Build the test wallet
         env:
-          PP_E2E_HANDLE: fixtures/build-handle.json
+          PP_SANDBOX_ARTIFACTS: fixtures/build-artifacts
           PP_APP_ORIGIN: http://127.0.0.1:4173
         run: bun run --cwd packages/e2e-kit build:test-wallet
 

@@ -1,14 +1,16 @@
-import { readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 import { type Durations, planShards, recordDurations } from "./shard-plan"
 
-const browser = join(dirname(fileURLToPath(import.meta.url)), "../../tests/browser")
-const RECORD = JSON.parse(readFileSync(join(browser, "shard-durations.json"), "utf8")) as Durations
-const suite = readdirSync(join(browser, "specs"))
+const kit = join(dirname(fileURLToPath(import.meta.url)), "../..")
+const RECORD = JSON.parse(readFileSync(join(kit, "shard-durations.json"), "utf8")) as Durations
+/** The specs `playwright.config.ts` runs; none until the app has them. */
+const specDir = process.env.PP_E2E_SPECS ?? join(kit, "../../apps/web/e2e")
+const suite = (existsSync(specDir) ? readdirSync(specDir) : [])
 	.filter((file) => file.endsWith(".spec.ts") && !file.startsWith("zz-"))
-	.map((file) => ({ file, tests: (readFileSync(join(browser, "specs", file), "utf8").match(/^test\(/gm) ?? []).length }))
+	.map((file) => ({ file, tests: (readFileSync(join(specDir, file), "utf8").match(/^test\(/gm) ?? []).length }))
 
 describe("planShards", () => {
 	it("places every spec file of the suite in exactly one shard, at any shard count", () => {
@@ -54,15 +56,15 @@ describe("planShards", () => {
 })
 
 describe("recordDurations", () => {
-	const job = (n: number) => `Shards (${n}) / tools e2e (${n}/6)\tUNKNOWN STEP\t`
+	const job = (n: number) => `Shards (${n}) / browser e2e (${n}/6)\tUNKNOWN STEP\t`
 	const log = [
-		`${job(1)}2026-10-20T21:20:00.0000000Z [e2e:tools] running playwright (--shard=1/6)`,
+		`${job(1)}2026-10-20T21:20:00.0000000Z [e2e] running playwright (--shard=1/6)`,
 		`${job(1)}2026-10-20T21:20:10.1234567Z Running 3 tests using 1 worker, shard 1 of 6`,
 		`${job(2)}2026-10-20T21:20:20.0000000Z Running 1 test using 1 worker, shard 2 of 6`,
-		`${job(1)}2026-10-20T21:21:10.1234567Z   ✓   1 [chromium] › tests/browser/specs/a.spec.ts:5:1 › first (45.0s)`,
-		`${job(2)}2026-10-20T21:20:50.0000000Z   ✓   1 [chromium] › tests/browser/specs/c.spec.ts:9:1 › only (20.0s)`,
-		`${job(1)}2026-10-20T21:21:40.1234567Z   ✓   2 [chromium] › tests/browser/specs/a.spec.ts:20:1 › second (28.0s)`,
-		`${job(1)}2026-10-20T21:22:00.1234567Z   ✓   3 [chromium] › tests/browser/specs/b c.spec.ts:7:1 › third › with › steps (12.5s)`,
+		`${job(1)}2026-10-20T21:21:10.1234567Z   ✓   1 [chromium] › a.spec.ts:5:1 › first (45.0s)`,
+		`${job(2)}2026-10-20T21:20:50.0000000Z   ✓   1 [chromium] › c.spec.ts:9:1 › only (20.0s)`,
+		`${job(1)}2026-10-20T21:21:40.1234567Z   ✓   2 [chromium] › a.spec.ts:20:1 › second (28.0s)`,
+		`${job(1)}2026-10-20T21:22:00.1234567Z   ✓   3 [chromium] › b c.spec.ts:7:1 › third › with › steps (12.5s)`,
 		`${job(1)}2026-10-20T21:22:01.0000000Z   3 passed (1.9m)`,
 	].join("\n")
 
@@ -77,9 +79,9 @@ describe("recordDurations", () => {
 	it("refuses a failed test, a test line it cannot attribute, and a log with no test lines", () => {
 		const failed = log.replace("✓   2", "✘   2")
 		expect(() => recordDurations(failed)).toThrow("record from a green run")
-		const unanchored = `${log}\n${job(3)}2026-10-20T21:23:00.0000000Z   ✓   1 [chromium] › tests/browser/specs/d.spec.ts:1:1 › early (1.0s)`
+		const unanchored = `${log}\n${job(3)}2026-10-20T21:23:00.0000000Z   ✓   1 [chromium] › d.spec.ts:1:1 › early (1.0s)`
 		expect(() => recordDurations(unanchored)).toThrow("cannot attribute")
-		const unreadable = log.replace("specs/c.spec.ts:9:1", "c.ts:9:1")
+		const unreadable = log.replace("c.spec.ts:9:1", "c.ts:9:1")
 		expect(() => recordDurations(unreadable)).toThrow("cannot attribute")
 		expect(() => recordDurations(`${job(1)}2026-10-20T21:20:00.0000000Z hello`)).toThrow("no browser-suite test lines")
 	})

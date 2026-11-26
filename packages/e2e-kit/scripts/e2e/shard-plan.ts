@@ -4,7 +4,7 @@
  * Every shard computes the same plan from the same inputs, so the shards are disjoint and complete.
  */
 
-/** Per spec file (its path under `specs/`): how many tests it had and the seconds its shard spent on it,
+/** Per spec file (its path under Playwright's `testDir`): how many tests it had and the seconds its shard spent on it,
  *  worker start and actor pool included. */
 export type Durations = Readonly<Record<string, { readonly tests: number; readonly seconds: number }>>
 
@@ -55,7 +55,8 @@ export function planShards(specs: readonly SpecFile[], total: number, record: Du
 const LOG_LINE = /^([^\t]+)\t[^\t]*\t(\S+) (.*)$/
 const RUNNING = /^Running \d+ tests? using \d+ workers?/
 const TEST_END = /^\s*([✓✘-])\s+\d+ \[[^\]]+\] › /
-const SPEC_AT = /^(?:\S*\/)?specs\/(.+?\.spec\.ts):\d+:\d+ › /
+/** Playwright prints a location relative to `testDir`, the same path the reporter keys files by. */
+const SPEC_AT = /^(.+?\.spec\.ts):\d+:\d+ › /
 
 type LogEvent =
 	| { kind: "start"; job: string; at: number }

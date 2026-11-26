@@ -1,10 +1,10 @@
 /**
- * An `@aztec-labs/wallets` embedded wallet with the two things tools needs from a wallet-sdk wallet
+ * An `@aztec-labs/wallets` embedded wallet with the two things the app needs from a wallet-sdk wallet
  * and the base class does not give it: a capability grant, and — per profile — the wallet-specific
  * RPCs. The profile only DECORATES a standard wallet; every bridge transaction still runs through
- * the stock `BaseWallet` path, which is what the suite is testing tools against.
+ * the stock `BaseWallet` path, which is what the suite is testing the app against.
  */
-import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
+import type { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import {
 	getContractInstanceFromInstantiationParams,
 	type InteractionWaitOptions,
@@ -12,18 +12,13 @@ import {
 	type SendReturn,
 } from "@aztec-labs/aztec.js/contracts"
 import { Fr } from "@aztec-labs/aztec.js/fields"
-import type { SendOptions, SimulateOptions } from "@aztec-labs/aztec.js/wallet"
+import type { SendOptions } from "@aztec-labs/aztec.js/wallet"
 import { SPONSORED_FPC_SALT } from "@aztec-labs/constants"
 import { SponsoredFPCContract } from "@aztec-labs/noir-contracts.js/SponsoredFPC"
-import { ProtocolContractAddress } from "@aztec-labs/protocol-contracts"
-import { FunctionSelector } from "@aztec-labs/stdlib/abi"
-import { ExecutionPayload, PendingTxReceipt, type Tx } from "@aztec-labs/stdlib/tx"
+import { type ExecutionPayload, PendingTxReceipt, type Tx } from "@aztec-labs/stdlib/tx"
 import { EmbeddedWallet } from "@aztec-labs/wallets/embedded"
 import { deriveNuloAccountKeys } from "@nulo-sh/wallet-crypto"
-import { DAPP_SELF_PAY_FEATURE, type Seed, type TestWalletIdentity, type TestWalletProfile } from "./profile"
-
-/** The call `FeeJuicePaymentMethodWithClaim` emits: a self-payer WITH it is a claim in setup. */
-const CLAIM_AND_END_SETUP = "claim_and_end_setup((Field),u128,Field,Field)"
+import type { Seed, TestWalletIdentity, TestWalletProfile } from "./profile"
 
 const unsupported = (method: string) => new Error(`Unsupported wallet method: ${method}`)
 
@@ -41,7 +36,6 @@ export class TestWallet extends EmbeddedWallet {
 	/** Every transaction handed to the node since this wallet booted, in order. */
 	readonly submitted: SubmittedTx[] = []
 	profile: TestWalletProfile = "plain"
-	private claimSelector = FunctionSelector.empty()
 	private readonly registeredTokens = new Set<string>()
 	private imported = 0
 
@@ -50,10 +44,8 @@ export class TestWallet extends EmbeddedWallet {
 		const wallet = await TestWallet.create(identity.nodeUrl, { ephemeral: true, pxe: { proverEnabled: false } })
 		wallet.observeSubmissions()
 		wallet.profile = profile
-		wallet.claimSelector = await FunctionSelector.fromSignature(CLAIM_AND_END_SETUP)
 		// A wallet on a network with a sponsor knows the SponsoredFPC — a dApp names it as payer and
-		// never registers it (tools: `sponsored-fpc.ts`). The local network pre-deploys it at the
-		// protocol salt.
+		// never registers it. The local network pre-deploys it at the protocol salt.
 		const sponsor = await getContractInstanceFromInstantiationParams(SponsoredFPCContract.artifact, {
 			salt: new Fr(SPONSORED_FPC_SALT),
 		})
@@ -94,7 +86,7 @@ export class TestWallet extends EmbeddedWallet {
 	// ── Wallet-specific RPCs (reachable only when the schema patch is loaded — never on `plain`) ──
 
 	getWalletFeatures(): Promise<string[]> {
-		return Promise.resolve(this.profile === "plain" ? [] : [DAPP_SELF_PAY_FEATURE])
+		return Promise.resolve([])
 	}
 
 	registerToken(account: AztecAddress, token: AztecAddress): Promise<void> {
@@ -113,12 +105,6 @@ export class TestWallet extends EmbeddedWallet {
 		throw unsupported("grantPublicAuthwit")
 	}
 
-	// ── Self-pay routing (`selfpay` and `full`) ──
-
-	/** A payload naming its sender as payer with no claim call is tools asking for the account's held
-	 *  public Fee Juice; BaseWallet would read that shape as a claim in setup and build an invalid
-	 *  transaction, so the payer is dropped and the account's own balance pays. A payload carrying
-	 *  `claim_and_end_setup` to the protocol FeeJuice really is a claim and passes through. */
 	/** The hand-off to the node is where the fees are final — the SDK completes them after `sendTx`'s
 	 *  options — so that is where a submission is recorded. Observation only, unless the suite armed
 	 *  a drop: then the recorded transaction is not forwarded at all. */
@@ -146,23 +132,12 @@ export class TestWallet extends EmbeddedWallet {
 		;(this as unknown as { aztecNode: unknown }).aztecNode = observed
 	}
 
-	private routed(payload: ExecutionPayload, from: unknown): ExecutionPayload {
-		if (this.profile === "plain" || !(from instanceof AztecAddress) || !payload.feePayer?.equals(from)) return payload
-		const claims = payload.calls.some((c) => c.to.equals(ProtocolContractAddress.FeeJuice) && c.selector.equals(this.claimSelector))
-		if (claims) return payload
-		return new ExecutionPayload(payload.calls, payload.authWitnesses, payload.capsules, payload.extraHashedArgs, undefined)
-	}
-
 	override async sendTx<W extends InteractionWaitOptions = undefined>(
 		payload: ExecutionPayload,
 		opts: SendOptions<W>,
 	): Promise<SendReturn<W>> {
-		if (!this.dropNextSubmission || opts.wait === NO_WAIT) return super.sendTx(this.routed(payload, opts.from), opts)
-		const { txHash, ...offchain } = await super.sendTx(this.routed(payload, opts.from), { ...opts, wait: NO_WAIT })
+		if (!this.dropNextSubmission || opts.wait === NO_WAIT) return super.sendTx(payload, opts)
+		const { txHash, ...offchain } = await super.sendTx(payload, { ...opts, wait: NO_WAIT })
 		return { receipt: new PendingTxReceipt(txHash, undefined), ...offchain } as unknown as SendReturn<W>
-	}
-
-	override simulateTx(payload: ExecutionPayload, opts: SimulateOptions) {
-		return super.simulateTx(this.routed(payload, opts.from), opts)
 	}
 }

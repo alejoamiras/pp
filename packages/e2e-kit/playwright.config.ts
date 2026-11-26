@@ -4,7 +4,8 @@ import { PROFILES } from "./test-wallet/profile"
 
 const env = runEnv()
 const here = new URL(".", import.meta.url).pathname
-const appRoot = new URL("../../", import.meta.url).pathname
+/** The web app under test; `agent.sh` builds it and runs this config only once it exists. */
+const appRoot = new URL("../../apps/web/", import.meta.url).pathname
 
 /**
  * One sandbox, one browser, one worker: every spec file owns a context, every test a fresh actor,
@@ -12,11 +13,11 @@ const appRoot = new URL("../../", import.meta.url).pathname
  * recorded duration through `shard-reporter.ts`.
  */
 export default defineConfig({
-	testDir: `${here}specs`,
+	testDir: process.env.PP_E2E_SPECS ?? `${appRoot}e2e`,
 	globalSetup: `${here}global-setup.ts`,
 	workers: 1,
 	fullyParallel: false,
-	retries: Number(process.env.UNLEASHED_E2E_RETRIES ?? 0),
+	retries: Number(process.env.PP_E2E_RETRIES ?? 0),
 	timeout: 10 * 60_000,
 	expect: { timeout: 60_000 },
 	reporter: [
@@ -27,7 +28,7 @@ export default defineConfig({
 	outputDir: `${env.stateDir}/test-results`,
 	use: {
 		...devices["Desktop Chrome"],
-		baseURL: env.toolsOrigin,
+		baseURL: env.appOrigin,
 		viewport: { width: 1440, height: 1000 },
 		trace: "retain-on-failure",
 		video: "off",
@@ -38,23 +39,20 @@ export default defineConfig({
 	projects: [{ name: "chromium", use: { channel: undefined } }],
 	webServer: [
 		{
-			// The PRODUCTION-mode local build, served at the exact host its integrity check names.
-			command: `bun run --cwd ${appRoot} vite preview --config vite.local.config.mts --outDir ${env.toolsDist} --host 127.0.0.1 --port ${env.toolsPort} --strictPort`,
-			url: `${env.toolsOrigin}/build.json`,
+			// The production-mode local build, served at the exact origin the wallet frames accept.
+			command: `bun run --cwd ${appRoot} vite preview --outDir ${env.appDist} --host 127.0.0.1 --port ${env.appPort} --strictPort`,
+			url: `${env.appOrigin}/`,
 			reuseExistingServer: false,
 			timeout: 60_000,
-			env: {
-				UNLEASHED_SANDBOX_ARTIFACTS: env.artifactsDir,
-				UNLEASHED_TOOLS_WEB_WALLETS: process.env.UNLEASHED_TOOLS_WEB_WALLETS ?? "",
-			},
+			env: { PP_SANDBOX_ARTIFACTS: env.artifactsDir },
 		},
 		// The one wallet build, served once per profile so each has its own origin.
 		...PROFILES.map((profile) => ({
-			command: `bun run --cwd ${appRoot} vite preview --config tests/browser/test-wallet/vite.config.mts --outDir ${env.testWalletDist} --host 127.0.0.1 --port ${new URL(env.testWalletOrigins[profile]).port} --strictPort`,
+			command: `bun run --cwd ${here} vite preview --config test-wallet/vite.config.mts --outDir ${env.testWalletDist} --host 127.0.0.1 --port ${new URL(env.testWalletOrigins[profile]).port} --strictPort`,
 			url: `${env.testWalletOrigins[profile]}/`,
 			reuseExistingServer: false,
 			timeout: 60_000,
-			env: { UNLEASHED_SANDBOX_ARTIFACTS: env.artifactsDir, UNLEASHED_TOOLS_ORIGIN: env.toolsOrigin },
+			env: { PP_SANDBOX_ARTIFACTS: env.artifactsDir, PP_APP_ORIGIN: env.appOrigin },
 		})),
 	],
 })

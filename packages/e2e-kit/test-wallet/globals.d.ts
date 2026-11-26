@@ -31,8 +31,8 @@ declare global {
 	/** Baked by `vite.config.mts` from the sandbox run's artifacts. */
 	const __TEST_WALLET__: TestWalletIdentity
 	interface Window {
-		__unleashedTestWallet?: TestWalletControl
+		__ppTestWallet?: TestWalletControl
 		/** Set by the suite's context init script before any page script runs. */
-		__unleashedTestWalletSeeds?: Seed[]
+		__ppTestWalletSeeds?: Seed[]
 	}
 }

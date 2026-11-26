@@ -5,7 +5,7 @@
  */
 import { readFileSync } from "node:fs"
 import type { FullConfig, FullResult, Reporter, Suite, TestRun } from "@playwright/test/reporter"
-import { type Durations, planShards } from "../../scripts/e2e/shard-plan"
+import { type Durations, planShards } from "./scripts/e2e/shard-plan"
 
 const RECORD = new URL("./shard-durations.json", import.meta.url)
 

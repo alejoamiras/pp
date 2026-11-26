@@ -11,12 +11,12 @@ import { test as base, type BrowserContext, expect, type Page } from "@playwrigh
 import { l2CtxFor, readHandle } from "@pp/bridge-core/sandbox"
 import { type RunEnv, runEnv } from "../env"
 import type { Seed } from "../test-wallet/profile"
-import { confineEgress, type Egress, type TokenListFixture } from "./egress"
+import { confineEgress, type Egress } from "./egress"
 import { installL1Wallet, type L1WalletControl } from "./l1-wallet"
 import { type ActorHandle, type SandboxAccess, sandboxAccess } from "./sandbox"
 import { parkWalletPanel } from "./wallet-panel"
 
-/** Tools caps a grant at 16 accounts; a file whose cells need more is split. */
+/** The most accounts one wallet grant lists; a file whose cells need more is split. */
 export const MAX_POOL = 16
 const SPARES = 2
 /** The local network builds a block only when a transaction arrives, and a claim waits on the
@@ -49,8 +49,6 @@ interface WorkerFixtures {
 	/** Extra actors beyond `cells` (retries take them). A file that must connect a wallet holding
 	 *  EXACTLY `cells` accounts sets 0 — and then has no retry budget. */
 	spares: number
-	/** The fixture the egress fence answers the community token list from — `test.use({ tokenList: "hostile" })`. */
-	tokenList: TokenListFixture
 	run: RunEnv
 	sandbox: SandboxAccess
 	pool: ActorPool
@@ -63,7 +61,6 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 	cells: [1, { option: true, scope: "worker" }],
 	l1Index: [0, { option: true, scope: "worker" }],
 	spares: [SPARES, { option: true, scope: "worker" }],
-	tokenList: ["community", { option: true, scope: "worker" }],
 
 	run: [
 		// biome-ignore lint/correctness/noEmptyPattern: Playwright requires the destructuring form even with no dependencies.
@@ -144,8 +141,8 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 	},
 
 	egress: [
-		async ({ context, tokenList }, use) => {
-			const egress = await confineEgress(context, tokenList)
+		async ({ context }, use) => {
+			const egress = await confineEgress(context)
 			await use(egress)
 			expect(egress.blocked, "every request stayed on loopback").toEqual([])
 		},
@@ -172,11 +169,11 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 export { expect }
 export type { ActorHandle, SandboxAccess }
 
-/** The seeds reach the wallet ORIGINS' documents only — the tools page never sees them. */
+/** The seeds reach the wallet ORIGINS' documents only — the app page never sees them. */
 async function installSeeds(context: BrowserContext, walletOrigins: string[], seeds: Seed[]): Promise<void> {
 	await context.addInitScript(
 		([origins, list]) => {
-			if (origins.includes(location.origin)) window.__unleashedTestWalletSeeds = list
+			if (origins.includes(location.origin)) window.__ppTestWalletSeeds = list
 		},
 		[walletOrigins, seeds] as const,
 	)

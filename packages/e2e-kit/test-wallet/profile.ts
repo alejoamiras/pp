@@ -1,12 +1,11 @@
-/** The three wallet shapes the suite connects tools to. Only the local target lists them. */
-export type TestWalletProfile = "plain" | "selfpay" | "full"
+/** The wallet shapes the suite connects the app to: `plain` is a stock wallet-sdk wallet, `full` also
+ *  answers the Nulo wallet's token-registration RPCs. */
+export type TestWalletProfile = "plain" | "full"
 
-export const PROFILES: readonly TestWalletProfile[] = ["plain", "selfpay", "full"]
+export const PROFILES: readonly TestWalletProfile[] = ["plain", "full"]
 
-/** The app id tools connects under (`useWalletConnection.ts`); every other dApp is refused. */
-export const TOOLS_APP_ID = "unleashed"
-
-export const DAPP_SELF_PAY_FEATURE = "dapp-self-pay"
+/** The app id the app connects under; every other dApp is refused. */
+export const APP_ID = "pp"
 
 export function parseProfile(raw: string | null): TestWalletProfile {
 	if (raw === null) return "plain"
@@ -19,7 +18,7 @@ export interface TestWalletIdentity {
 	nodeUrl: string
 	l1ChainId: number
 	rollupVersion: number
-	toolsOrigin: string
+	appOrigin: string
 }
 
 /** An actor the suite created in Node: the same Nulo derivation runs here, so the address matches. */

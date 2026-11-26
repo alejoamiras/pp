@@ -1,5 +1,5 @@
 /**
- * Four loopback ports for one browser run — the tools preview and one test-wallet origin per
+ * Three loopback ports for one browser run — the app preview and one test-wallet origin per
  * profile (the SDK's discovery probe tells wallet frames apart by origin alone) — bind-tested
  * from the static window below the kernel's ephemeral range, so the resolve → build → serve gap
  * cannot lose them to an outgoing connection's source port, and claimed in the host registry under
@@ -49,7 +49,7 @@ async function reserve(taken: Set<number>): Promise<number> {
 }
 
 /** The file names its owner: a state directory chosen by hand is not the run id its rows carry. */
-type RunPorts = { tools: number; walletPlain: number; walletSelfpay: number; walletFull: number }
+type RunPorts = { app: number; walletPlain: number; walletFull: number }
 type PortsFile = RunPorts & { owner: string; resolvedAt: string }
 
 if (process.argv[2] === "--release") {
@@ -65,7 +65,7 @@ if (process.argv[2] === "--release") {
 	const file: PortsFile = { ...ports, owner: runId, resolvedAt: new Date().toISOString() }
 	mkdirSync(stateDir, { recursive: true })
 	writeFileSync(join(stateDir, "ports.json"), `${JSON.stringify(file, null, 2)}\n`)
-	console.log(`[e2e:tools] tools=:${ports.tools} test-wallet=:${ports.walletPlain}/:${ports.walletSelfpay}/:${ports.walletFull}`)
+	console.log(`[e2e] app=:${ports.app} test-wallet=:${ports.walletPlain}/:${ports.walletFull}`)
 }
 
 /** Bind-test around every port the registry lists, then claim under its lock; a claim another run
@@ -74,13 +74,12 @@ async function claim(runId: string, pid: number): Promise<RunPorts> {
 	for (let attempt = 0; ; attempt++) {
 		const taken = registeredPorts()
 		const ports: RunPorts = {
-			tools: await reserve(taken),
+			app: await reserve(taken),
 			walletPlain: await reserve(taken),
-			walletSelfpay: await reserve(taken),
 			walletFull: await reserve(taken),
 		}
 		try {
-			await registerHostPorts(runId, "tools-e2e", ports, pid)
+			await registerHostPorts(runId, "browser-e2e", ports, pid)
 			return ports
 		} catch (e) {
 			if (!(e instanceof PortClaimConflict) || attempt >= 4) throw e

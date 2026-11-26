@@ -1,12 +1,12 @@
 /**
- * Rewrites `tests/browser/shard-durations.json` from the log of a green CI run of the browser suite:
+ * Rewrites the kit's `shard-durations.json` from the log of a green CI run of the browser suite:
  *
  *   gh run view <run-id> --log | bun scripts/e2e/record-shard-durations.ts
  */
 import { readFileSync, writeFileSync } from "node:fs"
 import { recordDurations } from "./shard-plan"
 
-const out = new URL("../../tests/browser/shard-durations.json", import.meta.url)
+const out = new URL("../../shard-durations.json", import.meta.url)
 const record = recordDurations(readFileSync(0, "utf8"))
 writeFileSync(out, `${JSON.stringify(record, null, "\t")}\n`)
 const files = Object.keys(record).length

@@ -1,0 +1,11 @@
+{
+	"anvilUrl": "http://127.0.0.1:8545",
+	"nodeUrl": "http://127.0.0.1:8080",
+	"l1ChainId": 31337,
+	"rollupVersion": 0,
+	"walletChainId": 0,
+	"artifactsDir": ".",
+	"l1": { "deployerKey": "0x00", "actorKeys": [] },
+	"l2": { "relayer": "0x00", "actorSecret": "0x00", "actorSalt": "0" },
+	"deployment": { "registry": "0x0000000000000000000000000000000000000000", "tokens": {} }
+}

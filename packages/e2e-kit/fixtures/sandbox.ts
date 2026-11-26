@@ -4,12 +4,13 @@
  * the browser ever hears their seeds, so a fixture can fund an account the UI has not shown yet.
  */
 import type { ContractBase } from "@aztec-labs/aztec.js/contracts"
-import type { ManifestToken, ManifestV2 } from "@pp/bridge-core"
 import {
 	type Actor,
 	buildContext,
 	createActor,
 	freshActorSecret,
+	type ManifestToken,
+	type ManifestV2,
 	openSandbox,
 	readHandle,
 	readManifest,

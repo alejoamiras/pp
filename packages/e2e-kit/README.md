@@ -1,119 +1,91 @@
-# apps/tools/tests/browser
+# @pp/e2e-kit
 
-The tools app driven in a real Chromium against a real local network, with a wallet that is NOT a
-product wallet: an `@aztec-labs/wallets` embedded wallet behind `@aztec-labs/wallet-sdk`'s iframe handler
-(`test-wallet/`), and an injected EIP-1193 L1 wallet answered from Node (`fixtures/l1-wallet.ts`).
-This is how the dApp proves it works with *a* wallet-sdk wallet; no product wallet's suite enters.
+The Playwright kit a web app under `apps/web` will be driven with: a real Chromium against a real
+local network, with a wallet that is not a product wallet. It holds an `@aztec-labs/wallets`
+embedded wallet behind `@aztec-labs/wallet-sdk`'s iframe handler (`test-wallet/`) and an injected
+EIP-1193 L1 wallet answered from Node (`fixtures/l1-wallet.ts`). No app exists yet, so a run stops
+after the sandbox boots and the wallet bundles against it.
 
 ```bash
-bun run e2e:tools                          # everything, one sandbox
-bun run e2e:tools -- --shard=1/2           # a shard (each shard boots its own sandbox)
-bun run e2e:tools -- specs/spike.spec.ts   # one file
+bun run --cwd packages/e2e-kit test:browser                    # everything, one sandbox
+bun run --cwd packages/e2e-kit test:browser -- --shard=1/2     # a shard (each boots its own sandbox)
+bun run --cwd packages/e2e-kit test:browser reap               # stop sandboxes this checkout left behind
 ```
 
-`scripts/e2e/agent.sh` is the whole run: reserve two ports → `sandbox:up` (anvil + `aztec start
---local-network` + a bridge generation, from `packages/bridge-core`) → `build:local` of tools with
-the run's node URL and wallet URLs baked in → `build:test-wallet` → assert both bundles name the
-node → Playwright with two `webServer`s (`vite preview` of each build, the tools one serving the
-generated CSP) → reap. State lives under `.e2e-state/<run>/` (gitignored): ports, the sandbox
-artifacts, both `dist`s, logs, traces.
+`scripts/e2e/agent.sh` is the whole run:
+
+1. Claim three ports from `~/.agents/ports.md`: the app and one wallet origin per profile.
+2. `sandbox:up` from `packages/bridge-core` (anvil, `aztec start --local-network`, a bridge
+   generation).
+3. `build:test-wallet` with the run's node and app origin baked in.
+4. Once `apps/web` exists: its `build:local` with the node and wallet URLs, then a check that both
+   bundles name the node, then Playwright with one `vite preview` per build.
+5. Reap.
+
+State lives under `.e2e-state/<run>/` (gitignored): ports, the sandbox artifacts, both builds, logs,
+traces. `PP_E2E_KEEP=1` keeps the sandbox and prints the line that reattaches to it
+(`PP_E2E_ATTACH=<state dir>`, with `PP_E2E_REBUILD=1` to rebuild).
 
 ## Layout
 
 | Path | Role |
 |---|---|
-| `playwright.config.ts` | chromium, `workers: 1`, the two servers, traces on failure |
-| `shard-reporter.ts` | under `--shard`, splits by duration instead of test count (see CI) |
-| `shard-durations.json` | each spec file's tests and the seconds its CI shard spent on it, worker start and actor pool included |
-| `env.ts` | the run's coordinates from the env the runner sets |
-| `global-setup.ts` | the handle names chain 31337, the build is `local`, the sandbox's drip record equals the committed one |
+| `playwright.config.ts` | Chromium, `workers: 1`, the app and wallet servers, traces on failure; specs come from `apps/web/e2e` or `PP_E2E_SPECS` |
+| `env.ts` | the run's coordinates from the `PP_*` variables the runner sets |
+| `global-setup.ts` | the handle names chain 31337 |
 | `fixtures/test.ts` | the `test` every spec uses: sandbox access, an actor pool per file, a fresh actor per test, the L1 shim, the egress fence, the parked wallet panel |
-| `fixtures/sandbox.ts` | the Node side: `openSandbox` on the handle, `newActor()` (sponsor-deployed, own flow context) |
-| `fixtures/l1-wallet.ts` | `window.ethereum` → `exposeFunction` → viem over anvil; `setChainId`, `setAccount`, `rejectNext`, `holdNext(kind, { to })` (a request that never answers, narrowable to one transaction target), `calls(method)` per-method counts, `permits()` (every Permit2 permit as signed) |
-| `fixtures/egress.ts` | aborts every non-loopback request, answers the token list from `../e2e/fixtures/token-list.json` (or `token-list-hostile.json` under `test.use({ tokenList: "hostile" })`); the record must be empty at teardown |
-| `fixtures/wallet-panel.ts` | parks the SDK's floating session panel in a corner so it covers no testid |
-| `pages/*.ts` | testid-only page helpers: connect, drip, the Send wizard's deposit and exit directions, the journal (records + the fees their transactions billed), `fees.ts` (the ceiling the wallet will price — see below) |
-| `specs/*.spec.ts` | the cells, one file per family (`deposit-token`, `fee-states`, `deposit-token-gas`, `deposit-gas-only`, `tokens`, `tokens-hostile` (the community list served from the hostile fixture), `recovery`, `l1-wallet`, `exits`, `drip`, `activity`, `accounts` — the multi-account path, pair cells take a second actor from the pool — and `accounts-single`, a one-seed wallet with `spares: 0`; `spike` keeps the discovery / grant / isolation checks and the narrow-viewport pass); `test.use({ cells: N, l1Index: i })` at the top of each file |
-| `test-wallet/` | the wallet page: `profile.ts` (`plain` \| `selfpay` \| `full`), `wallet.ts` (the embedded wallet + grant + wallet-specific RPCs + self-pay routing), `main.ts` (the handler, the control hook `window.__unleashedTestWallet`: `addAccount`, `calls`, `submitted`, `failNext` / `holdNext` / `swallowNext` — refuse, park (until `release`), or run-but-never-answer the next matching call — `dropNextSubmission` (the next transaction is recorded at the node hand-off and never forwarded), `declineNextGrant`), its own `vite.config.mts` |
+| `fixtures/sandbox.ts` | the Node side: `openSandbox` on the handle, `newActor()` (sponsor-deployed, with its own flow context) |
+| `fixtures/l1-wallet.ts` | `window.ethereum` → `exposeFunction` → viem over anvil: `setChainId`, `setAccount`, `rejectNext`, `holdNext(kind, { to })`, per-method `calls` |
+| `fixtures/egress.ts` | aborts every non-loopback request; the record must be empty at teardown |
+| `fixtures/wallet-panel.ts` | parks the SDK's floating session panel in a corner so it covers no test id |
+| `fixtures/build-artifacts/handle.json` | placeholder handle for the build-only CI job; names no live network and holds no key |
+| `test-wallet/` | the wallet page: `profile.ts`, `wallet.ts` (embedded wallet, grant, wallet-specific RPCs), `main.ts` (the handler and the control hook `window.__ppTestWallet`), its own `vite.config.mts` |
+| `shard-reporter.ts`, `scripts/e2e/shard-plan.ts` | under `--shard`, deal whole spec files by recorded duration instead of test count |
+| `shard-durations.json` | the record `shard-plan.ts` reads; empty until the app has specs |
+| `scripts/e2e/resolve-ports.ts` | claims and releases the run's ports in the host registry |
 
-## How a spec gets its accounts
+## Accounts
 
-Actors are created in Node before the browser opens — `cells + 2` per file, capped by tools' grant
-limit of 16 — and reach the wallet through a context-level init script that sets
-`window.__unleashedTestWalletSeeds` on the wallet origin only. The wallet imports every seed before it
-answers `requestCapabilities`, so the switcher lists the whole pool from the first connect; a test
-takes the next unused actor (`actor` fixture), a retry takes a spare, and no actor is ever reused.
-Fee fixtures (public Fee Juice, private credit) are funded on-chain from the actor's flow context
-(`actor.s`) just before the UI runs, with the same helpers the integration suite uses.
+Actors are created in Node before the browser opens, `cells + 2` per file, capped at 16 per grant.
+A context init script sets `window.__ppTestWalletSeeds` on the wallet origins only, so the app page
+never sees a seed. The wallet imports every seed before it answers `requestCapabilities`. A test
+takes the next unused actor, a retry takes a spare, and no actor is reused.
 
 ## Profiles
 
-- `plain` — a standard wallet-sdk wallet; no wallet-specific RPCs (the transport answers `Unknown wallet method`).
-- `selfpay` — loads `@nulo-sh/wallet-sdk-schema-patch`, advertises `dapp-self-pay`, routes a self-payer
-  payload with no `claim_and_end_setup` call to the account's held public Fee Juice; `registerToken`
-  and friends answer `Unsupported wallet method`.
-- `full` — `selfpay` plus a working `registerToken`/`isTokenRegistered`.
+- `plain`: a stock wallet-sdk wallet. Wallet-specific RPCs answer `Unknown wallet method`.
+- `full`: loads `@nulo-sh/wallet-sdk-schema-patch` and answers `registerToken` and
+  `isTokenRegistered`.
 
-Each profile is served on its own loopback origin (one port each, the same build): the SDK's
-discovery probe tells wallet frames apart by origin alone, so same-origin profiles answer each
-other's probe and the slowest frame is never listed.
+Each profile is served on its own loopback origin from the same build. The SDK's discovery probe
+tells wallet frames apart by origin alone, so same-origin profiles answer each other's probe.
 
-The wallet accepts only tools' app id and the sandbox's chain, is framed only by the tools origin
-(CSP `frame-ancestors` + the handler's `allowedOrigins`), and is listed by no shipped build — the
-`build:testnet`/`build:mainnet` bundles contain neither its URL nor the node's.
+The wallet accepts only the app id `pp` and the sandbox's chain. Only the app origin may frame it
+(CSP `frame-ancestors` and the handler's `allowedOrigins`).
 
-## Two things the wallet decides, and the suite reads back
+## Control hook
 
-- **The FPC ceiling is the wallet's.** A claim, a registration or a private exit paid through the
-  PrivateFPC sets aside `gasLimits · maxFeesPerGas` of ITS transaction, and the wallet decides the
-  max fee (the aztec.js 6.0.0 option schema names the cap `maxFeePerGas`; wallets read
-  `maxFeesPerGas`; a stock wallet prices it itself, 1.5× the prediction). The app therefore reads the
-  figure from the wallet (`src/lib/wallet-fee-budget.ts`: a no-op simulated under the app's limits,
-  the applied settings read back), and so does the suite: `pages/fees.ts` runs the same probe
-  through the harness's scripting wallet — the same `EmbeddedWallet` class on the same node — so a
-  cell asserts the exact deduction the FPC made, never a multiple of tools' prediction.
-- **Blocks come on demand.** The local network builds a block only when a transaction arrives; a
-  claim driven from the UI waits on an L1→L2 message no block would carry. The `test` fixture keeps
-  a heartbeat for the worker's whole life (the relayer revokes a random public authwit every 3 s),
-  the same nudge the harness uses. It is the one place this suite differs from a real network.
+`window.__ppTestWallet` on the wallet origin: `addAccount`, `calls`, `submitted`, `failNext`,
+`holdNext` (park until `release`), `swallowNext` (run, never answer), `dropNextSubmission` (record
+the transaction at the node hand-off, never forward it) and `declineNextGrant`.
 
-## Screenshot tours
+## Blocks come on demand
 
-You can take PR screenshots with a throwaway spec, `specs/zz-*.spec.ts`. It drives the real UI and calls `page.screenshot`.
-- Run it alone: `bash scripts/e2e/agent.sh specs/zz-….spec.ts`.
-- Never commit it, and delete it before a full run.
-- The test wallet's iframe and its parked panel (`[data-wallet-parked]`) sit over the rail's top-left corner, where the logo is. Pass `style: "iframe, [data-wallet-parked] { visibility: hidden !important; }"` to `page.screenshot` so the capture shows the app, not the harness.
-- The wallet and token names in a capture are harness test data, not app copy.
-- A theme switch runs a 90ms colour transition: wait about 350ms after switching before a capture, or labels are caught mid-fade.
-- The parked panel can also take a real click aimed near that corner (the rail's tabs after an account switch, the tab bar at 390). Dispatch the click on the element itself there.
-- A tour cannot reach a retried state through an injected `failNext` or `holdNext` wallet failure: bridge-core's uncertain-outcome guard waits for the pending attempt's receipt, so Retry never lands. Reach the state another way, such as a held L1 transaction.
+The local network builds a block only when a transaction arrives, so a claim driven from the UI
+would wait forever on an L1→L2 message. The `test` fixture keeps a heartbeat for the worker's life,
+the same nudge the integration harness uses. This is the one place the suite differs from a real
+network.
 
 ## CI
 
-`.github/workflows/pr-tools-e2e.yml` → `_tools-e2e.yml`, 6 shards (`--shard=i/6`), one sandbox
-each, `tools-e2e-status` as the aggregator; runs on the `tools-e2e` paths-filter or the `e2e:tools`
-label. Traces (`retain-on-failure`) and the sandbox's logs are uploaded when a shard fails.
-
-Playwright's own `--shard` cuts by test count. Here a file's tests average anywhere from half a minute to well over a
-minute each, so equal counts made unequal shards. `shard-reporter.ts` takes over the split:
-- It deals whole spec files, slowest first, each to the shard with the least estimated time so far (`scripts/e2e/shard-plan.ts`).
-- A file's estimate scales with its current test count. A file missing from `shard-durations.json` is estimated
-  at the record's average per test.
-- Each shard prints its files and estimate (`[shard] 3/6 by duration: …`).
-- A shard whose run holds anything other than its planned files fails.
-
-A stale record only costs balance, never coverage. Refresh it from a green run when the shard times drift
-apart:
-
-```bash
-gh run view <run-id> --log | bun scripts/e2e/record-shard-durations.ts   # from apps/tools
-```
+`pr-quick.yml` builds the test wallet against `fixtures/build-artifacts` on every change the kit can
+see. The browser suite itself does not run in CI until `apps/web` has specs.
 
 ## Rules
 
-- Selectors are `data-testid` only (`src/lib/testids.ts`), narrowed by `data-*` attributes on the
-  same element where an id repeats (`data-wallet-id`, `data-address`, `data-key`, `data-symbol`).
-- Every cell states its expected payer and its balance / note postconditions, read from the chain
-  through the harness — the UI's text is never the authority.
+- Selectors are `data-testid` only, narrowed by `data-*` attributes on the same element where an id
+  repeats.
+- Every test states its expected payer and its balance or note postconditions, read from the chain
+  through the harness; the UI's text is never the authority.
 - Nothing here boots a network or picks a port by hand; the runner owns both. Two runs on one
-  machine are two sandboxes on two port packs.
+  machine are two sandboxes on two port sets.
