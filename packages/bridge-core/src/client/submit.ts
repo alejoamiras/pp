@@ -14,7 +14,7 @@ import {
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { sendGasLimit } from "../l1-gas"
 import { type AttemptState, type Intent, planAttempt } from "./attempts"
-import { guarded, revertName } from "./boundary"
+import { contractRevert, guarded, revertName } from "./boundary"
 import { assertBridgeSpend, snapshotSpend } from "./checks"
 import { BridgeClientError, type StaleRootCode } from "./errors"
 import { Journal, type JournalAttempt, type JournalRecord, type KeyValueStore } from "./journal"
@@ -185,7 +185,7 @@ async function freshness(run: Run, s: PreparedBridgeSpend): Promise<Fresh> {
 		const data = revertData(e)
 		const stale = data ? spendRevertCode(data) : null
 		if (stale) return { kind: "stale", stale }
-		if (data === undefined && revertName(e) === undefined) throw e
+		if (data === undefined && !contractRevert(e)) throw e
 		const receipt = outcome(await resolveFor(run, s, false))
 		if (receipt) return { kind: "done", receipt }
 		const revert = revertName(e)

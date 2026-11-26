@@ -1,5 +1,5 @@
 import { PoolClientError } from "@pp/pool-client"
-import { type Hash, toHex, UserRejectedRequestError } from "viem"
+import { ContractFunctionRevertedError, type Hash, toHex, UserRejectedRequestError } from "viem"
 import { describe, expect, it, vi } from "vitest"
 import {
 	aztecWallet,
@@ -13,6 +13,7 @@ import {
 	openSession,
 	randomRecipient,
 } from "../test/client-fakes"
+import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { MAX_UNRESOLVED_ATTEMPTS } from "./attempts"
 import { BridgeClientError } from "./errors"
 import { Journal, type JournalRecord } from "./journal"
@@ -208,6 +209,25 @@ describe("submit: after the wallet call", () => {
 	it("returns the event's receipt when the transaction landed but its hash could not be saved", async () => {
 		const t = await setup({ failWrite: (n) => n === 2 })
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ amount: 70n })
+	})
+})
+
+describe("submit: simulation reverts", () => {
+	const revert = () => new ContractFunctionRevertedError({ abi: PROCESSOR_PORTAL_ABI, functionName: "bridgeFromPool" })
+
+	it("returns a landed copy's receipt for any revert, and SIMULATION_REVERTED when nothing landed", async () => {
+		const t = await setup()
+		t.chain.simulate.mockRejectedValue(revert())
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("SIMULATION_REVERTED")
+		await t.chain.land(t.spend.secretHash, hash(9), t.spend.proof.pubSignals)
+		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ l1TxHash: hash(9) })
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+	})
+
+	it("reports a transport failure as RPC_FAILED without consulting the chain", async () => {
+		const t = await setup()
+		t.chain.simulate.mockRejectedValue(new Error("socket hang up"))
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("RPC_FAILED")
 	})
 })
 

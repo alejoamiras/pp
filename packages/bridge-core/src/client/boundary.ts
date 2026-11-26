@@ -34,7 +34,8 @@ function fromPool(e: PoolClientError): BridgeClientError {
 	}
 }
 
-const contractRevert = (e: unknown): ContractFunctionRevertedError | null =>
+/** viem's revert error anywhere in an error chain: a contract refused the call, as opposed to a transport failure. */
+export const contractRevert = (e: unknown): ContractFunctionRevertedError | null =>
 	e instanceof BaseError ? (e.walk((x) => x instanceof ContractFunctionRevertedError) as ContractFunctionRevertedError | null) : null
 
 /** The decoded error name of a contract revert anywhere in a viem error chain, when it is an identifier. */
