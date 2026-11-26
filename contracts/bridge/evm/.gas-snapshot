@@ -1,1 +1,4 @@
-PortalGasTest:test_gas_createPortal_freshToken() (gas: 295324)
+PortalGasTest:test_gas_bridgeFromPool() (gas: 225587)
+PortalGasTest:test_gas_createPortal_freshToken() (gas: 295323)
+PortalGasTest:test_gas_settlePublicExit() (gas: 79756)
+PortalGasTest:test_gas_settleRagequit() (gas: 80297)

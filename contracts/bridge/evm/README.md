@@ -44,24 +44,28 @@ bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by nam
   opens entries only once the bindings check out.
 - **`ProcessorPortalImpl`** is the implementation every clone delegates to: the vault, the cap and
   the Aztec Inbox, Outbox and version are its immutables, and each clone's only storage is two
-  counters, `grossAccepted` and `totalPaid`. In this version it exposes no entry or exit yet.
+  counters, `grossAccepted` and `totalPaid`. `bridgeFromPool` spends one pool note into the clone
+  (1×1 shape, this token, under the cap, exact receipt) and sends its value to the hub;
+  `settleRagequit` and `settlePublicExit` pay a proven exit, never more than
+  `grossAccepted − totalPaid`, in any pause state. Payloads come from `BridgeMessageV1`.
   `IPrivacyPoolVault` declares the vault's `transact`, its selector pinned to the pool's build.
 - `MintableERC20` / `TestUsdc` are capped-mint test tokens; the local network deploys
   `MintableERC20` (see INFO-1).
 
 ## Tests
 
-Hermetic forge tests (`forge test --no-match-contract Fork`), **2 halmos proofs**
-(`FormalFactoryTest`; each guard-shaped proof carries a forge canary showing the property fails
-without the guard), and a committed `.gas-snapshot` for `createPortal` on a fresh token.
+Hermetic forge tests (`forge test --no-match-contract Fork`), **4 halmos proofs**
+(`FormalFactoryTest 2 · FormalProcessorPortalTest 2`; each guard-shaped proof carries a forge canary
+showing the property fails without the guard), and a committed `.gas-snapshot` for `createPortal` on
+a fresh token, `bridgeFromPool` and both settles.
 
 | Layer | Suites |
 |---|---|
-| unit | `PortalFactory`, `ProcessorPortal` (the vault selector), `Keystone` (3-way vectors with Noir and TS), `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `MintableERC20`, `TestUsdc` |
+| unit | `PortalFactory`, `ProcessorPortal`, `PortalVectors` (the clone's wire envelope against the shared vectors), `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `Keystone` (3-way vectors with Noir and TS), `MintableERC20`, `TestUsdc` |
 | fuzz | `PortalFactoryFuzz` |
 | invariant | `PortalFactoryInvariant` |
-| symbolic | `FormalFactory`; see its header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |
-| adversarial | `BlackhatFactory` (F-1…F-9) |
+| symbolic | `FormalFactory`, `FormalProcessorPortal` (on a keccak harness); see each header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |
+| adversarial | `BlackhatFactory` (F-1…F-9; F-7 and F-9 against the processor portal) |
 | gas | `PortalGas` |
 
 ## Threat model: the factory-bound portal

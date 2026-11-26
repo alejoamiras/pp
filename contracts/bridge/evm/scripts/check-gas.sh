@@ -15,5 +15,8 @@ while read -r name; do
 	}
 done <<'CASES'
 test_gas_createPortal_freshToken
+test_gas_bridgeFromPool
+test_gas_settleRagequit
+test_gas_settlePublicExit
 CASES
 exit "$fail"
