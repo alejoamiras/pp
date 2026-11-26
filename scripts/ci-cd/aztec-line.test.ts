@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { dirname, join, posix } from "node:path"
 
 /**
  * One Aztec line per install. The line publishes on two version tracks: every `@aztec-labs/*`
@@ -99,10 +99,18 @@ type ResolvedLock = { packages: Record<string, [string, string?, LockDeps?, stri
 const runtimeSpecs = (m: LockDeps | undefined): Specs => ({ ...m?.dependencies, ...m?.optionalDependencies, ...m?.peerDependencies })
 const runtimeDeps = (m: LockDeps | undefined) => Object.keys(runtimeSpecs(m))
 
-/** The workspace a dependency names: the target of a `workspace:<name>` alias, else its own key. */
-function workspaceOf(dep: string, spec: string, workspaces: Map<string, Workspace>): string | undefined {
-	const target = /^workspace:((?:@[^@/]+\/)?[^@]+)/.exec(spec)?.[1]
-	if (target && workspaces.has(target)) return target
+/**
+ * The workspace a dependency of the workspace in `fromDir` names: the target of a `workspace:` alias,
+ * by name or by a path relative to `fromDir`, else its own key.
+ */
+function workspaceOf(fromDir: string, dep: string, spec: string, workspaces: Map<string, Workspace>): string | undefined {
+	const target = spec.startsWith("workspace:") ? spec.slice("workspace:".length) : ""
+	if (target.startsWith(".") || target.startsWith("/")) {
+		const dir = posix.normalize(posix.join(fromDir, target)).replace(/\/$/, "")
+		return [...workspaces].find(([, w]) => w.dir === dir)?.[0]
+	}
+	const named = /^((?:@[^@/]+\/)?[^@]+)/.exec(target)?.[1]
+	if (named && workspaces.has(named)) return named
 	return workspaces.has(dep) ? dep : undefined
 }
 
@@ -118,7 +126,8 @@ function appClosure(workspaces: Map<string, Workspace>): Set<string> {
 	for (let name = queue.pop(); name !== undefined; name = queue.pop()) {
 		if (members.has(name)) continue
 		members.add(name)
-		queue.push(...Object.entries(runtimeSpecs(workspaces.get(name)?.manifest)).flatMap(([dep, spec]) => workspaceOf(dep, spec, workspaces) ?? []))
+		const w = workspaces.get(name)
+		queue.push(...Object.entries(runtimeSpecs(w?.manifest)).flatMap(([dep, spec]) => workspaceOf(w?.dir ?? "", dep, spec, workspaces) ?? []))
 	}
 	return members
 }
@@ -207,9 +216,11 @@ test("the closure walk finds a nested second viem and stops at a workspace outsi
 	const members = appClosure(workspaces)
 	expect([...members]).toEqual(["@pp/bridge-core"])
 	expect([...viemReached(lock, workspaces, members)]).toEqual(["2.40.0"])
-	const aliasing = { name: "@pp/bridge-core", dependencies: { env: "workspace:@pp/pp-env" } }
-	const aliased = new Map(workspaces).set("@pp/bridge-core", { dir: "packages/bridge-core", manifest: aliasing })
-	expect([...appClosure(aliased)].sort()).toEqual(["@pp/bridge-core", "@pp/pp-env"])
+	for (const alias of ["workspace:@pp/pp-env", "workspace:../pp-env"]) {
+		const aliasing = { name: "@pp/bridge-core", dependencies: { env: alias } }
+		const aliased = new Map(workspaces).set("@pp/bridge-core", { dir: "packages/bridge-core", manifest: aliasing })
+		expect([...appClosure(aliased)].sort(), alias).toEqual(["@pp/bridge-core", "@pp/pp-env"])
+	}
 })
 
 test("the foundation version is the exact one the locked aztec.js requires", () => {
