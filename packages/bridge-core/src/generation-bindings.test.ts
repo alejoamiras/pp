@@ -8,6 +8,9 @@ const expected: ExpectedBindings = {
 	implementation: addr(0x1a),
 	hub: `0x${"4b".repeat(32)}`,
 	guardian: addr(0x6a),
+	inbox: addr(0x1b),
+	outbox: addr(0x0b),
+	rollupVersion: 4242n,
 	pool: addr(0x90),
 	lifetimeCap: 10n ** 30n,
 	portals: [
@@ -25,6 +28,9 @@ function chain(overrides: Record<string, unknown> = {}) {
 		[`${expected.factory}.owner`]: expected.guardian,
 		[`${expected.implementation}.FACTORY`]: expected.factory,
 		[`${expected.implementation}.L2_HUB`]: expected.hub,
+		[`${expected.implementation}.INBOX`]: expected.inbox,
+		[`${expected.implementation}.OUTBOX`]: expected.outbox,
+		[`${expected.implementation}.ROLLUP_VERSION`]: expected.rollupVersion,
 		[`${expected.implementation}.POOL`]: expected.pool,
 		[`${expected.implementation}.LIFETIME_CAP`]: expected.lifetimeCap,
 		...Object.fromEntries(
@@ -51,7 +57,7 @@ describe("assertGenerationBindings", () => {
 	it("passes a generation whose every binding agrees, case-insensitively", async () => {
 		const { client, reads } = chain()
 		await expect(assertGenerationBindings(client, expected)).resolves.toBeUndefined()
-		expect(reads).toHaveLength(7 + 2 * expected.portals.length)
+		expect(reads).toHaveLength(10 + 2 * expected.portals.length)
 	})
 
 	it("names the first binding that disagrees, and reads no implementation the factory does not point at", async () => {
@@ -59,6 +65,8 @@ describe("assertGenerationBindings", () => {
 		const [first, second] = expected.portals
 		const cases: [string, unknown][] = [
 			[`${expected.implementation}.FACTORY`, stranger],
+			[`${expected.implementation}.OUTBOX`, stranger],
+			[`${expected.implementation}.ROLLUP_VERSION`, expected.rollupVersion + 1n],
 			[`${expected.implementation}.LIFETIME_CAP`, expected.lifetimeCap + 1n],
 			[`${expected.factory}.portalOf(${second?.token})`, stranger],
 			[`${first?.portal}.underlying`, stranger],

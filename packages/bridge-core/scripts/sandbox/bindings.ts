@@ -4,7 +4,7 @@ import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import type { Address, Hex } from "viem"
 import { PORTAL_FACTORY_ABI } from "../../src/factory-abi"
 import type { L1Ctx } from "../../src/flows"
-import { assertGenerationBindings } from "../../src/generation-bindings"
+import { assertGenerationBindings, type RollupInfoSource, rollupEndpointsOf } from "../../src/generation-bindings"
 import { hubTokenFor } from "../../src/hub-l2"
 import type { BridgeBlock, ManifestToken } from "../../src/manifest-v2"
 import { registerHub } from "../script-l2"
@@ -12,9 +12,9 @@ import { SANDBOX_LIFETIME_CAP, SANDBOX_POOL } from "./constants"
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
-/** The manifest's generation is bound to the sandbox's vault and cap, every manifest token's portal
- *  exists and holds that token, and entries are still paused. */
-export async function flowGenerationBindings(l1: L1Ctx, bridge: BridgeBlock): Promise<string> {
+/** The manifest's generation is bound to the sandbox's vault and cap and to the rollup `node`
+ *  follows, every manifest token's portal exists and holds that token, and entries are still paused. */
+export async function flowGenerationBindings(l1: L1Ctx, node: RollupInfoSource, bridge: BridgeBlock): Promise<string> {
 	const factory = bridge.l1.factory as Address
 	await assertGenerationBindings(
 		l1.pub,
@@ -23,6 +23,7 @@ export async function flowGenerationBindings(l1: L1Ctx, bridge: BridgeBlock): Pr
 			implementation: bridge.l1.implementation as Address,
 			hub: bridge.l2.hub.address as Hex,
 			guardian: bridge.l1.guardian as Address,
+			...(await rollupEndpointsOf(node)),
 			pool: SANDBOX_POOL,
 			lifetimeCap: SANDBOX_LIFETIME_CAP,
 			portals: bridge.tokens.map((t) => ({ token: t.erc20 as Address, portal: t.portal as Address })),

@@ -81,6 +81,13 @@ interface ChainOptions {
 
 type Read = { address: string; functionName: string }
 
+/** The rollup the fake node follows, which the hub deploys to. */
+const ROLLUP = {
+	inbox: "0x1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
+	outbox: "0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+	version: 4242n,
+}
+
 /** What the generation's contracts answer, keyed `<contract>.<getter>`: a read sent to the wrong
  *  contract has no answer and fails, so a misdirected read cannot pass. */
 function chainReads(
@@ -93,6 +100,9 @@ function chainReads(
 		"factory.L2_HUB": chain.factoryHub(),
 		"implementation.FACTORY": chain.factory(),
 		"implementation.L2_HUB": chain.factoryHub(),
+		"implementation.INBOX": ROLLUP.inbox,
+		"implementation.OUTBOX": ROLLUP.outbox,
+		"implementation.ROLLUP_VERSION": ROLLUP.version,
 		"implementation.POOL": inputs.pool,
 		"implementation.LIFETIME_CAP": inputs.lifetimeCap,
 		...overrides,
@@ -156,6 +166,10 @@ function fakeChain(startNonce: bigint, predictedAt = startNonce, opts: ChainOpti
 		wallet: freshWallet(),
 		node: {
 			getContract: vi.fn(async () => hub),
+			getNodeInfo: vi.fn(async () => ({
+				rollupVersion: Number(ROLLUP.version),
+				l1ContractAddresses: { inboxAddress: ROLLUP.inbox, outboxAddress: ROLLUP.outbox },
+			})),
 			getContractClass: vi.fn(async (id: Fr) => (opts.publishedClasses?.has(id.toString()) ? {} : undefined)),
 		},
 		from: AztecAddress.fromStringUnsafe(GUARDIAN_L2),
@@ -349,6 +363,9 @@ describe("deployGeneration — crash-resume at every journalled step", () => {
 			"factory.owner": stranger,
 			"implementation.FACTORY": stranger,
 			"implementation.L2_HUB": `0x${"f".repeat(64)}`,
+			"implementation.INBOX": stranger,
+			"implementation.OUTBOX": stranger,
+			"implementation.ROLLUP_VERSION": ROLLUP.version + 1n,
 			"implementation.POOL": stranger,
 			"implementation.LIFETIME_CAP": inputs.lifetimeCap - 1n,
 		}

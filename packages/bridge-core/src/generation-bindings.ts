@@ -1,7 +1,7 @@
 /**
  * A generation's L1 bindings read back from chain and compared with what its deployer chose. Nothing
- * can sweep a clone, so a spend accepted by a portal bound to another hub, vault or cap is stuck for
- * good: the guardian opens entries only once this passes.
+ * can sweep a clone, so a spend accepted by a portal bound to another hub, rollup, vault or cap is
+ * stuck for good: the guardian opens entries only once this passes.
  */
 import type { Address, Hex, PublicClient } from "viem"
 import { PORTAL_FACTORY_ABI, PROCESSOR_PORTAL_ABI } from "./factory-abi"
@@ -13,6 +13,11 @@ export interface ExpectedBindings {
 	hub: Hex
 	/** The factory's owner, the only key that can open or close entries. */
 	guardian: Address
+	/** The rollup the hub lives on (`rollupEndpointsOf`). The implementation pins the registry's
+	 *  canonical rollup when it is built, which can differ if the registry moved during the deploy. */
+	inbox: Address
+	outbox: Address
+	rollupVersion: bigint
 	pool: Address
 	lifetimeCap: bigint
 	/** Portals that must already exist, each holding its token. Empty before the first `createPortal`. */
@@ -34,10 +39,28 @@ export class BindingMismatchError extends Error {
 
 export type BindingsClient = Pick<PublicClient, "readContract">
 
+/** The part of an Aztec node this module reads; an `AztecNode` satisfies it. */
+export interface RollupInfoSource {
+	getNodeInfo(): Promise<{
+		rollupVersion: number
+		l1ContractAddresses: { inboxAddress: { toString(): string }; outboxAddress: { toString(): string } }
+	}>
+}
+
+/** The Inbox, Outbox and version of the rollup `node` follows: the expected values for a hub on it. */
+export async function rollupEndpointsOf(node: RollupInfoSource): Promise<Pick<ExpectedBindings, "inbox" | "outbox" | "rollupVersion">> {
+	const info = await node.getNodeInfo()
+	return {
+		inbox: info.l1ContractAddresses.inboxAddress.toString() as Address,
+		outbox: info.l1ContractAddresses.outboxAddress.toString() as Address,
+		rollupVersion: BigInt(info.rollupVersion),
+	}
+}
+
 /**
  * Reads the factory's `IMPLEMENTATION`, `L2_HUB` and `owner`; the implementation's `FACTORY`,
- * `L2_HUB`, `POOL` and `LIFETIME_CAP`; and for each expected portal, `portalOf(token)` and the
- * clone's `underlying()`. The implementation is read only after the factory is shown to point at it.
+ * `L2_HUB`, `INBOX`, `OUTBOX`, `ROLLUP_VERSION`, `POOL` and `LIFETIME_CAP`; and for each expected
+ * portal, `portalOf(token)` and the clone's `underlying()`. The implementation is read only after the factory is shown to point at it.
  * Says nothing about the entry pause: opening it is the caller's next step.
  *
  * @param label prefixes the error message, naming which deploy path or caller ran the check.
@@ -56,6 +79,13 @@ export async function assertGenerationBindings(client: BindingsClient, expected:
 	check("factory.owner", await client.readContract({ ...factory, functionName: "owner" }), expected.guardian)
 	check("implementation.FACTORY", await client.readContract({ ...implementation, functionName: "FACTORY" }), expected.factory)
 	check("implementation.L2_HUB", await client.readContract({ ...implementation, functionName: "L2_HUB" }), expected.hub)
+	check("implementation.INBOX", await client.readContract({ ...implementation, functionName: "INBOX" }), expected.inbox)
+	check("implementation.OUTBOX", await client.readContract({ ...implementation, functionName: "OUTBOX" }), expected.outbox)
+	check(
+		"implementation.ROLLUP_VERSION",
+		await client.readContract({ ...implementation, functionName: "ROLLUP_VERSION" }),
+		expected.rollupVersion,
+	)
 	check("implementation.POOL", await client.readContract({ ...implementation, functionName: "POOL" }), expected.pool)
 	check(
 		"implementation.LIFETIME_CAP",

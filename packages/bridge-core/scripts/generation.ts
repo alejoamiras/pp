@@ -28,7 +28,7 @@ import { tokenBridgeHubArtifact } from "../src/artifacts"
 import { PORTAL_FACTORY_ABI } from "../src/factory-abi"
 import { type Registration, readRegistration } from "../src/factory-registry"
 import type { L1Ctx } from "../src/flows"
-import { assertGenerationBindings, type ExpectedBindings } from "../src/generation-bindings"
+import { assertGenerationBindings, type ExpectedBindings, rollupEndpointsOf } from "../src/generation-bindings"
 import { hubTokenFor } from "../src/hub-l2"
 import { deriveHubTokenInstance } from "../src/hub-token"
 import { l1ToL2MessageReadiness } from "../src/l1-to-l2-readiness"
@@ -185,11 +185,19 @@ async function deployEvm(l1: L1Ctx, name: string, args: unknown[], nonce?: bigin
 	return { address: lc(receipt.contractAddress), txHash }
 }
 
-/** No portal exists while the factory step runs; one bound to another vault, cap or owner is refused. */
-const expectedBindings = (predicted: FactoryPrediction, hub: string, inputs: GenerationInputs): ExpectedBindings => ({
+type RollupEndpoints = Pick<ExpectedBindings, "inbox" | "outbox" | "rollupVersion">
+
+/** No portal exists while the factory step runs; one bound to another rollup, vault, cap or owner is refused. */
+const expectedBindings = (
+	predicted: FactoryPrediction,
+	hub: string,
+	rollup: RollupEndpoints,
+	inputs: GenerationInputs,
+): ExpectedBindings => ({
 	factory: predicted.factory,
 	implementation: predicted.implementation,
 	hub: hub as Hex,
+	...rollup,
 	guardian: lc(inputs.guardianL1),
 	pool: lc(inputs.pool),
 	lifetimeCap: inputs.lifetimeCap,
@@ -220,18 +228,20 @@ async function deployFactory(
 	inputs: GenerationInputs,
 	predicted: FactoryPrediction,
 	hubAddress: string,
+	rollup: RollupEndpoints,
 	journal: DeployJournal,
 ): Promise<FactoryPrediction> {
+	const expected = expectedBindings(predicted, hubAddress, rollup, inputs)
 	const done = findStep(journal, "factory-deployed")
 	if (done) {
 		// The hub was derived from the prediction, so a journal whose factory step disagrees with it is
 		// not one generation.
 		assertSame(done.factory, predicted.factory, "journalled factory address")
 		assertSame(done.implementation, predicted.implementation, "journalled implementation address")
-		await assertGenerationBindings(l1.pub, expectedBindings(predicted, hubAddress, inputs), "journalled factory")
+		await assertGenerationBindings(l1.pub, expected, "journalled factory")
 		return predicted
 	}
-	const adopted = await adoptLandedFactory(l1, predicted, expectedBindings(predicted, hubAddress, inputs), journal)
+	const adopted = await adoptLandedFactory(l1, predicted, expected, journal)
 	if (adopted) return adopted
 	// The hub is already salted with the predicted address; a factory that lands anywhere else is
 	// bound to a hub nothing can reach, so a moved nonce ends the generation rather than the step.
@@ -249,7 +259,7 @@ async function deployFactory(
 		nonce,
 	)
 	assertSame(address, predicted.factory, "PortalFactory address")
-	await assertGenerationBindings(l1.pub, expectedBindings(predicted, hubAddress, inputs), "deployed factory")
+	await assertGenerationBindings(l1.pub, expected, "deployed factory")
 	// Entries stay paused: the factory starts them so, and opening them is the guardian's later call.
 	journal.append({ kind: "factory-deployed", factory: address, implementation: predicted.implementation, txHash })
 	return { factory: address, implementation: predicted.implementation }
@@ -340,7 +350,9 @@ export async function deployGeneration(l1: L1Ctx, l2: L2Ctx, inputs: GenerationI
 	const predicted = await predictFactory(l1, journal)
 	const args = hubConstructorArgs(tokenClassId, predicted.factory, inputs.guardianL2)
 	const hubInstance = await deriveHub(tokenClassId, predicted.factory, inputs.guardianL2)
-	const { factory, implementation } = await deployFactory(l1, inputs, predicted, hubInstance.address.toString(), journal)
+	// The hub deploys to the rollup this node follows, so the implementation must pin that one.
+	const rollup = await rollupEndpointsOf(l2.node)
+	const { factory, implementation } = await deployFactory(l1, inputs, predicted, hubInstance.address.toString(), rollup, journal)
 	await deployHub(l2, hubInstance, args, factory, journal)
 
 	const record: GenerationRecord = {
