@@ -24,7 +24,7 @@ while read -r n contract; do
 	}
 done <<'EXPECTED'
 2 FormalFactoryTest
-2 FormalProcessorPortalTest
+10 FormalProcessorPortalTest
 EXPECTED
 
 while read -r proof; do
@@ -37,6 +37,14 @@ check_predictPortal_isCreate2OfInitcode
 check_setEntriesPaused_revertsForNonOwner
 check_bridge_valid_accountsExactly
 check_settle_anyPause_paysExactly
+check_bridge_paused_revertsBeforePool
+check_bridge_badShape_revertsBeforePool
+check_bridge_wrongToken_revertsBeforePool
+check_bridge_secretHashOutOfRange_revertsBeforePool
+check_bridge_overCap_revertsBeforePool
+check_bridge_inexactPayment_reverts
+check_settle_aboveReserve_reverts
+check_settle_badPayeeOrLabel_reverts
 PROOFS
 
 summaries=$(grep -c '^Symbolic test result: ' halmos.clean || true)
