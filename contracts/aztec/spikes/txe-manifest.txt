@@ -1,2 +1,13 @@
 # Every TXE test that must report ok in an unfiltered run.
-harness_deploys_and_calls_private
+# Q1 hashing
+hash_1_matches_reference
+hash_2_matches_reference
+every_membership_path_reproduces_its_root
+contract_computes_pool_commitment_and_asp_leaf
+contract_accepts_depth_18_member
+contract_accepts_promoted_leaf
+asp_member_failure_wrong_sibling
+asp_member_failure_wrong_index_bit
+asp_member_failure_wrong_depth
+asp_member_failure_index_bit_above_depth
+asp_member_failure_depth_above_18_against_zero_root

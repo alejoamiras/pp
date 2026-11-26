@@ -25,6 +25,8 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",
+		"@zk-kit/lean-imt": "2.2.4",
+		"poseidon-lite": "0.3.0",
 		"typescript": "6.0.3",
 		"vitest": "4.1.10"
 	}
