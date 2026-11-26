@@ -6,6 +6,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./artifacts": "./src/artifacts.ts",
+		"./asp-registry-artifact": "./src/asp-registry-artifact.ts",
 		"./sandbox": "./scripts/sandbox/index.ts"
 	},
 	"scripts": {

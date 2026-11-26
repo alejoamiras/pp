@@ -24,6 +24,11 @@ const PINS = [
 		path: join(CONTRACTS, "token_bridge_hub", "target", "token_bridge_hub_contract-TokenBridgeHub.json"),
 		classId: "0x2132a9de52d748417fb251b0924154633658534d6cf806bd9c3d79554d632abe",
 	},
+	{
+		name: "AspRootRegistry",
+		path: join(CONTRACTS, "asp_registry", "target", "asp_registry-AspRootRegistry.json"),
+		classId: "0x0ebac6e8eedf910656c4c1d8be2359ff10f924e048017df79d3f081b3d2ac0eb",
+	},
 ] as const
 
 describe("committed bridge Noir artifacts — class-id tripwire (6.0.0)", () => {
