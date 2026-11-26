@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process"
+import { execFileSync, spawn, spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -34,6 +34,19 @@ describe("assertSocketRoom", () => {
 		// "/" + dir + "/cdb-ts-4194304-999-999.sock" is 29 bytes beyond the dir name.
 		expect(() => assertSocketRoom(`/${"d".repeat(78)}`)).not.toThrow()
 		expect(() => assertSocketRoom(`/${"d".repeat(79)}`)).toThrow(/no room for the node's IPC sockets \(108 > 107 bytes\)/)
+	})
+})
+
+describe("assertNothingLeft", () => {
+	it("fails a vitest run whose global teardown finds leftovers", () => {
+		const config = join(import.meta.dirname, "fixtures/teardown-leftovers/vitest.config.ts")
+		const run = spawnSync("bun", ["--bun", "vitest", "run", "--config", config], {
+			cwd: join(import.meta.dirname, "../.."),
+			encoding: "utf8",
+		})
+		// Not the error's message: under Bun about one run in 25 prints the error without it.
+		expect(run.stdout + run.stderr).toContain("error during close")
+		expect(run.status).toBe(1)
 	})
 })
 

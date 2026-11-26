@@ -606,10 +606,13 @@ export interface LocalNetwork {
 	leftovers(): string[]
 }
 
-/** Throws when a stopped network left anything behind. */
+/** Throws when a stopped network left anything behind, and marks the process as failed first:
+ *  vitest 4.1 only logs an error thrown from a global teardown and still exits 0. */
 export function assertNothingLeft(net: LocalNetwork): void {
 	const left = net.leftovers()
-	if (left.length) throw new Error(`[sandbox] the stopped network left behind: ${left.join("; ")}`)
+	if (!left.length) return
+	process.exitCode = 1
+	throw new Error(`[sandbox] the stopped network left behind: ${left.join("; ")}`)
 }
 
 /** Both env vars together mean "use the network already running"; one alone would boot a fresh
