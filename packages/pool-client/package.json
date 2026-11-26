@@ -15,7 +15,7 @@
 		}
 	},
 	"scripts": {
-		"typecheck": "tsc --noEmit",
+		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.entries.json",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"check": "bun run typecheck && bun run lint && bun run test:node && bun run test",
