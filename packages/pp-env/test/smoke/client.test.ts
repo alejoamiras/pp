@@ -2,9 +2,14 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import * as sdk from "@ppv2/evm-sdk"
+import { createWalletClient, http } from "viem"
+import { privateKeyToAccount } from "viem/accounts"
+import { foundry } from "viem/chains"
 import { POOL_VAULT_ERRORS_ABI, POOL_VAULT_EVENTS_ABI, POOL_VAULT_TRANSACT_ABI } from "../../src/client/abi.ts"
-import { SECRET_DERIVATION_PURPOSE } from "../../src/client/derivation.ts"
+import { SECRET_DERIVATION_PURPOSE, secretDerivationTypedData } from "../../src/client/derivation.ts"
+import { createPoolUser } from "../../src/client/pool.ts"
 import { checkout } from "../../src/env/checkout.ts"
+import { anvilKey, USER_INDEX } from "../../src/env/harness/anvil.ts"
 
 type AbiItem = { type: string; name?: string; inputs?: readonly unknown[] }
 /** Drops what viem ignores: Solidity internal types and the default `anonymous: false`. */
@@ -50,4 +55,12 @@ test("the secret-derivation purpose matches the pinned upstream sample app byte 
 	const upstream = readFileSync(join(checkout().src, "apps/sample-web/src/secretDerivationPayload.ts"), "utf8")
 	expect(upstream).toContain(JSON.stringify(SECRET_DERIVATION_PURPOSE))
 	expect(upstream).toContain('name: "Standardized Secret Derivation"')
+})
+
+test("a user built from another account's derivation signature is refused", async () => {
+	const [mine, theirs] = [privateKeyToAccount(anvilKey(USER_INDEX)), privateKeyToAccount(anvilKey(USER_INDEX - 1))]
+	// Never contacted: the signature is checked before anything touches the chain.
+	const wallet = createWalletClient({ chain: foundry, transport: http("http://127.0.0.1:9"), account: mine })
+	const signature = await theirs.signTypedData(secretDerivationTypedData(theirs.address))
+	await expect(createPoolUser(undefined as never, { wallet, signature })).rejects.toThrow(/secret-derivation signature/)
 })

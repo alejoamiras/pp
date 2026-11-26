@@ -20,6 +20,7 @@ export declare function secretDerivationTypedData(signer: Address): SecretDeriva
 
 /**
  * A pool user whose keys derive from `signature`, or from `wallet` signing the secret-derivation
- * payload. Spends are proved locally with the circuits in `config.circuitsDir`.
+ * payload; a signature that is not the wallet's is refused. Spends are proved locally with the
+ * circuits in `config.circuitsDir`.
  */
 export declare function createPoolUser(config: ClientConfig, o: { wallet: LocalWallet; signature?: Hex }): Promise<PoolUser>

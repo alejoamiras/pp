@@ -28,7 +28,7 @@ import {
 	ViemWalletInteractor,
 	WitnessPreparationService,
 } from "@ppv2/evm-sdk"
-import { type Address, createPublicClient, decodeFunctionData, getAddress, type Hex, http, keccak256, toHex } from "viem"
+import { type Address, createPublicClient, decodeFunctionData, getAddress, type Hex, http, keccak256, toHex, verifyTypedData } from "viem"
 import { POOL_VAULT_TRANSACT_ABI } from "./abi.ts"
 import { secretDerivationTypedData } from "./derivation.ts"
 import { createProofService } from "./prover.ts"
@@ -188,11 +188,17 @@ async function prepareSpend(sdk: Sdk, pool: Address, { processor, data, asset, a
 	}
 }
 
-/** Builds a user whose keys derive from `signature`, or from the wallet signing the secret-derivation payload. */
+/**
+ * Builds a user whose keys derive from `signature`, or from the wallet signing the secret-derivation
+ * payload. A supplied signature must be the wallet's own: any other derives keys it cannot reproduce.
+ */
 export async function createPoolUser(config: ClientConfig, o: { wallet: LocalWallet; signature?: Hex }): Promise<PoolUser> {
 	const { wallet } = o
 	const owner = wallet.account.address
-	const signature = o.signature ?? (await wallet.signTypedData({ account: wallet.account, ...secretDerivationTypedData(owner) }))
+	const typedData = secretDerivationTypedData(owner)
+	if (o.signature && !(await verifyTypedData({ address: owner, signature: o.signature, ...typedData })))
+		throw new Error(`the signature is not ${owner}'s secret-derivation signature`)
+	const signature = o.signature ?? (await wallet.signTypedData({ account: wallet.account, ...typedData }))
 	const cryptoService = new CryptoService()
 	const keystoreManager = KeystoreManager.fromSignature(
 		{ signature, signerAddress: owner, addressHash: keccak256(owner), revocableKeyIndex: "0x0" },

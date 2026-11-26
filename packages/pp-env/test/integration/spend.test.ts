@@ -157,4 +157,9 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("a pool spend paid to a stub pr
 		expect(noteAt(p1.changeCommitment)?.status).toBe(NoteStatus.SPENT)
 		expect(noteAt(s.changeCommitment)).toMatchObject({ value: 0n, label })
 	})
+
+	test("10. a call to an address with no code mines, but is not reported as a spend", async () => {
+		const codeless: Address = "0x000000000000000000000000000000000000dead"
+		await rejectsWith(() => env.submitViaStub(codeless, p2, SUBMITTER_INDEX), "did not process it")
+	})
 })
