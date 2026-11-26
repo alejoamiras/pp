@@ -39,3 +39,13 @@ depth = 500
 # expected-revert cases in try/catch, but `sweep` on an empty balance and other benign
 # no-ops still revert, and failing the campaign on those would only add noise.
 fail_on_revert = false
+
+# `bun run nightly`: the same fuzz and invariant suites with far more inputs than a pull request can
+# afford. Everything else inherits from the default profile.
+[profile.nightly.fuzz]
+runs = 10000
+
+[profile.nightly.invariant]
+runs = 1024
+depth = 500
+fail_on_revert = false

@@ -15,6 +15,7 @@
 		"test:all": "BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun run --filter '@pp/*' --if-present test",
 		"test:ci-gating": "BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun test scripts/ci-cd/",
 		"demo": "bun packages/local-stack/src/cli.ts demo",
+		"nightly": "bun scripts/nightly.ts",
 		"baseline:complexity": "bun scripts/complexity-baseline/generate.ts",
 		"baseline:rescore": "bun scripts/complexity-baseline/rescore.ts",
 		"check:imports": "biome check packages/",

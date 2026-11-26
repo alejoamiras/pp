@@ -42,16 +42,9 @@ jobs:
         with:
           version: "1.7.1"
 
-      # lib/ is gitignored and installed per-checkout. Pinned to COMMITS, not floating tags: the
-      # README's unpinned install is what a contributor runs locally, but CI resolving a different
-      # forge-std than the one the suites were validated against is a silent divergence — an older
-      # one made halmos abort in setUp with "Unsupported cheat code", passing nothing.
+      # lib/ is gitignored; the script pins each library to a commit.
       - name: Install forge libraries
-        working-directory: contracts/bridge/evm
-        run: |
-          forge install \
-            foundry-rs/forge-std@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b \
-            OpenZeppelin/openzeppelin-contracts@cab19933c33c2ad1d4c7a84864a3601dddfd16f3
+        run: bash contracts/bridge/evm/scripts/install-libs.sh
 
       # foundry.toml's @aztec/ and @aztec-blob-lib/ remaps assume a hoisted node_modules;
       # this repo uses bun's isolated linker, so the generated remappings.txt is what makes
@@ -265,11 +258,7 @@ jobs:
           version: "1.7.1"
 
       - name: Install forge libraries
-        working-directory: contracts/bridge/evm
-        run: |
-          forge install \
-            foundry-rs/forge-std@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b \
-            OpenZeppelin/openzeppelin-contracts@cab19933c33c2ad1d4c7a84864a3601dddfd16f3
+        run: bash contracts/bridge/evm/scripts/install-libs.sh
 
       - name: Generate remappings + forge build
         run: |

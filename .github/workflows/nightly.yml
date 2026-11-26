@@ -1,0 +1,79 @@
+name: Nightly
+
+# Suites too slow for a pull request: `bun run nightly`, as defined by the branch under test. A
+# scheduled workflow runs only from the default branch while lanes merge into bridge-v1, so this one
+# checks out bridge-v1 when it exists, else main. That puts integration-branch code in main's cache
+# scope, so every cache is restore-only, the toolchain actions come from this workflow's own commit
+# (the tested branch cannot switch a cache back to saving), and no secret is used.
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test; empty means bridge-v1 when it exists, else main
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ inputs.ref || 'default' }}
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    name: nightly suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Resolve the ref under test
+        id: ref
+        env:
+          WANTED: ${{ inputs.ref }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if [ -n "$WANTED" ]; then
+            ref="$WANTED"
+          elif git ls-remote --exit-code --heads "$REPO_URL" bridge-v1 > /dev/null; then
+            ref=bridge-v1
+          else
+            ref=main
+          fi
+          echo "testing $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ steps.ref.outputs.ref }}
+
+      # After the tested checkout, which would clean anything already in the workspace.
+      - name: Check out this workflow's toolchain actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: .nightly-ci
+          sparse-checkout: .github/actions
+
+      - uses: ./.nightly-ci/.github/actions/setup-bun
+        with:
+          cache-save: "false"
+
+      - uses: ./.nightly-ci/.github/actions/setup-aztec
+        with:
+          cache-save: "false"
+
+      # Pinned for the same reason as the pull-request job: newer Foundry breaks halmos 0.3.3, and the
+      # suites were validated on this version.
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: "1.7.1"
+          cache: false
+
+      - name: bun run nightly
+        run: bun run nightly

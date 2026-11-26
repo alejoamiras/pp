@@ -71,6 +71,11 @@ After any change: lint, typecheck and the unit tests of the touched package. Bef
 the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml`,
 `pool-client.yml` and `actionlint.yml`.
 
+Suites too slow for a pull request go in `SUITES` in [`scripts/nightly.ts`](scripts/nightly.ts)
+(`bun run nightly`). `nightly.yml` runs it every day from `bridge-v1` when that branch exists, else
+`main`, so a lane adds its deep suite in its own branch; dispatch the workflow with a `ref` to test
+another. A suite that passes no test fails.
+
 ## Working in this repo
 
 - **The linker is `isolated`** (`bunfig.toml`). A workspace resolves only what its `package.json`

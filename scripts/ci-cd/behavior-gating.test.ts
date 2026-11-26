@@ -297,6 +297,38 @@ describe("Noir crate manifest", () => {
   })
 })
 
+// The nightly runs integration-branch code in main's cache scope: a cache it saved could poison
+// main's own workflows, and a persisted token or secret would be in reach of that code.
+test("the nightly reads only: restore-only caches, this commit's actions, no credentials, a timeout", () => {
+  const text = readFileSync(join(ROOT, ".github/workflows/nightly.yml"), "utf8")
+  const wf = workflow("nightly.yml")
+  expect(wf.permissions).toEqual({ contents: "read" })
+  expect(text).not.toContain("secrets.")
+  expect(Object.keys(wf.on).sort()).toEqual(["schedule", "workflow_dispatch"])
+  for (const [name, job] of Object.entries(wf.jobs) as [string, { "timeout-minutes"?: number; steps: { uses?: string; run?: string; with?: Record<string, unknown> }[] }][]) {
+    expect(job["timeout-minutes"], name).toBeGreaterThan(0)
+    for (const step of job.steps.filter((s) => s.uses)) {
+      const uses = step.uses as string
+      expect(uses, `${name}: actions/cache saves`).not.toMatch(/^actions\/cache@/)
+      if (uses.startsWith("actions/checkout@")) expect(step.with?.["persist-credentials"], uses).toBe(false)
+      if (uses.startsWith("./")) {
+        expect(uses, "composite actions come from this workflow's commit").toMatch(/^\.\/\.nightly-ci\//)
+        expect(step.with?.["cache-save"], uses).toBe("false")
+      }
+      if (uses.startsWith("foundry-rs/foundry-toolchain@")) expect(step.with?.cache, uses).toBe(false)
+    }
+    expect(job.steps.map((s) => s.run)).toContain("bun run nightly")
+  }
+  for (const action of ["setup-bun", "setup-aztec"]) {
+    const steps: { if?: string; uses?: string }[] = Bun.YAML.parse(readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")).runs.steps
+    for (const step of steps.filter((s) => s.uses?.startsWith("actions/cache"))) {
+      const restoreOnly = step.if?.includes("inputs.cache-save == 'false'")
+      expect(step.uses?.startsWith("actions/cache/restore@"), `${action}: ${step.if}`).toBe(Boolean(restoreOnly))
+      if (!restoreOnly) expect(step.if, `${action}: a saving cache step must be off when cache-save is false`).toContain("inputs.cache-save != 'false'")
+    }
+  }
+})
+
 test("the unit-test workflow runs this suite", () => {
   const steps: { run?: string }[] = workflow("_unit-tests.yml").jobs["unit-tests"].steps
   expect(steps.map((step) => step.run)).toContain("bun run test:ci-gating")
