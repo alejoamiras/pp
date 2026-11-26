@@ -116,11 +116,12 @@ Anvil account 0 is the node's publisher; bridge actors start at 1; pp-env uses 1
 ## Tests
 
 ```bash
-bun run --cwd packages/local-stack test                 # unit
-bun run --cwd packages/local-stack test:integration     # boots real stacks
+bun run --cwd packages/local-stack test                    # unit
+bun run --cwd packages/local-stack test:integration        # boots real stacks; the pull-request gate
+bun run --cwd packages/local-stack test:integration:long   # 32 min of idling at the default tick; nightly
 ```
 
-Both run under vitest, never `bun test`: on a cold transpiler cache, as on every fresh CI runner,
+All run under vitest, never `bun test`: on a cold transpiler cache, as on every fresh CI runner,
 `bun test` injects its `expect` into `@aztec-labs/foundation`, which then throws at import
 (`expect.addEqualityTesters is not a function`). A warm cache hides it, so reproduce with
 `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0`.

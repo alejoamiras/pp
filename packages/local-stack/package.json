@@ -11,7 +11,8 @@
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"test": "bun --bun vitest run",
-		"test:integration": "PP_STACK_INTEGRATION=1 bun --bun vitest run --config vitest.integration.config.ts"
+		"test:integration": "PP_STACK_INTEGRATION=1 bun --bun vitest run --config vitest.integration.config.ts",
+		"test:integration:long": "PP_STACK_INTEGRATION=1 PP_STACK_LONG=1 bun --bun vitest run --config vitest.integration.config.ts test/integration/heartbeat.integration.test.ts -t 'long idle'"
 	},
 	"dependencies": {
 		"@pp/bridge-core": "workspace:*",
