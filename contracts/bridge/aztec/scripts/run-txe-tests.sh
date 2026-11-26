@@ -12,7 +12,7 @@
 #   - The server's dependency set is the committed mini-project in ../txe-server (frozen lockfile),
 #     never an ad-hoc `bun add` — its transitives are part of the supply chain.
 #
-# Usage: scripts/run-txe-tests.sh [--crate token_bridge_hub] [nargo flags...] [-- test names...]
+# Usage: scripts/run-txe-tests.sh [--crate token_bridge_hub|asp_registry|asp_registry_probe] [nargo flags...] [-- test names...]
 #
 # Pass criteria are per crate: a committed `txe-manifest.txt` names every test that must pass, so a
 # dropped `mod test;` or a silently skipped file cannot read as green.
@@ -29,8 +29,10 @@ if [ "${1:-}" = "--crate" ]; then
   crate="${2:-}"; shift 2
 fi
 case "$crate" in
-  token_bridge_hub) ;;
-  *) echo "usage: $0 [--crate token_bridge_hub] [nargo flags...] [-- test names...]" >&2; exit 2 ;;
+  token_bridge_hub) floor=65 ;;
+  asp_registry) floor=49 ;;
+  asp_registry_probe) floor=8 ;;
+  *) echo "usage: $0 [--crate token_bridge_hub|asp_registry|asp_registry_probe] [nargo flags...] [-- test names...]" >&2; exit 2 ;;
 esac
 # Everything before `--` is a nargo flag (with or without a value); only names after `--` filter.
 nargo_flags=()
@@ -74,9 +76,16 @@ trap cleanup EXIT INT TERM
 # ── 1. Stage dependency artifacts into <crate>/target/ ──────────────────────────────
 # Resolved through bridge-core's declared dependency, not $repo_root/node_modules: this repo
 # uses bun's isolated linker, so there is no hoisted root node_modules to look in.
-TOKEN_ARTIFACT="$repo_root/packages/bridge-core/node_modules/@aztec-foundation/aztec-standards/artifacts/target/token_contract-Token.json"
-[ -f "$TOKEN_ARTIFACT" ] || { echo "Token artifact missing at $TOKEN_ARTIFACT — run bun install." >&2; exit 1; }
-cp "$TOKEN_ARTIFACT" "$tb/target/token_contract-Token.json"
+if [ "$crate" = token_bridge_hub ]; then
+  TOKEN_ARTIFACT="$repo_root/packages/bridge-core/node_modules/@aztec-foundation/aztec-standards/artifacts/target/token_contract-Token.json"
+  [ -f "$TOKEN_ARTIFACT" ] || { echo "Token artifact missing at $TOKEN_ARTIFACT — run bun install." >&2; exit 1; }
+  cp "$TOKEN_ARTIFACT" "$tb/target/token_contract-Token.json"
+fi
+if [ "$crate" = asp_registry_probe ]; then
+  REGISTRY_ARTIFACT="$here/asp_registry/target/asp_registry-AspRootRegistry.json"
+  [ -f "$REGISTRY_ARTIFACT" ] || { echo "registry artifact missing at $REGISTRY_ARTIFACT — run scripts/compile.sh asp_registry." >&2; exit 1; }
+  cp "$REGISTRY_ARTIFACT" "$tb/target/asp_registry-AspRootRegistry.json"
+fi
 
 # TXE speaks JSON-RPC and does not answer a bare GET, so `curl -sf` reports failure even once
 # it is serving. Probe the TCP socket instead — the original HTTP probe never succeeded, which
@@ -151,7 +160,6 @@ grep -qE "[1-9][0-9]* tests? passed" "$tb/txe-run.log" || {
 # manifest is not a pass criterion either.
 if [ "${#filters[@]}" -eq 0 ]; then
   [ -f "$tb/txe-manifest.txt" ] || { echo "run-txe-tests.sh: $tb/txe-manifest.txt is missing" >&2; exit 1; }
-  floor=65
   named=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*$' "$tb/txe-manifest.txt" | sort -u | wc -l | tr -d ' ')
   if [ "$named" -lt "$floor" ]; then
     echo "run-txe-tests.sh: $tb/txe-manifest.txt names $named tests; the floor for $crate is $floor" >&2
@@ -161,7 +169,8 @@ if [ "${#filters[@]}" -eq 0 ]; then
   # Stripped once, not piped per name: under pipefail, `sed | grep -q` fails whenever grep's early
   # exit SIGPIPEs sed, which happens for a match near the top of a log larger than the pipe buffer.
   run_log="$(sed -E 's/\x1b\[[0-9;]*m//g' "$tb/txe-run.log")"
-  while IFS= read -r name; do
+  # `|| [ -n "$name" ]` also checks a last line without a newline, which the floor count includes.
+  while IFS= read -r name || [ -n "$name" ]; do
     [ -z "$name" ] && continue
     case "$name" in \#*) continue ;; esac
     # Anchored on the module separator so a manifest entry cannot be satisfied by a longer name
