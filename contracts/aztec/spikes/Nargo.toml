@@ -1,2 +1,2 @@
 [workspace]
-members = ["poseidon_spike"]
+members = ["poseidon_spike", "label_token"]
