@@ -3,10 +3,11 @@ import { join } from "node:path"
 import type { Hex } from "viem"
 import { mnemonicToAccount } from "viem/accounts"
 import { anvilBin, cleanEnv } from "../tools.ts"
+import type { LocalChainId } from "../types.ts"
 import { claimPort } from "./ports.ts"
 import { type CleanupStack, killGroup, rpc, spawnOwned, waitFor } from "./process.ts"
 
-export const CHAIN_ID = 31337
+export const CHAIN_ID: LocalChainId = 31337
 export const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"
 /** Index 0 is the Aztec node's publisher and the bridge sandbox signs with 15, so pp-env stays clear of both. */
 export const ANVIL_ACCOUNTS = 16

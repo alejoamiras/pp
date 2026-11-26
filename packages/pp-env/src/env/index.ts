@@ -9,7 +9,7 @@ import { foundry } from "viem/chains"
 import { createPoolUser } from "../client/pool.ts"
 import type { ClientConfig, LocalWallet } from "../client/types.ts"
 import { checkout } from "./checkout.ts"
-import { deployFixture, deployPool, enableAsset, ensureFixtures, installPoseidon, mintTestToken, type PoolDeployment } from "./deploy.ts"
+import { deployFixture, deployPool, enableAsset, ensureFixtures, installPoseidon, mintTestToken } from "./deploy.ts"
 import { verifyFetched } from "./fetch/index.ts"
 import { anvilKey, attachAnvil, CHAIN_ID, DEPLOYER_INDEX, startAnvil } from "./harness/anvil.ts"
 import { claimPort, releasePorts } from "./harness/ports.ts"
@@ -17,8 +17,7 @@ import { CleanupStack } from "./harness/process.ts"
 import type { PoolEnv, StartPoolEnvOptions } from "./types.ts"
 import { submitViaStub } from "./stub.ts"
 
-export type { PoolDeployment } from "./deploy.ts"
-export type { PoolEnv, StartPoolEnvOptions } from "./types.ts"
+export type { LocalChainId, PoolDeployment, PoolEnv, StartPoolEnvOptions } from "./types.ts"
 
 export const RUNS_DIR = join(homedir(), ".cache/pp/pp-env/runs")
 const RUN_ID = /^[a-z0-9][a-z0-9-]{0,63}$/

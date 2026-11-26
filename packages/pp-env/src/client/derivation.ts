@@ -3,7 +3,7 @@ import { type Address, keccak256, toHex, zeroAddress } from "viem"
 import type { SecretDerivationTypedData } from "./types.ts"
 
 /** Part of the signed hash, and so of every derived key: it must never change by a byte. */
-export const SECRET_DERIVATION_PURPOSE =
+export const SECRET_DERIVATION_PURPOSE: string =
 	"This signature is used to deterministically derive application-specific secrets from your master seed. It is not a transaction and will not cost any gas."
 
 /**

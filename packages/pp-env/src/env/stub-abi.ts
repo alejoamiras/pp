@@ -1,4 +1,5 @@
-import { POOL_VAULT_ERRORS_ABI, POOL_VAULT_EVENTS_ABI, POOL_VAULT_TRANSACT_ABI } from "../client/abi.ts"
+// A `.js` specifier: dependents reach this file through the public types and may not allow `.ts` imports.
+import { POOL_VAULT_ERRORS_ABI, POOL_VAULT_EVENTS_ABI, POOL_VAULT_TRANSACT_ABI } from "../client/abi.js"
 
 const [transact] = POOL_VAULT_TRANSACT_ABI
 

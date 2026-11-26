@@ -1,8 +1,20 @@
 // The environment's public types. No SDK import, so dependents typecheck without the pool checkout.
 import type { Address, Hex } from "viem"
 import type { ClientConfig, PoolUser, PreparedSpend } from "../client/types.ts"
-import type { PoolDeployment } from "./deploy.ts"
-import type { CHAIN_ID } from "./harness/anvil.ts"
+
+/** Anvil's default chain, which the Aztec local network also deploys its rollup to. */
+export type LocalChainId = 31337
+
+export type PoolDeployment = {
+	accessRouter: Address
+	keystore: Address
+	aspRegistry: Address
+	pool: Address
+	entrypoint: Address
+	relay: Address
+	postman: Address
+	deployBlock: bigint
+}
 
 export type StartPoolEnvOptions = {
 	/** Attach to this loopback anvil instead of starting one; stop() then leaves it running. */
@@ -21,7 +33,7 @@ export type StartPoolEnvOptions = {
 export interface PoolEnv {
 	runId: string
 	rpcUrl: string
-	chainId: typeof CHAIN_ID
+	chainId: LocalChainId
 	deployment: PoolDeployment
 	asset: Address
 	deployerIndex: number

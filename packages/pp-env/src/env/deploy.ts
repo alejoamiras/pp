@@ -3,21 +3,11 @@ import { copyFile, mkdir, readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { type Address, getAddress, type Hex, isAddress, maxUint256, type PublicClient, type WalletClient } from "viem"
 import { type Checkout, PACKAGE_DIR } from "./checkout.ts"
+import type { PoolDeployment } from "./types.ts"
 import { withFileLock } from "./harness/lock.ts"
 import { rpc } from "./harness/process.ts"
 import { CANONICAL_CODE_FIXTURE, forgeLibraryFlags, POSEIDON_LIBRARIES } from "./pins.ts"
 import { assertFfiDisabled, forgeBin, forgeEnv, run } from "./tools.ts"
-
-export type PoolDeployment = {
-	accessRouter: Address
-	keystore: Address
-	aspRegistry: Address
-	pool: Address
-	entrypoint: Address
-	relay: Address
-	postman: Address
-	deployBlock: bigint
-}
 
 const FORGE_CACHE_FILE = "solidity-files-cache.json"
 export const FIXTURES_DIR = join(PACKAGE_DIR, "contracts")

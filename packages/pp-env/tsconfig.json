@@ -17,5 +17,5 @@
 			"@ppv2/mock-asp/evm": ["./.ppv2/packages/mock-asp/dist/evm"]
 		}
 	},
-	"include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+	"include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "types/**/*.d.ts"]
 }
