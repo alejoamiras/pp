@@ -46,9 +46,9 @@ with warm package and toolchain caches.
 | L1 symbolic proofs | `bash contracts/bridge/evm/scripts/check-halmos.sh` | 67 s |
 | L2 artifact parity | `bash contracts/bridge/aztec/scripts/compile.sh --check` | 76 s |
 | L2 TXE suite | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh` | 3.5 min |
-| L2 hash vectors | `bun run --cwd packages/bridge-spec vectors:nargo` (keystone, every v1 test by name) | 28 s |
-| L2 hash library | `bash contracts/bridge/aztec/scripts/nargo.sh contracts/bridge/aztec/pp_hash test --force` | — |
-| Wire-format vectors | `bun run --cwd packages/bridge-spec vectors:check`, then `vectors:mutate -- --suite ts\|sol\|nr` | — |
+| L2 hash vectors | `bun run --cwd packages/bridge-spec vectors:nargo` (keystone, every v1 test by name) | 33 s |
+| L2 hash library | `bash contracts/bridge/aztec/scripts/nargo.sh contracts/bridge/aztec/pp_hash test --force` | 23 s |
+| Wire-format vectors | `bun run --cwd packages/bridge-spec vectors:check`, then `vectors:mutate -- --suite ts\|sol\|nr` | < 1 s, then 3 s · 5 s · 45 s |
 | Sole consumer | `bash contracts/bridge/aztec/scripts/check-sole-consumer.sh` | < 1 s |
 | Integration (local network) | `bun run --cwd packages/bridge-core test:integration` | 10 min |
 | Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | 7.5 min |
