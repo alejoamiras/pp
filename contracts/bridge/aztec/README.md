@@ -74,18 +74,18 @@ Events: `post_root` emits `RootPosted` (the record's five fields), `set_poster` 
 stays the authority, and nothing on chain reads them.
 
 Freshness: a checked spend's anchor may be at most 30 minutes past `root_time` (inclusive), and the
-spend expires 30 minutes after its anchor, so it lands at most 60 minutes past `root_time`. If posts
+spend expires by 30 minutes after its anchor, so it lands at most 60 minutes past `root_time`. If posts
 stop, checked spends anchored more than 30 minutes after the last `root_time` fail; claims and
 ragequits never read the registry. A record observed from an Ethereum block `L` s old and included `I` s later is
 usable for new anchors for `1800 - L - I` s: about 11-17 minutes on Sepolia's finalized tag
 (`L` = 768-1152 s), which bounds how often the poster must land a post.
 
-Known limits: nothing outside this contract can check `birth_root`; only `pool_root` has an Ethereum
-counterpart, which a watcher outside this contract compares, with `root_time`, at `l1_block`. Any post
-that changes a root, honest or not, reverts every unshield proved before it and not yet included,
-whichever tree it used: a new birth approval also reverts pool-origin unshields. The unshield's public
-check compares only the current pair, so an unshield proved under a pair that was replaced and then
-restored, even across a poster rotation, still lands. A lost or stolen admin key cannot be replaced
+Known limits: `birth_root` has no Ethereum counterpart, so no watcher can compare it: the registry
+takes the poster's value. Only `pool_root` can be compared, with `root_time`, against Ethereum at
+`l1_block`. An unshield reverts if the current pair, when it executes, differs from the pair it was
+proved against. So any root change, honest or not, reverts the unshields proved before it, whichever
+tree they used: a new birth approval also reverts pool-origin unshields. A pair that was replaced and
+then restored, even across a poster rotation, passes again. A lost or stolen admin key cannot be replaced
 on chain; recovery is a new registry and a new token generation. While one tree's root is zero, a
 successful checked spend shows which tree it used.
 
