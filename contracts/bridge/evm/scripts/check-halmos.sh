@@ -6,8 +6,9 @@ cd "$(dirname "$0")/.."
 
 # --ast --force: halmos reads the solc AST from the artifacts, and a plain `forge build` writes them
 # without it. Against those artifacts halmos does not fail: it reports "No tests with
-# --match-contract" and exits 0, which passes for a missing suite.
-forge build --ast --force
+# --match-contract" and exits 0, which passes for a missing suite. The storage layout is for
+# check-harness.py, which reads these same artifacts rather than calling `forge inspect`.
+forge build --ast --extra-output storageLayout --force
 halmos --match-contract '^Formal' 2>&1 | tee halmos.log
 
 # Counts alone cannot police this: halmos prints one summary per contract and no grand total, so a
@@ -56,4 +57,6 @@ if grep -qE '^Symbolic test result: [0-9]+ passed; [1-9]' halmos.clean; then
 	echo "::error::a symbolic proof failed; see the log above"
 	fail=1
 fi
+# The proofs hold for the portal only while the harness differs from it in nothing but its hash.
+python3 scripts/check-harness.py || fail=1
 exit "$fail"

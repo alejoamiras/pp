@@ -29,7 +29,7 @@ forge step generate it too.
 bun packages/bridge-core/scripts/gen-remappings.ts        # writes contracts/bridge/evm/remappings.txt
 (cd contracts/bridge/evm && forge build && forge test --no-match-contract Fork)
 bash contracts/bridge/evm/scripts/check-gas.sh             # .gas-snapshot within 2%, every case ran
-bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by name
+bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by name, and the harness check
 ```
 
 ## Contracts
@@ -54,14 +54,20 @@ bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by nam
 
 ## Tests
 
-Hermetic forge tests (`forge test --no-match-contract Fork`), **4 halmos proofs**
-(`FormalFactoryTest 2 · FormalProcessorPortalTest 2`; each guard-shaped proof carries a forge canary
+Hermetic forge tests (`forge test --no-match-contract Fork`), **12 halmos proofs**
+(`FormalFactoryTest 2 · FormalProcessorPortalTest 10`; each guard-shaped proof carries a forge canary
 showing the property fails without the guard), and a committed `.gas-snapshot` for `createPortal` on
 a fresh token, `bridgeFromPool` and both settles.
 
+halmos cannot run sha256, so the portal proofs drive `ProcessorPortalHarness`, whose content hash is
+keccak. Three things keep it honest: `PortalVectors` checks the production hash against the shared
+vectors, `HarnessParity` fuzzes the same calls into a production and a harness clone and requires
+identical outcomes, and `scripts/check-harness.py` (run by `check-halmos.sh`) requires equal selectors
+and storage and a harness that declares nothing but a forwarding constructor and `_contentHash`.
+
 | Layer | Suites |
 |---|---|
-| unit | `PortalFactory`, `ProcessorPortal`, `PortalVectors` (the clone's wire envelope against the shared vectors), `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `Keystone` (3-way vectors with Noir and TS), `MintableERC20`, `TestUsdc` |
+| unit | `PortalFactory`, `ProcessorPortal`, `HarnessParity`, `PortalVectors` (the clone's wire envelope against the shared vectors), `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `Keystone` (3-way vectors with Noir and TS), `MintableERC20`, `TestUsdc` |
 | fuzz | `PortalFactoryFuzz` |
 | invariant | `PortalFactoryInvariant` |
 | symbolic | `FormalFactory`, `FormalProcessorPortal` (on a keccak harness); see each header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |
