@@ -97,7 +97,9 @@ describe("q4 partial note committing to a private label", () => {
 	})
 
 	it("a third party unknown to bob prepares for him with constrained delivery, and bob finds it", async () => {
-		expect((await pxeTagSources(bob)).senders).not.toContain(carol.address.toString())
+		const known = await pxeTagSources(bob)
+		expect(known.accounts).toEqual([bob.address.toString()])
+		expect(known.senders).not.toContain(carol.address.toString())
 		const label = Fr.random()
 		record("q4.prepare_partial.third_party.gates", summarizeProfile(await at.carol!.methods.prepare_partial(bob.address, label, alice.address).profile({ from: carol.address, profileMode: "gates" })))
 		const commitment = await prepare(carol, label)

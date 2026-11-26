@@ -46,7 +46,11 @@ export async function startLocalNetwork(): Promise<LocalNetwork> {
 	let stopping: Promise<void> | undefined
 	const stop = (): Promise<void> => {
 		stopping ??= (async () => {
-			while (children.length > 0) await killGroup(children.pop())
+			// Popped only once dead: vitest may exit mid-grace, and the exit hook must still see the group.
+			while (children.length > 0) {
+				await killGroup(children.at(-1))
+				children.pop()
+			}
 			await releasePorts(runId)
 			removeRunDir(runId)
 		})()
