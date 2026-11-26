@@ -318,6 +318,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  registry-network:
+    name: ASP registry on a local network
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      # Defaults to bridge-core's @aztec-labs pin, the node the suite talks to.
+      - uses: ./.github/actions/setup-aztec
+
+      # No forge build: the suite deploys only the committed registry and probe artifacts on L2.
+      - name: Registry network suite
+        run: bun run --cwd packages/bridge-core test:registry
+
+      - name: Upload sandbox logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: asp-registry-network-logs
+          path: ~/.cache/pp/bridge-sandbox/logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   sole-consumer:
     name: sole-consumer static guard
     runs-on: ubuntu-latest

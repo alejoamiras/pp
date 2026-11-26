@@ -10,6 +10,8 @@ global POOL_B: Field = 0xa2;
 global BIRTH_A: Field = 0xb1;
 global BIRTH_B: Field = 0xb2;
 
+mod check;
+
 pub struct Setup {
     pub env: TestEnvironment,
     pub admin: AztecAddress,
@@ -19,7 +21,7 @@ pub struct Setup {
     pub t0: u64,
 }
 
-unconstrained fn setup() -> Setup {
+pub unconstrained fn setup() -> Setup {
     let mut env = TestEnvironment::new();
     let admin = env.create_light_account();
     let poster = env.create_light_account();
@@ -35,7 +37,7 @@ unconstrained fn setup() -> Setup {
     Setup { env, admin, poster, registry, probe, t0 }
 }
 
-unconstrained fn post(s: Setup, now: u64, sequence: u64, pool_root: Field, birth_root: Field) {
+pub unconstrained fn post(s: Setup, now: u64, sequence: u64, pool_root: Field, birth_root: Field) {
     s.env.set_next_block_timestamp(now);
     s.env.call_public(
         s.poster,
