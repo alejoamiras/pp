@@ -1,8 +1,10 @@
 # shellcheck shell=bash
-# Sourced by the gate scripts. A FOUNDRY_* filter in the caller's environment narrows what forge
-# runs, and forge exits 0 on an empty match, so the gates clear the filters and then check the count.
-unset FOUNDRY_MATCH_TEST FOUNDRY_NO_MATCH_TEST FOUNDRY_MATCH_CONTRACT FOUNDRY_NO_MATCH_CONTRACT \
-	FOUNDRY_MATCH_PATH FOUNDRY_NO_MATCH_PATH FOUNDRY_TEST
+# Sourced by the gate scripts. Any FOUNDRY_* variable in the caller's environment overrides
+# foundry.toml (a filter, a run count, a depth, another config file), and forge exits 0 on an empty
+# match, so the gates clear all of them but FOUNDRY_PROFILE, then check the count.
+while IFS= read -r var; do
+	[ "$var" = FOUNDRY_PROFILE ] || unset "$var"
+done < <(compgen -e | grep '^FOUNDRY_' || true)
 
 # require_ran LOG PREFIX: forge's summary in LOG must count exactly the `function PREFIX...` tests
 # declared under test/, every one passed and none skipped.
