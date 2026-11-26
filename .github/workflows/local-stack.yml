@@ -46,6 +46,7 @@ jobs:
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'
+              - 'vitest.base.ts'
               - 'patches/**'
               - '.github/workflows/local-stack.yml'
               - '.github/actions/setup-aztec/**'
@@ -77,16 +78,19 @@ jobs:
         run: bun run --cwd packages/local-stack test
 
       - name: Integration suites
-        # bun test prints `N pass`, `N skip`, `N fail`; a skipped case here means a gate that never ran.
+        # A skipped or todo case here is a gate that never ran, and the heartbeat's liveness case must pass by name.
         run: |
           start=$(date +%s)
-          PP_STACK_INTEGRATION=1 bun test --timeout 1800000 packages/local-stack/test/integration 2>&1 | tee integration.log
+          set +e
+          bun run --cwd packages/local-stack test:integration --reporter=verbose --reporter=json \
+            --outputFile.json="$GITHUB_WORKSPACE/integration.json" 2>&1 | tee integration.log
           status=${PIPESTATUS[0]}
+          set -e
           echo "suite wall-clock: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
           [ "$status" -eq 0 ] || exit "$status"
-          grep -Eq '^ 0 fail$' integration.log
-          if grep -Eq '^ [1-9][0-9]* skip$' integration.log; then echo "a gated case was skipped"; exit 1; fi
-          grep -Eq '^\(pass\) .*a lone Inbox message becomes consumable' integration.log
+          jq -e '.success and .numFailedTests == 0 and .numPendingTests == 0 and .numTodoTests == 0
+            and ([.testResults[].assertionResults[] | select(.title | startswith("a lone Inbox message becomes consumable")) | .status] == ["passed"])' \
+            integration.json
 
       - name: Upload stack logs on failure
         if: failure()
@@ -95,6 +99,7 @@ jobs:
           name: local-stack-logs
           path: |
             integration.log
+            integration.json
             ~/.cache/pp/bridge-sandbox/logs/*.log
           if-no-files-found: ignore
           retention-days: 7

@@ -33,22 +33,12 @@ export function processTree(root: number): Proc[] {
  */
 export function sampleTree(root: number, ignorePgids: ReadonlySet<number> = new Set(), everyMs = 500) {
 	const pgids = new Set<number>()
-	const seen: Proc[] = []
 	const take = () => {
-		for (const p of processTree(root)) {
-			if (ignorePgids.has(p.pgid)) continue
-			pgids.add(p.pgid)
-			if (!seen.some((s) => s.pid === p.pid)) seen.push(p)
-		}
+		for (const p of processTree(root)) if (!ignorePgids.has(p.pgid)) pgids.add(p.pgid)
 	}
 	take()
 	const timer = setInterval(take, everyMs)
-	return {
-		pgids,
-		seen,
-		sawArgs: (re: RegExp) => seen.some((p) => re.test(p.args)),
-		stop: () => clearInterval(timer),
-	}
+	return { pgids, stop: () => clearInterval(timer) }
 }
 
 export function groupAlive(pgid: number): boolean {

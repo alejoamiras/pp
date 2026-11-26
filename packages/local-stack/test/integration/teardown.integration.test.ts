@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest"
 import { type ChildProcess, spawn } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -7,28 +7,38 @@ import { type PoolEnv, startPoolEnv } from "@pp/pp-env"
 import { createPublicClient, http, type PublicClient } from "viem"
 import { AttachRefused } from "../../src/attach.ts"
 import { nodeInfo } from "../../src/node-rpc.ts"
-import { newRunId, startStack } from "../../src/stack.ts"
-import { portsOwnedBy, processTree, registryRows, residueOf, sampleTree } from "./residue.ts"
+import { newRunId } from "../../src/run-dir.ts"
+import { startStack } from "../../src/stack.ts"
+import { groupAlive, portsOwnedBy, processTree, registryRows, residueOf, sampleTree } from "./residue.ts"
 
-const REPO = join(import.meta.dir, "..", "..", "..", "..")
+const REPO = join(import.meta.dirname, "..", "..", "..", "..")
 const BOOT_MS = 600_000
+type Run = ReturnType<typeof launch>
+type Reapable = { child: ChildProcess; tree: { pgids: ReadonlySet<number> }; stopSampling(): void }
 /** Every CLI this file starts, so a failed assertion cannot leave one running. */
-const launched: ChildProcess[] = []
+const launched: Reapable[] = []
 
-/** SIGINT, then SIGKILL to the group after 90 s: the reap of a run a failed test left up. */
-async function reap(child: ChildProcess): Promise<void> {
-	if (child.exitCode !== null || child.signalCode !== null) return
-	const gone = new Promise<void>((resolve) => child.once("exit", () => resolve()))
-	child.kill("SIGINT")
-	const timer = setTimeout(() => process.kill(-(child.pid as number), "SIGKILL"), 90_000)
-	await gone
-	clearTimeout(timer)
+/**
+ * The reap of a run a failed test left up: SIGINT, then SIGKILL after 90 s to every group it was
+ * seen with, since the harnesses' children run in groups of their own.
+ */
+async function reap(run: Reapable): Promise<void> {
+	const { child } = run
+	if (child.exitCode === null && child.signalCode === null) {
+		const gone = new Promise<void>((resolve) => child.once("exit", () => resolve()))
+		child.kill("SIGINT")
+		const timer = setTimeout(() => {
+			for (const g of run.tree.pgids) if (groupAlive(g)) process.kill(-g, "SIGKILL")
+		}, 90_000)
+		await gone
+		clearTimeout(timer)
+	}
+	run.stopSampling()
 }
 
 /** One CLI run in its own process group, with its output, its sampled tree and the ports it claimed. */
 function launch(cmd: string[], ignorePgids: ReadonlySet<number>, env: Record<string, string | undefined> = process.env) {
 	const child: ChildProcess = spawn(cmd[0] as string, cmd.slice(1), { cwd: REPO, detached: true, stdio: ["ignore", "pipe", "pipe"], env })
-	launched.push(child)
 	const lines: string[] = []
 	const onData = (chunk: Buffer) => lines.push(...chunk.toString().split("\n").filter(Boolean))
 	child.stdout?.on("data", onData)
@@ -51,14 +61,19 @@ function launch(cmd: string[], ignorePgids: ReadonlySet<number>, env: Record<str
 			await Bun.sleep(100)
 		}
 	}
-	const finished = async () => {
-		const code = await exit
+	const stopSampling = () => {
 		tree.stop()
 		clearInterval(portTimer)
+	}
+	const finished = async () => {
+		const code = await exit
+		stopSampling()
 		return code
 	}
 	const tmpDir = () => lines.map((l) => l.match(/, tmp (\S+)$/)?.[1]).find(Boolean)
-	return { child, lines, waitFor, finished, tree, ports, runId, tmpDir }
+	const run = { child, lines, waitFor, finished, stopSampling, tree, ports, runId, tmpDir }
+	launched.push(run)
+	return run
 }
 
 describe.skipIf(!process.env.PP_STACK_INTEGRATION)("a stack tears down exactly what it started", () => {
@@ -73,10 +88,13 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("a stack tears down exactly w
 		expect(await siblingClient.getChainId()).toBe(31337)
 		expect(registryRows().some((r) => r.owner === sibling.runId)).toBe(true)
 	}
-	const expectClean = async (run: ReturnType<typeof launch>) => {
-		const runId = run.runId()
+	/** Every CLI case gets past the network, so it must have been seen with ports and a TMPDIR. */
+	const expectClean = async (run: Run) => {
+		const [runId, tmpDir] = [run.runId(), run.tmpDir()]
 		expect(runId).toBeTruthy()
-		expect(await residueOf({ runId: runId as string, pgids: run.tree.pgids, ports: run.ports, tmpDir: run.tmpDir() })).toEqual([])
+		expect(tmpDir).toBeTruthy()
+		expect(run.ports.size).toBeGreaterThan(0)
+		expect(await residueOf({ runId: runId as string, pgids: run.tree.pgids, ports: run.ports, tmpDir })).toEqual([])
 		await expectSiblingIntact()
 	}
 
@@ -110,7 +128,7 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("a stack tears down exactly w
 		expect(await client.getChainId()).toBe(31337)
 		for (const address of [m.pool.poolVault, m.pool.entrypoint, m.pool.aspRegistry, m.pool.keystore, m.pool.asset])
 			expect(await client.getCode({ address })).toBeTruthy()
-		await (await fetch(m.pool.aspApiUrl)).body?.cancel()
+		expect((await fetch(new URL("/health", m.pool.aspApiUrl))).ok).toBe(true)
 		expect((await nodeInfo(m.aztecNode)).l1ChainId).toBe(31337)
 		const cliPid = Number(run.lines.find((l) => l.startsWith("[stack] run "))?.match(/pid (\d+)$/)?.[1])
 		expect(Number(readFileSync(join(path, "..", "pid"), "utf8"))).toBe(cliPid)
@@ -123,8 +141,10 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("a stack tears down exactly w
 
 	test("boot signal: SIGINT while pp-env runs forge stops the boot and exits 130", async () => {
 		const run = launch(["bun", "packages/local-stack/src/cli.ts", "demo"], siblingPgids)
+		// The network's harness runs a forge of its own; only one alive after this line is pp-env's.
+		await run.waitFor(/^\[stack\] pool starting on /)
 		const deadline = Date.now() + BOOT_MS
-		while (!run.tree.sawArgs(/\bforge\b/)) {
+		while (!processTree(run.child.pid as number).some((p) => /\bforge\b/.test(p.args))) {
 			if (Date.now() > deadline) throw new Error("never saw pp-env's forge child")
 			await Bun.sleep(200)
 		}

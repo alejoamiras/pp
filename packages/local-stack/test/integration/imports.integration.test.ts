@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 
 // Loading pp-env needs its fetched checkout, so this runs only with the integration flag.
 describe.skipIf(!process.env.PP_STACK_INTEGRATION)("harness imports", () => {

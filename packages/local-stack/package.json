@@ -10,8 +10,8 @@
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
-		"test": "bun test src --pass-with-no-tests",
-		"test:integration": "PP_STACK_INTEGRATION=1 bun test --timeout 1800000 test/integration"
+		"test": "bun --bun vitest run",
+		"test:integration": "PP_STACK_INTEGRATION=1 bun --bun vitest run --config vitest.integration.config.ts"
 	},
 	"dependencies": {
 		"@pp/bridge-core": "workspace:*",
@@ -21,6 +21,7 @@
 	"devDependencies": {
 		"@types/bun": "1.4.4",
 		"@types/node": "^24.13.2",
-		"typescript": "^6.0.3"
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.9"
 	}
 }

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "vitest"
 import { anvilKey, type PoolUser, type PreparedSpend, STUB_PROCESSOR_ABI, USER_INDEX } from "@pp/pp-env"
 import { type Address, createPublicClient, createWalletClient, erc20Abi, type Hex, http, type PublicClient } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
@@ -193,6 +193,14 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the pool on the anvil the Az
 		gaps.push(await sampleThenMine(stack.manifest.aztecNode, client, "idle-90-then-transfer"))
 		console.log(`[stack] gaps ${JSON.stringify(gaps)}`)
 		expect(gaps).toHaveLength(7)
+		// Wall-clock idling adds nothing: L1 runs ahead in whole 12 s blocks, less than a slot, and the
+		// next block lands one slot after the Ethereum block its tip cites.
+		for (const g of gaps) {
+			expect(g.rawGap % 12, g.label).toBe(0)
+			expect(g.rawGap, g.label).toBeLessThan(Number(SLOT))
+			expect(g.snapshotGap, g.label).toBe(0)
+			expect(g.inclusionGap, g.label).toBe(Number(SLOT))
+		}
 	})
 
 	test("g. a second registration supersedes P1's root and stamps its expiry", async () => {

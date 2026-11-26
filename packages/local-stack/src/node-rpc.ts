@@ -20,4 +20,4 @@ export type NodeInfo = {
 	l1ContractAddresses: { rollupAddress: `0x${string}`; inboxAddress: `0x${string}` }
 }
 
-export const nodeInfo = (nodeUrl: string) => nodeRpc<NodeInfo>(nodeUrl, "node_getNodeInfo")
+export const nodeInfo = (nodeUrl: string, signal?: AbortSignal) => nodeRpc<NodeInfo>(nodeUrl, "node_getNodeInfo", [], signal)

@@ -38,7 +38,7 @@ export function startHeartbeat(o: HeartbeatOptions): Heartbeat {
 		const started = performance.now()
 		const late = setTimeout(() => o.log(`[stack] heartbeat beat open for ${o.slowMs / 1000} s`), o.slowMs)
 		try {
-			if (o.due && !(await o.due())) return
+			if ((o.due && !(await o.due())) || ac.signal.aborted) return
 			await o.beat(ac.signal)
 			beats++
 			failuresInARow = 0

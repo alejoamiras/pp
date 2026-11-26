@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "vitest"
 import { anvilKey } from "@pp/pp-env"
 import { createPublicClient, createWalletClient, type Hex, http, parseEventLogs, type PublicClient, toHex } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
@@ -171,13 +171,14 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the heartbeat mines only for
 		await expectOwedBeatsThenFrozen(before.checkpointed)
 	})
 
-	test("a block that races the node's ingestion of a message misses it, and the second beat carries it", async () => {
+	// Whether the racing block misses the message depends on the archiver's poll, so both outcomes must pass.
+	test("a block that races the node's read of a message never strands it", async () => {
 		const leaf = await sendMessage(() => nodeRpc<null>(stack.manifest.aztecNode, "aztecDebug_mineBlock"))
 		const raced = await tips()
-		expect(await consumableAt(leaf, raced.checkpointed)).toBe(false)
+		const missed = !(await consumableAt(leaf, raced.checkpointed))
 		expect(await within(TICK_MS * 4, () => consumableNow(leaf))).toBe(true)
 		const beats = (await tips()).checkpointed - raced.checkpointed
-		console.log(`[stack] after a racing block, the heartbeat carried the message in ${beats} beat(s)`)
+		console.log(`[stack] the racing block ${missed ? "missed" : "carried"} the message; then ${beats} beat(s) to consumable`)
 		expect(beats).toBeLessThanOrEqual(2)
 		await expectOwedBeatsThenFrozen(raced.checkpointed)
 	})

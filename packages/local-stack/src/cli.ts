@@ -1,4 +1,5 @@
 import { AttachRefused, refuseAttach } from "./attach.ts"
+import { newRunId } from "./run-dir.ts"
 
 const USAGE = "usage: bun run demo [--keep]"
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
@@ -79,9 +80,9 @@ export async function runCli(args: readonly string[], deps: CliDeps): Promise<nu
 }
 
 if (import.meta.main) {
-	const { newRunId, startStack } = await import("./stack.ts")
 	const code = await runCli(process.argv.slice(2), {
-		startStack,
+		// Loaded on first use, so bad arguments and attach variables exit 2 even where the harnesses cannot load.
+		startStack: async (o) => (await import("./stack.ts")).startStack(o),
 		newRunId,
 		env: process.env,
 		log: (line) => console.log(line),

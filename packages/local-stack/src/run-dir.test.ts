@@ -1,8 +1,9 @@
-import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
-import { createRunDir, removeRunDir, RUNS_DIR, writeAtomic } from "./run-dir.ts"
+import { afterAll, describe, expect, test } from "vitest"
+import { createRunDir, RUNS_DIR, removeRunDir, writeAtomic } from "./run-dir.ts"
 
+await mkdir(join(RUNS_DIR, ".."), { recursive: true })
 const scratch = await mkdtemp(join(RUNS_DIR, "..", "local-stack-unit-"))
 afterAll(() => rm(scratch, { recursive: true, force: true }))
 
@@ -17,6 +18,14 @@ describe("run dir", () => {
 		await removeRunDir(dir)
 		await removeRunDir(dir)
 		expect(await readdir(scratch)).toEqual([])
+	})
+
+	test("a run id in use, or one ending in -pool, is refused and nothing is touched", async () => {
+		const dir = await createRunDir(scratch, "stack-2-abc")
+		await expect(createRunDir(scratch, "stack-2-abc")).rejects.toThrow("belongs to another stack")
+		expect(await readFile(join(dir, "pid"), "utf8")).toBe(`${process.pid}\n`)
+		await removeRunDir(dir)
+		await expect(createRunDir(scratch, "stack-2-pool")).rejects.toThrow("must match")
 	})
 
 	test("a failed write leaves neither the target nor a temp file", async () => {

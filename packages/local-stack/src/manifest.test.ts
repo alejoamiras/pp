@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { parseStackManifest, serializeStackManifest } from "@pp/bridge-core"
 import { buildManifest } from "./manifest.ts"
 

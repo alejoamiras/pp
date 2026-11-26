@@ -11,7 +11,7 @@ export type ManifestInputs = {
 	aspUrl: string
 }
 
-/** The pool-only manifest of a local stack; later lanes add their blocks. `serializeStackManifest` validates it. */
+/** The pool-only manifest of a local stack; `serializeStackManifest` validates it. */
 export function buildManifest(i: ManifestInputs): StackManifest {
 	return {
 		version: 1,

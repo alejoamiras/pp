@@ -9,19 +9,16 @@ import { BeatPolicy, type ChainView, type L1Tx } from "./beat-policy.ts"
 import { type Heartbeat, startHeartbeat } from "./heartbeat.ts"
 import { buildManifest } from "./manifest.ts"
 import { nodeInfo, nodeRpc } from "./node-rpc.ts"
-import { createRunDir, RUNS_DIR, removeRunDir, writeAtomic } from "./run-dir.ts"
+import { createRunDir, newRunId, RUNS_DIR, removeRunDir, writeAtomic } from "./run-dir.ts"
 import { Teardown } from "./teardown.ts"
 
 export const STACK_CHAIN_ID = 31337
 export const HEARTBEAT_MS = 120_000
-/** A beat open this long would let two checkpoints drift 300 s apart, A8's cadence. */
+/** The node answers a mine within a second; a beat open this long is logged as stuck. */
 const LATE_BEAT_MS = 180_000
 const STOP_WAIT_MS = 60_000
 /** pp-env's default deployer; bridge-core's harness and actors sit at 15 and from 1 up. */
 const POOL_DEPLOYER_INDEX = 14
-/** One path segment, short enough that pp-env's `-pool` id stays inside its 64 characters. */
-const RUN_ID = /^[a-z0-9][a-z0-9-]{0,47}$/
-
 export type StepName = "network" | "pool" | "manifest" | "heartbeat"
 
 export type StartStackOptions = {
@@ -48,8 +45,6 @@ export interface Stack {
 	stop(): Promise<void>
 }
 
-export const newRunId = () => `stack-${process.pid}-${Date.now().toString(36)}`
-
 function throwIfAborted(signal: AbortSignal | undefined): void {
 	if (signal?.aborted) throw signal.reason ?? new Error("aborted")
 }
@@ -61,6 +56,7 @@ async function runStep<T>(o: StartStackOptions, step: StepName, start: () => Pro
 	register(handle)
 	throwIfAborted(o.signal)
 	await o.onStep?.({ step, seconds: (performance.now() - t0) / 1000 })
+	throwIfAborted(o.signal)
 	return handle
 }
 
@@ -71,8 +67,8 @@ async function stopNetwork(net: LocalNetwork): Promise<void> {
 }
 
 /** The stack is ready once both halves still answer on the shared anvil. */
-async function assertReady(client: PublicClient, nodeUrl: string, pool: PoolEnv): Promise<void> {
-	const info = await nodeInfo(nodeUrl)
+async function assertReady(client: PublicClient, nodeUrl: string, pool: PoolEnv, signal?: AbortSignal): Promise<void> {
+	const info = await nodeInfo(nodeUrl, signal)
 	if (info.l1ChainId !== STACK_CHAIN_ID) throw new Error(`node reports L1 chain ${info.l1ChainId}, not ${STACK_CHAIN_ID}`)
 	const { accessRouter, keystore, aspRegistry, pool: poolVault, entrypoint, relay } = pool.deployment
 	const contracts: Record<string, Address> = {
@@ -90,22 +86,30 @@ async function assertReady(client: PublicClient, nodeUrl: string, pool: PoolEnv)
 	)
 	const missing = codeless.filter((m) => m !== undefined)
 	if (missing.length) throw new Error(`no code at ${missing.join(", ")}`)
-	const asp = await fetch(pool.asp.url).catch((err: unknown) => {
-		throw new Error(`mock ASP at ${pool.asp.url} refused: ${err instanceof Error ? err.message : String(err)}`)
+	const health = new URL("/health", pool.asp.url)
+	const asp = await fetch(health, { signal }).catch((err: unknown) => {
+		throw new Error(`mock ASP at ${health} refused: ${err instanceof Error ? err.message : String(err)}`)
 	})
 	await asp.body?.cancel()
+	if (!asp.ok) throw new Error(`mock ASP at ${health} answered HTTP ${asp.status}`)
 }
 
-function chainView(client: PublicClient, nodeUrl: string): ChainView {
+type ChainTips = { checkpointed: { block: { number: number } } }
+type BlockData = { header: { totalManaUsed: string } }
+
+/** viem's transport bounds every L1 read; `signal` bounds the node's, which have no timeout. */
+function chainView(client: PublicClient, nodeUrl: string, signal?: AbortSignal): ChainView {
 	return {
 		l1Head: () => client.getBlockNumber({ cacheTime: 0 }),
+		l1Hash: async (n) => (await client.getBlock({ blockNumber: n })).hash,
 		l1Txs: async (n) =>
 			(await client.getBlock({ blockNumber: n, includeTransactions: true })).transactions.map((t) => ({
 				from: t.from.toLowerCase(),
 				to: t.to?.toLowerCase() ?? null,
 			})),
-		aztecTip: async () =>
-			(await nodeRpc<{ checkpointed: { block: { number: number } } }>(nodeUrl, "node_getChainTips")).checkpointed.block.number,
+		aztecTip: async () => (await nodeRpc<ChainTips>(nodeUrl, "node_getChainTips", [], signal)).checkpointed.block.number,
+		// Every transaction spends mana, so an empty block is exactly one with none used.
+		aztecHasTxs: async (n) => BigInt((await nodeRpc<BlockData>(nodeUrl, "node_getBlockData", [n], signal)).header.totalManaUsed) > 0n,
 	}
 }
 
@@ -115,17 +119,17 @@ const mineBlock = (nodeUrl: string, signal?: AbortSignal) => nodeRpc<null>(nodeU
  * The first beat is part of readiness, so a renamed debug method fails the boot. Its propose
  * transaction also names the node's sender and target, which the policy must not count as work.
  */
-async function firstBeat(client: PublicClient, nodeUrl: string): Promise<BeatPolicy> {
-	const view = chainView(client, nodeUrl)
+async function firstBeat(client: PublicClient, nodeUrl: string, signal?: AbortSignal): Promise<BeatPolicy> {
+	const view = chainView(client, nodeUrl, signal)
 	const [head, tip] = [await view.l1Head(), await view.aztecTip()]
-	await mineBlock(nodeUrl)
+	await mineBlock(nodeUrl, signal)
 	if ((await view.aztecTip()) <= tip) throw new Error("aztecDebug_mineBlock returned without a new checkpointed block")
 	const txs = new Map<string, L1Tx>()
 	for (let n = head + 1n, last = await view.l1Head(); n <= last; n++) for (const t of await view.l1Txs(n)) txs.set(`${t.from}>${t.to}`, t)
 	const [nodeTx, ...others] = txs.values()
 	if (!nodeTx || others.length)
 		throw new Error(`the first beat's L1 transactions are [${[...txs.keys()].join(", ")}]; expected one propose`)
-	const policy = new BeatPolicy(view, nodeTx)
+	const policy = new BeatPolicy(chainView(client, nodeUrl), nodeTx)
 	await policy.start()
 	return policy
 }
@@ -137,10 +141,7 @@ function beatEvery(intervalMs: number, nodeUrl: string, policy: BeatPolicy): Hea
 		stopWaitMs: STOP_WAIT_MS,
 		log: (line) => console.warn(line),
 		due: () => policy.due(),
-		beat: async (signal) => {
-			await mineBlock(nodeUrl, signal)
-			await policy.beaten()
-		},
+		beat: (signal) => policy.beat(() => mineBlock(nodeUrl, signal)),
 	})
 }
 
@@ -151,9 +152,7 @@ function beatEvery(intervalMs: number, nodeUrl: string, policy: BeatPolicy): Hea
  * @throws AttachRefused when `SANDBOX_L1_RPC` or `SANDBOX_NODE_URL` is set.
  */
 export async function startStack(o: StartStackOptions = {}): Promise<Stack> {
-	refuseAttach()
 	const runId = o.runId ?? newRunId()
-	if (!RUN_ID.test(runId)) throw new Error(`runId ${JSON.stringify(runId)} must match ${RUN_ID}`)
 	const teardown = new Teardown()
 	try {
 		const runDir = await createRunDir(o.runsDir ?? RUNS_DIR, runId)
@@ -161,7 +160,11 @@ export async function startStack(o: StartStackOptions = {}): Promise<Stack> {
 		const net = await runStep(
 			o,
 			"network",
-			() => startLocalNetwork({ runId, signals: false }),
+			// Checked with no await before the harness reads the same variables.
+			() => {
+				refuseAttach()
+				return startLocalNetwork({ runId, signals: false })
+			},
 			(n) => teardown.push("network", () => stopNetwork(n)),
 		)
 		console.log(`[stack] pool starting on ${net.anvilUrl}`)
@@ -172,8 +175,8 @@ export async function startStack(o: StartStackOptions = {}): Promise<Stack> {
 			(p) => teardown.push("pool", () => p.stop()),
 		)
 		const client = createPublicClient({ transport: http(net.anvilUrl) })
-		await assertReady(client, net.nodeUrl, pool)
-		const policy = o.heartbeat === false ? undefined : await firstBeat(client, net.nodeUrl)
+		await assertReady(client, net.nodeUrl, pool, o.signal)
+		const policy = o.heartbeat === false ? undefined : await firstBeat(client, net.nodeUrl, o.signal)
 		const { pool: poolVault, entrypoint, aspRegistry, keystore, deployBlock } = pool.deployment
 		const manifest = buildManifest({
 			chainId: STACK_CHAIN_ID,
