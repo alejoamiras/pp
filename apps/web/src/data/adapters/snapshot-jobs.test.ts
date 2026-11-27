@@ -36,12 +36,14 @@ describe("the allow-list worker", () => {
 		expect(w.check(11n)).toEqual([{ kind: "failed", failure: "NOT_LOADED" }])
 	})
 
-	test("answers an absent label with no tree built, and builds one tree for every found label of a list", () => {
+	test("builds one tree per list, for an absent label too, and answers every later label from it", () => {
 		const w = rig()
 		expect(w.load()).toEqual([{ kind: "loaded" }])
-		expect(w.check(99n)).toEqual([{ kind: "checked", result: { state: "ABSENT" } }])
+		const absent = w.check(99n)
+		expect(builds(absent)).toBe(1)
+		expect(outcome(absent)).toEqual({ kind: "checked", result: { state: "ABSENT" } })
 		const first = w.check(11n)
-		expect(builds(first)).toBe(1)
+		expect(hashing(first)).toEqual([])
 		const found = outcome(first)
 		if (found?.kind !== "checked" || found.result.state !== "ACTIVE") throw new Error(`not active: ${JSON.stringify(found, String)}`)
 		expect(leanImtRoot(aspLeaf(11n), found.result.path)).toBe(poolRoot)
