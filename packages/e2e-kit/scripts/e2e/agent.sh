@@ -6,7 +6,7 @@
 #   bun run --cwd packages/e2e-kit test:browser reap    # stop every sandbox a run of THIS checkout left behind
 #
 # The app is `apps/web`: its `build:local` script builds against PP_SANDBOX_ARTIFACTS with the wallet
-# URLs in PP_WEB_WALLETS, and its specs live in `apps/web/e2e`. Until it exists a run stops after the
+# URLs in PP_WEB_WALLETS, and its specs live in `apps/web/e2e`. A checkout without it stops after the
 # wallet build, which still proves the sandbox boots and the wallet bundles against it.
 #
 # Iterating: PP_E2E_KEEP=1 leaves the sandbox and the builds alive and prints the attach line;
