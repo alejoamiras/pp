@@ -11,6 +11,7 @@ import type { FixtureSnapshot } from "../src/data/fixtures/control"
 declare global {
 	interface Window {
 		__ppCspViolations?: string[]
+		__ppSeen?: Record<string, string>
 	}
 }
 
@@ -121,7 +122,21 @@ export function selectL1Account(page: Page, which: "owner" | "sender"): Promise<
 	return page.evaluate((w) => window.__ppFixtures?.selectL1Account(w), which)
 }
 
-/** The next fixture prove never settles, until the page's deadline cancels it. */
-export function hangNextProve(page: Page): Promise<void> {
-	return page.evaluate(() => window.__ppFixtures?.hangNext("prove"))
+/**
+ * Records the text of the first element with `testId` to enter the document from now on, for a view
+ * too brief to poll for; `seen` reads it back (`undefined` while it has not appeared).
+ */
+export async function recordFirst(page: Page, testId: string): Promise<{ seen(): Promise<string | undefined> }> {
+	await page.evaluate((id) => {
+		window.__ppSeen ??= {}
+		const seen = window.__ppSeen
+		const observer = new MutationObserver(() => {
+			const el = document.querySelector(`[data-testid="${id}"]`)
+			if (!el) return
+			seen[id] = el.textContent ?? ""
+			observer.disconnect()
+		})
+		observer.observe(document.body, { childList: true, subtree: true })
+	}, testId)
+	return { seen: () => page.evaluate((id) => window.__ppSeen?.[id], testId) }
 }

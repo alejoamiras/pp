@@ -8,8 +8,7 @@
  * the sandbox; the sandbox serves only the wallet.
  */
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
-import { messageOf } from "../src/data/errors"
-import { advance, connectWallet, fixtureState, hangNextProve, selectL1Account, signInToPool, submitted, watchPage } from "./support"
+import { advance, connectWallet, fixtureState, recordFirst, selectL1Account, signInToPool, submitted, watchPage } from "./support"
 
 test.use({ family: "walkthrough", cells: 1, spares: 0 })
 
@@ -17,7 +16,7 @@ test.use({ family: "walkthrough", cells: 1, spares: 0 })
 const NOTE = "4097"
 const AMOUNT = "70000000"
 const CHANGE = "30000000"
-/** One Aztec slot of Ethereum blocks: past the 60 s prove deadline, and the step from mined to claimable. */
+/** One Aztec slot of Ethereum blocks: a bridge mined in the first slot is claimable in the next. */
 const SLOT = 6
 
 test("renders every screen, bridges a note to claimed, and resumes the bridge after a reload", async ({ page, run, actor }) => {
@@ -50,26 +49,23 @@ test("renders every screen, bridges a note to claimed, and resumes the bridge af
 		await expect(details).toBeHidden()
 	})
 
-	await test.step("the bridge form, the proving pause, a prove past its deadline, then mined", async () => {
+	await test.step("the bridge form, the proving pause, then mined", async () => {
 		await selectL1Account(page, "sender")
 		await page.locator(`[data-testid="note-row"][data-commitment="${NOTE}"]`).getByRole("button", { name: "Bridge to Aztec" }).click()
 		const form = page.getByTestId("bridge-form")
 		await form.getByLabel(/Amount to bridge/).fill("70")
 		const submit = form.getByRole("button", { name: "Bridge to Aztec" })
 		await expect(submit).toBeEnabled()
-		await hangNextProve(page)
+		// The fixture prove settles two frames after the pause paints: too brief to poll for.
+		const proving = await recordFirst(page, "proving")
 		await submit.click()
-		await expect(page.getByTestId("proving")).toBeVisible()
-
-		await advance(page, SLOT)
-		await expect(page.getByTestId("bridge-failure")).toHaveAttribute("data-code", "PROVE_TIMEOUT")
-		await expect(page.getByTestId("bridge-failure")).toHaveText(messageOf("PROVE_TIMEOUT"))
-		expect((await fixtureState(page)).sent.l1, "a prove past its deadline sends nothing").toBe(0)
-
-		await bridgeScreen.getByRole("button", { name: "Prove again" }).click()
 		await expect(bridgeScreen).toHaveAttribute("data-step", "mined")
-		const { bridges } = await fixtureState(page)
-		expect(bridges).toEqual([{ id: expect.any(String), amount: AMOUNT, label, state: "mined", l1TxHash: expect.stringMatching(/^0x/) }])
+		expect(await proving.seen(), "the proving pause painted first").toContain("the page may pause for a few seconds")
+		const s = await fixtureState(page)
+		expect(s.bridges).toEqual([
+			{ id: expect.any(String), amount: AMOUNT, label, state: "mined", l1TxHash: expect.stringMatching(/^0x/) },
+		])
+		expect(s.sent).toEqual({ l1: 1, aztec: 0 })
 		await watch.clean()
 	})
 
