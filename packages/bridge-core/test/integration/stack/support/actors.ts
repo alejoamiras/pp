@@ -10,6 +10,7 @@ import { ProtocolContractAddress } from "@aztec-labs/protocol-contracts"
 import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
 import { deriveStorageSlotInMap } from "@aztec-labs/stdlib/hash"
 import { createPublicClient, createTestClient, http } from "viem"
+import { balanceOf } from "../../../../scripts/sandbox/context"
 import { chainOf, type Device, device as stackDevice } from "../../../../scripts/stack-actors"
 import { labelledTokenArtifact } from "../../../../src/artifacts"
 import { type AttachedStack, scratch } from "./stack"
@@ -94,6 +95,5 @@ export async function labelBalance(d: Device, holder: AztecAddress, label: bigin
 
 /** `holder`'s public balance of the stack's labelled token. */
 export async function publicBalance(d: Device, holder: AztecAddress): Promise<bigint> {
-	const token = await Contract.at(d.token, labelledTokenArtifact, d.wallet as never)
-	return BigInt(resultOf(await token.methods.balance_of_public(holder).simulate({ from: holder } as never)) as bigint)
+	return balanceOf(await Contract.at(d.token, labelledTokenArtifact, d.wallet as never), holder, "public")
 }
