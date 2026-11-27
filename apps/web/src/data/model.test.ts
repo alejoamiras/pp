@@ -14,7 +14,7 @@ describe("view models", () => {
 	test("ages come from the chain clock, never Date.now()", async () => {
 		const now = vi.spyOn(Date, "now").mockReturnValue(0)
 		const clock = { aztecNow: vi.fn(async () => 1_000_240n), l1Now: vi.fn(async () => 9n) }
-		const record = { sequence: 128n, poolRoot: 1n, birthRoot: 0n, l1Block: 7n, rootTime: 1_000_000n }
+		const record = { sequence: 128n, poolRoot: 1n, birthRoot: 0n, l1Block: 7n, rootTime: 1_000_000n, poolSize: 1n, birthSize: 0n }
 		expect(await allowListAge(clock, record)).toEqual({ seconds: 240n, text: "4 min ago (chain time)" })
 		expect(clock.aztecNow).toHaveBeenCalledOnce()
 		expect(now).not.toHaveBeenCalled()

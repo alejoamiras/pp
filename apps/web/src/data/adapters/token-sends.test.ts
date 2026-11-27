@@ -48,7 +48,10 @@ function rig() {
 		release = r
 	})
 	const allowList: Pick<AllowListPort, "current" | "check"> = {
-		current: async () => ({ record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n }, nowSec: 2n }),
+		current: async () => ({
+			record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n, poolSize: 1n, birthSize: 0n },
+			nowSec: 2n,
+		}),
 		check: () => checked,
 	}
 	const sends = stackTokenSends({ aztec, allowList, sponsoredFpc: FPC, notes: ENOUGH })
@@ -103,7 +106,10 @@ describe("the token's checked spends", () => {
 
 	test("checks the label again against the record that is latest after the first check, and sends nothing if it left", async () => {
 		const r = rig()
-		const first = { record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n }, nowSec: 2n }
+		const first = {
+			record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n, poolSize: 1n, birthSize: 0n },
+			nowSec: 2n,
+		}
 		const later = { ...first, record: { ...first.record, sequence: 2n, poolRoot: 10n } }
 		const current = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(later)
 		const check = vi.fn().mockResolvedValueOnce(ACTIVE).mockResolvedValueOnce({ state: "ABSENT" })
@@ -116,7 +122,7 @@ describe("the token's checked spends", () => {
 	test("takes a path only once the record read after its check has the same roots, and refuses a list that keeps moving", async () => {
 		const r = rig()
 		const view = (sequence: bigint, poolRoot: bigint) => ({
-			record: { sequence, poolRoot, birthRoot: 0n, l1Block: 1n, rootTime: sequence },
+			record: { sequence, poolRoot, birthRoot: 0n, l1Block: 1n, rootTime: sequence, poolSize: 1n, birthSize: 0n },
 			nowSec: 2n,
 		})
 		const settled = vi.fn().mockResolvedValueOnce(view(1n, 9n)).mockResolvedValue(view(2n, 9n))
@@ -136,7 +142,10 @@ describe("the token's checked spends", () => {
 	test("refuses a path whose roots held through the check but aged past spending by the read after it", async () => {
 		const r = rig()
 		// For rootTime 1, 1501 is the last read time still fresh once the proving budget is added.
-		const read = (nowSec: bigint) => ({ record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n }, nowSec })
+		const read = (nowSec: bigint) => ({
+			record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n, poolSize: 1n, birthSize: 0n },
+			nowSec,
+		})
 		const check = vi.fn().mockResolvedValue(ACTIVE)
 		const through = (later: bigint) =>
 			stackTokenSends({

@@ -24,7 +24,15 @@ function posted(w: World): Posted {
 	const poolRoot = rootOf(a.pool)
 	const birthRoot = rootOf(a.birth)
 	return {
-		record: { sequence: a.sequence, poolRoot, birthRoot, l1Block: a.l1Block, rootTime: a.rootTime },
+		record: {
+			sequence: a.sequence,
+			poolRoot,
+			birthRoot,
+			l1Block: a.l1Block,
+			rootTime: a.rootTime,
+			poolSize: BigInt(a.pool.length),
+			birthSize: BigInt(a.birth.length),
+		},
 		snapshot: {
 			sequence: a.sequence,
 			poolRoot,

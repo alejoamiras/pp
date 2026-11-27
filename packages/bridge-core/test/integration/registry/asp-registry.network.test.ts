@@ -8,6 +8,7 @@ import { waitForTx } from "@aztec-labs/aztec.js/node"
 import { TxExecutionResult, TxStatus } from "@aztec-labs/aztec.js/tx"
 import { createAztecNodeDebugClient } from "@aztec-labs/stdlib/interfaces/client"
 import type { Tx, TxExecutionRequest, TxProvingResult } from "@aztec-labs/stdlib/tx"
+import { type Hex, readRootRecord } from "@pp/label-paths"
 import { beforeAll, describe, expect, inject, it } from "vitest"
 import { connectL2, type L2Base } from "../../../scripts/sandbox/l2"
 import { aspRootRegistryArtifact } from "../../../src/asp-registry-artifact"
@@ -80,7 +81,7 @@ describe.skipIf(!process.env.BRIDGE_INTEGRATION)("ASP root registry on a local n
 		if (!head) throw new Error("the node has no latest block")
 		sequence += 1n
 		await registry.methods
-			.post_root(sequence, poolRoot, Fr.ZERO, sequence, head.header.globalVariables.timestamp)
+			.post_root(sequence, poolRoot, Fr.ZERO, sequence, head.header.globalVariables.timestamp, 1, 0)
 			.send(base.relayerOpts as never)
 	}
 
@@ -120,6 +121,23 @@ describe.skipIf(!process.env.BRIDGE_INTEGRATION)("ASP root registry on a local n
 		await post(OTHER_ROOT)
 		expect((await base.node.simulatePublicCalls(proven.tx, false)).revertReason?.message).toMatch(/^Assertion failed/)
 		expect(await land(proven)).toBe(TxExecutionResult.REVERTED)
+	})
+
+	it("stores both lengths with a post, read at its block, and clears them with the poster", async () => {
+		const deployOpts = { from, fee: base.fee, wait: { waitForStatus: TxStatus.CHECKPOINTED } } as never
+		const fresh = (await Contract.deploy(base.wallet, aspRootRegistryArtifact, [from, from, from]).send(deployOpts)).contract
+		const read = (at?: number) => readRootRecord({ aztecNode: inject("nodeUrl"), registry: fresh.address.toString() as Hex, at })
+		expect(await read()).toMatchObject({ sequence: 0n, poolRoot: 0n, poolSize: 0n, birthSize: 0n })
+		const head = await base.node.getBlockData("latest")
+		if (!head) throw new Error("the node has no latest block")
+		const sent = await fresh.methods
+			.post_root(1n, new Fr(0xa1n), new Fr(0xb2n), 1n, head.header.globalVariables.timestamp, 7, 5)
+			.send(base.relayerOpts as never)
+		const block = (sent as unknown as { receipt: { blockNumber?: number } }).receipt.blockNumber
+		expect(block).toBeDefined()
+		expect(await read(block)).toMatchObject({ sequence: 1n, poolRoot: 0xa1n, birthRoot: 0xb2n, poolSize: 7n, birthSize: 5n })
+		await fresh.methods.set_poster(from).send(base.relayerOpts as never)
+		expect(await read()).toMatchObject({ sequence: 1n, poolRoot: 0n, birthRoot: 0n, poolSize: 0n, birthSize: 0n })
 	})
 
 	// Last: the warp cannot be undone, and an attached network is someone else's clock.
