@@ -13,7 +13,7 @@ import { createPublicClient, erc20Abi, http } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { formatAmount, plainAmount } from "../src/ui/format"
 import { approvedNote, seededStack } from "./stack"
-import { connectWallet, signInToPool, submitted, watchPage } from "./support"
+import { connectWallet, openForm, signInToPool, submitted, watchPage } from "./support"
 
 test.use({ family: "ragequit", cells: 1, spares: 0 })
 test.skip(({ run }) => run.mode !== "stack", "the sandbox build exits in the fixture world, which the unit suite covers")
@@ -61,12 +61,7 @@ test("leaves a claimed label to Ethereum, lists its ticket from the chain and co
 	await l1.setAccount(anvilKey(s.stack.accounts.user.index))
 	await signInToPool(page)
 	const frame = await connectWallet(page, wallet)
-	await page
-		.locator(`[data-testid="note-row"][data-commitment="${note.commitment}"]`)
-		.getByRole("button", { name: "Bridge to Aztec" })
-		.click()
-	const form = page.getByTestId("bridge-form")
-	await form.getByLabel(/Amount to bridge/).fill(plainAmount(amount, s.decimals))
+	const form = await openForm(page, note.commitment, plainAmount(amount, s.decimals))
 	await form.getByRole("button", { name: "Send from the local dev account" }).click()
 	step("start")
 	await form.getByRole("button", { name: "Bridge to Aztec" }).click()

@@ -95,6 +95,14 @@ export async function chooseWallet(page: Page, o: WalletChoice): Promise<Frame> 
 	return frame
 }
 
+/** The bridge form of `commitment`'s row with `amount` typed in. */
+export async function openForm(page: Page, commitment: bigint, amount: string) {
+	await page.locator(`[data-testid="note-row"][data-commitment="${commitment}"]`).getByRole("button", { name: "Bridge to Aztec" }).click()
+	const form = page.getByTestId("bridge-form")
+	await form.getByLabel(/Amount to bridge/).fill(amount)
+	return form
+}
+
 /** Signs in to the pool as the Ethereum wallet's selected account, its owner, and waits for a note. */
 export async function signInToPool(page: Page): Promise<void> {
 	await page.getByTestId("eth-sign-in").click()
