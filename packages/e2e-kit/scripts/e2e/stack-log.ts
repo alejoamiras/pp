@@ -2,18 +2,24 @@
 import { existsSync, readFileSync } from "node:fs"
 import { setTimeout as sleep } from "node:timers/promises"
 
+/** The rest of the line, so a directory holding spaces survives. */
+const CIRCUITS = /^\[stack\] circuits (.+)$/m
 const READY = /PP_STACK_MANIFEST=(\S+)/
 const SEEDED = /pool user (0x[0-9a-fA-F]{40})\b.*bridge sender (0x[0-9a-fA-F]{40})\b/
 
 export interface StackLog {
+	/** The pool checkout's circuit builds, which the app's server serves. */
+	circuitsDir?: string
 	manifestPath?: string
 	seeded?: { user: string; sender: string }
 }
 
 export function parseStackLog(text: string): StackLog {
+	const circuitsDir = text.match(CIRCUITS)?.[1]
 	const manifestPath = text.match(READY)?.[1]
 	const seeded = text.match(SEEDED)
 	return {
+		...(circuitsDir ? { circuitsDir } : {}),
 		...(manifestPath ? { manifestPath } : {}),
 		...(seeded?.[1] && seeded[2] ? { seeded: { user: seeded[1], sender: seeded[2] } } : {}),
 	}
@@ -26,23 +32,34 @@ export interface ReadyOptions {
 	pollMs?: number
 }
 
+export interface ReadyStack {
+	circuitsDir: string
+	manifestPath: string
+	user: string
+	sender: string
+}
+
 /**
- * Resolves once the log holds the ready and seeded lines. Rejects if the CLI exits first, if the
- * seeded line has not matched `seededGraceMs` after the ready line did, or after `readyMs`.
+ * The ready stack once the log holds it, undefined while it may still. Throws at a ready line with no
+ * circuits line before it, and once the seeded line lags the ready one by more than `graceMs`.
  */
-export async function untilReady(
-	log: string,
-	exited: () => number | null,
-	o: ReadyOptions = {},
-): Promise<{ manifestPath: string; user: string; sender: string }> {
+function settled(s: StackLog, msSinceReady: number, graceMs: number, log: string): ReadyStack | undefined {
+	if (!s.manifestPath) return undefined
+	if (!s.circuitsDir) throw new Error(`stack: the CLI logged ready but no circuits directory; see ${log}`)
+	if (s.seeded) return { circuitsDir: s.circuitsDir, manifestPath: s.manifestPath, ...s.seeded }
+	if (msSinceReady > graceMs) throw new Error(`stack: the CLI logged ready but no seeded accounts within ${graceMs / 1000} s; see ${log}`)
+	return undefined
+}
+
+/** Resolves once the log holds the circuits, ready and seeded lines; rejects as `settled` does, if the CLI exits first, or after `readyMs`. */
+export async function untilReady(log: string, exited: () => number | null, o: ReadyOptions = {}): Promise<ReadyStack> {
 	const { readyMs = 20 * 60_000, seededGraceMs = 5_000, pollMs = 1_000 } = o
 	let readyAt: number | undefined
 	for (const end = Date.now() + readyMs; Date.now() < end; await sleep(pollMs)) {
-		const { manifestPath, seeded } = parseStackLog(existsSync(log) ? readFileSync(log, "utf8") : "")
-		if (manifestPath && seeded) return { manifestPath, ...seeded }
-		if (manifestPath) readyAt ??= Date.now()
-		if (readyAt !== undefined && Date.now() - readyAt > seededGraceMs)
-			throw new Error(`stack: the CLI logged ready but no seeded accounts within ${seededGraceMs / 1000} s; see ${log}`)
+		const s = parseStackLog(existsSync(log) ? readFileSync(log, "utf8") : "")
+		if (s.manifestPath) readyAt ??= Date.now()
+		const ready = settled(s, readyAt === undefined ? 0 : Date.now() - readyAt, seededGraceMs, log)
+		if (ready) return ready
 		const code = exited()
 		if (code !== null) throw new Error(`stack: the CLI exited (${code}) before it was ready; see ${log}`)
 	}

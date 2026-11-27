@@ -35,9 +35,11 @@ network's artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the networ
 
 `bun run --cwd apps/web e2e` runs this mode; it needs what `bun run demo` needs (`bun run
 demo:prepare` once per clone, Foundry 1.7.1 or `FORGE` pointing at it). `stack.ts up` writes
-`<state>/stack.json` (the CLI's process group, the manifest path, the anvil indices of the stack's
-seeded pool user and bridge sender; never a key) and `<state>/wallet/handle.json`, the node, chain
-and rollup version the test wallet builds from. From the spawn on, `<state>/stack.pid` records the
+`<state>/stack.json` (the CLI's process group, the manifest path, the circuits directory the CLI
+printed, the anvil indices of the stack's seeded pool user and bridge sender; never a key) and
+`<state>/wallet/handle.json`, the node, chain and rollup version the test wallet builds from. The
+app's own server gets that circuits directory as `PP_CIRCUITS_DIR`, and `up` fails at a ready line
+the circuits line did not precede. From the spawn on, `<state>/stack.pid` records the
 group and its leader's start time. `stack.ts down` sends SIGTERM to that group only while its
 leader still has that start time and runs the CLI, and waits up to three minutes: the CLI tears
 down every group it started itself, which SIGKILL would orphan. A live group led by anything else

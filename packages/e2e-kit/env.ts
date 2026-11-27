@@ -31,6 +31,8 @@ export interface RunEnv {
 export interface StackRun {
 	pgid: number
 	manifestPath: string
+	/** The pool checkout's circuit builds, as the stack's CLI printed them; the app's server serves these. */
+	circuitsDir: string
 	accounts: { user: { address: Address; index: number }; sender: { address: Address; index: number } }
 }
 

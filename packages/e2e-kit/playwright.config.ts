@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test"
-import { runEnv } from "./env"
+import { runEnv, stackRun } from "./env"
 import { PROFILES } from "./test-wallet/profile"
 
 const env = runEnv()
@@ -7,10 +7,16 @@ const here = new URL(".", import.meta.url).pathname
 /** The web app under test; `agent.sh` builds it and runs this config only once it exists. */
 const appRoot = new URL("../../apps/web/", import.meta.url).pathname
 
-/** A fixture-world build is served by Vite's preview; a stack build by the app's own server, which also serves the proving files. */
+/**
+ * A fixture-world build is served by Vite's preview; a stack build by the app's own server, which also
+ * serves the proving files from the directory the stack's CLI printed (a record without one makes it refuse).
+ */
 const appServer: { command: string; env: Record<string, string> } =
 	env.mode === "stack"
-		? { command: `bun run --cwd ${appRoot} serve --outDir ${env.appDist} ${hostFlags(env.appPort)}`, env: {} }
+		? {
+				command: `bun run --cwd ${appRoot} serve --outDir ${env.appDist} ${hostFlags(env.appPort)}`,
+				env: { PP_CIRCUITS_DIR: stackRun(env).circuitsDir ?? "" },
+			}
 		: {
 				command: `bun run --cwd ${appRoot} vite preview --outDir ${env.appDist} ${hostFlags(env.appPort)}`,
 				env: { PP_SANDBOX_ARTIFACTS: env.artifactsDir },

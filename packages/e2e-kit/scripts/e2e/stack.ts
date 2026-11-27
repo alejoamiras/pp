@@ -77,10 +77,10 @@ async function up(stateDir: string): Promise<void> {
 	})
 	try {
 		recordGroup(f.pid, pgid)
-		const { manifestPath, user, sender } = await untilReady(f.log, () => code)
+		const { circuitsDir, manifestPath, user, sender } = await untilReady(f.log, () => code)
 		const { manifest, rollupVersion } = await checkedManifest(manifestPath)
 		const account = (address: string) => ({ address: getAddress(address), index: anvilIndexOf(address) })
-		const run: StackRun = { pgid, manifestPath, accounts: { user: account(user), sender: account(sender) } }
+		const run: StackRun = { pgid, manifestPath, circuitsDir, accounts: { user: account(user), sender: account(sender) } }
 		writeFileSync(f.walletHandle, JSON.stringify({ nodeUrl: manifest.aztecNode, l1ChainId: manifest.chainId, rollupVersion }))
 		writeFileSync(f.run, JSON.stringify(run, null, 2))
 	} catch (err) {
