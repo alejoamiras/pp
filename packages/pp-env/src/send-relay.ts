@@ -8,6 +8,9 @@
  *   served;
  * - an `eth_estimateGas` error within `freshMs` of such a receipt is asked again until `freshMs` has passed
  *   or the request's budget ends;
+ * - a null receipt of a transaction the relay sent is asked again until it is not null or the request's
+ *   budget ends: forge asks three times without a pause once it has seen the transaction in a block, and a
+ *   backend whose nodes lag each other can answer null all three times;
  * - a read the endpoint refused or answered ambiguously (HTTP 429 or 5xx, JSON-RPC -32005 or 429, a broken
  *   connection, an unreadable body) is asked again inside the request's budget.
  *
@@ -123,9 +126,14 @@ class Relay {
 		return reply(c.id, { result: `0x${floor.toString(16)}` })
 	}
 
+	/** The transaction this relay sent whose hash `c` asks about, if any. */
+	private sentTx(c: Call) {
+		const hash = Array.isArray(c.params) ? c.params[0] : undefined
+		return typeof hash === "string" ? this.path.sent.get(hash.toLowerCase() as Hex) : undefined
+	}
+
 	private noteReceipt(c: Call, r: Reply): void {
-		const hash = (Array.isArray(c.params) ? c.params[0] : undefined) as Hex | undefined
-		const tx = hash && this.path.sent.get(hash.toLowerCase() as Hex)
+		const tx = this.sentTx(c)
 		const a = parseAnswer(r.text)
 		if (!tx || a?.result === null || typeof a?.result !== "object") return
 		const who = tx.sender.toLowerCase()
@@ -146,7 +154,8 @@ class Relay {
 			case "eth_estimateGas":
 				return this.read(c, (r) => parseAnswer(r.text)?.error !== undefined && Date.now() - this.lastReceiptAt < this.freshMs)
 			case "eth_getTransactionReceipt": {
-				const r = await this.read(c)
+				const ours = this.sentTx(c) !== undefined
+				const r = await this.read(c, (a) => ours && parseAnswer(a.text)?.result === null)
 				this.noteReceipt(c, r)
 				return r
 			}

@@ -86,6 +86,19 @@ describe("the send relay", () => {
 		expect((await call("eth_estimateGas", [{}])).error?.message).toBe("execution reverted")
 	})
 
+	it("asks again a null receipt of a transaction it sent, and passes any other one at once", async () => {
+		admitAll()
+		const hash = (await call("eth_sendRawTransaction", [await signed(6)])).result
+		let reads = 0
+		read.set((m, p) =>
+			m === "eth_getTransactionReceipt" && p[0] === hash && ++reads >= 3
+				? { result: { transactionHash: hash, status: "0x1" } }
+				: { result: null },
+		)
+		expect((await call("eth_getTransactionReceipt", [`0x${"11".repeat(32)}`])).result).toBeNull()
+		expect([(await call("eth_getTransactionReceipt", [hash])).result, reads]).toEqual([{ transactionHash: hash, status: "0x1" }, 3])
+	})
+
 	it("asks again a read the endpoint refused, and gives up inside the read budget with an answer no client retry repeats", async () => {
 		let n = 0
 		read.set((m) => (m === "eth_blockNumber" ? (++n < 3 ? { status: 503 } : { result: "0x10" }) : { result: null }))
