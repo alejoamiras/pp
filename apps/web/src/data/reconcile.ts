@@ -1,11 +1,14 @@
 /**
  * The pool side as the page shows it after any load, reload included. A journal record is written
- * before its Ethereum transaction and gains the hash only when the wallet returns one, and a stored
- * hash is no proof of a send, so each open record is read against the chain: the bridge's event
- * (`recover`) or a mined hash make it a bridge to follow; a hash pending at the RPC is in flight; no
- * hash, or one the RPC does not know, is uncertain while the note is unspent; a note spent without the
- * event was consumed elsewhere. `recover` also runs for the connected accounts, so a mined bridge shows
- * on a device that has no journal for it.
+ * before its Ethereum transaction and gains the hash only when the wallet returns one, so each open
+ * record is read against the chain. Only the bridge's event makes it a bridge to follow, from `recover`
+ * or as bridge-core's verified receipt on the record. A hash never does: the record carries its latest
+ * attempt's, which can be a reverted retry while an earlier attempt is still out, and a successful
+ * receipt shows that a transaction ran, not that it bridged this note. A hash pending at the RPC, or
+ * mined with no event seen yet, is in flight; no hash, one the RPC does not know, or one that reverted
+ * is uncertain while the note is unspent; a note spent without the event was consumed elsewhere.
+ * `recover` also runs for the connected accounts, so a mined bridge shows on a device that has no
+ * journal for it.
  */
 import type { Hash } from "viem"
 import { codeOf } from "./errors"
@@ -37,12 +40,16 @@ const isOpen = (r: BridgeRecordView) => typeof r.step !== "object" && r.step !==
 /** What an open record's attempt is on chain: a bridge to follow, pending at the RPC, unconfirmed, or beaten to its note. */
 export type PriorKind = "bridge" | "in-flight" | "uncertain" | "consumed"
 
-/** `seen`: `recover` found the record's event; `tx`: the RPC's answer for its hash; `unspent`: its note. */
+const WAITING: ReadonlySet<L1TxState | undefined> = new Set(["pending", "mined"])
+
+/** `seen`: the record's event, by `recover` or its verified receipt; `tx`: the RPC's answer for its hash; `unspent`: its note. */
 function classify(seen: boolean, tx: L1TxState | undefined, unspent: boolean): PriorKind {
-	if (seen || tx === "mined") return "bridge"
-	if (unspent && tx === "pending") return "in-flight"
+	if (seen) return "bridge"
+	if (unspent && WAITING.has(tx)) return "in-flight"
 	return unspent ? "uncertain" : "consumed"
 }
+
+const verified = (r: BridgeRecordView, recovered: BridgeRecordView | undefined) => recovered !== undefined || r.receipt !== undefined
 
 /**
  * `recovered` is `recover` for the recipients, `unspent` maps each unspent note's nullifier to the note,
@@ -64,7 +71,7 @@ export function reconcile(
 	for (const r of records.filter(isOpen)) {
 		const seen = recovered.find((x) => x.id === r.id)
 		const note = unspent.get(r.nullifier)
-		const kind = classify(seen !== undefined, r.l1TxHash ? txs.get(r.l1TxHash) : undefined, note !== undefined)
+		const kind = classify(verified(r, seen), r.l1TxHash ? txs.get(r.l1TxHash) : undefined, note !== undefined)
 		if (kind === "bridge") bridges.push(seen ?? r)
 		else if (kind === "consumed" || note === undefined) consumed.push(r)
 		else (kind === "uncertain" && submitting.has(note.commitment) ? sending : open[kind]).set(note.commitment, r)
@@ -95,7 +102,7 @@ async function journalOf(session: Session, commitment: bigint) {
 async function readOpen(session: Session, r: BridgeRecordView, unspent: boolean): Promise<Prior> {
 	const [recovered, tx] = await Promise.all([session.recover(r.recipient), r.l1TxHash ? session.l1TxState(r.l1TxHash) : undefined])
 	const seen = recovered.find((x) => x.id === r.id)
-	return { kind: classify(seen !== undefined, tx, unspent), record: seen ?? r }
+	return { kind: classify(verified(r, seen), tx, unspent), record: seen ?? r }
 }
 
 /** The note's open journal record, read against the chain exactly as `reconcile` reads it; `null` when it has none. */

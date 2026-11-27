@@ -140,8 +140,11 @@ export interface Session {
 	close(): void
 }
 
-/** `pending`: in the RPC's pool, not mined; `unknown`: the RPC has no such transaction (never sent, or dropped). */
-export type L1TxState = "pending" | "mined" | "unknown"
+/**
+ * `mined` and `reverted`: the receipt's status; `pending`: in the RPC's pool, not mined; `unknown`: the
+ * RPC has no such transaction (never sent, or dropped).
+ */
+export type L1TxState = "pending" | "mined" | "reverted" | "unknown"
 
 export interface LabelBalance {
 	label: bigint

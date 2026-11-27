@@ -12,6 +12,7 @@ import { stageManifest } from "../capabilities"
 import { isUserRejection } from "../errors"
 import type { Attempt, Proved, SubmitHooks } from "../ports"
 import type { AztecAddress, BridgeRecordView } from "../stack-types"
+import { readPool } from "../reconcile"
 import type { HeldWallet } from "../wallet/connector"
 import { parseGrant } from "../wallet/grant"
 import type { AztecDeps } from "./aztec"
@@ -128,7 +129,7 @@ function memoryStorage(seed: Record<string, string> = {}): PageStorage & { data:
 }
 
 /** A stack session over fakes at the bridge client, the Ethereum client and the Aztec wallet. */
-function rig() {
+function rig(o: Partial<Pick<SessionDeps, "open" | "reads">> = {}) {
 	const aztecWallet = freshWallet()
 	let held: HeldWallet | null = { epoch: 1, wallet: aztecWallet.asWallet, grant: GRANT }
 	const gate: { reached: () => void; open: Promise<void>; release: () => void } = {
@@ -170,6 +171,7 @@ function rig() {
 		open: (async () => ({ l1Address: OWNER, pool: { notes: async () => [] } })) as unknown as typeof openBridgeSession,
 		prepare: prepare as unknown as SessionDeps["prepare"],
 		client,
+		...o,
 	}
 	return {
 		client,
@@ -235,14 +237,37 @@ describe("the stack session", () => {
 		expect(prover.cancel).toHaveBeenCalledOnce()
 	})
 
-	test("a hash is mined with a receipt, pending with only a transaction, unknown with neither; an RPC failure is no answer", async () => {
+	test("a hash is mined or reverted by its receipt, pending with only a transaction, unknown with neither; an RPC failure is no answer", async () => {
 		const found = () => Promise.resolve({})
 		const state = (getTransactionReceipt: () => Promise<unknown>, getTransaction: () => Promise<unknown>) =>
 			l1TxState({ getTransactionReceipt, getTransaction } as unknown as SessionDeps["reads"], TX)
-		await expect(state(found, missingTx)).resolves.toBe("mined")
+		await expect(state(async () => ({ status: "success" }), missingTx)).resolves.toBe("mined")
+		await expect(state(async () => ({ status: "reverted" }), found)).resolves.toBe("reverted")
 		await expect(state(missingReceipt, found)).resolves.toBe("pending")
 		await expect(state(missingReceipt, missingTx)).resolves.toBe("unknown")
 		await expect(state(() => Promise.reject(new Error("fetch failed")), found)).rejects.toThrow("fetch failed")
+	})
+
+	test("a reverted retry beside an earlier attempt still out is unconfirmed after a reload, never a bridge", async () => {
+		const note = { commitment: 7n, label: 3n, value: 100n, asset: A20("05"), status: "approved" }
+		const r = rig({
+			open: (async () => ({
+				l1Address: OWNER,
+				pool: { notes: async () => [note], nullifierOf: async () => 9n },
+			})) as unknown as typeof openBridgeSession,
+			reads: {
+				getTransactionReceipt: async () => ({ status: "reverted" }),
+				getTransaction: async () => ({}),
+			} as unknown as SessionDeps["reads"],
+		})
+		// bridge-core's view of it: no event, so no receipt, and the latest attempt's hash.
+		r.client.records.mockResolvedValue([
+			{ id: "r1", nullifier: 9n, recipient: { toString: () => RECIPIENT }, amount: 70n, l1TxHash: TX, step: "submitted" },
+		])
+		r.client.recover.mockResolvedValue([])
+		const pool = await readPool(await r.open(), [RECIPIENT])
+		expect(pool.bridges).toEqual([])
+		expect([...pool.uncertain.keys()]).toEqual([7n])
 	})
 
 	test("a proof made under one attempt is refused under another before the bridge client sees it, and spends once", async () => {

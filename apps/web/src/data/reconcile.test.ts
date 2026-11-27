@@ -24,6 +24,7 @@ const record = (id: string, nullifier: bigint, extra: Partial<BridgeRecordView> 
 
 describe("reconciling bridge records", () => {
 	test("reads each open record against the chain, never against its stored hash alone", () => {
+		const verified = { ...record("x", 0n), step: "mined", receipt: { l1TxHash: hash(10) } } as unknown as BridgeRecordView
 		const records = [
 			record("hashless", 1n),
 			record("lost", 2n, { l1TxHash: hash(2) }),
@@ -33,28 +34,35 @@ describe("reconciling bridge records", () => {
 			record("gone", 6n),
 			record("claimed", 7n, { step: "claimed" }),
 			record("reverted", 8n, { step: { error: "REVERTED" } }),
+			record("retry-reverted", 10n, { l1TxHash: hash(10) }),
+			{ ...verified, id: "verified", nullifier: 11n },
 		]
 		const recovered = [
 			record("landed", 5n, { l1TxHash: hash(5), step: "mined" }),
 			record("forgotten", 9n, { l1TxHash: hash(9), step: "mined" }),
 		]
-		const unspent = new Map([1n, 2n, 3n, 5n].map((n) => [n, note(10n + n)]))
+		const unspent = new Map([1n, 2n, 3n, 4n, 5n, 10n].map((n) => [n, note(10n + n)]))
 		const txs = new Map<Hash, L1TxState>([
 			[hash(2), "unknown"],
 			[hash(3), "pending"],
 			[hash(4), "mined"],
+			[hash(10), "reverted"],
 		])
 		const r = reconcile(records, recovered, unspent, txs)
-		expect([...r.uncertain.keys()]).toEqual([11n, 12n])
-		expect([...r.inFlight].map(([n, x]) => [n, x.l1TxHash])).toEqual([[13n, hash(3)]])
+		// A mined hash with no verified event waits; the latest hash reverting leaves the earlier attempt unconfirmed.
+		expect([...r.uncertain.keys()]).toEqual([11n, 12n, 20n])
+		expect([...r.inFlight].map(([n, x]) => [n, x.l1TxHash])).toEqual([
+			[13n, hash(3)],
+			[14n, hash(4)],
+		])
 		expect(r.bridges.map((b) => [b.id, b.step])).toEqual([
-			["mined", "submitted"],
 			["landed", "mined"],
+			["verified", "mined"],
 			["forgotten", "mined"],
 		])
 		expect(r.consumed.map((b) => b.id)).toEqual(["gone"])
 		// A note this page is sending owns its hashless record; one pending at the RPC stays in flight.
 		const live = reconcile(records, recovered, unspent, txs, new Set([11n, 13n]))
-		expect([[...live.sending.keys()], [...live.uncertain.keys()], [...live.inFlight.keys()]]).toEqual([[11n], [12n], [13n]])
+		expect([[...live.sending.keys()], [...live.uncertain.keys()], [...live.inFlight.keys()]]).toEqual([[11n], [12n, 20n], [13n, 14n]])
 	})
 })

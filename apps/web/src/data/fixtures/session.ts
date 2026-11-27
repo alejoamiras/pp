@@ -283,7 +283,8 @@ function makeSession(c: Ctx, signature: Hex): Session {
 		async l1TxState(hash) {
 			live()
 			const b = w.s.bridges.find((x) => x.l1TxHash === hash)
-			return b === undefined ? "unknown" : b.state === "sent" ? "pending" : "mined"
+			if (b === undefined) return "unknown"
+			return b.state === "sent" ? "pending" : b.state === "reverted" ? "reverted" : "mined"
 		},
 		close() {
 			held = null

@@ -84,7 +84,8 @@ const unlessMissing = (err: unknown): null => {
 }
 
 export async function l1TxState(reads: SessionDeps["reads"], hash: Hash): Promise<L1TxState> {
-	if (await reads.getTransactionReceipt({ hash }).catch(unlessMissing)) return "mined"
+	const receipt = await reads.getTransactionReceipt({ hash }).catch(unlessMissing)
+	if (receipt) return receipt.status === "success" ? "mined" : "reverted"
 	return (await reads.getTransaction({ hash }).catch(unlessMissing)) ? "pending" : "unknown"
 }
 
