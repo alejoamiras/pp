@@ -51,13 +51,52 @@ function filtersOf(workflow: string): Record<string, string[]> {
   throw new Error(`no dorny/paths-filter step found in ${workflow}`)
 }
 
-/** A gate's pattern set must whole-package the target and src+manifest every transitive dep lib. */
-function assertGraphCovered(patterns: string[], target: string, label: string) {
-  expect(patterns, `${label}: target '${target}' must be whole-package gated`).toContain(`${dirOf(target)}/${target}/**`)
-  for (const dep of transitiveDeps(target)) {
-    expect(patterns, `${label}: dep lib '${dep}' src must be gated`).toContain(`packages/${dep}/src/**`)
-    expect(patterns, `${label}: dep lib '${dep}' package.json must be gated`).toContain(`packages/${dep}/package.json`)
+const manifestOf = (pkg: string) => JSON.parse(readFileSync(join(ROOT, dirOf(pkg), pkg, "package.json"), "utf8"))
+const exportTargets = (e: unknown): string[] => (typeof e === "string" ? [e] : Object.values(e ?? {}).flatMap(exportTargets))
+
+/** The `@pp/<dep>` subpaths a package's own files import ("" for the root entry). */
+function importedSubpaths(pkg: string, dep: string): Set<string> {
+  const dir = join(ROOT, dirOf(pkg), pkg)
+  const files = (readdirSync(dir, { recursive: true }) as string[]).filter(
+    (f) => /\.(ts|tsx|mts|js|mjs)$/.test(f) && !/(^|\/)(node_modules|dist)\//.test(f),
+  )
+  const found = new Set<string>()
+  for (const file of files)
+    for (const m of readFileSync(join(dir, file), "utf8").matchAll(/["']@pp\/([\w-]+)(\/[^"']*)?["']/g)) if (m[1] === dep) found.add(m[2] ?? "")
+  return found
+}
+
+/**
+ * What a change in `dep` can alter for `pkg`: its manifest and the directory of every export `pkg`
+ * imports by name, or of every export when `pkg` imports none by name.
+ */
+function edgePaths(pkg: string, dep: string): string[] {
+  const exports = manifestOf(dep).exports ?? {}
+  const used = [...importedSubpaths(pkg, dep)].map((sub) => exports[`.${sub}`])
+  const targets = used.length && used.every(Boolean) ? used.flatMap(exportTargets) : exportTargets(exports)
+  const dirs = targets.map((t) => join(dirOf(dep), dep, dirname(t)))
+  return [`${dirOf(dep)}/${dep}/package.json`, ...dirs.map((d) => `${d}/**`)]
+}
+
+/**
+ * For every package a filter gates whole (`packages/<x>/**`), the paths of its `@pp/*` dependency
+ * closure the filter misses, walking each edge with what the dependent imports.
+ */
+function closureGaps(patterns: string[]): string[] {
+  // A nested sample path: a recursive glob matches it, a single-file pattern does not.
+  const gated = (path: string) => patterns.some((p) => new Bun.Glob(p).match(path.replace(/\*\*$/, "nested/x.ts")))
+  const gaps = new Set<string>()
+  const seen = new Set<string>()
+  const queue = patterns.map((p) => /^(?:packages|apps)\/([^/]+)\/\*\*$/.exec(p)?.[1]).filter((x): x is string => Boolean(x))
+  for (let pkg = queue.shift(); pkg !== undefined; pkg = queue.shift()) {
+    if (seen.has(pkg)) continue
+    seen.add(pkg)
+    for (const dep of directDeps(pkg)) {
+      for (const path of edgePaths(pkg, dep)) if (!gated(path)) gaps.add(path)
+      queue.push(dep)
+    }
   }
+  return [...gaps].sort()
 }
 
 const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml", "local-stack.yml", "pool-client.yml"]
@@ -116,6 +155,26 @@ describe("CI aggregator check names", () => {
 })
 
 describe("CI behavior-gating guard", () => {
+  test("a per-package workflow gates its package whole", () => {
+    const named = FILTER_WORKFLOWS.map((wf) => wf.replace(/\.yml$/, "")).filter((name) => existsSync(join(ROOT, "packages", name, "package.json")))
+    expect(named.length).toBeGreaterThan(0)
+    for (const name of named) {
+      const patterns = Object.values(filtersOf(`${name}.yml`)).flat()
+      expect(patterns, `${name}.yml`).toContain(`packages/${name}/**`)
+    }
+  })
+
+  test("every filter that gates a package whole gates what its workspace dependencies export", () => {
+    for (const wf of FILTER_WORKFLOWS)
+      for (const [name, patterns] of Object.entries(filtersOf(wf))) expect(closureGaps(patterns), `${wf} → ${name}`).toEqual([])
+  })
+
+  test("the closure pin names a dependency a filter leaves out", () => {
+    const stack = filtersOf("local-stack.yml")["stack"]
+    expect(closureGaps(stack.filter((p) => !p.startsWith("packages/bridge-spec/")))).toEqual(["packages/bridge-spec/package.json", "packages/bridge-spec/src/**"])
+    expect(closureGaps(stack.filter((p) => p !== "packages/bridge-core/**"))).toContain("packages/bridge-core/scripts/sandbox/**")
+  })
+
   test("NO `!` negation patterns anywhere (the dorny some-quantifier footgun)", () => {
     for (const wf of FILTER_WORKFLOWS) {
       for (const [name, pats] of Object.entries(filtersOf(wf))) {
@@ -149,10 +208,9 @@ describe("CI behavior-gating guard", () => {
     }
   })
 
-  test("the e2e kit build covers the kit graph, the sandbox harness it imports, and the files bridge-core bundles", () => {
+  test("the e2e kit build covers the kit and the files bridge-core bundles", () => {
     const kit = filtersOf("pr-quick.yml")["kit"]
-    assertGraphCovered(kit, "e2e-kit", "kit")
-    expect(kit, "the kit imports @pp/bridge-core/sandbox, which lives in scripts/").toContain("packages/bridge-core/scripts/**")
+    expect(kit).toContain("packages/e2e-kit/**")
     const outside = importsOutside("bridge-core")
     expect(outside.length, "bridge-core bundles the hub artifact from contracts/").toBeGreaterThan(0)
     for (const path of outside) {
@@ -166,8 +224,7 @@ describe("CI behavior-gating guard", () => {
   test("bridge-contracts covers the contracts, the harness package, its graph, and the shared vitest config", () => {
     const contracts = filtersOf("bridge-contracts.yml")["contracts"]
     expect(contracts, "the Solidity + Noir sources").toContain("contracts/bridge/**")
-    assertGraphCovered(contracts, "bridge-core", "bridge-contracts")
-    assertGraphCovered(contracts, "labelled-token", "bridge-contracts")
+    for (const pkg of ["bridge-core", "labelled-token"]) expect(contracts, pkg).toContain(`packages/${pkg}/**`)
     for (const p of [
       "vitest.base.ts",
       "package.json",
@@ -183,7 +240,6 @@ describe("CI behavior-gating guard", () => {
 
   test("pp-env covers its package, its graph, the shared vitest config, and every action its suites job calls", () => {
     const ppEnv = filtersOf("pp-env.yml")["pp-env"]
-    assertGraphCovered(ppEnv, "pp-env", "pp-env")
     const calls: string[] = workflow("pp-env.yml")
       .jobs.suites.steps.map((step: { uses?: string }) => step.uses)
       .filter((uses: string | undefined) => uses?.startsWith("./.github/actions/"))
@@ -223,7 +279,6 @@ describe("CI behavior-gating guard", () => {
 
   test("pool-client covers its package, pp-env whole, the shared test config, and every action its jobs call", () => {
     const poolClient = filtersOf("pool-client.yml")["pool-client"]
-    assertGraphCovered(poolClient, "pool-client", "pool-client")
     const jobs = workflow("pool-client.yml").jobs
     const calls: string[] = [jobs.unit, jobs.suites]
       .flatMap((job: { steps: { uses?: string }[] }) => job.steps.map((step) => step.uses))
