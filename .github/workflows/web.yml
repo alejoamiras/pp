@@ -40,7 +40,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations (dorny's some-quantifier footgun). The app and the kit
-          # whole; bridge-core's sources and the sandbox harness in its scripts/; contracts/bridge/**,
+          # whole; bridge-core's sources and the sandbox harness in its scripts/, and bridge-spec's sources, which bridge-core imports; contracts/bridge/**,
           # which the sandbox compiles and deploys from source; the actions these jobs run; the root files
           # the install and the vitest config read (lint lives in pr-quick.yml). Pinned by
           # scripts/ci-cd/behavior-gating.test.ts.
@@ -51,6 +51,8 @@ jobs:
               - 'packages/bridge-core/src/**'
               - 'packages/bridge-core/scripts/**'
               - 'packages/bridge-core/package.json'
+              - 'packages/bridge-spec/src/**'
+              - 'packages/bridge-spec/package.json'
               - 'contracts/bridge/**'
               - 'package.json'
               - 'bun.lock'
