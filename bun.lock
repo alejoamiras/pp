@@ -42,6 +42,7 @@
         "@aztec-labs/noir-contracts.js": "6.0.0",
         "@nulo-sh/resolve-asset": "0.3.0",
         "@playwright/test": "1.63.0",
+        "@pp/bridge-spec": "workspace:*",
         "@pp/e2e-kit": "workspace:*",
         "@pp/local-stack": "workspace:*",
         "@pp/run-isolation": "workspace:*",

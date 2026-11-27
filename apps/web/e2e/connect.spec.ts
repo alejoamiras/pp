@@ -9,12 +9,13 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
 import { messageOf } from "../src/data/errors"
+import { approvedNote, seededStack } from "./stack"
 import { chooseWallet, connectWallet, declineNextGrant, signInToPool, submitted, walletOption, watchPage } from "./support"
 
 test.use({ family: "connect", cells: 3, spares: 0 })
 
-/** The seeded approved pool note's commitment, as its row carries it. */
-const BRIDGEABLE_NOTE = "4097"
+/** The fixture world's seeded approved pool note's commitment, as its row carries it. */
+const FIXTURE_NOTE = "4097"
 
 // Fails if the page or the wallet frame is not cross-origin isolated, the served headers drift from
 // the built ones, or the SDK, Radix or zod trip the CSP.
@@ -57,15 +58,15 @@ test("discovers both wallet profiles and connects the full one after its emoji c
 // Fails if the page reads a grant it was not given: a declined contract scope must close the bridge and
 // every token action, with a reason, and a later full grant must lift exactly that refusal.
 test("a declined grant closes the bridge and token actions with a reason; granting again opens them", async ({ page, run, actor }) => {
-	test.skip(run.mode === "stack", "a stack build has no bridge or token actions yet for a grant to open")
 	const watch = await watchPage(page)
+	const stack = run.mode === "stack"
+	const note = stack ? (await approvedNote((await seededStack(run)).pool)).commitment.toString() : FIXTURE_NOTE
 	await page.goto("/")
 	await signInToPool(page)
-	const bridge = page
-		.locator(`[data-testid="note-row"][data-commitment="${BRIDGEABLE_NOTE}"]`)
-		.getByRole("button", { name: "Bridge to Aztec" })
+	const bridge = page.locator(`[data-testid="note-row"][data-commitment="${note}"]`).getByRole("button", { name: "Bridge to Aztec" })
 	const publicRow = page.getByTestId("public-row")
-	const tokenActions = ["Shield", "Withdraw to Ethereum"].map((name) => publicRow.getByRole("button", { name, exact: true }))
+	// A stack build has no public token actions yet; the bridge alone carries the grant there.
+	const tokenActions = stack ? [] : ["Shield", "Withdraw to Ethereum"].map((name) => publicRow.getByRole("button", { name, exact: true }))
 	const wallet = { profile: "plain", origin: run.testWalletOrigins.plain, account: actor.address } as const
 
 	const declined = await connectWallet(page, { ...wallet, whileVerifying: declineNextGrant })

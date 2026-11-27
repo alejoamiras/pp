@@ -3,43 +3,24 @@
  * sent. Estimated 30 s, measured 5 s on a 192-core host: one in-browser sign-in with its note
  * sync, one pool client in Node, and the three proving files over loopback.
  */
-import { readFileSync } from "node:fs"
-import { parseStackManifest, requireBlocks } from "@pp/bridge-core"
-import { stackRun } from "@pp/e2e-kit/env.ts"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
-import { openPoolClient } from "@pp/pool-client"
-import { anvilAccount, circuitsDir, derivationSignature } from "@pp/pool-client/testing"
 import { PINNED_CIRCUITS } from "@pp/pool-client/circuits"
-import { messageOf } from "../src/data/errors"
 import { formatAmount, labelHex } from "../src/ui/format"
+import { seededStack } from "./stack"
 import { signInToPool, watchPage } from "./support"
 
 test.use({ family: "pool", cells: 0, spares: 0 })
 test.skip(({ run }) => run.mode !== "stack", "the sandbox build shows the fixture world's pool, not a chain's")
 
-/** The stack's test token; the build does not read decimals from chain yet. */
-const DECIMALS = 6
-
 // Fails if the stack build's session does not open in the browser (pool-client and the bridge client
 // under the CSP, cross-origin isolation and the polyfills), if the notes it lists by label differ from
-// what pool-client reads in Node for the same keys, if the CSP refuses the ASP API, the bot or the
+// what pool-client reads in Node for the same keys, in the decimals the factory registered, if the CSP refuses the ASP API, the bot or the
 // page's own proving-file routes, or if `serve` hands out bytes other than the pinned ones.
-test("lists the seeded user's notes by label as pool-client reads them, bridging closed, every stack origin under the CSP", async ({
-	page,
-	run,
-}) => {
+test("lists the seeded user's notes by label as pool-client reads them, every stack origin under the CSP", async ({ page, run }) => {
 	const watch = await watchPage(page)
-	const stack = stackRun(run)
-	const manifest = requireBlocks(parseStackManifest(JSON.parse(readFileSync(stack.manifestPath, "utf8"))), ["bot"])
-	const { index } = stack.accounts.user
-	const client = await openPoolClient({
-		pool: { chainId: manifest.chainId, l1Rpc: manifest.l1Rpc, ...manifest.pool },
-		l1Address: anvilAccount(index).address,
-		signature: await derivationSignature(index),
-		artifacts: { kind: "dir", path: circuitsDir() },
-	})
-	const expected = (await client.notes()).filter((n) => n.value > 0n && n.status === "approved")
-	expect(expected.length, "the stack seeds two approved notes").toBe(2)
+	const { manifest, pool, decimals } = await seededStack(run)
+	const expected = (await pool.notes()).filter((n) => n.value > 0n && n.status === "approved")
+	expect(expected.length, "two approved notes with value left, a bridged note's change included").toBe(2)
 
 	const aspOrigin = new URL(manifest.pool.aspApiUrl).origin
 	const aspStatuses: number[] = []
@@ -53,15 +34,12 @@ test("lists the seeded user's notes by label as pool-client reads them, bridging
 	for (const note of expected) {
 		const row = page.locator(`[data-testid="note-row"][data-commitment="${note.commitment}"]`)
 		await expect(row.locator("[data-label]")).toHaveAttribute("data-label", labelHex(note.label))
-		await expect(row).toContainText(formatAmount(note.value, DECIMALS, 2))
-		const bridge = row.getByRole("button", { name: "Bridge to Aztec" })
-		await expect(bridge).toBeDisabled()
-		await expect(bridge).toHaveAccessibleDescription(messageOf("BRIDGE_UNAVAILABLE"))
+		await expect(row).toContainText(formatAmount(note.value, decimals, 2))
 	}
 	expect(aspStatuses, "the page read the ASP API").toContain(200)
 
-	// No page flow fetches the bot or a proving file before bridging is wired, so the page fetches
-	// them itself: its own CSP applies, and the digests prove which bytes `serve` handed out.
+	// Sign-in fetches no bot snapshot, and its proving-file prefetch shows the test no bytes, so the
+	// page fetches them itself: its own CSP applies, and the digests prove which bytes `serve` handed out.
 	const pins = Object.values(PINNED_CIRCUITS).flatMap((p) => [
 		[p.wasm, p.wasmSha256],
 		[p.provingKey, p.provingKeySha256],
