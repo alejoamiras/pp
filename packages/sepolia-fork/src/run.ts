@@ -6,9 +6,9 @@ import { releasePorts, rowsOwnedBy } from "@pp/run-isolation/ports"
 import { CleanupStack } from "@pp/run-isolation/process"
 import { groupAlive } from "@pp/run-isolation/process-group"
 import { ANVIL_CLIENT_VERSION, type ForkAnvil, startForkAnvil } from "./anvil.ts"
-import { BUNDLE, bundleDir, readVkeys } from "./bundle.ts"
+import { bundleDir, readVkeys } from "./bundle.ts"
 import { fixturePath } from "./forge.ts"
-import { PINS, type Pins } from "./pins.ts"
+import { DEFAULT_TARGET, type Pins, TARGETS } from "./pins.ts"
 import { checkEndpoint, checkFork, checkKeys, checkLive } from "./preflight.ts"
 import { ENDPOINT_RETRIES, hostOf, httpRpc, type Rpc } from "./rpc.ts"
 import { assertFork } from "./writer.ts"
@@ -70,7 +70,7 @@ async function preflightAndBody(o: RunOptions, run: Run): Promise<bigint> {
 	await checkEndpoint(endpoint, pins, host)
 	log(`${host} serves block ${pins.block.number}`)
 	run.signal.throwIfAborted()
-	const bundle = await bundleDir({ log, cleanup: run.cleanup })
+	const bundle = await bundleDir({ bundle: pins.bundle, log, cleanup: run.cleanup })
 	run.signal.throwIfAborted()
 	const t0 = performance.now()
 	const fork = await startForkAnvil({
@@ -99,7 +99,7 @@ async function onFork(o: RunOptions, run: Run, fork: ForkAnvil, endpoint: Rpc, b
 	await checkFork(fork.rpc, pins)
 	log(`every pin holds on the fork at block ${pins.block.number}`)
 	await checkKeys(fork.rpc, pins, await readVkeys(bundle))
-	log(`the pinned verifiers hold the ${BUNDLE} keys`)
+	log(`the pinned verifiers hold the ${pins.bundle} keys`)
 	const finalized = await checkLive(endpoint, pins)
 	log(`the live deployment matches the pins at finalized block ${finalized}`)
 	run.signal.throwIfAborted()
@@ -119,7 +119,7 @@ export async function runFork(o: RunOptions): Promise<RunReport> {
 	const run: Run = {
 		runId,
 		dataDir: join(RUNS_DIR, runId),
-		pins: o.pins ?? PINS,
+		pins: o.pins ?? TARGETS[DEFAULT_TARGET],
 		cleanup: new CleanupStack(),
 		log: o.log ?? ((line: string) => console.log(`sepolia-fork: ${line}`)),
 		signal: abort.signal,

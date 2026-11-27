@@ -5,7 +5,7 @@
  */
 import type { Address } from "viem"
 import type { AztecAddress, Origin } from "../stack-types"
-import { MAX_NOTES_PER_BURN, ragequitChunks } from "../chunks"
+import { assertSpendable, MAX_NOTES_PER_BURN, ragequitChunks } from "../chunks"
 import { BridgeFailure, ProviderError } from "../errors"
 import { BALANCES_PAGE, NOTES_PAGE, readAllPages } from "../paging"
 import { BN254_P, isAztecPoint, parseBalanceRow, parsePayee, parseU128 } from "../parse"
@@ -17,6 +17,8 @@ import type { World } from "./world"
 
 const desc = (a: AztecNote, b: AztecNote) => (a.value > b.value ? -1 : a.value < b.value ? 1 : 0)
 const ofLabel = (w: World, owner: AztecAddress, label: bigint) => w.s.aztecNotes.filter((n) => n.owner === owner && n.label === label)
+/** As the wallet lists them: every origin under the label, as the stack port reads them before a spend. */
+const noteValues = (w: World, owner: AztecAddress, label: bigint) => ofLabel(w, owner, label).map((n) => n.value)
 
 /** `private_balances_by_label(owner, start)`: raw `(label, origin, balance)` triples, as a wallet answers. */
 function balancesView(w: World, owner: AztecAddress, start: number): unknown[][] {
@@ -140,6 +142,7 @@ export function fixtureAztec(w: World): AztecPort {
 		async transferPrivate(from, { to, amount, label, origin }, on) {
 			// The wallet refuses an address that cannot receive notes before it proves anything.
 			if (!isAztecPoint(to)) throw new BridgeFailure("RECIPIENT_INVALID")
+			assertSpendable(noteValues(w, from, label), amount)
 			on.handoff()
 			return send(
 				w,
@@ -148,6 +151,7 @@ export function fixtureAztec(w: World): AztecPort {
 			)
 		},
 		async unshield(from, { amount, label, origin }, on) {
+			assertSpendable(noteValues(w, from, label), amount)
 			on.handoff()
 			return send(
 				w,

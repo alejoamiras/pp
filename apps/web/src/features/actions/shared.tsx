@@ -2,9 +2,11 @@ import { type ReactNode, useEffect, useRef, useState } from "react"
 import { type Address, type Hex, isAddressEqual } from "viem"
 import { useApp } from "../../app/context"
 import { useLive } from "../../app/live"
-import { BridgeFailure, messageOf, PAYEE_MESSAGES, revertCopy, type UiCode } from "../../data/errors"
+import { useLabelNotes } from "../../app/queries"
+import { spendCap } from "../../data/chunks"
+import { BridgeFailure, codeOf, messageOf, PAYEE_MESSAGES, revertCopy, type UiCode } from "../../data/errors"
 import { parseAmount, parsePayee } from "../../data/parse"
-import type { AztecSendHooks, Sent } from "../../data/ports"
+import type { AztecSendHooks, LabelBalance, Sent } from "../../data/ports"
 import type { AztecAddress } from "../../data/stack-types"
 import type { TxAction, TxOutcome } from "../../data/tx"
 import { ActionButton, Callout, Field, Modal, plainAmount, shortHex } from "../../ui"
@@ -89,6 +91,39 @@ export function useAmount(max: bigint) {
 	const error =
 		text !== "" && amount === null ? `Enter an amount above zero and at most ${plainAmount(max, decimals)} ${symbol}.` : undefined
 	return { text, setText, amount, error, max }
+}
+
+/**
+ * The most one spend of `balance`'s label can move (`spendCap`), from the label's notes: `max` for the
+ * form, never above the balance, which is read apart and can lag the notes; `cap` is null until they
+ * are read, and `blocked` says why the spend waits meanwhile. The port checks again before the handoff.
+ */
+export function useSpendCap(account: AztecAddress, balance: LabelBalance) {
+	const { aztec } = useApp()
+	const notes = useLabelNotes(aztec, account, balance.label)
+	const cap = notes.data ? spendCap(notes.data) : null
+	const short = cap !== null && cap < balance.balance
+	const blocked = notes.isError ? "We could not read this label's notes." : cap === null ? "Reading this label's notes…" : null
+	return { cap, max: short && cap !== null ? cap : balance.balance, notes, blocked, short }
+}
+
+/** Says why a spend's amount stops short of the label's balance, or that its notes could not be read. */
+export function SpendCapNote({ spend }: { spend: ReturnType<typeof useSpendCap> }) {
+	const { source } = useApp()
+	const { decimals, symbol } = source.deployment
+	if (spend.notes.isError)
+		return (
+			<Callout tone="bad" title="We could not read this label's notes">
+				{messageOf(codeOf(spend.notes.error) ?? "RPC_FAILED")}
+			</Callout>
+		)
+	if (!spend.short || spend.cap === null) return null
+	return (
+		<p className="text-xs text-ink-3">
+			One transaction spends at most this label's 8 largest notes: up to {plainAmount(spend.cap, decimals)} {symbol}. Move the rest in
+			another transaction.
+		</p>
+	)
 }
 
 export function AmountField({ field, label = "Amount" }: { field: ReturnType<typeof useAmount>; label?: string }) {

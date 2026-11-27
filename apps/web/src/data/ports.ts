@@ -50,8 +50,15 @@ export type Attempt = Readonly<{
 }>
 
 export interface L1Port {
-	/** The wallet's selected account first. */
+	/** The wallet's selected account first; none until the wallet shares one with this origin. */
 	accounts(): Promise<Address[]>
+	/**
+	 * Asks the wallet to share its accounts with this origin (`eth_requestAccounts`), which may prompt
+	 * the user; only on a user's click. @throws `NO_SENDER` with no wallet, the wallet's 4001 on a no.
+	 */
+	requestAccounts(): Promise<Address[]>
+	/** Whether the page found an Ethereum wallet at all; one with no shared account can still be asked. */
+	readonly hasWallet: boolean
 	chainId(): Promise<number>
 	signTypedData(owner: Address, td: TypedDataDefinition): Promise<Hex>
 	onAccountsChanged(f: (accounts: Address[]) => void): () => void
@@ -170,7 +177,11 @@ export interface AztecPort {
 	/** Note values, largest first. */
 	notesByLabel(owner: AztecAddress, label: bigint): Promise<bigint[]>
 	publicBalance(owner: AztecAddress): Promise<bigint>
-	/** A checked spend: its label path comes from the allow list right before it is sent. */
+	/**
+	 * A checked spend: its label path comes from the allow list right before it is sent.
+	 * @throws `OVER_NOTE_CAP` before the handoff when one transaction cannot spend `amount` from the
+	 *   label's notes as read after that check (`spendCap`)
+	 */
 	transferPrivate(
 		from: AztecAddress,
 		a: { to: AztecAddress; amount: bigint; label: bigint; origin: Origin },

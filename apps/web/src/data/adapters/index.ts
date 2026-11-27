@@ -94,7 +94,12 @@ type SendSide = Pick<AztecPort, "transferPrivate" | "unshield">
 let sendsLoad: Promise<SendSide> | undefined
 const loadSends = (): Promise<SendSide> =>
 	(sendsLoad ??= Promise.all([import("./token-sends"), loadAztec()]).then(([m, side]) =>
-		m.stackTokenSends({ aztec: side.deps, allowList, sponsoredFpc: deployment.sponsoredFpc }),
+		m.stackTokenSends({
+			aztec: side.deps,
+			allowList,
+			sponsoredFpc: deployment.sponsoredFpc,
+			notes: (owner, label) => side.port.notesByLabel(owner, label),
+		}),
 	))
 
 const sessions: SessionPort = {

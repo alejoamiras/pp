@@ -13,6 +13,7 @@ import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { labelledTokenArtifact } from "@pp/bridge-core/artifacts"
 import { rootFresh } from "@pp/label-paths"
+import { assertSpendable } from "../chunks"
 import { BridgeFailure } from "../errors"
 import type { AllowListPort, AllowListView, AztecPort, AztecSendHooks, Sent } from "../ports"
 import type { AztecAddress, LabelPath, Origin } from "../stack-types"
@@ -25,6 +26,8 @@ export interface TokenSendDeps {
 	allowList: Pick<AllowListPort, "current" | "check">
 	/** Pays every spend: the fee payer is public, and an account paying its own would link it to the spend. */
 	sponsoredFpc: AztecAddress
+	/** A label's note values as the connected wallet reports them when called. */
+	notes: AztecPort["notesByLabel"]
 }
 
 const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
@@ -85,12 +88,15 @@ export function stackTokenSends(d: TokenSendDeps): Pick<AztecPort, "transferPriv
 	const payloads = spendPayloads({ token: d.aztec.deployment.token, sponsoredFpc: d.sponsoredFpc })
 	const spend = async (
 		from: AztecAddress,
-		at: { label: bigint; origin: Origin },
+		at: { label: bigint; origin: Origin; amount: bigint },
 		on: AztecSendHooks,
 		build: (wallet: Wallet, path: LabelPath) => Promise<ExecutionPayload>,
 	): Promise<Sent> => {
 		const path = await checkedPath(d.allowList, at.label, at.origin)
 		const payload = await build(boundTo(d.aztec, on.epoch).wallet, path)
+		// Read after the check's wait, so notes spent meanwhile (from another tab) refuse here, not in the
+		// wallet, where a failed simulation cannot be told from a send that went out.
+		assertSpendable(await d.notes(from, at.label), at.amount)
 		return sendThroughWallet(d.aztec, { epoch: on.epoch, from, payload, contracts: ["token"], handoff: () => on.handoff() })
 	}
 	return {

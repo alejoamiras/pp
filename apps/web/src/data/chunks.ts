@@ -30,6 +30,18 @@ export const ragequitChunks: RagequitChunks = (noteValues, amount) => {
 	return chunks
 }
 
+/**
+ * The most one spend (send or unshield) can move: the token nullifies at most the label's 8 largest
+ * notes and keeps the excess as change. Above it, the wallet's simulation fails after the handoff,
+ * where the page cannot tell that nothing was sent.
+ */
+export const spendCap = (noteValues: readonly bigint[]): bigint => singleCallAmounts(noteValues).at(-1) ?? 0n
+
+/** @throws `OVER_NOTE_CAP` when one spend cannot move `amount` out of these notes. */
+export function assertSpendable(noteValues: readonly bigint[], amount: bigint): void {
+	if (amount > spendCap(noteValues)) throw new BridgeFailure("OVER_NOTE_CAP")
+}
+
 /** Every amount one ragequit call can take exactly: the sums of the 1 to 8 largest notes. */
 export function singleCallAmounts(noteValues: readonly bigint[]): bigint[] {
 	const sorted = noteValues.filter((v) => v > 0n).sort(desc)

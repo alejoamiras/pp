@@ -56,6 +56,11 @@ jobs:
         working-directory: contracts/bridge/evm
         run: forge build
 
+      # Solc hashes each contract's metadata (remappings, source names) into its bytecode, so a
+      # checkout or home path there would give every checkout different bridge bytecode.
+      - name: artifact metadata carries no checkout path
+        run: bun packages/bridge-core/scripts/check-l1-metadata.ts
+
       - name: forge test (hermetic)
         working-directory: contracts/bridge/evm
         run: forge test --no-match-contract Fork --no-match-test '^invariant_'

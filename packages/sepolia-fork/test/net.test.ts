@@ -4,8 +4,8 @@ import { cpSync, mkdtempSync, rmSync, statSync, truncateSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { CIRCUIT_BUNDLES } from "@pp/pool-client"
-import { BUNDLE, bundleDir, CIRCUITS, checkBundleDir } from "../src/bundle.ts"
-import { PINS, type Pins } from "../src/pins.ts"
+import { bundleDir, CIRCUITS, checkBundleDir } from "../src/bundle.ts"
+import { DEFAULT_TARGET, type Pins, TARGETS, type TargetName } from "../src/pins.ts"
 import { PreflightError } from "../src/preflight.ts"
 import { runFork } from "../src/run.ts"
 
@@ -27,22 +27,29 @@ const failure = async (pins: Pins) => {
 	return err as PreflightError
 }
 
+const PINS = TARGETS[DEFAULT_TARGET]
+
 describe.skipIf(!endpoint)("the Sepolia fork", () => {
-	test("starts at the pinned block, holds every pin, and tears down to nothing", async () => {
-		const seen: string[] = []
-		const report = await runFork({
-			endpoint: endpoint!,
-			log,
-			body: async (fork) => {
-				seen.push(await fork.rpc<string>("web3_clientVersion"))
-			},
-		})
-		expect(seen).toEqual(["anvil/v1.7.1"])
-		expect(report.finalized).toBeGreaterThan(PINS.block.number)
-		expect(report.leftovers).toEqual({ groups: 0, rows: 0, dirs: 0 })
-		const { pathname, search } = new URL(endpoint!)
-		for (const secret of [pathname.length > 1 ? pathname : "", search]) if (secret) expect(lines.join("\n")).not.toContain(secret)
-	})
+	test.each(Object.keys(TARGETS) as TargetName[])(
+		"%s starts at its pinned block, holds every pin, and tears down to nothing",
+		async (name) => {
+			const pins = TARGETS[name]
+			const seen: string[] = []
+			const report = await runFork({
+				endpoint: endpoint!,
+				pins,
+				log,
+				body: async (fork) => {
+					seen.push(await fork.rpc<string>("web3_clientVersion"))
+				},
+			})
+			expect(seen).toEqual(["anvil/v1.7.1"])
+			expect(report.finalized).toBeGreaterThan(pins.block.number)
+			expect(report.leftovers).toEqual({ groups: 0, rows: 0, dirs: 0 })
+			const { pathname, search } = new URL(endpoint!)
+			for (const secret of [pathname.length > 1 ? pathname : "", search]) if (secret) expect(lines.join("\n")).not.toContain(secret)
+		},
+	)
 
 	test("a mutated Inbox pin fails on the fork, naming the pin", async () => {
 		const err = await failure({ ...PINS, bindings: { ...PINS.bindings, inbox: "0x0000000000000000000000000000000000000001" } })
@@ -70,6 +77,9 @@ function manifestOf(source: string): Record<string, Record<string, string>> {
 	return out
 }
 
+// The older target's bundle: single-party keys whose only public record is that npm release.
+const LEGACY = TARGETS["vault-323c"].bundle
+
 describe.skipIf(!endpoint)("the pre-ceremony bundle", () => {
 	test("is the manifest SDK 1.0.0 published on npm, digest for digest", async () => {
 		const tarball = new Uint8Array(await (await fetch(SDK_TARBALL, { redirect: "error" })).arrayBuffer())
@@ -77,19 +87,19 @@ describe.skipIf(!endpoint)("the pre-ceremony bundle", () => {
 		const files = await new Bun.Archive(tarball).files()
 		const manifest = manifestOf((await files.get("package/dist/index.js")?.text()) ?? "")
 		for (const circuit of CIRCUITS) {
-			const { sizes: _, ...pins } = CIRCUIT_BUNDLES[BUNDLE].circuits[circuit]
+			const { sizes: _, ...pins } = CIRCUIT_BUNDLES[LEGACY].circuits[circuit]
 			expect(manifest[circuit]).toEqual({ ...pins })
 		}
 	})
 
 	test("comes from the public gateways at pool-client's pins, and a cached file one byte short is refused by name", async () => {
-		const dir = await bundleDir({ log })
+		const dir = await bundleDir({ bundle: LEGACY, log })
 		const copy = mkdtempSync(join(homedir(), ".cache/pp/fork/bundle-net-"))
 		try {
 			cpSync(dir, copy, { recursive: true })
 			const key = join(copy, "transact_1x1", "groth16_pkey.zkey")
 			truncateSync(key, statSync(key).size - 1)
-			await expect(checkBundleDir(copy)).rejects.toMatchObject({
+			await expect(checkBundleDir(copy, LEGACY)).rejects.toMatchObject({
 				code: "ARTIFACT_MISMATCH",
 				message: expect.stringContaining("transact_1x1 provingKey"),
 			})
