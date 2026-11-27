@@ -13,9 +13,10 @@ import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { labelledTokenArtifact } from "@pp/bridge-core/artifacts"
 import { BridgeFailure } from "../errors"
-import type { AllowListPort, AztecPort, AztecSendHooks, Sent } from "../ports"
+import type { AllowListPort, AllowListView, AztecPort, AztecSendHooks, Sent } from "../ports"
 import type { AztecAddress, LabelPath, Origin } from "../stack-types"
 import { type AztecDeps, boundTo, sendThroughWallet } from "./aztec"
+import { rootsKey } from "./snapshot-protocol"
 
 export interface TokenSendDeps {
 	aztec: AztecDeps
@@ -32,15 +33,23 @@ const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
  *   against, and the allow list's own `LIST_*` failures when it could not be checked
  */
 export async function checkedPath(allowList: TokenSendDeps["allowList"], label: bigint, origin: Origin): Promise<LabelPath> {
-	await pathAt(allowList, label, origin)
-	// The first check can wait behind others, a download and a tree build, while a new record lands or
-	// this one ages out. A second read of the latest record finds the list already loaded for unchanged
-	// roots, so the path sent is one the record just before the send holds and is fresh for.
-	return pathAt(allowList, label, origin)
+	let view = await allowList.current()
+	// A check can wait behind others, a download and a tree build, while new roots land. Its path is
+	// taken only once the record read after it still has the roots it was checked against; a list that
+	// keeps moving past that many checks is too new to spend against yet.
+	for (let checks = 0; checks < MAX_CHECKS; checks++) {
+		const path = await pathIn(allowList, view, label, origin)
+		const after = await allowList.current()
+		if (rootsKey(after.record) === rootsKey(view.record)) return path
+		view = after
+	}
+	throw new BridgeFailure("LIST_STALE")
 }
 
-async function pathAt(allowList: TokenSendDeps["allowList"], label: bigint, origin: Origin): Promise<LabelPath> {
-	const check = await allowList.check(await allowList.current(), label, origin)
+const MAX_CHECKS = 3
+
+async function pathIn(allowList: TokenSendDeps["allowList"], view: AllowListView, label: bigint, origin: Origin): Promise<LabelPath> {
+	const check = await allowList.check(view, label, origin)
 	if (check.state === "ABSENT") throw new BridgeFailure("LABEL_ABSENT")
 	if (check.state === "STALE_ROOT") throw new BridgeFailure("LIST_STALE")
 	return check.path

@@ -111,6 +111,26 @@ describe("the token's checked spends", () => {
 		expect(r.wallet.sendTx).not.toHaveBeenCalled()
 	})
 
+	test("takes a path only once the record read after its check has the same roots, and refuses a list that keeps moving", async () => {
+		const r = rig()
+		const view = (sequence: bigint, poolRoot: bigint) => ({
+			record: { sequence, poolRoot, birthRoot: 0n, l1Block: 1n, rootTime: sequence },
+			nowSec: 2n,
+		})
+		const settled = vi.fn().mockResolvedValueOnce(view(1n, 9n)).mockResolvedValue(view(2n, 9n))
+		const check = vi.fn().mockResolvedValue(ACTIVE)
+		const sends = stackTokenSends({ aztec: r.aztec, allowList: { current: settled, check }, sponsoredFpc: FPC })
+		await sends.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())
+		expect([check.mock.calls.length, settled.mock.calls.length]).toEqual([1, 2])
+		let root = 20n
+		const moving = vi.fn(async () => view(root, root++))
+		check.mockClear()
+		const again = stackTokenSends({ aztec: r.aztec, allowList: { current: moving, check }, sponsoredFpc: FPC })
+		await expect(again.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())).rejects.toMatchObject({ code: "LIST_STALE" })
+		expect(check).toHaveBeenCalledTimes(3)
+		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
+	})
+
 	test("sends the label's checked path, paid by the SponsoredFPC, and refuses a label the list does not hold", async () => {
 		const r = rig()
 		const sent = unshield(r)
