@@ -153,7 +153,8 @@ export async function finalityTimeout(c: CaseCtx): Promise<string[]> {
 
 /**
  * A pause at the next nonce that cannot mine because the base fee rose past its fee cap and stays
- * there: PAUSE_STALLED once the stall budget runs out, then `pause --nonce --replace --pending`.
+ * there: PAUSE_STALLED once the stall budget runs out, then `pause --nonce --replace --pending`, or the
+ * plain `pause --nonce` that its refusal names when the node no longer reports the stalled pause.
  */
 export async function stalledPause(c: CaseCtx): Promise<string[]> {
 	const s = await stage(c)
@@ -173,12 +174,19 @@ export async function stalledPause(c: CaseCtx): Promise<string[]> {
 	check(stalled.ms >= PAUSE_WAITS.stallMs, `PAUSE_STALLED came after ${secs(stalled.ms)}, inside its budget`)
 	check((await nonceOf(s)) === nonce, "the stalled nonce moved")
 	const replaced = await pause(s, ["--nonce", String(nonce), "--replace", "--pending", sent.hash as string])
-	expectPaused(replaced, nonce, "pause --nonce --replace over the stalled pause")
+	// geth keeps reporting a transaction the base fee priced out, so a live run replaces it. Anvil stops
+	// reporting it, and the CLI then refuses, naming the plain manual branch, which the owner runs next.
+	const forgotten = replaced.code === 2 && replaced.out.includes(`run \`pause --nonce ${nonce}\` without --replace`)
+	const done = forgotten ? await pause(s, ["--nonce", String(nonce)]) : replaced
+	expectPaused(done, nonce, forgotten ? "pause --nonce after the refused replacement" : "pause --nonce --replace over the stalled pause")
 	check((await receiptOf(s, sent.hash as `0x${string}`)) === null, "the stalled pause mined")
 	check(await pausedNow(s), "entries open after the replacement")
+	const recovery = forgotten
+		? `pause --nonce ${nonce} --replace --pending <the stalled pause>: refused, exit 2, as the anvil no longer reports it; pause --nonce ${nonce}: exit 0 in ${secs(done.ms)}`
+		: `pause --nonce ${nonce} --replace --pending <the stalled pause>: exit 0 in ${secs(done.ms)}`
 	return [
 		`pause at nonce ${nonce} capped at ${BigInt(tx.maxFeePerGas)} wei; the base fee then held at ${spike} wei`,
 		`pause: PAUSE_STALLED at nonce ${nonce}, exit 1, after ${secs(stalled.ms)}`,
-		`pause --nonce ${nonce} --replace --pending <the stalled pause>: exit 0 in ${secs(replaced.ms)}; the stalled send never mined`,
+		`${recovery}; the stalled send never mined`,
 	]
 }
