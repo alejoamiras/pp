@@ -17,3 +17,26 @@ contract SurchargeERC20 is ERC20 {
         if (from != address(0) && to != address(0)) super._update(from, address(0xFEE), 1);
     }
 }
+
+/// Refuses every transfer out of a frozen holder, as an issuer's blocklist does: a portal's payout
+/// then reverts, and the settle must take its consumption and count with it.
+contract FreezableERC20 is ERC20 {
+    error Frozen(address holder);
+
+    mapping(address holder => bool) public frozen;
+
+    constructor() ERC20("Freezable", "FRZ") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function freeze(address holder, bool on) external {
+        frozen[holder] = on;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (frozen[from]) revert Frozen(from);
+        super._update(from, to, value);
+    }
+}

@@ -30,6 +30,8 @@ bun packages/bridge-core/scripts/gen-remappings.ts        # writes contracts/bri
 (cd contracts/bridge/evm && forge build && forge test --no-match-contract Fork)
 bash contracts/bridge/evm/scripts/check-gas.sh             # .gas-snapshot within 2%, every case ran
 bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by name, and the harness check
+bash contracts/bridge/evm/scripts/check-invariant.sh       # invariant campaigns, with their reach checked
+bash contracts/bridge/evm/scripts/nightly.sh               # the nightly profile: deep fuzz and invariants
 ```
 
 ## Contracts
@@ -60,7 +62,8 @@ bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by nam
 Hermetic forge tests (`forge test --no-match-contract Fork`), **12 halmos proofs**
 (`FormalFactoryTest 2 · FormalProcessorPortalTest 10`; each guard-shaped proof carries a forge canary
 showing the property fails without the guard), and a committed `.gas-snapshot` for `createPortal` on
-a fresh token, `bridgeFromPool` and both settles.
+a fresh token, `bridgeFromPool` and both settles. Fuzz runs 256 times and invariant campaigns run 256
+runs at depth 100 by default; the `nightly` profile raises fuzz to 5,000 runs and depth to 500.
 
 halmos cannot run sha256, so the portal proofs drive `ProcessorPortalHarness`, whose content hash is
 keccak. Three things keep it honest: `PortalVectors` checks the production hash against the shared
@@ -70,9 +73,9 @@ and storage and a harness that declares nothing but a forwarding constructor and
 
 | Layer | Suites |
 |---|---|
-| unit | `PortalFactory`, `ProcessorPortal`, `HarnessParity`, `PortalVectors` (the clone's wire envelope against the shared vectors), `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `Keystone` (3-way vectors with Noir and TS), `MintableERC20`, `TestUsdc` |
-| fuzz | `PortalFactoryFuzz` |
-| invariant | `PortalFactoryInvariant` |
+| unit | `PortalFactory`, `ProcessorPortal`, `SettleRealOutbox` (both settles against Aztec's real `Outbox`: one payment per `(epoch, leafId)`, replay across a longer proof, identical exits as distinct tickets, tag and clone separation, reverting and surcharging payouts), `HarnessParity`, `PortalVectors` (the clone's wire envelope against the shared vectors), `BridgeMessageV1` (the v1 wire format against `packages/bridge-spec/vectors/v1.json`), `Keystone` (3-way vectors with Noir and TS), `MintableERC20`, `TestUsdc` |
+| fuzz | `PortalFactoryFuzz`, `ProcessorPortalFuzz` (every refusal over its input range, with nothing moved) |
+| invariant | `PortalFactoryInvariant`, `ProcessorPortalInvariant` (two clones on the real `Outbox` with the handler as rollup: honest, forged and replayed exits, every vault mode including reentry, donations, pause flips; payouts checked per payee; `check-invariant.sh` requires non-zero campaign counts of Outbox-refused replays, landed forged payouts, cap hits, reserve hits and guard hits, and both gate scripts clear every `FOUNDRY_*` and legacy `DAPP_*` variable but `FOUNDRY_PROFILE` and require every `invariant_` and `testFuzz` under `test/` to have run) |
 | symbolic | `FormalFactory`, `FormalProcessorPortal` (on a keccak harness); see each header for what halmos can and cannot model (it has no sha256, so `createPortal` itself is forge-only) |
 | adversarial | `BlackhatFactory` (F-1…F-9; F-7 and F-9 against the processor portal) |
 | gas | `PortalGas` |
