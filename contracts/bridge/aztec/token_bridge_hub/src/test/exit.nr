@@ -50,8 +50,6 @@ unconstrained fn exit_public_burns_exactly() {
     assert_eq(public_balance(h, token, user), 6);
 }
 
-// Exactly two public logs: the token's burn of the caller's amount, then the hub's ticket with the
-// token, the payee and that amount.
 #[test]
 unconstrained fn exit_public_ticket_matches_the_burn() {
     let (h, user, token) = public_holder();

@@ -19,10 +19,12 @@ and `pp_hash` (circom Poseidon, label paths, birth hashes) implement the wire fo
 [`packages/bridge-spec`](../../../packages/bridge-spec/README.md) specifies; keystone runs its
 generated `src/vectors_v1.nr` against them.
 
-`labelled_token` is the token every note of which carries a deposit label and an origin; its stage-A
+`labelled_token` is the token every note of which carries a deposit label and an origin; its
 surface, budgets and network suite are described in [`@pp/labelled-token`](../../../packages/labelled-token/README.md).
 `bridge_stub` is its test-only minter: the TXE suite and the network suite deploy it in the hub's
-place. The TXE runner deploys the committed `target/` artifact, so compile a crate before running its suite.
+place. The TXE runner rebuilds a crate, and the artifacts it stages, before running its suite. An
+artifact a suite reads in place by path is not rebuilt (the hub's tests read `labelled_token` and
+`asp_registry` this way), so compile that crate after editing it.
 
 ## Toolchain — the pinned 6.0.0 nargo
 

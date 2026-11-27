@@ -44,7 +44,8 @@ pub contract TokenBridgeHub {
         label: Field,
     }
 
-    // The public exit's settlement preimage, so the exit settles on Ethereum from chain data alone.
+    // The payee and amount of the exit's Outbox content, and the token whose portal receives it, so
+    // the exit settles on Ethereum from chain data alone.
     #[event]
     pub struct PublicExitTicket {
         token: AztecAddress,
