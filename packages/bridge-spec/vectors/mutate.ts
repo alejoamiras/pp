@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url"
 import { AZTEC_DIR, type NargoTest, nargoTest } from "./nargo"
 import { renderNoir } from "./render-nr"
 
-const PKG = fileURLToPath(new URL("..", import.meta.url))
+export const PKG = fileURLToPath(new URL("..", import.meta.url))
 const VECTORS = join(PKG, "vectors", "v1.json")
 const TIMEOUT_MS = 600_000
 
@@ -37,9 +37,17 @@ const TARGET: Record<string, string> = {
 
 type Lang = "ts" | "sol" | "nr"
 type TestResult = { status: string; message: string }
-/** `exitCode` is the runner's own status: a report saying "passed" from a process that failed is no pass. */
-type Outcome = { tests: Map<string, TestResult>; exitCode: number | null; error?: string }
-type Suite = { lang: Lang; sections: readonly string[]; run(vectorsPath: string, runDir: string): Outcome }
+/**
+ * `exitCode` is the runner's own status: a report saying "passed" from a process that failed is no pass.
+ * `tests` is keyed by section; `raw` keeps every test the runner reported under its own name, duplicates included.
+ */
+export type Outcome = {
+	tests: Map<string, TestResult>
+	raw: readonly (TestResult & { name: string })[]
+	exitCode: number | null
+	error?: string
+}
+export type Suite = { lang: Lang; sections: readonly string[]; run(vectorsPath: string, runDir: string): Outcome }
 type Row = Record<string, unknown>
 type Mutation = { section: string; index: number }
 
@@ -80,21 +88,25 @@ function vitestSuite(): Suite {
 				encoding: "utf8",
 			})
 			if (proc.error || proc.signal)
-				return { tests: new Map(), exitCode: null, error: `vitest did not finish: ${proc.error ?? proc.signal}` }
+				return { tests: new Map(), raw: [], exitCode: null, error: `vitest did not finish: ${proc.error ?? proc.signal}` }
 			let parsed: {
 				testResults?: { message?: string; assertionResults?: { title: string; status: string; failureMessages: string[] }[] }[]
 			}
 			try {
 				parsed = JSON.parse(readFileSync(report, "utf8"))
 			} catch {
-				return { tests: new Map(), exitCode: proc.status, error: `no vitest report:\n${proc.stdout}\n${proc.stderr}` }
+				return { tests: new Map(), raw: [], exitCode: proc.status, error: `no vitest report:\n${proc.stdout}\n${proc.stderr}` }
 			}
 			const file = parsed.testResults?.[0]
-			const tests = new Map(
-				(file?.assertionResults ?? []).map((t) => [t.title, { status: t.status, message: t.failureMessages.join("\n") }]),
-			)
+			const raw = (file?.assertionResults ?? []).map((t) => ({
+				name: t.title,
+				status: t.status,
+				message: t.failureMessages.join("\n"),
+			}))
+			const tests = new Map(raw.map(({ name, ...t }) => [name, t]))
 			return {
 				tests,
+				raw,
 				exitCode: proc.status,
 				error: tests.size === 0 ? `suite did not load: ${file?.message ?? proc.stderr}` : undefined,
 			}
@@ -118,26 +130,29 @@ function forgeSuite(): Suite {
 				maxBuffer: 64 * 1024 * 1024,
 			})
 			if (proc.error || proc.signal)
-				return { tests: new Map(), exitCode: null, error: `forge did not finish: ${proc.error ?? proc.signal}` }
+				return { tests: new Map(), raw: [], exitCode: null, error: `forge did not finish: ${proc.error ?? proc.signal}` }
 			let report: ForgeReport
 			try {
 				report = JSON.parse(proc.stdout.slice(proc.stdout.indexOf("{")))
 			} catch {
 				return {
 					tests: new Map(),
+					raw: [],
 					exitCode: proc.status,
 					error: `no forge report:\n${proc.stdout.slice(-2000)}\n${proc.stderr.slice(-2000)}`,
 				}
 			}
-			const results = Object.values(report).flatMap((s) => Object.entries(s.test_results ?? {}))
+			const raw = Object.values(report)
+				.flatMap((s) => Object.entries(s.test_results ?? {}))
+				.map(([name, r]) => ({ name, status: r.status === "Success" ? "passed" : "failed", message: r.reason ?? "" }))
 			// `test_in()` reports section `in`; fuzz tests keep their names and must pass in the control run.
-			const tests = new Map(
-				results.map(([name, r]) => [
-					name.replace(/^test_(\w+)\(\)$/, "$1"),
-					{ status: r.status === "Success" ? "passed" : "failed", message: r.reason ?? "" },
-				]),
-			)
-			return { tests, exitCode: proc.status, error: tests.size === 0 ? `suite did not run:\n${proc.stderr.slice(-2000)}` : undefined }
+			const tests = new Map(raw.map(({ name, ...t }) => [name.replace(/^test_(\w+)\(\)$/, "$1"), t]))
+			return {
+				tests,
+				raw,
+				exitCode: proc.status,
+				error: tests.size === 0 ? `suite did not run:\n${proc.stderr.slice(-2000)}` : undefined,
+			}
 		},
 	}
 }
@@ -194,7 +209,8 @@ function nargoSuite(): Suite {
 				writeFileSync(join(keystone, "src", "vectors_v1.nr"), renderNoir(JSON.parse(readFileSync(vectorsPath, "utf8"))))
 				// Only the generated module: the mutation is in it, and the legacy keystone tests run in vectors:nargo.
 				const run = nargoTest(keystone, { filter: "vectors_v1::", timeoutMs: TIMEOUT_MS })
-				return { tests: bySection(run.tests), exitCode: run.exitCode, error: run.error }
+				const raw = run.tests.map((t) => ({ name: t.name, status: t.event === "ok" ? "passed" : "failed", message: t.message }))
+				return { tests: bySection(run.tests), raw, exitCode: run.exitCode, error: run.error }
 			} finally {
 				rmSync(dir, { recursive: true, force: true })
 			}
@@ -202,9 +218,10 @@ function nargoSuite(): Suite {
 	}
 }
 
-const SUITES: Record<string, () => Suite> = { ts: vitestSuite, sol: forgeSuite, nr: nargoSuite }
+export const SUITES = { ts: vitestSuite, sol: forgeSuite, nr: nargoSuite } satisfies Record<Lang, () => Suite>
 
-function verifyControl(suite: Suite, outcome: Outcome): string[] {
+/** Problems with a run whose vectors are unchanged: an error, a non-zero exit, a test not passing, a section without a test. */
+export function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	if (outcome.error) return [`control: ${outcome.error}`]
 	if (outcome.exitCode !== 0) return [`control: runner exited ${outcome.exitCode}`]
 	const problems = [...outcome.tests]
@@ -234,7 +251,7 @@ function verifyMutant(mutations: Mutation[], outcome: Outcome, control: Outcome)
 
 function main(): number {
 	const name = process.argv[process.argv.indexOf("--suite") + 1] ?? ""
-	const make = SUITES[name]
+	const make = (SUITES as Record<string, () => Suite>)[name]
 	if (!process.argv.includes("--suite") || make === undefined) {
 		console.error(`usage: bun vectors/mutate.ts --suite ${Object.keys(SUITES).join("|")}`)
 		return 2
@@ -264,4 +281,4 @@ function main(): number {
 	}
 }
 
-process.exit(main())
+if (import.meta.main) process.exit(main())
