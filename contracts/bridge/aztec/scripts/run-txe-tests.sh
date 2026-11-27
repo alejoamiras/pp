@@ -6,8 +6,9 @@
 #     @aztec-labs/txe over HTTP and passed via --oracle-resolver.
 #   - The TXE server resolves DEPENDENCY contract artifacts from the crate's target/, under
 #     "<dependency_package_name>-<ContractName>.json". Each crate declares its staged deps below.
-#   - The Token artifact MUST be the transpiled one (@aztec-foundation/aztec-standards ships it);
-#     plain `nargo compile` output is rejected ("public bytecode has not been transpiled").
+#   - A dependency artifact MUST be the transpiled one (`compile.sh` output); plain
+#     `nargo compile` output is rejected ("public bytecode has not been transpiled").
+#   - The crate under test is not recompiled here: run `compile.sh <crate>` first.
 #   - Long TXE calls die on nargo's default foreign-call timeout; upstream CI raises it.
 #   - The server's dependency set is the committed mini-project in ../txe-server (frozen lockfile),
 #     never an ad-hoc `bun add` — its transitives are part of the supply chain.
@@ -19,7 +20,6 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"          # contracts/bridge/aztec
-repo_root="$(cd "$here/../../.." && pwd)"
 AZTEC_HOME="${AZTEC_HOME:-$HOME/.aztec/versions/6.0.0}"
 NARGO="$AZTEC_HOME/bin/aztec-nargo"
 [ -x "$NARGO" ] || { echo "aztec-nargo not found at $NARGO" >&2; exit 1; }
@@ -30,7 +30,7 @@ if [ "${1:-}" = "--crate" ]; then
 fi
 # The floor lives here, not in the manifest, so one diff cannot drop tests and lower it together.
 case "$crate" in
-  token_bridge_hub) floor=65 ;;
+  token_bridge_hub) floor=44 ;;
   asp_registry) floor=49 ;;
   asp_registry_probe) floor=21 ;;
   labelled_token) floor=18 ;;
@@ -76,13 +76,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # ── 1. Stage dependency artifacts into <crate>/target/ ──────────────────────────────
-# Resolved through bridge-core's declared dependency, not $repo_root/node_modules: this repo
-# uses bun's isolated linker, so there is no hoisted root node_modules to look in.
 case "$crate" in
   token_bridge_hub)
-    TOKEN_ARTIFACT="$repo_root/packages/bridge-core/node_modules/@aztec-foundation/aztec-standards/artifacts/target/token_contract-Token.json"
-    [ -f "$TOKEN_ARTIFACT" ] || { echo "Token artifact missing at $TOKEN_ARTIFACT — run bun install." >&2; exit 1; }
-    cp "$TOKEN_ARTIFACT" "$tb/target/token_contract-Token.json"
+    # The tests deploy `../labelled_token@labelled_token/LabelledToken`, which the TXE reads from
+    # that crate's committed artifact in place: nothing to stage.
     ;;
   asp_registry_probe)
     REGISTRY_ARTIFACT="$here/asp_registry/target/asp_registry-AspRootRegistry.json"

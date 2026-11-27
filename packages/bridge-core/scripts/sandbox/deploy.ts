@@ -5,13 +5,13 @@ import { privateKeyToAccount } from "viem/accounts"
 import type { L1Ctx } from "../../src/flows"
 import type { ManifestV2 } from "../../src/manifest-v2"
 import { openDeployJournal, writeCandidateAtomically } from "../deploy-manifest"
-import { deployGeneration, preCreateToken } from "../generation"
+import { deployGeneration, NO_ASP_REGISTRY, preCreateToken } from "../generation"
 import { createL1Clients, stopwatch } from "../script-bootstrap"
 import { anvilKey, CHAIN_ID, HARNESS_INDEX, HARNESS_KEY, lc, SANDBOX_LIFETIME_CAP, SANDBOX_POOL, sandboxChain } from "./constants"
 import { ensureForgeArtifacts } from "./forge"
 import type { SandboxClients, SandboxHandle } from "./handle"
 import { deployL1Fixtures } from "./l1"
-import { type Actor, adoptGuardian, connectL2, createActor, l2CtxFor, SANDBOX_ACTOR_SALT, SANDBOX_ACTOR_SECRET } from "./l2"
+import { type Actor, connectL2, createActor, l2CtxFor, SANDBOX_ACTOR_SALT, SANDBOX_ACTOR_SECRET } from "./l2"
 import { buildManifest, writeArtifacts } from "./manifest"
 
 export interface DeployedSandbox {
@@ -44,7 +44,6 @@ export async function deployEverything(net: { anvilUrl: string; nodeUrl: string 
 
 	const l2base = await connectL2(net.nodeUrl)
 	const actor = await createActor(l2base.wallet, l2base.node, l2base.fee, SANDBOX_ACTOR_SECRET, SANDBOX_ACTOR_SALT)
-	await adoptGuardian(l2base, SANDBOX_ACTOR_SECRET, SANDBOX_ACTOR_SALT)
 	const l2 = l2CtxFor(l2base, actor.address)
 	const info = await l2.node.getNodeInfo()
 	const registry = lc(info.l1ContractAddresses.registryAddress.toString())
@@ -72,7 +71,7 @@ export async function deployEverything(net: { anvilUrl: string; nodeUrl: string 
 			pool: SANDBOX_POOL,
 			lifetimeCap: SANDBOX_LIFETIME_CAP,
 			guardianL1: l1.account.address,
-			guardianL2: l2.from.toString(),
+			aspRegistry: NO_ASP_REGISTRY,
 		},
 		journal,
 	)

@@ -1,8 +1,6 @@
 pub mod utils;
-mod register;
-mod claims;
-mod claims_private;
-mod exits;
+mod claim;
 mod guards;
-mod pause;
 mod keystone;
+mod ragequit;
+mod register;

@@ -46,12 +46,6 @@ export async function actorAccount(
 	return { address, secretKey, completeAddress: await manager.getCompleteAddress(), manager }
 }
 
-/** The address an actor secret derives to — the same derivation the browser test wallet runs, so a
- *  fixture can fund an account before any wallet holds it. */
-export async function actorAddress(wallet: unknown, secret: Hex, salt: bigint = SANDBOX_ACTOR_SALT): Promise<AztecAddress> {
-	return (await actorAccount(wallet, secret, salt)).address
-}
-
 export async function createActor(
 	wallet: unknown,
 	node: L2Ctx["node"],
@@ -81,15 +75,6 @@ export interface L2Base {
 	fee: Record<string, unknown>
 	relayer: AztecAddress
 	relayerOpts: Record<string, unknown>
-	/** Sends as the base actor, the hub's guardian; set once the wallet holds that account. */
-	guardianOpts: Record<string, unknown>
-}
-
-/** Registers the base actor in this wallet and makes it the guardian sender. */
-export async function adoptGuardian(base: L2Base, secret: Hex, salt: bigint): Promise<AztecAddress> {
-	const guardian = await actorAddress(base.wallet, secret, salt)
-	base.guardianOpts = { from: guardian, fee: base.fee, wait: { waitForStatus: TxStatus.PROPOSED } }
-	return guardian
 }
 
 export async function connectL2(nodeUrl: string): Promise<L2Base> {
@@ -108,7 +93,6 @@ export async function connectL2(nodeUrl: string): Promise<L2Base> {
 		fee: paid,
 		relayer,
 		relayerOpts: { from: relayer, fee: paid, wait: { waitForStatus: TxStatus.PROPOSED } },
-		guardianOpts: {},
 	}
 }
 

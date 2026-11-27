@@ -4,17 +4,17 @@ import { deriveHubTokenInstance } from "./hub-token"
 import { assertManifestTokensDerive, deriveManifestHub, manifestToken, parseManifestV2, parseManifestV2Strict } from "./manifest-v2"
 import { predictPortal } from "./portal-address"
 
-const TOKEN_CLASS_ID = "0x2ff0939914ff64bd3f7979926dbe8cf3332bc2fee55928bf3cc9ca802568ea9f"
+const TOKEN_CLASS_ID = "0x0ffdf2f819f7dbbeed8dabe38a38a76aef084445509c653762a3e3158fe1aaaa"
 const FACTORY = "0x3333333333333333333333333333333333333333"
 const IMPL = "0x1111111111111111111111111111111111111111"
 const ERC20 = "0x00000000000000000000000000000000000e2c20"
-const GUARDIAN = "0x0000000000000000000000000000000000000000000000000000000000000ab1"
+const ASP_REGISTRY = "0x0000000000000000000000000000000000000000000000000000000000000ab1"
 const NAME_WORD = "0x005465737420546f6b656e000000000000000000000000000000000000000000"
 const SYMBOL_WORD = "0x0054535400000000000000000000000000000000000000000000000000000000"
 const HUB_RECORD = {
 	salt: `0x${"0".repeat(24)}${FACTORY.slice(2)}`,
 	constructorArtifact: "constructor",
-	constructorArgs: [TOKEN_CLASS_ID, FACTORY, GUARDIAN],
+	constructorArgs: [TOKEN_CLASS_ID, FACTORY, ASP_REGISTRY],
 }
 const HUB = (
 	await deriveManifestHub({ l2: { hub: { ...HUB_RECORD, address: "" } } } as unknown as Parameters<typeof deriveManifestHub>[0])
@@ -26,6 +26,7 @@ async function fixture() {
 		ERC20,
 		{ nameWord: NAME_WORD, symbolWord: SYMBOL_WORD, decimals: 18 },
 		TOKEN_CLASS_ID,
+		AztecAddress.fromStringUnsafe(ASP_REGISTRY),
 	)
 	return {
 		schema: 2,
@@ -41,7 +42,7 @@ async function fixture() {
 			},
 			l2: {
 				hub: { ...HUB_RECORD, address: HUB },
-				guardian: GUARDIAN,
+				aspRegistry: ASP_REGISTRY,
 				tokenClassId: TOKEN_CLASS_ID,
 				tokenArtifactSha256: "a".repeat(64),
 			},
@@ -102,8 +103,8 @@ describe("manifest v2 (strict, self-deriving)", () => {
 
 	it("rejects hub constructor args that disagree with the manifest", async () => {
 		const raw = await fixture()
-		raw.bridge.l2.hub.constructorArgs = [TOKEN_CLASS_ID, "0x0000000000000000000000000000000000000009", GUARDIAN]
-		expect(() => parseManifestV2(raw)).toThrow(/hub constructorArgs must be \[tokenClassId, factory, guardian\]/)
+		raw.bridge.l2.hub.constructorArgs = [TOKEN_CLASS_ID, "0x0000000000000000000000000000000000000009", ASP_REGISTRY]
+		expect(() => parseManifestV2(raw)).toThrow(/hub constructorArgs must be \[tokenClassId, factory, aspRegistry\]/)
 	})
 
 	it("rejects duplicate tokens and unknown keys", async () => {

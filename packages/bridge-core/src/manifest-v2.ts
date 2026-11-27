@@ -62,7 +62,8 @@ export const bridgeBlockSchema = z
 		l2: z
 			.object({
 				hub: l2RecordSchema,
-				guardian: aztecAddress,
+				/** The ASP registry the hub passes to every token it derives; zero in a generation without one. */
+				aspRegistry: aztecAddress,
 				tokenClassId: bytes32,
 				tokenArtifactSha256: z.string().regex(/^[0-9a-f]{64}$/),
 			})
@@ -88,12 +89,12 @@ export const manifestV2Schema = z
 			hubArgs.length !== 3 ||
 			hubArgs[0] !== m.bridge.l2.tokenClassId ||
 			String(hubArgs[1]).toLowerCase() !== m.bridge.l1.factory.toLowerCase() ||
-			hubArgs[2] !== m.bridge.l2.guardian
+			hubArgs[2] !== m.bridge.l2.aspRegistry
 		) {
 			ctx.addIssue({
 				code: "custom",
 				path: ["bridge", "l2", "hub", "constructorArgs"],
-				message: "hub constructorArgs must be [tokenClassId, factory, guardian] matching the manifest",
+				message: "hub constructorArgs must be [tokenClassId, factory, aspRegistry] matching the manifest",
 			})
 		}
 		if (m.bridge.l2.hub.constructorArtifact !== "constructor") {
@@ -150,9 +151,9 @@ export function parseManifestV2(raw: unknown): ManifestV2 {
  */
 /** The hub instance the manifest record derives to — every token derivation hangs off this address. */
 export async function deriveManifestHub(b: NonNullable<ManifestV2["bridge"]>) {
-	const [tokenClassId, factory, guardian] = b.l2.hub.constructorArgs as [string, string, string]
+	const [tokenClassId, factory, aspRegistry] = b.l2.hub.constructorArgs as [string, string, string]
 	return getContractInstanceFromInstantiationParams(tokenBridgeHubArtifact, {
-		constructorArgs: [Fr.fromHexString(tokenClassId), EthAddress.fromString(factory), AztecAddress.fromStringUnsafe(guardian)],
+		constructorArgs: [Fr.fromHexString(tokenClassId), EthAddress.fromString(factory), AztecAddress.fromStringUnsafe(aspRegistry)],
 		constructorArtifact: b.l2.hub.constructorArtifact,
 		salt: Fr.fromHexString(b.l2.hub.salt),
 		deployer: AztecAddress.ZERO,
@@ -175,6 +176,7 @@ export async function assertManifestTokensDerive(m: ManifestV2): Promise<void> {
 			t.erc20,
 			{ nameWord: t.nameWord as Hex, symbolWord: t.symbolWord as Hex, decimals: t.decimals },
 			m.bridge.l2.tokenClassId,
+			AztecAddress.fromStringUnsafe(m.bridge.l2.aspRegistry),
 		)
 		if (inst.address.toString().toLowerCase() !== t.l2Token.toLowerCase()) {
 			throw new Error(

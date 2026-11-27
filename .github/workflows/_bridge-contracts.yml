@@ -385,6 +385,11 @@ jobs:
       - name: Integration suite
         run: bun run --cwd packages/bridge-core test:integration
 
+      # Boots a local network of its own: the claim, the ragequit and its settlement count beats and
+      # the Outbox depth, which another client's transactions would change.
+      - name: Hub network suite
+        run: bun run --cwd packages/bridge-core test:hub
+
       - name: Upload sandbox logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -432,10 +437,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # Guards the F-007 invariant that claim_private is the only consumer of a mint_to_private
-      # message. It was never wired to anything. --self-test first: it replays crafted
-      # bearer regressions, so a guard whose own parser has broken fails here rather than
-      # reporting a clean scan of a file it can no longer read.
+      # Pins the hub's two consume sites (_bind, claim_from_pool), none in its path dependencies,
+      # and claim_from_pool's dataflow, so no claim becomes a bearer instrument. --self-test first:
+      # it replays crafted regressions, so a guard whose own parser has broken fails here rather
+      # than reporting a clean scan of a source it can no longer read.
       - name: check-sole-consumer (self-test)
         run: bash contracts/bridge/aztec/scripts/check-sole-consumer.sh --self-test
 

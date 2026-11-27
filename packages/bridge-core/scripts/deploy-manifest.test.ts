@@ -20,8 +20,8 @@ const FACTORY = "0x3333333333333333333333333333333333333333"
 const IMPL = "0x1111111111111111111111111111111111111111"
 const ERC20 = "0x00000000000000000000000000000000000e2c20"
 const HUB = "0x1234000000000000000000000000000000000000000000000000000000000abc"
-const GUARDIAN = `0x${"0".repeat(61)}ab1`
-const TOKEN_CLASS_ID = "0x2ff0939914ff64bd3f7979926dbe8cf3332bc2fee55928bf3cc9ca802568ea9f"
+const ASP_REGISTRY = `0x${"0".repeat(61)}ab1`
+const TOKEN_CLASS_ID = "0x0ffdf2f819f7dbbeed8dabe38a38a76aef084445509c653762a3e3158fe1aaaa"
 const NAME_WORD = "0x005465737420546f6b656e000000000000000000000000000000000000000000"
 const SYMBOL_WORD = "0x0054535400000000000000000000000000000000000000000000000000000000"
 const TX = `0x${"ab".repeat(32)}`
@@ -42,6 +42,7 @@ async function withBridge(): Promise<ManifestV2> {
 		ERC20,
 		{ nameWord: NAME_WORD, symbolWord: SYMBOL_WORD, decimals: 18 },
 		TOKEN_CLASS_ID,
+		AztecAddress.fromStringUnsafe(ASP_REGISTRY),
 	)
 	return {
 		...placeholder,
@@ -60,9 +61,9 @@ async function withBridge(): Promise<ManifestV2> {
 					address: HUB,
 					salt: `0x${"0".repeat(24)}${FACTORY.slice(2)}`,
 					constructorArtifact: "constructor",
-					constructorArgs: [TOKEN_CLASS_ID, FACTORY, GUARDIAN],
+					constructorArgs: [TOKEN_CLASS_ID, FACTORY, ASP_REGISTRY],
 				},
-				guardian: GUARDIAN,
+				aspRegistry: ASP_REGISTRY,
 				tokenClassId: TOKEN_CLASS_ID,
 				tokenArtifactSha256: "a".repeat(64),
 			},

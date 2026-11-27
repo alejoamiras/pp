@@ -21,10 +21,8 @@ import type { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { EthAddress } from "@aztec-labs/foundation/eth-address"
 import { getContractClassFromArtifact } from "@aztec-labs/stdlib/contract"
-import { resolvePackageAsset } from "@nulo-sh/resolve-asset"
-import { TokenContractArtifact } from "@aztec-foundation/aztec-standards/artifacts/src/artifacts/Token.js"
 import { type Address, getContractAddress, type Hex } from "viem"
-import { tokenBridgeHubArtifact } from "../src/artifacts"
+import { labelledTokenArtifact, tokenBridgeHubArtifact } from "../src/artifacts"
 import { PORTAL_FACTORY_ABI } from "../src/factory-abi"
 import { type Registration, readRegistration } from "../src/factory-registry"
 import type { L1Ctx } from "../src/flows"
@@ -54,6 +52,9 @@ export interface L2Ctx {
 	forceBlock?: () => Promise<unknown>
 }
 
+/** A stage A generation's ASP registry: none, so its tokens run no checked spends. */
+export const NO_ASP_REGISTRY = `0x${"0".repeat(64)}`
+
 export interface GenerationInputs {
 	registry: Address
 	/** The Privacy Pools vault every portal of this generation is the processor for. */
@@ -61,8 +62,9 @@ export interface GenerationInputs {
 	/** Each portal's lifetime limit on accepted funds, in its token's base units. */
 	lifetimeCap: bigint
 	guardianL1: Address
-	/** The L2 guardian, as an Aztec address hex. */
-	guardianL2: string
+	/** The ASP registry the hub passes to every token it derives, as an Aztec address hex: zero in a
+	 *  generation without checked spends. Not `registry`, which is the L1 one. */
+	aspRegistry: string
 }
 
 export interface GenerationRecord {
@@ -74,7 +76,7 @@ export interface GenerationRecord {
 	}
 	l2: {
 		hub: { address: string; salt: Hex; constructorArtifact: "constructor"; constructorArgs: [string, Address, string] }
-		guardian: string
+		aspRegistry: string
 		tokenClassId: string
 		tokenArtifactSha256: string
 	}
@@ -95,12 +97,12 @@ function assertSame(actual: string, expected: string, label: string): void {
 /** The class ids of the two artifacts a generation instantiates, recomputed on every run so a
  *  toolchain that moved either one is caught before it can be journalled as this generation's. */
 async function artifactClassIds(): Promise<{ tokenClassId: string; hubClassId: string }> {
-	const token = await getContractClassFromArtifact(TokenContractArtifact)
+	const token = await getContractClassFromArtifact(labelledTokenArtifact)
 	const hub = await getContractClassFromArtifact(tokenBridgeHubArtifact)
 	return { tokenClassId: token.id.toString(), hubClassId: hub.id.toString() }
 }
 
-/** A class someone else already published (the Token class on a shared network) is a no-op, not a
+/** A class someone else already published (the token class on a shared network) is a no-op, not a
  *  failure: the node is asked first, and a publication that still loses the race is recognised by the
  *  registry's nullifier rejection, whose wording differs across node versions. */
 async function publishIfAbsent(l2: L2Ctx, artifact: Parameters<typeof publishContractClass>[1], label: string): Promise<void> {
@@ -127,20 +129,20 @@ async function publishClasses(l2: L2Ctx, journal: DeployJournal): Promise<{ toke
 	const ids = await artifactClassIds()
 	const recorded = findStep(journal, "classes-published")
 	if (recorded) {
-		assertSame(ids.tokenClassId, recorded.tokenClassId, "journalled Token class id")
+		assertSame(ids.tokenClassId, recorded.tokenClassId, "journalled token class id")
 		assertSame(ids.hubClassId, recorded.hubClassId, "journalled hub class id")
 		return ids
 	}
-	await publishIfAbsent(l2, TokenContractArtifact, "Token")
+	await publishIfAbsent(l2, labelledTokenArtifact, "LabelledToken")
 	await publishIfAbsent(l2, tokenBridgeHubArtifact, "TokenBridgeHub")
 	journal.append({ kind: "classes-published", ...ids })
 	return ids
 }
 
-/** The bytes the manifest pins: the aztec-standards Token artifact JSON as shipped, not a
- *  re-serialization of the loaded object (which would drift with any loader change). */
+/** The bytes the manifest pins: the committed LabelledToken artifact JSON, not a re-serialization
+ *  of the loaded object (which would drift with any loader change). */
 function tokenArtifactSha256(): string {
-	const path = resolvePackageAsset("@aztec-foundation/aztec-standards", "target/token_contract-Token.json", { from: import.meta.url })
+	const path = new URL("../../../contracts/bridge/aztec/labelled_token/target/labelled_token-LabelledToken.json", import.meta.url)
 	return createHash("sha256").update(readFileSync(path)).digest("hex")
 }
 
@@ -269,17 +271,24 @@ async function deployFactory(
 
 type HubArgs = [string, Address, string]
 
-const hubConstructorArgs = (tokenClassId: string, factory: Address, guardianL2: string): HubArgs => [tokenClassId, factory, guardianL2]
+const hubConstructorArgs = (tokenClassId: string, factory: Address, aspRegistry: string): HubArgs => [tokenClassId, factory, aspRegistry]
+
+/** The registry is part of every token's address, so a malformed one is refused before any side effect. */
+function validAspRegistry(aspRegistry: string): string {
+	if (!/^0x[0-9a-f]{64}$/.test(aspRegistry) || BigInt(aspRegistry) >= Fr.MODULUS)
+		throw new Error(`aspRegistry must be a 32-byte lower-case hex Aztec address, got ${aspRegistry}`)
+	return aspRegistry
+}
 
 /** The salt IS the factory address as a field, so one factory can only ever have one hub. */
 function hubSalt(factory: Address): Fr {
 	return new Fr(BigInt(factory))
 }
 
-function deriveHub(tokenClassId: string, factory: Address, guardianL2: string): Promise<ContractInstanceWithAddress> {
+function deriveHub(tokenClassId: string, factory: Address, aspRegistry: string): Promise<ContractInstanceWithAddress> {
 	return deriveInstance(
 		tokenBridgeHubArtifact,
-		[Fr.fromHexString(tokenClassId), EthAddress.fromString(factory), AztecAddress.fromStringUnsafe(guardianL2)],
+		[Fr.fromHexString(tokenClassId), EthAddress.fromString(factory), AztecAddress.fromStringUnsafe(aspRegistry)],
 		"constructor",
 		hubSalt(factory),
 		AztecAddress.ZERO,
@@ -346,10 +355,11 @@ async function assertGeneration(l1: L1Ctx, l2: L2Ctx, record: GenerationRecord):
 }
 
 export async function deployGeneration(l1: L1Ctx, l2: L2Ctx, inputs: GenerationInputs, journal: DeployJournal): Promise<GenerationRecord> {
+	const aspRegistry = validAspRegistry(inputs.aspRegistry)
 	const { tokenClassId } = await publishClasses(l2, journal)
 	const predicted = await predictFactory(l1, journal)
-	const args = hubConstructorArgs(tokenClassId, predicted.factory, inputs.guardianL2)
-	const hubInstance = await deriveHub(tokenClassId, predicted.factory, inputs.guardianL2)
+	const args = hubConstructorArgs(tokenClassId, predicted.factory, aspRegistry)
+	const hubInstance = await deriveHub(tokenClassId, predicted.factory, aspRegistry)
 	// The hub deploys to the rollup this node follows, so the implementation must pin that one.
 	const rollup = await rollupEndpointsOf(l2.node)
 	const { factory, implementation } = await deployFactory(l1, inputs, predicted, hubInstance.address.toString(), rollup, journal)
@@ -369,7 +379,7 @@ export async function deployGeneration(l1: L1Ctx, l2: L2Ctx, inputs: GenerationI
 				constructorArtifact: "constructor",
 				constructorArgs: args,
 			},
-			guardian: inputs.guardianL2,
+			aspRegistry,
 			tokenClassId,
 			tokenArtifactSha256: tokenArtifactSha256(),
 		},
@@ -473,6 +483,7 @@ async function manifestTokenOf(
 		erc20,
 		{ nameWord: reg.nameWord, symbolWord: reg.symbolWord, decimals: reg.decimals },
 		gen.l2.tokenClassId,
+		AztecAddress.fromStringUnsafe(gen.l2.aspRegistry),
 	)
 	// The manifest demands non-empty display strings; a token whose metadata the factory froze as
 	// empty still has to render as something, so fall back down to the address.
@@ -509,7 +520,7 @@ export async function preCreateToken(
 	const hub = await registerHub(l2.wallet, gen.l2.hub)
 	// `register_token` enqueues the derived Token's constructor, so the wallet must hold that
 	// instance before it can even BUILD the transaction — the oracle resolves the callee locally.
-	await registerHubToken(l2.wallet, AztecAddress.fromStringUnsafe(gen.l2.hub.address), token, gen.l2.tokenClassId)
+	await registerHubToken(l2.wallet, AztecAddress.fromStringUnsafe(gen.l2.hub.address), token, gen.l2.tokenClassId, gen.l2.aspRegistry)
 	const registerTxHash = opts.register === false ? undefined : await registerOnHub(l2, hub, erc20, reg)
 	if (!journal.has("token-precreated", erc20)) {
 		journal.append({ kind: "token-precreated", erc20: erc20.toLowerCase(), portal: reg.portal.toLowerCase(), txHash, registerTxHash })

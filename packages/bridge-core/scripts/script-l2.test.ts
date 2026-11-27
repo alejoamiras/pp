@@ -1,24 +1,22 @@
 import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
-import type { ContractBase } from "@aztec-labs/aztec.js/contracts"
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { EthAddress } from "@aztec-labs/foundation/eth-address"
 import { computeSiloedPrivateInitializationNullifier } from "@aztec-labs/stdlib/hash"
 import { describe, expect, it } from "vitest"
 import { tokenBridgeHubArtifact } from "../src/artifacts"
-import type { HubClaimParams } from "../src/hub-l2"
 import { deriveHubTokenInstance } from "../src/hub-token"
 import type { ManifestToken } from "../src/manifest-v2"
-import { claimTokensUntilSynced, deployAccountIfAbsent, deriveInstance, registerHub, registerHubToken } from "./script-l2"
+import { deployAccountIfAbsent, deriveInstance, registerHub, registerHubToken } from "./script-l2"
 
 const FACTORY = "0x3333333333333333333333333333333333333333"
-const GUARDIAN = `0x${"0".repeat(61)}ab1`
-/** The installed aztec-standards@6.0.0 Token class — the same pin as noir-artifact-classids.test.ts. */
-const TOKEN_CLASS_ID = "0x2ff0939914ff64bd3f7979926dbe8cf3332bc2fee55928bf3cc9ca802568ea9f"
+const ASP_REGISTRY = `0x${"0".repeat(61)}ab1`
+/** The committed LabelledToken class — the same pin as noir-artifact-classids.test.ts. */
+const TOKEN_CLASS_ID = "0x0ffdf2f819f7dbbeed8dabe38a38a76aef084445509c653762a3e3158fe1aaaa"
 const ERC20 = "0x00000000000000000000000000000000000e2c20"
 const HUB_SALT = `0x${"0".repeat(24)}${FACTORY.slice(2)}`
 
-const hubArgs = [Fr.fromHexString(TOKEN_CLASS_ID), EthAddress.fromString(FACTORY), AztecAddress.fromStringUnsafe(GUARDIAN)]
+const hubArgs = [Fr.fromHexString(TOKEN_CLASS_ID), EthAddress.fromString(FACTORY), AztecAddress.fromStringUnsafe(ASP_REGISTRY)]
 
 const manifestToken = (l2Token: string): ManifestToken => ({
 	erc20: ERC20,
@@ -51,7 +49,13 @@ describe("script-l2", () => {
 	it("deriveInstance is deployer-sensitive: the same salt and args under a different deployer is a different address", async () => {
 		const salt = Fr.fromHexString(HUB_SALT)
 		const universal = await deriveInstance(tokenBridgeHubArtifact, hubArgs, "constructor", salt, AztecAddress.ZERO)
-		const deployed = await deriveInstance(tokenBridgeHubArtifact, hubArgs, "constructor", salt, AztecAddress.fromStringUnsafe(GUARDIAN))
+		const deployed = await deriveInstance(
+			tokenBridgeHubArtifact,
+			hubArgs,
+			"constructor",
+			salt,
+			AztecAddress.fromStringUnsafe(ASP_REGISTRY),
+		)
 		expect(universal.address.toString()).not.toBe(deployed.address.toString())
 		expect(universal.deployer.isZero()).toBe(true)
 	})
@@ -62,7 +66,7 @@ describe("script-l2", () => {
 			address: expected.address.toString(),
 			salt: HUB_SALT,
 			constructorArtifact: "constructor",
-			constructorArgs: [TOKEN_CLASS_ID, FACTORY, GUARDIAN],
+			constructorArgs: [TOKEN_CLASS_ID, FACTORY, ASP_REGISTRY],
 		}
 		const { wallet, registered } = fakeWallet()
 		const hub = await registerHub(wallet, record)
@@ -77,111 +81,24 @@ describe("script-l2", () => {
 
 	it("registerHubToken asserts the hub's derivation for the token and registers it", async () => {
 		const hub = AztecAddress.fromStringUnsafe("0x1234000000000000000000000000000000000000000000000000000000000abc")
-		const derived = await deriveHubTokenInstance(hub, ERC20, manifestToken("0x0"), TOKEN_CLASS_ID)
+		const derived = await deriveHubTokenInstance(
+			hub,
+			ERC20,
+			manifestToken("0x0"),
+			TOKEN_CLASS_ID,
+			AztecAddress.fromStringUnsafe(ASP_REGISTRY),
+		)
 		const token = manifestToken(derived.address.toString())
 
 		const { wallet, registered } = fakeWallet()
-		const contract = await registerHubToken(wallet, hub, token, TOKEN_CLASS_ID)
+		const contract = await registerHubToken(wallet, hub, token, TOKEN_CLASS_ID, ASP_REGISTRY)
 		expect(contract.address.toString()).toBe(token.l2Token)
 		expect(registered.instances).toEqual([token.l2Token])
 
 		const guard = fakeWallet()
-		await expect(registerHubToken(guard.wallet, hub, { ...token, l2Token: `0x${"11".repeat(32)}` }, TOKEN_CLASS_ID)).rejects.toThrow(
-			/manifest token TST mismatch/,
-		)
-	})
-
-	it("claimTokensUntilSynced retries only while the message is unsynced and returns the claim outcome", async () => {
-		const claim: HubClaimParams = {
-			token: {
-				erc20: ERC20,
-				portal: "0x00000000000000000000000000000000000000a1",
-				l2Token: `0x${"11".repeat(32)}`,
-				nameWord: "0x00",
-				symbolWord: "0x00",
-				decimals: 18,
-				displaySymbol: "TST",
-				registerIndex: "5",
-			},
-			recipient: `0x${"22".repeat(32)}`,
-			amount: 5n,
-			claimValue: new Fr(7n),
-			leafIndex: 9n,
-			isPrivate: false,
-			from: `0x${"22".repeat(32)}`,
-		}
-		// The public path's assert wording, then the private witness helper's — both mean "not yet".
-		const unsynced = [
-			"Assertion failed: Tried to consume nonexistent L1-to-L2 message 'assert(self.l1_to_l2_msg_exists(message_hash, leaf_index), \"…\")'",
-			"No L1 to L2 message found for message hash 0xabc",
-		]
-		let sends = 0
-		const hub = {
-			methods: new Proxy(
-				{},
-				{
-					get: (_t, name: string) => () => ({
-						simulate: async () => ({ result: claim.token.l2Token }),
-						send: async () => {
-							sends += 1
-							if (sends <= unsynced.length) throw new Error(unsynced[sends - 1])
-							return { receipt: { txHash: `0x${name}` } }
-						},
-					}),
-				},
-			),
-		} as unknown as ContractBase
-
-		expect(await claimTokensUntilSynced({ hub, claim, sendOpts: {}, intervalMs: 0 })).toEqual({
-			path: "claim",
-			claimTxHash: "0xclaim_public",
-		})
-		expect(sends).toBe(3)
-	})
-
-	it.each([
-		"Assertion failed: Balance too low",
-		// An already-consumed message: waiting never helps, and it must not be mistaken for unsynced.
-		"No non-nullified L1 to L2 message found for message hash 0xabc",
-	])("claimTokensUntilSynced surfaces a non-sync failure on the first attempt: %s", async (wording) => {
-		const hub = {
-			methods: new Proxy(
-				{},
-				{
-					get: () => () => ({
-						simulate: async () => ({ result: `0x${"11".repeat(32)}` }),
-						send: async () => {
-							throw new Error(wording)
-						},
-					}),
-				},
-			),
-		} as unknown as ContractBase
 		await expect(
-			claimTokensUntilSynced({
-				hub,
-				claim: {
-					token: {
-						erc20: ERC20,
-						portal: "0x00000000000000000000000000000000000000a1",
-						l2Token: `0x${"11".repeat(32)}`,
-						nameWord: "0x00",
-						symbolWord: "0x00",
-						decimals: 18,
-						displaySymbol: "TST",
-					},
-					recipient: `0x${"22".repeat(32)}`,
-					amount: 5n,
-					claimValue: new Fr(7n),
-					leafIndex: 9n,
-					isPrivate: true,
-					from: `0x${"22".repeat(32)}`,
-				},
-				sendOpts: {},
-				intervalMs: 0,
-				attempts: 5,
-			}),
-		).rejects.toThrow(wording)
+			registerHubToken(guard.wallet, hub, { ...token, l2Token: `0x${"11".repeat(32)}` }, TOKEN_CLASS_ID, ASP_REGISTRY),
+		).rejects.toThrow(/manifest token TST mismatch/)
 	})
 
 	it("deployAccountIfAbsent no-ops when the node serves the account OR its init nullifier exists, else sends NO_FROM with the fee", async () => {
