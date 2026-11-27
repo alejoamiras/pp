@@ -113,9 +113,11 @@ the app or the kit can see.
 `bun run --cwd packages/e2e-kit test:real-wallet [-- <playwright args>]` runs
 `apps/web/e2e/real-wallet.pw.ts` against the pinned public release of the wallet, approving in its
 own windows. `real-wallet/run.ts` gives the run a fresh state directory (a `mkdtemp` child of
-`PP_E2E_STATE_DIR`, else of `.e2e-state/`), runs `agent.sh` with `PP_E2E_WALLET=real`, then fails
-if a listener, a port row, a browser process or the `real-wallet/` directory of the run survives.
-Playwright's output ends with `real-wallet: N/4 passed as expected`.
+`PP_E2E_STATE_DIR`, else of `.e2e-state/`), runs `agent.sh` on the local stack (`PP_E2E_MODE=stack`,
+so `bun run demo:prepare` first) with `PP_E2E_WALLET=real`, then fails if a listener, a port row, a
+browser process or the `real-wallet/` directory of the run survives. Playwright's output ends with
+`real-wallet: N/4 passed as expected`. The Aztec side is the wallet, approved in its own windows; the
+Ethereum side is the kit's injected wallet, signing as the stack's seeded accounts.
 
 - **Pins.** `real-wallet/wallet-pin.json` (zip URL, size, sha256, provenance) and
   `real-wallet/crs-pin.json` (the proving points' compressed ranges and the decompressed G1). Bump
@@ -129,7 +131,10 @@ Playwright's output ends with `real-wallet: N/4 passed as expected`.
   loopback port both reach the recorder, that port's listener sees nothing, an owned probe answers.
   Every refused host must be listed in `real-wallet/declared-refusals.json`, and listed hosts stay
   refused; any other host fails the test that tried it. A new profile starts on Mainnet, so the
-  wallet's first requests go to the Mainnet node and its relay, which the fence refuses.
+  wallet's first requests go to the Mainnet node and its relay, which the fence refuses. The
+  wallet's local Presto prover ports, `127.0.0.1:59833` and `:59834`, are refused too: a proving
+  service on a shared host must never take over the wallet's proving, and the refusal is what makes
+  the run prove in WASM. The claim asserts the wallet tried one of them and reached only the recorder.
 - **Proving points.** Node downloads the exact pinned ranges from the Aztec CDN, checks them,
   decompresses G1 with bb.js's WASM backend and checks the result. A launch of its own writes them
   into the wallet's IndexedDB; the test launch reads them back at their pinned hashes before onboarding.

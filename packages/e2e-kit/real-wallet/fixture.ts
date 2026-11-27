@@ -1,8 +1,9 @@
 /**
  * The real-wallet suite's `test`: one worker owns the pinned wallet in a persistent Chromium context
  * behind the browser-level fence, its proving points seeded in a launch of their own, a recording
- * proxy in front of the stack's node and the one app page the spec drives. Everything the worker
- * creates lives under `<state>/real-wallet/` and is deleted by it; nothing else is.
+ * proxy in front of the stack's node, the kit's injected Ethereum wallet as the stack's seeded user
+ * and the one app page the spec drives. Stack mode only. Everything the worker creates lives under
+ * `<state>/real-wallet/` and is deleted by it; nothing else is.
  */
 import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -10,7 +11,10 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { test as base, type BrowserContext, expect, type Page, type TestInfo } from "@playwright/test"
 import { walletChainIdOf } from "@pp/bridge-core"
-import { type RunEnv, runEnv } from "../env"
+import { type RunEnv, runEnv, stackRun } from "../env"
+import { installL1Wallet, type L1WalletControl } from "../fixtures/l1-wallet"
+import { openNetwork } from "../fixtures/network"
+import { type Chain, chainAt } from "./chain"
 import { prepareCrs, readCrsPin, type SeedArrays } from "./crs"
 import { type WalletDriver, walletDriver } from "./driver"
 import { type EgressRecorder, type Listener, startEgressRecorder, startOwnedProbe, startTripwire } from "./egress-recorder"
@@ -33,10 +37,16 @@ export interface RealWallet extends WalletLaunch {
 	appOrigin: string
 	driver: WalletDriver
 	node: NodeRecorder
+	/** The stack's own node, read around the recorder so the reads stay out of the wallet's record. */
+	chain: Chain
+	/** The app page's injected Ethereum wallet, signing as the stack's seeded pool user. */
+	l1: L1WalletControl
 	egress: EgressRecorder
 	/** The id the wallet must give the stack's network: `l1ChainId XOR rollupVersion`. */
 	expectedChainId: number
 	sandboxed: boolean
+	/** The test launch's owned loopback ports, the only ones that bypass the recorder. */
+	owned: number[]
 	/** Page and service-worker requests off the owned ports, with the context that made them. */
 	requests: Attributed[]
 	/** Recorder targets the canaries produced, kept apart from the wallet's own refusals. */
@@ -62,11 +72,12 @@ const loopbackPorts = (v: unknown, out: Set<number> = new Set()): Set<number> =>
 
 /** The stack's coordinates from its handle, and every loopback port its handle and manifest name. */
 function stackOf(run: RunEnv): Stack {
-	const read = (f: string) => (existsSync(join(run.artifactsDir, f)) ? JSON.parse(readFileSync(join(run.artifactsDir, f), "utf8")) : {})
-	const handle = read("handle.json") as { nodeUrl?: string; l1ChainId?: number; rollupVersion?: number }
+	if (run.mode !== "stack") throw new Error("real wallet: runs on the local stack only (PP_E2E_MODE=stack, which run.ts sets)")
+	const read = (path: string) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {})
+	const handle = read(join(run.artifactsDir, "handle.json")) as { nodeUrl?: string; l1ChainId?: number; rollupVersion?: number }
 	if (!handle.nodeUrl || handle.l1ChainId === undefined || handle.rollupVersion === undefined)
 		throw new Error(`real wallet: ${run.artifactsDir}/handle.json names no node, L1 chain or rollup version`)
-	const ports = loopbackPorts([handle, read("manifest.json")])
+	const ports = loopbackPorts([handle, read(stackRun(run).manifestPath)])
 	return { nodeUrl: handle.nodeUrl, expectedChainId: walletChainIdOf(handle.l1ChainId, handle.rollupVersion), ports: [...ports] }
 }
 
@@ -211,6 +222,9 @@ export const test = base.extend<{ fences: undefined; digested: undefined }, { ru
 
 				const requests: Attributed[] = []
 				attribute(l.context, new Set(owned), `chrome-extension://${l.extensionId}`, run.appOrigin, requests)
+				// Before the app page exists: the shim is a context init script and binding.
+				const user = (await openNetwork(run)).l1(0)
+				const l1 = await installL1Wallet(l.context, { ...user, appOrigin: run.appOrigin })
 				const appPage = await l.context.newPage()
 				const driver = walletDriver(l.context, l.extensionId, randomBytes(18).toString("base64url"))
 				await use({
@@ -219,10 +233,13 @@ export const test = base.extend<{ fences: undefined; digested: undefined }, { ru
 					appOrigin: run.appOrigin,
 					driver,
 					node,
+					chain: chainAt(p.stack.nodeUrl),
+					l1,
 					egress,
 					expectedChainId: p.stack.expectedChainId,
 					requests,
 					canaryTargets,
+					owned,
 					checkCache,
 					log,
 					lines,

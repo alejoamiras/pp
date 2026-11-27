@@ -19,7 +19,7 @@ const stateDir = mkdtempSync(join(parent, "real-wallet-"))
 
 // A kept or attached run would outlive the leak check below.
 const { PP_E2E_KEEP: _keep, PP_E2E_ATTACH: _attach, ...inherited } = process.env
-const env: NodeJS.ProcessEnv = { ...inherited, PP_E2E_STATE_DIR: stateDir, PP_E2E_WALLET: "real" }
+const env: NodeJS.ProcessEnv = { ...inherited, PP_E2E_STATE_DIR: stateDir, PP_E2E_MODE: "stack", PP_E2E_WALLET: "real" }
 
 const args = process.argv.slice(2).filter((a) => a !== "--")
 const run = spawnSync("bash", [join(kit, "scripts/e2e/agent.sh"), ...args], { stdio: "inherit", env })
