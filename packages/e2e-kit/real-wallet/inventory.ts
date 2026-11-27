@@ -13,6 +13,8 @@ export interface Owned {
 	owners: string[]
 	ports: number[]
 	profileDir: string
+	/** The pids listening on each owned port when the snapshot was taken. */
+	listeners: Record<number, number[]>
 }
 
 export const ownedFile = (stateDir: string) => join(stateDir, "real-wallet-owned.json")
@@ -21,21 +23,45 @@ export const ownedFile = (stateDir: string) => join(stateDir, "real-wallet-owned
 export function snapshotOwned(stateDir: string, knownPorts: number[], profileDir: string): Owned {
 	const owners = [...new Set(knownPorts.map(portOwner).filter((o): o is string => o !== undefined))]
 	const ports = [...new Set([...knownPorts, ...owners.flatMap(portsOwnedBy)])].sort((a, b) => a - b)
-	const owned = { owners, ports, profileDir }
+	const live = listeners()
+	const held: Record<number, number[]> = {}
+	for (const p of ports) {
+		const pids = live.get(p)
+		if (pids) held[p] = pids
+	}
+	const owned: Owned = { owners, ports, profileDir, listeners: held }
 	writeFileSync(ownedFile(stateDir), JSON.stringify(owned, null, 2))
 	return owned
 }
 
-/** TCP and UDP ports with a listener on this host, any user. */
-export function listeningPorts(): Set<number> {
-	const out = execFileSync("ss", ["-ltnuH"], { encoding: "utf8" })
-	const ports = new Set<number>()
-	for (const line of out.split("\n")) {
+/** Each listening TCP or UDP port in `ss -ltnupH` output, with the pids it names (only this user's). */
+export function parseListeners(ss: string): Map<number, number[]> {
+	const out = new Map<number, number[]>()
+	for (const line of ss.split("\n")) {
 		const local = line.trim().split(/\s+/)[4] ?? ""
 		const port = Number.parseInt(local.slice(local.lastIndexOf(":") + 1), 10)
-		if (Number.isInteger(port)) ports.add(port)
+		if (!Number.isInteger(port)) continue
+		out.set(port, [...(out.get(port) ?? []), ...Array.from(line.matchAll(/pid=(\d+)/g), (m) => Number(m[1]))])
 	}
-	return ports
+	return out
+}
+
+const listeners = () => parseListeners(execFileSync("ss", ["-ltnupH"], { encoding: "utf8" }))
+
+/**
+ * The owned ports whose listener is the run's: the port's registry row is still one of the run's
+ * owners, or the row is gone and a process that listened there at the snapshot still does. A port
+ * nobody listened on at the snapshot cannot be attributed and counts as the run's.
+ */
+export function leakedListeners(o: Owned, live: Map<number, number[]>, ownerOf: (port: number) => string | undefined): number[] {
+	return o.ports.filter((port) => {
+		const now = live.get(port)
+		if (!now) return false
+		const owner = ownerOf(port)
+		if (owner !== undefined) return o.owners.includes(owner)
+		const then = o.listeners[port] ?? []
+		return then.length === 0 || now.some((pid) => then.includes(pid))
+	})
 }
 
 export function processesNaming(needle: string): number[] {
@@ -53,7 +79,7 @@ export function processesNaming(needle: string): number[] {
 
 /**
  * Everything of the run still alive or claimed, as readable lines; empty means clean.
- * A port a different owner has claimed since is theirs, not a leak.
+ * A port a different owner has claimed since, or a stranger bound after the run released it, is not a leak.
  */
 export function leftovers(stateDir: string): string[] {
 	const file = ownedFile(stateDir)
@@ -63,11 +89,7 @@ export function leftovers(stateDir: string): string[] {
 	}
 	const o = JSON.parse(readFileSync(file, "utf8")) as Owned
 	const out: string[] = []
-	const live = listeningPorts()
-	for (const port of o.ports) {
-		const owner = portOwner(port)
-		if (live.has(port) && (owner === undefined || o.owners.includes(owner))) out.push(`a listener is still on port ${port}`)
-	}
+	for (const port of leakedListeners(o, listeners(), portOwner)) out.push(`a listener is still on port ${port}`)
 	for (const owner of o.owners) if (rowsOwnedBy(owner) > 0) out.push(`ports.md still has rows owned by ${owner}`)
 	const procs = processesNaming(o.profileDir).filter((pid) => pid !== process.pid)
 	if (procs.length > 0) out.push(`processes still name the wallet profile: ${procs.join(", ")}`)
