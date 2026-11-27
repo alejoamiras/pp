@@ -20,7 +20,8 @@ export function isRateLimited(e: unknown): boolean {
 	return false
 }
 
-type Request = (args: { method: string; params?: unknown }, options?: never) => Promise<unknown>
+type Args = { method: string; params?: unknown }
+type Request = (args: Args, options?: { retryCount?: number }) => Promise<unknown>
 type TransportLike = (args: never) => { request: Request }
 
 /** `send`, called again `delayMs`, `2·delayMs`, `4·delayMs` later while it rejects as rate-limited. */
@@ -39,16 +40,21 @@ async function offer(send: () => Promise<unknown>, delayMs: number): Promise<unk
 }
 
 /**
- * `transport` with each `eth_sendRawTransaction` offered again, as the identical request object it was
- * handed, while the endpoint refuses it as rate-limited: up to {@link SEND_ATTEMPTS} attempts,
- * `delayMs`, then twice and four times that apart. Nothing is signed, estimated or numbered here, so
- * every attempt carries the same bytes and hash. Any other error rejects at once; after the last
+ * `transport` with each `eth_sendRawTransaction` offered again while the endpoint refuses it as
+ * rate-limited: up to {@link SEND_ATTEMPTS} attempts, `delayMs`, then twice and four times that apart.
+ * The request is copied once on entry and each attempt sends that copy, with the inner transport's own
+ * retries off, so the caller can neither change the bytes between attempts nor multiply the bound.
+ * Nothing is signed, estimated or numbered here. Any other error rejects at once; after the last
  * refusal the first one rejects. Every other method passes through untouched.
  */
 export function sendRetrying<T extends TransportLike>(transport: T, delayMs = 1_000): T {
 	return ((args: never) => {
 		const t = transport(args)
-		const request: Request = (r, o) => (r.method === "eth_sendRawTransaction" ? offer(() => t.request(r, o), delayMs) : t.request(r, o))
+		const send = (r: Args, o: Parameters<Request>[1]) => {
+			const fixed = { method: r.method, params: Array.isArray(r.params) ? [...r.params] : r.params }
+			return offer(() => t.request(fixed, { ...o, retryCount: 0 }), delayMs)
+		}
+		const request: Request = (r, o) => (r.method === "eth_sendRawTransaction" ? send(r, o) : t.request(r, o))
 		return { ...t, request }
 	}) as T
 }

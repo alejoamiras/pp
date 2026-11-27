@@ -3,6 +3,7 @@ import { createWalletClient, http } from "viem"
 import { SEND_ATTEMPTS, sendRetrying } from "./send-retry.ts"
 
 type Answer = { status?: number; error?: { code: number; message: string }; result?: string }
+type Hex = `0x${string}`
 
 /** A loopback JSON-RPC endpoint that answers each send from `script`, by attempt, and records its bytes. */
 function gateway() {
@@ -20,11 +21,13 @@ function gateway() {
 		},
 	})
 	const wallet = createWalletClient({ transport: sendRetrying(http(`http://127.0.0.1:${server.port}`), 0) })
-	const send = (serializedTransaction: `0x${string}`) => wallet.sendRawTransaction({ serializedTransaction })
 	return {
 		server,
 		sent,
-		send,
+		/** viem's own action, which asks the transport for no retries of its own. */
+		action: (raw: Hex) => wallet.sendRawTransaction({ serializedTransaction: raw }),
+		/** A bare request, which would inherit the http transport's default retries. */
+		bare: (raw: Hex) => wallet.request({ method: "eth_sendRawTransaction", params: [raw] }),
 		answer(s: (n: number) => Answer) {
 			script = s
 			sent.length = 0
@@ -40,16 +43,29 @@ describe("sendRetrying", () => {
 	const g = gateway()
 	afterAll(() => g.server.stop(true))
 
-	it("offers the identical bytes again while the send is rate-limited, and returns the hash that lands", async () => {
+	it.each(["action", "bare"] as const)("offers the identical bytes again while rate-limited, through a %s send", async (path) => {
 		g.answer((n) => (n <= 2 ? limited(n) : { result: HASH }))
-		expect(await g.send(RAW)).toBe(HASH)
+		expect(await g[path](RAW)).toBe(HASH)
 		expect(g.sent).toEqual([RAW, RAW, RAW])
 	})
 
-	it(`stops after ${SEND_ATTEMPTS} attempts and rejects with the first refusal`, async () => {
-		g.answer(limited)
-		await expect(g.send(RAW)).rejects.toThrow(/rate limit exceeded #1\b/)
-		expect(g.sent).toEqual(Array(SEND_ATTEMPTS).fill(RAW))
+	it.each(["action", "bare"] as const)(
+		`stops after ${SEND_ATTEMPTS} attempts through a %s send, rejecting with the first refusal`,
+		async (path) => {
+			g.answer(limited)
+			await expect(g[path](RAW)).rejects.toThrow(/rate limit exceeded #1\b/)
+			expect(g.sent).toEqual(Array(SEND_ATTEMPTS).fill(RAW))
+		},
+	)
+
+	it("resends the bytes it was handed, whatever the caller does to its request afterwards", async () => {
+		g.answer((n) => (n === 1 ? limited(n) : { result: HASH }))
+		const params: Hex[] = [RAW]
+		const transport = sendRetrying(http(`http://127.0.0.1:${g.server.port}`), 5)({} as never)
+		const pending = transport.request({ method: "eth_sendRawTransaction", params })
+		params[0] = "0xdead"
+		expect(await pending).toBe(HASH)
+		expect(g.sent).toEqual([RAW, RAW])
 	})
 
 	it.each<[string, Answer]>([
@@ -57,7 +73,7 @@ describe("sendRetrying", () => {
 		["an HTTP 429", { status: 429 }],
 	])("fails at once on %s", async (_, answer) => {
 		g.answer(() => answer)
-		await expect(g.send(RAW)).rejects.toThrow()
+		await expect(g.action(RAW)).rejects.toThrow()
 		expect(g.sent).toEqual([RAW])
 	})
 })
