@@ -82,7 +82,20 @@ describe("the stack's Ethereum port", () => {
 
 	test("without an injected wallet the page lists no account and refuses anything that needs one", async () => {
 		const l1 = stackL1(TARGET, undefined)
+		expect(l1.hasWallet).toBe(false)
 		await expect(l1.accounts()).resolves.toEqual([])
 		await expect(l1.chainId()).rejects.toMatchObject({ code: "NO_SENDER" })
+		await expect(l1.requestAccounts()).rejects.toMatchObject({ code: "NO_SENDER" })
+	})
+
+	test("asking for accounts is eth_requestAccounts, which a wallet may answer with a prompt", async () => {
+		const on = wallet(TARGET.l1ChainId)
+		const asked = {
+			...on.w,
+			request: async (a: { method: string; params?: unknown }) => (a.method === "eth_requestAccounts" ? [SENDER] : on.w.request(a)),
+		}
+		const l1 = stackL1(TARGET, asked)
+		expect(l1.hasWallet).toBe(true)
+		await expect(l1.requestAccounts()).resolves.toEqual([SENDER])
 	})
 })

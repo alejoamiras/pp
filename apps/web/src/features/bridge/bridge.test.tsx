@@ -105,6 +105,17 @@ async function openForm(app: Awaited<ReturnType<typeof demoApp>>) {
 }
 
 describe("the dev-account choice", () => {
+	test("with no dev account to send from, the form says the sender needs ETH of its own, whoever is selected", async () => {
+		const app = renderApp()
+		await signIn(app.user)
+		await connectAztec(app.user)
+		await openForm(app)
+		await screen.findByText(/sends the bridge's Ethereum transaction and pays its gas, so it needs its own ETH on/)
+		act(() => app.control.selectL1Account("sender"))
+		await waitFor(() => expect(screen.queryByText("Switch to a separate Ethereum account")).toBeNull())
+		screen.getByText(/sends the bridge's Ethereum transaction and pays its gas, so it needs its own ETH on/)
+	})
+
 	test("clears when the wallet switches account and on sign-out", async () => {
 		const app = await demoApp(async () => {})
 		await openForm(app)

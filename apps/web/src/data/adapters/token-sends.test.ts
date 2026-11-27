@@ -14,6 +14,8 @@ import { stackTokenSends } from "./token-sends"
 const at = (n: string) => `0x${n.repeat(32)}` as AztecAddress
 const [HUB, TOKEN, FPC, ME, YOU] = [at("08"), at("09"), at("0c"), at("1c"), at("2d")]
 const T = { hub: HUB, token: TOKEN, sponsoredFpc: FPC }
+/** A label holding more than any test spends, in one note. */
+const ENOUGH = async () => [1000n]
 const MANIFEST = stageManifest("2b", T)
 const GRANT = parseGrant(MANIFEST, {
 	granted: MANIFEST.capabilities.map((c) => (c.type === "accounts" ? { ...c, accounts: [{ item: ME }] } : c)),
@@ -49,7 +51,7 @@ function rig() {
 		current: async () => ({ record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n }, nowSec: 2n }),
 		check: () => checked,
 	}
-	const sends = stackTokenSends({ aztec, allowList, sponsoredFpc: FPC })
+	const sends = stackTokenSends({ aztec, allowList, sponsoredFpc: FPC, notes: ENOUGH })
 	return {
 		wallet,
 		aztec,
@@ -105,7 +107,7 @@ describe("the token's checked spends", () => {
 		const later = { ...first, record: { ...first.record, sequence: 2n, poolRoot: 10n } }
 		const current = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(later)
 		const check = vi.fn().mockResolvedValueOnce(ACTIVE).mockResolvedValueOnce({ state: "ABSENT" })
-		const sends = stackTokenSends({ aztec: r.aztec, allowList: { current, check }, sponsoredFpc: FPC })
+		const sends = stackTokenSends({ aztec: r.aztec, allowList: { current, check }, sponsoredFpc: FPC, notes: ENOUGH })
 		await expect(sends.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())).rejects.toMatchObject({ code: "LABEL_ABSENT" })
 		expect(check.mock.calls.map(([view]) => view)).toEqual([first, later])
 		expect(r.wallet.sendTx).not.toHaveBeenCalled()
@@ -119,13 +121,13 @@ describe("the token's checked spends", () => {
 		})
 		const settled = vi.fn().mockResolvedValueOnce(view(1n, 9n)).mockResolvedValue(view(2n, 9n))
 		const check = vi.fn().mockResolvedValue(ACTIVE)
-		const sends = stackTokenSends({ aztec: r.aztec, allowList: { current: settled, check }, sponsoredFpc: FPC })
+		const sends = stackTokenSends({ aztec: r.aztec, allowList: { current: settled, check }, sponsoredFpc: FPC, notes: ENOUGH })
 		await sends.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())
 		expect([check.mock.calls.length, settled.mock.calls.length]).toEqual([1, 2])
 		let root = 20n
 		const moving = vi.fn(async () => view(root, root++))
 		check.mockClear()
-		const again = stackTokenSends({ aztec: r.aztec, allowList: { current: moving, check }, sponsoredFpc: FPC })
+		const again = stackTokenSends({ aztec: r.aztec, allowList: { current: moving, check }, sponsoredFpc: FPC, notes: ENOUGH })
 		await expect(again.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())).rejects.toMatchObject({ code: "LIST_STALE" })
 		expect(check).toHaveBeenCalledTimes(3)
 		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
@@ -141,10 +143,38 @@ describe("the token's checked spends", () => {
 				aztec: r.aztec,
 				allowList: { current: vi.fn().mockResolvedValueOnce(read(2n)).mockResolvedValueOnce(read(later)), check },
 				sponsoredFpc: FPC,
+				notes: ENOUGH,
 			}).unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())
 		await through(1501n)
 		await expect(through(1502n)).rejects.toMatchObject({ code: "LIST_STALE" })
 		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
+	})
+
+	test("reads the label's notes after the list check and refuses before the handoff what one transaction cannot spend", async () => {
+		const r = rig()
+		const order: string[] = []
+		const handoff = vi.fn()
+		const sends = stackTokenSends({
+			aztec: r.aztec,
+			allowList: {
+				current: async () => ({ record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n }, nowSec: 2n }),
+				check: async () => {
+					order.push("check")
+					return ACTIVE
+				},
+			},
+			sponsoredFpc: FPC,
+			notes: async () => {
+				order.push("notes")
+				return [5n, 5n]
+			},
+		})
+		await expect(sends.unshield(ME, { amount: 11n, label: 77n, origin: 0 }, on(handoff))).rejects.toMatchObject({
+			code: "OVER_NOTE_CAP",
+		})
+		expect(order).toEqual(["check", "notes"])
+		expect(handoff).not.toHaveBeenCalled()
+		expect(r.wallet.sendTx).not.toHaveBeenCalled()
 	})
 
 	test("sends the label's checked path, paid by the SponsoredFPC, and refuses a label the list does not hold", async () => {

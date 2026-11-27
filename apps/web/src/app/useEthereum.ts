@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { openOwnerSession } from "../data/chain"
 import { codeOf, isUserRejection, type UiCode } from "../data/errors"
-import type { Session } from "../data/ports"
+import type { L1Port, Session } from "../data/ports"
 import type { DataSource } from "../data/source"
 import type { LiveStore } from "./live"
 
@@ -11,6 +11,36 @@ const signInFailure = (err: unknown): EthStatus => ({
 	kind: "error",
 	code: isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED"),
 })
+
+/**
+ * With no account known yet, the click reads the wallet again, and asks it to share one only when it
+ * still lists none (a locked wallet unlocks then). The selection is what the wallet lists after that,
+ * never the request's own answer; an account or network event heard meanwhile, an emptied account list
+ * included, is newer than these reads and keeps its value. False when a newer sign-in or a sign-out
+ * replaced this one, which then asks the wallet nothing more.
+ */
+async function shareAccount(l1: L1Port, live: LiveStore, current: () => boolean): Promise<boolean> {
+	if (live.get().account !== null) return true
+	const heard = { account: false, chain: false }
+	const offAccounts = l1.onAccountsChanged(() => {
+		heard.account = true
+	})
+	const offChain = l1.onChainChanged(() => {
+		heard.chain = true
+	})
+	try {
+		const listed = await l1.accounts()
+		if (!current()) return false
+		if (listed.length === 0) await l1.requestAccounts()
+		const [[account], chainId] = await Promise.all([l1.accounts(), l1.chainId()])
+		if (!current()) return false
+		live.set({ ...(heard.account ? {} : { account: account ?? null }), ...(heard.chain ? {} : { chainId }) })
+		return true
+	} finally {
+		offAccounts()
+		offChain()
+	}
+}
 
 /**
  * The selected Ethereum account and chain, kept current from wallet events, and the owner's session.
@@ -69,6 +99,7 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 		const mine = run.current
 		setStatus({ kind: "signing" })
 		try {
+			if (!(await shareAccount(source.l1, live, () => mine === run.current))) return
 			const opened = await openOwnerSession({
 				l1: source.l1,
 				sessions: source.sessions,
