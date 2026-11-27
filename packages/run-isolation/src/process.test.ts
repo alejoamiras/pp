@@ -51,7 +51,10 @@ test("a CleanupStack built with signals: false installs no signal handler", asyn
 })
 
 test("killGroup ends the members a group keeps after its leader has exited", async () => {
-	const owned = spawnOwned("sh", ["-c", "sleep 30 & exit 0"], join(dir, "orphan.log"), { PATH: process.env.PATH ?? "" })
+	// An ignored signal stays ignored across exec, so only SIGKILL ends the orphaned sleep.
+	const owned = spawnOwned("sh", ["-c", "(trap '' TERM; exec sleep 30) & exit 0"], join(dir, "orphan.log"), {
+		PATH: process.env.PATH ?? "",
+	})
 	await owned.exited
 	const pgid = owned.child.pid as number
 	try {
@@ -61,4 +64,17 @@ test("killGroup ends the members a group keeps after its leader has exited", asy
 	} finally {
 		signalGroup(pgid, "SIGKILL")
 	}
+})
+
+test("killGroup calls while one is under way share it, so the leader gets one SIGTERM", async () => {
+	const marks = join(dir, "terms")
+	// The second SIGTERM, if any, lands during the leader's graceful exit and is counted.
+	const script = `trap 'echo t >> "$MARKS"; done=1' TERM; while [ -z "$done" ]; do sleep 0.05; done; sleep 0.5`
+	const owned = spawnOwned("sh", ["-c", script], join(dir, "terms.log"), { PATH: process.env.PATH ?? "", MARKS: marks })
+	await Bun.sleep(200)
+	const first = killGroup(owned)
+	await Bun.sleep(150)
+	const second = killGroup(owned)
+	expect(await Promise.all([first, second])).toEqual([true, true])
+	expect(readFileSync(marks, "utf8").trim().split("\n")).toEqual(["t"])
 })

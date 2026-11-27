@@ -5,7 +5,7 @@ import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { withFileLock } from "./lock"
+import { withFileLock } from "./lock.ts"
 
 /** Ports below the OS dynamic range are never handed to an outgoing connection between probe and spawn. */
 const DEFAULT_EPHEMERAL_FLOOR = 32768
@@ -76,10 +76,15 @@ async function withRegistry(mutate: (lines: string[]) => string[]): Promise<bool
 	return done !== undefined
 }
 
+/** A cell a row can hold and an exact owner match can find again. */
+const CELL = /^[^|\s](?:[^|\r\n]*[^|\s])?$/
+
 /** A claim that found one of its ports already listed: pick again. */
 export class PortClaimConflict extends Error {
-	constructor(readonly ports: number[]) {
+	readonly ports: number[]
+	constructor(ports: number[]) {
 		super(`ports already claimed in ${registryPath()}: ${ports.join(", ")}`)
+		this.ports = ports
 	}
 }
 
@@ -89,6 +94,10 @@ export class PortClaimConflict extends Error {
  * `PortClaimConflict` when the registry already lists one, and an `Error` when the lock never came free.
  */
 export async function claimRows(runId: string, rows: Record<string, number>, pidHint: number): Promise<void> {
+	for (const cell of [runId, ...Object.keys(rows)]) {
+		if (!CELL.test(cell))
+			throw new Error(`${JSON.stringify(cell)} cannot be a registry cell: no "|", line break, or leading or trailing space`)
+	}
 	const claimed = new Date().toISOString()
 	const wanted = new Set(Object.values(rows))
 	let conflicts: number[] = []

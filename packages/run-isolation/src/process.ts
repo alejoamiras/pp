@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process"
 import { closeSync, mkdirSync, openSync } from "node:fs"
 import { dirname } from "node:path"
-import { groupAlive, groupGone, signalGroup } from "./process-group"
+import { groupAlive, groupGone, signalGroup } from "./process-group.ts"
 
 /** A spawned group leader plus the one authority on whether it still runs: its own exit or spawn error. */
 export interface OwnedChild {
@@ -78,12 +78,24 @@ export function ownsGroup(owned: OwnedChild): boolean {
 	return !owned.hasExited() || (groupAlive(pid) && !processExists(pid))
 }
 
+const killing = new WeakMap<OwnedChild, Promise<boolean>>()
+
 /**
  * Ends the group `owned` leads and nothing else: SIGTERM while the leader runs, then SIGKILL to what is
  * still running in the group, since a member that ignores SIGTERM outlives its leader. Resolves with
- * whether the group is gone within `graceMs` of that SIGKILL.
+ * whether the group is gone within `graceMs` of that SIGKILL. Calls while one is under way share it, so
+ * a leader shutting down gracefully never gets a second SIGTERM.
  */
-export async function killGroup(owned: OwnedChild, graceMs = 5_000): Promise<boolean> {
+export function killGroup(owned: OwnedChild, graceMs = 5_000): Promise<boolean> {
+	let p = killing.get(owned)
+	if (!p) {
+		p = escalate(owned, graceMs).finally(() => killing.delete(owned))
+		killing.set(owned, p)
+	}
+	return p
+}
+
+async function escalate(owned: OwnedChild, graceMs: number): Promise<boolean> {
 	const pid = owned.child.pid
 	if (pid === undefined || !ownsGroup(owned)) return true
 	const signal = (sig: NodeJS.Signals) => {

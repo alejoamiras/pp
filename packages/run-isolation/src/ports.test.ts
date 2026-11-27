@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { claimPort, claimRows, releasePorts, releaseRows, rowsOwnedBy } from "./ports.ts"
+import { claimPort, claimRows, registeredPorts, releasePorts, releaseRows, rowsOwnedBy } from "./ports.ts"
 
 const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
@@ -51,4 +51,14 @@ test("release leaves a row whose owner only contains the run id, and one that na
 	expect([rowsOwnedBy(runId), rowsOwnedBy(`${runId}-pool`), rowsOwnedBy("ports-test-neighbour")]).toEqual([0, 1, 1])
 	await releasePorts(`${runId}-pool`)
 	await releasePorts("ports-test-neighbour")
+})
+
+test("a claim refuses an owner or service a release could not match", async () => {
+	for (const [owner, service] of [
+		["run ", "anvil"],
+		["run", "a|b"],
+		["run\nx", "anvil"],
+	] as const)
+		await expect(claimRows(owner, { [service]: 40_010 }, process.pid)).rejects.toThrow("cannot be a registry cell")
+	expect(registeredPorts().has(40_010)).toBe(false)
 })

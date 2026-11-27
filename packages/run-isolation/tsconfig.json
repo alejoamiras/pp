@@ -9,7 +9,8 @@
 		"isolatedModules": true,
 		"skipLibCheck": true,
 		"types": ["bun", "node"],
-		"allowImportingTsExtensions": true
+		"allowImportingTsExtensions": true,
+		"erasableSyntaxOnly": true
 	},
 	"include": ["src/**/*.ts"]
 }
