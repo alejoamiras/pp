@@ -8,7 +8,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { sepoliaPoolUser } from "@pp/pp-env/sepolia"
-import { claimPort, releaseNamed } from "@pp/run-isolation/ports"
+import { claimPort, releaseNamed, releasePorts } from "@pp/run-isolation/ports"
 import { CleanupStack, killGroup, type OwnedChild } from "@pp/run-isolation/process"
 import { startForkAnvil } from "@pp/sepolia-fork/src/anvil.ts"
 import { type Address, createPublicClient, createWalletClient, type Hex, http, numberToHex, parseAbi, parseEther } from "viem"
@@ -118,8 +118,9 @@ async function approvals(c: Ctx, url: string): Promise<bigint> {
 }
 
 export async function forkRehearsal(log: (line: string) => void): Promise<ForkResult> {
-	const cleanup = new CleanupStack()
 	const runId = `pp-testnet-rehearse-${process.pid}`
+	const cleanup = new CleanupStack()
+	cleanup.push(() => releasePorts(runId))
 	const dir = join(homedir(), ".cache", "pp", "testnet", "rehearse", runId)
 	mkdirSync(join(dir, "home"), { recursive: true, mode: 0o700 })
 	try {
@@ -157,7 +158,8 @@ export async function forkRehearsal(log: (line: string) => void): Promise<ForkRe
 		rmSync(dir, { recursive: true, force: true })
 		return { block, gas, debit }
 	} catch (e) {
-		log(`[fork] failed; its logs and scratch files stay in ${dir}`)
+		rmSync(join(dir, "home"), { recursive: true, force: true })
+		log(`[fork] failed; its logs stay in ${dir}, and its scratch home with the scratch key file is deleted`)
 		throw e
 	} finally {
 		await cleanup.run()
