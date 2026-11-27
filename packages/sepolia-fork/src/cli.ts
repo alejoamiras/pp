@@ -3,6 +3,7 @@
 // for a pin refresh. The endpoint comes only from SEPOLIA_RPC_URL; unset, `run` skips unless --require-rpc
 // makes that a failure. Usage errors never echo an argument, which may be a mistyped endpoint.
 import { parseArgs } from "node:util"
+import { isHash } from "viem"
 import { DEFAULT_TARGET, isTargetName, type Pins, TARGETS } from "./pins.ts"
 import { enroll, PreflightError } from "./preflight.ts"
 import { ENDPOINT_RETRIES, hostOf, httpRpc, scrub } from "./rpc.ts"
@@ -23,6 +24,12 @@ const OPTIONS = {
 	"require-rpc": { type: "boolean" },
 	"prepare-only": { type: "boolean" },
 } as const
+
+/** parseArgs quotes the offending token, which may be an endpoint; these say what is wrong without it. */
+const PARSE_ERRORS: Record<string, string> = {
+	ERR_PARSE_ARGS_UNKNOWN_OPTION: "unknown option",
+	ERR_PARSE_ARGS_INVALID_OPTION_VALUE: "an option's value is missing or not allowed",
+}
 
 type Values = ReturnType<typeof parseArgs<{ options: typeof OPTIONS; allowPositionals: true; strict: true }>>["values"]
 
@@ -49,7 +56,7 @@ function parse(argv: string[]): Command | string {
 		const [name, ...rest] = positionals
 		return command(TARGETS[target], name, rest, values)
 	} catch (err) {
-		return err instanceof Error ? err.message : String(err)
+		return PARSE_ERRORS[String((err as { code?: unknown }).code)] ?? "unreadable command line"
 	}
 }
 
@@ -57,7 +64,8 @@ async function printPins(endpoint: string, pins: Pins, block: bigint): Promise<v
 	const rpc = httpRpc(endpoint, { retries: ENDPOINT_RETRIES })
 	const bindings = await enroll(rpc, pins, block)
 	const header = await rpc<{ hash: string; number: string } | null>("eth_getBlockByNumber", [`0x${block.toString(16)}`, false])
-	if (header === null || BigInt(header.number) !== block) throw new Error(`the endpoint returned no header for block ${block}`)
+	if (header === null || BigInt(header.number) !== block || !isHash(header.hash))
+		throw new Error(`the endpoint returned no header for block ${block}`)
 	console.log(
 		JSON.stringify(
 			{ block: { number: String(block), hash: header.hash }, bindings },

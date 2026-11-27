@@ -62,7 +62,10 @@ code hashes only. Every upgrade of one of the four contracts fails the next run,
 `code.<contract>.<field>` with both values (kind `live` once the pinned block is behind it). Another package
 checks the same hashes with the same reads through `@pp/sepolia-fork/pins`, which loads only viem:
 `TARGETS`, `readPoolCode(client, pool, blockNumber)` (any viem `PublicClient` serves as the client, which
-must answer every call at that block or throw) and `codeMismatches(want, got)`.
+must answer every call at that block or throw) and `codeMismatches(want, got)`. A refresh (`pins <block>`)
+refuses a block that is not finalized, empty code, a cleared slot or 1x1 route, wiring that names other
+contracts, and a proxy whose code differs from the pinned one: a new proxy needs its dispatch reviewed and
+its pin edited by hand first.
 
 What a pass does not cover:
 - The finalized block lags the head by about 15 minutes, so an upgrade can land between the compared block
@@ -80,5 +83,5 @@ name the endpoint's host, never its path or query.
 
 | Command | What |
 |---|---|
-| `bun run test` | Unit: pins, the code reader and its mismatch names, the shared entry's viem-only imports, the preflight's verdicts on a fake chain (an upgrade, a rewiring, a cleared slot refused at enrollment), the verifier key check, a refused cache, host-only messages and rate-limit retries, the writer guard, the CLI's skip, usage and failure lines, the Foundry resolver, Forge's environment, profile and named-case checks, and the deadline's teardown. |
+| `bun run test` | Unit: pins, the code reader and its mismatch names, the shared entry's viem-only imports, the preflight's verdicts on a fake chain (an upgrade, one that drops a getter, a rewiring, every read at the checked block, and the refreshes refused), the verifier key check, a refused cache, host-only messages and rate-limit retries, the writer guard, the CLI's skip, usage and failure lines, the Foundry resolver, Forge's environment, profile and named-case checks, and the deadline's teardown. |
 | `bun run test:net` | With `SEPOLIA_RPC_URL` set: a preflight run per target, a mutated Inbox pin and a mutated block hash failing on their pins with nothing left behind, the pre-ceremony bundle against SDK 1.0.0's published manifest, and a cached circuit file one byte short refused by name. Skipped when unset. |

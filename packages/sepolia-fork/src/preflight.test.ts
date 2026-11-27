@@ -76,7 +76,6 @@ function chain(b: Chain, o: Options = {}) {
 	}
 	const proxyCode = new Map(Object.entries(o.proxyCode ?? {}).map(([c, code]) => [getAddress(pool[c as PoolContract]), code]))
 	const codeAt = (a: Address): Hex => (a === addr(0) ? "0x" : (proxyCode.get(a) ?? codeOf(a)))
-	/** The block tag of every state read, so a test can tell they all name the block under check. */
 	const tags: unknown[] = []
 	const handlers: Record<string, (params: unknown[]) => unknown> = {
 		eth_chainId: () => numberToHex(o.chainId ?? 11_155_111),

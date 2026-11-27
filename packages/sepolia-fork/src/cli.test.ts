@@ -27,7 +27,9 @@ test("with no endpoint the suite skips in one line, unless --require-rpc makes t
 test("a command line that is not one fails with usage before any endpoint is read, so it never skips", () => {
 	for (const [args, cause] of [
 		[["run", "--target", "v8"], "unknown target; known: pool1, vault-323c"],
-		[["run", "--targt", "pool1"], "Unknown option '--targt'"],
+		[["run", "--targt", "pool1"], "unknown option"],
+		[["run", "--https://rpc.example/k3y"], "unknown option"],
+		[["run", "--target"], "an option's value is missing or not allowed"],
 		[["run", "https://rpc.example/k3y"], "run takes no arguments"],
 		[["pins"], "pins takes one block number"],
 		[["pins", "1", "2"], "pins takes one block number"],

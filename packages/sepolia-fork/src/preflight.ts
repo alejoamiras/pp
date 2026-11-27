@@ -119,7 +119,6 @@ export async function wiringMismatches(rpc: Rpc, pins: Pins, block: bigint): Pro
 	return out
 }
 
-/** The bindings and wiring that differ at `block`, with one message each. */
 async function mismatchesAt(rpc: Rpc, pins: Pins, block: bigint): Promise<Mismatch[]> {
 	// Code first and alone: an upgrade can drop a getter the other reads call, and must still fail as an upgrade.
 	const code = await readPoolCode(codeReader(rpc), pins.pool, block)
