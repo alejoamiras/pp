@@ -1,6 +1,7 @@
-import { readFileSync, rmSync, writeFileSync } from "node:fs"
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { parseStackManifest } from "@pp/bridge-core/stack-manifest"
+import { parseDeployment } from "@pp/testnet/schema"
 import { afterAll, describe, expect, test } from "vitest"
 import { scratchDir } from "../../scripts/proc"
 import { resolveSameOrigin } from "./same-origin"
@@ -92,6 +93,7 @@ describe("testnetTarget", () => {
 			["operator section", (d) => (d.operator = {}), /operator/],
 			["local chain", (d) => (d.network.l1ChainId = 31337), /Sepolia/],
 			["unpinned L1 RPC", (d) => (d.network.l1Rpc = "https://rpc.example"), /pinned Sepolia RPC/],
+			["unpinned L1 send RPC", (d) => (d.network.l1SendRpc = "https://sepolia.gateway.tenderly.co"), /pinned Sepolia send RPC/],
 			["unpinned node", (d) => (d.network.aztecNode = "https://node.example"), /pinned testnet node/],
 			["other FPC", (d) => (d.network.fpc = `0x${"11".repeat(32)}`), /canonical SponsoredFPC/],
 			["no bridge", (d) => (d.bridge = undefined), /bridge/],
@@ -108,6 +110,14 @@ describe("testnetTarget", () => {
 			for (const value of ["x", ""])
 				expect(() => testnetTarget(FIXTURE, { [name]: value }, FPC), name).toThrow(new RegExp(`${name} is set`))
 	})
+})
+
+test("every committed deployment file parses under the schema the build reads them with", () => {
+	const committed = join(import.meta.dirname, "../../../../packages/testnet/deployments")
+	const files = readdirSync(committed).filter((f) => f.endsWith(".json"))
+	expect(files.length).toBeGreaterThan(0)
+	for (const f of [...files.map((f) => join(committed, f)), FIXTURE])
+		expect(() => parseDeployment(JSON.parse(readFileSync(f, "utf8"))), f).not.toThrow()
 })
 
 test("the fixture names the SponsoredFPC the build derives", async () => {

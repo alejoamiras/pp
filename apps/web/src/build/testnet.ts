@@ -20,6 +20,9 @@ export function readTestnetDeployment(file: string) {
 	if (d.target !== "own") fail(file, `targets ${JSON.stringify(d.target)}; a testnet build serves the own pool only`)
 	if (d.network.l1ChainId !== SEPOLIA) fail(file, `is for L1 chain ${d.network.l1ChainId}; a testnet build is for Sepolia (${SEPOLIA})`)
 	if (!isPinned("l1Rpc", d.network.l1Rpc)) fail(file, `network.l1Rpc ${d.network.l1Rpc} is not a pinned Sepolia RPC`)
+	// The page never sends through it, but a file naming an unpinned endpoint anywhere is refused.
+	if (d.network.l1SendRpc !== undefined && !isPinned("l1SendRpc", d.network.l1SendRpc))
+		fail(file, `network.l1SendRpc ${d.network.l1SendRpc} is not the pinned Sepolia send RPC`)
 	if (!isPinned("aztecNode", d.network.aztecNode)) fail(file, `network.aztecNode ${d.network.aztecNode} is not the pinned testnet node`)
 	return d
 }
