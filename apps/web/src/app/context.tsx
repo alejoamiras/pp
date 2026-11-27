@@ -17,10 +17,11 @@ import { type Tx, useTx } from "./useTx"
 export type View = "home" | "bridge" | "exits"
 
 /**
- * Why a collect did not end collected, and the Ethereum transaction it names, if any. `earlier` is an
- * earlier collect's transaction that may still pay the exit out, kept through later attempts.
+ * Why a collect did not end collected, and the Ethereum transaction it names, if any. `earlier` holds
+ * every earlier collect's transaction that may still pay the exit out, oldest first, kept through later
+ * attempts.
  */
-export type CollectFailure = { code: UiCode; txHash?: Hash; earlier?: Hash }
+export type CollectFailure = { code: UiCode; txHash?: Hash; earlier?: readonly Hash[] }
 
 export interface App {
 	source: DataSource

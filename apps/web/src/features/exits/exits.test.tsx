@@ -22,6 +22,7 @@ async function confirmCollect(user: User, button?: HTMLElement): Promise<void> {
 
 const L2_TX = `0x${"ab".repeat(32)}` as const
 const L1_TX = `0x${"cd".repeat(32)}` as const
+const L1_TX_2 = `0x${"ce".repeat(32)}` as const
 
 /** One ready public exit to the owner. */
 const oneReady = (d: { id: string; token: ExitTicket["token"] }): ExitView[] => [
@@ -102,8 +103,12 @@ describe("exits", () => {
 		},
 	)
 
-	test("a declined retry keeps the first collect's unread transaction on the row and says so in the review", async () => {
-		const outcomes = [new BridgeFailure("UNCERTAIN", { l1TxHash: L1_TX }), new ProviderError(4001, "User rejected the request.")]
+	test("a declined retry keeps every earlier unread collect on the row and says so in the review", async () => {
+		const outcomes = [
+			new BridgeFailure("UNCERTAIN", { l1TxHash: L1_TX }),
+			new BridgeFailure("UNCERTAIN", { l1TxHash: L1_TX_2 }),
+			new ProviderError(4001, "User rejected the request."),
+		]
 		const app = renderApp({
 			patch: (s) => ({
 				...s,
@@ -121,10 +126,16 @@ describe("exits", () => {
 		await app.user.click(screen.getByRole("button", { name: "Collect on Ethereum" }))
 		review().getByText("An earlier collect may still pay this out")
 		await app.user.click(review().getByRole("button", { name: "Collect" }))
+		await within(await screen.findByRole("alert")).findByTitle(L1_TX_2)
+		await app.user.click(screen.getByRole("button", { name: "Collect on Ethereum" }))
+		review().getByTitle(L1_TX)
+		review().getByTitle(L1_TX_2)
+		await app.user.click(review().getByRole("button", { name: "Collect" }))
 		const alert = within(await screen.findByRole("alert"))
 		await alert.findByText(messageOf("WALLET_REJECTED"))
 		alert.getByText("Not confirmed")
 		alert.getByTitle(L1_TX)
+		alert.getByTitle(L1_TX_2)
 	})
 
 	test("a failure read before the exit settled leaves the row once a Refresh reads it collected", async () => {

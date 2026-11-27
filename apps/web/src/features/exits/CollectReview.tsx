@@ -59,6 +59,17 @@ function OwnerBlock(p: { sender: Address; payee: Address; label: boolean; accept
 	)
 }
 
+export function TxHashes({ hashes }: { hashes: readonly Hash[] }) {
+	return hashes.map((h, i) => (
+		<span key={h}>
+			{i > 0 ? ", " : null}
+			<span className="font-mono" title={h}>
+				{shortHex(h)}
+			</span>
+		</span>
+	))
+}
+
 /**
  * The collect's sender and payee, read live, before anything is sent. A sender other than the payee
  * is said to be linked to it; the signed-in pool owner's address is refused unless the user accepts
@@ -71,8 +82,8 @@ export function CollectReview({
 	onConfirm,
 }: {
 	view: ExitView
-	/** An earlier collect's transaction that may still pay this exit out. */
-	earlier: Hash | undefined
+	/** The earlier collects' transactions that may still pay this exit out. */
+	earlier: readonly Hash[]
 	onClose(): void
 	onConfirm(from: CollectFrom): void
 }) {
@@ -106,10 +117,11 @@ export function CollectReview({
 				]}
 			/>
 			{ctx.demo && source.l1.demo ? <p className="text-xs text-ink-3">{DEMO_NOTE}</p> : null}
-			{earlier ? (
+			{earlier.length > 0 ? (
 				<Callout tone="attn" title="An earlier collect may still pay this out">
-					Transaction <span className="font-mono">{shortHex(earlier)}</span> has not been read as paid or failed. Refresh first:
-					if it lands, this collect fails but still costs gas.
+					{earlier.length === 1 ? "Transaction" : "Transactions"} <TxHashes hashes={earlier} />{" "}
+					{earlier.length === 1 ? "has" : "have"} not been read as paid or failed. Refresh first: if one lands, this collect fails
+					but still costs gas.
 				</Callout>
 			) : null}
 			{sender === null ? null : isOwner ? (

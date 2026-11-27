@@ -9,7 +9,7 @@ import { parsePayee } from "../../data/parse"
 import type { ExitView } from "../../data/ports"
 import { bindL1Send } from "../../data/sends"
 import { ActionButton, Amount, Callout, EmptyState, Field, LabelChip, Panel, StateBadge, shortHex, type Tone } from "../../ui"
-import { type CollectFrom, CollectReview, sameAddress } from "./CollectReview"
+import { type CollectFrom, CollectReview, sameAddress, TxHashes } from "./CollectReview"
 
 const STATUS: Record<ExitStatus, { text: string; tone: Tone; note: string }> = {
 	proving: {
@@ -61,8 +61,8 @@ function useCollect(view: ExitView) {
 	const { source, live, collecting, refresh } = useApp()
 	const key = exitKey(view)
 	const collect = async (from: CollectFrom) => {
-		// A retry that ends in anything but a payout must not hide a first collect that may still land.
-		const earlier = pendingOf(collecting.failure(key))
+		// A retry that ends in anything but a payout must not hide an earlier collect that may still land.
+		const pending = pendingOf(collecting.failure(key))
 		const on = collectHandoff(live, from)
 		await collecting.run(key, async () => {
 			try {
@@ -70,7 +70,8 @@ function useCollect(view: ExitView) {
 				return undefined
 			} catch (err) {
 				const f = failureOf(err, on.refused())
-				return earlier ? { ...f, earlier } : f
+				const earlier = pending.filter((h) => h !== f.txHash)
+				return earlier.length > 0 ? { ...f, earlier } : f
 			} finally {
 				refresh()
 			}
@@ -98,8 +99,9 @@ const COLLECT_UNCONFIRMED: ReadonlySet<UiCode> = new Set(["UNCERTAIN", "UNKNOWN"
 
 const unconfirmed = (f: Failed): boolean => f.code !== "REVERTED" && (COLLECT_UNCONFIRMED.has(f.code) || f.txHash !== undefined)
 
-/** The transaction of a collect that may still pay the exit out: this failure's own, else an earlier one's. */
-const pendingOf = (f: Failed | undefined): Hash | undefined => (f && unconfirmed(f) && f.txHash ? f.txHash : f?.earlier)
+/** Every collect transaction that may still pay the exit out, oldest first: the earlier ones', then this failure's own. */
+const pendingOf = (f: Failed | undefined): readonly Hash[] =>
+	f === undefined ? [] : [...new Set([...(f.earlier ?? []), ...(unconfirmed(f) && f.txHash ? [f.txHash] : [])])]
 
 const DEMO_COLLECT_NOTE = "Collecting sends one Ethereum transaction from the local demo's dev account, no wallet."
 
@@ -113,9 +115,9 @@ function CollectFailed({ failed }: { failed: Failed }) {
 				</span>
 			) : null}
 			{failed.earlier ? (
-				<span className="mt-1 block" title={failed.earlier}>
-					An earlier collect, transaction <span className="font-mono">{shortHex(failed.earlier)}</span>, may still pay this exit
-					out. {REFRESH_FIRST}
+				<span className="mt-1 block">
+					{failed.earlier.length === 1 ? "An earlier collect, transaction" : "Earlier collects, transactions"}{" "}
+					<TxHashes hashes={failed.earlier} />, may still pay this exit out. {REFRESH_FIRST}
 				</span>
 			) : null}
 		</Callout>
