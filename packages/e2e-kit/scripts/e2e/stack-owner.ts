@@ -1,43 +1,57 @@
 /**
  * The process group a state dir's `stack.pid` records, and whether it is still the one that dir
  * started. A pgid is an identity only while some member holds it, so the record also keeps the
- * leader's start time, which a process that later gets the same pid cannot share.
+ * leader's start time, which a process that later gets the same pid cannot share, and the
+ * `pidNamespace` token under which that pid and start time name one process.
  */
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { endGroup, groupAlive, type ProcFs, startTime } from "@pp/run-isolation/process-group"
+import { endGroup, groupAlive, type ProcFs, pidNamespace, startTime } from "@pp/run-isolation/process-group"
 
 const HOST: ProcFs = { readdir: (path) => readdirSync(path), readFile: (path) => readFileSync(path, "utf8") }
 
 export interface GroupRecord {
 	pgid: number
 	start: string
+	namespace: string
 }
 
 /**
  * Records `pgid` with its leader's start time. Call it before the spawner awaits anything: until the
  * event loop reaps the child, no other process can hold its pid.
  */
-export function recordGroup(path: string, pgid: number, proc: ProcFs = HOST): void {
+export function recordGroup(path: string, pgid: number, proc: ProcFs = HOST, namespace = pidNamespace): void {
 	const start = startTime(pgid, proc)
 	if (start === undefined && startTime(process.pid, proc) === undefined)
 		throw new Error(
 			"stack: this machine has no /proc, so up cannot record the group it starts; stack mode runs only where /proc exists",
 		)
+	const ns = namespace()
+	if (ns === undefined)
+		throw new Error("stack: this /proc hides processes or numbers another pid namespace, so up cannot record the group it starts")
 	if (start === undefined) throw new Error(`stack: pid ${pgid} exited before its start time was read; see stack.log`)
-	writeFileSync(path, `${pgid} ${start}\n`)
+	writeFileSync(path, `${pgid} ${start} ${ns}\n`)
 }
 
 function readRecord(path: string): GroupRecord | undefined {
-	const [pgid, start, ...rest] = readFileSync(path, "utf8").trim().split(" ")
+	const [pgid, start, namespace, ...rest] = readFileSync(path, "utf8").trim().split(" ")
 	const n = Number(pgid)
-	return Number.isSafeInteger(n) && n > 1 && start && rest.length === 0 ? { pgid: n, start } : undefined
+	return Number.isSafeInteger(n) && n > 1 && start && namespace && rest.length === 0 ? { pgid: n, start, namespace } : undefined
 }
 
-/** Whether `r.pgid` is still led by the recorded process, running `cli`. */
-export function ownedBy(r: GroupRecord, cli: string, proc: ProcFs = HOST): boolean {
-	if (startTime(r.pgid, proc) !== r.start) return false
+/**
+ * Whether `r.pgid` is still the recorded group, read under the record's namespace: led by the recorded
+ * process (running `cli`, or a zombie, whose cmdline reads empty), or leaderless and still running,
+ * since a member holding the number keeps the kernel from handing it out as a pid. Assumes the number
+ * is not reused for a new group that is itself orphaned while this record stands.
+ */
+export function ownedBy(r: GroupRecord, cli: string, proc: ProcFs = HOST, namespace = pidNamespace): boolean {
+	if (namespace() !== r.namespace) return false
+	const start = startTime(r.pgid, proc)
+	if (start === undefined) return groupAlive(r.pgid, proc)
+	if (start !== r.start) return false
 	try {
-		return proc.readFile(`/proc/${r.pgid}/cmdline`).split("\0").includes(cli)
+		const args = proc.readFile(`/proc/${r.pgid}/cmdline`)
+		return args === "" || args.split("\0").includes(cli)
 	} catch {
 		return false
 	}
@@ -51,6 +65,7 @@ export async function stopRecorded(path: string, cli: string, graceMs: number): 
 	if (!existsSync(path)) return console.log("[e2e] no stack to stop")
 	const r = readRecord(path)
 	if (r === undefined) return console.log(`[e2e] ${path} is not a record this kit writes; leaving it`)
+	if (r.namespace !== pidNamespace()) return console.log(`[e2e] ${path} was written under another boot or pid namespace; leaving it`)
 	if (ownedBy(r, cli)) {
 		console.log(`[e2e] stopping the stack (pgid ${r.pgid})`)
 		if (!(await endGroup(r.pgid, graceMs))) throw new Error(`stack: pgid ${r.pgid} survived SIGKILL`)
