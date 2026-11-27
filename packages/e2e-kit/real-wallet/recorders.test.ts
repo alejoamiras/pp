@@ -154,7 +154,7 @@ describe("node recorder", () => {
 		const post = (body: unknown) => fetch(rec.url, { method: "POST", body: JSON.stringify(body) })
 		await post({ jsonrpc: "2.0", id: 1, method: "aztec_getNullifierMembershipWitness", params: ["latest", "0x04"] })
 		const late = post({ jsonrpc: "2.0", id: 2, method: "aztec_getNullifierMembershipWitness", params: ["latest", "0x03"] })
-		await new Promise((r) => setTimeout(r, 50))
+		await expect.poll(() => rec.nullifierQueries().length).toBe(2)
 		await post({ jsonrpc: "2.0", id: 3, method: "aztec_sendTx", params: [{}] })
 		await late
 		const send = rec.calls().find((c) => c.name === "sendTx")

@@ -121,7 +121,7 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 			)
 			.catch((e: Error) => `not observed: ${e.message.split("\n")[0]}`)
 	const left = testInfo.timeout - (Date.now() - began)
-	const total = left > OBSERVE_MS ? await observe() : "not observed: too little of the test's time left"
+	const total = testInfo.timeout === 0 || left > OBSERVE_MS ? await observe() : "not observed: too little of the test's time left"
 	testInfo.annotations.push({ type: "wallet token total", description: `${total}; the app shows ${shown}` })
 	rw.log(`wallet token total ${total}; the app shows ${shown}`)
 })
