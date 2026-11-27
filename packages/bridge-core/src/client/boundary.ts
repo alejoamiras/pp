@@ -1,7 +1,7 @@
 import { SpecRangeError } from "@pp/bridge-spec"
 import { PoolClientError } from "@pp/pool-client"
 import { BaseError, ContractFunctionRevertedError } from "viem"
-import { BridgeClientError } from "./errors"
+import { BridgeClientError, isSpendCheckName, rebuildError } from "./errors"
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
 
@@ -15,7 +15,7 @@ function fromPool(e: PoolClientError): BridgeClientError {
 		case "ASP_ROOT_STALE":
 			return new BridgeClientError("STALE", { stale: code })
 		case "SPEND_CHECK_FAILED":
-			return new BridgeClientError("SPEND_MISMATCH", e.check ? { check: e.check } : { source: code })
+			return new BridgeClientError("SPEND_MISMATCH", isSpendCheckName(e.check) ? { check: e.check } : { source: code })
 		case "NOTE_NOT_FOUND":
 		case "NULLIFIER_NOT_FOUND":
 			return new BridgeClientError("NOTE_NOT_FOUND")
@@ -47,7 +47,17 @@ export const revertName = (e: unknown): string | undefined => identifier(contrac
  * lower layers put in their messages (amounts, openings, signatures) stops here.
  */
 export function translate(e: unknown): BridgeClientError {
-	if (e instanceof BridgeClientError) return e
+	try {
+		return translateOrThrow(e)
+	} catch {
+		// A detail the error type refuses (say, a check name pool-client added later) still maps.
+		return new BridgeClientError("RPC_FAILED", { source: "TranslationFailed" })
+	}
+}
+
+function translateOrThrow(e: unknown): BridgeClientError {
+	// Rebuilt, never passed through: a caller's callback can throw one carrying a cause or extra fields.
+	if (e instanceof BridgeClientError) return rebuildError(e)
 	if (e instanceof PoolClientError) return fromPool(e)
 	if (e instanceof SpecRangeError) return new BridgeClientError("SPEND_MISMATCH", { source: identifier(e.code) ?? "SpecRangeError" })
 	if (contractRevert(e)) {

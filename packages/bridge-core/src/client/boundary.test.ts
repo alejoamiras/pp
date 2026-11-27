@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { CLAIM_KEY, SIGNATURE } from "../test/client-fakes"
 import { guarded, translate } from "./boundary"
+import { BridgeClientError } from "./errors"
 
 const MAPPED: Record<PoolClientErrorCode, object> = {
 	SIGNATURE_INVALID: { code: "SPEND_MISMATCH", source: "SIGNATURE_INVALID" },
@@ -53,6 +54,9 @@ const leaky = (): unknown[] => [
 	new TypeError(`cannot read ${OPENING}`),
 	Object.assign(new Error(`rpc ${KEY_HEX}`), { name: `${SIGNATURE}` }),
 	`thrown string ${SALT}`,
+	// A caller's callback can throw the client's own error type, decorated.
+	Object.assign(new BridgeClientError("UNCERTAIN"), { cause: new Error(`salt ${SALT}`), opening: OPENING, message: `${KEY_HEX}` }),
+	new BridgeClientError("RPC_FAILED", { source: "x", extra: SIGNATURE } as never),
 ]
 
 describe("error boundary", () => {
@@ -73,5 +77,15 @@ describe("error boundary", () => {
 			expect(e).not.toHaveProperty("cause")
 		}
 		expectClean(out)
+	})
+
+	it("refuses detail values outside each field's allowed set, and translate still never throws", () => {
+		expect(() => new BridgeClientError("REVERTED", { l1TxHash: "0x12" as Hex })).toThrow(TypeError)
+		expect(() => new BridgeClientError("SPEND_MISMATCH", { check: "opening" as never })).toThrow(TypeError)
+		expect(() => new BridgeClientError("NOPE" as never)).toThrow(TypeError)
+		const forged = Object.assign(new BridgeClientError("UNCERTAIN"), { code: "NOPE", l1TxHash: `${SALT}` })
+		expect(translate(forged)).toMatchObject({ code: "RPC_FAILED", source: "BridgeClientError" })
+		const unknownCheck = new PoolClientError("SPEND_CHECK_FAILED", "x", { check: "brandNew" as never })
+		expect(translate(unknownCheck)).toMatchObject({ code: "SPEND_MISMATCH", source: "SPEND_CHECK_FAILED" })
 	})
 })

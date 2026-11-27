@@ -1,21 +1,26 @@
-import { PoolClientError } from "@pp/pool-client"
-import { toHex } from "viem"
-import { describe, expect, it } from "vitest"
+import { openPoolClient, PoolClientError } from "@pp/pool-client"
+import { type Hex, toHex } from "viem"
+import { describe, expect, it, vi } from "vitest"
 import {
 	aztecWallet,
 	bridgeSpend,
+	CLAIM_KEY,
 	context,
 	DEPLOYMENT,
 	FakeChain,
 	fakePool,
 	manifest,
 	memoryStore,
+	OWNER,
 	openSession,
 	randomRecipient,
+	SIGNATURE,
 } from "../test/client-fakes"
 import { BridgeClientError } from "./errors"
-import { BridgeSession, useSession } from "./session"
+import { BridgeSession, openBridgeSession, useSession } from "./session"
 import { submit } from "./submit"
+
+vi.mock("@pp/pool-client", async (actual) => ({ ...(await actual<typeof import("@pp/pool-client")>()), openPoolClient: vi.fn() }))
 
 describe("BridgeSession", () => {
 	it("cannot be built or imitated outside openBridgeSession", async () => {
@@ -51,5 +56,18 @@ describe("BridgeSession", () => {
 			check: "nullifier",
 		})
 		expect(chain.writeContract).not.toHaveBeenCalled()
+	})
+
+	it("derives its keys and deployment from the options as they were when opening began", async () => {
+		const opened = Promise.withResolvers<unknown>()
+		vi.mocked(openPoolClient).mockReturnValueOnce(opened.promise as never)
+		const a = { manifest: manifest(), l1Address: OWNER, signature: SIGNATURE as Hex, artifacts: {} as never }
+		const pending = openBridgeSession(a)
+		a.signature = `0x${"33".repeat(65)}`
+		a.manifest.bridge = { ...a.manifest.bridge!, hub: toHex(0x0b6n, { size: 32 }) }
+		opened.resolve(fakePool())
+		const { secrets } = useSession(await pending, DEPLOYMENT.id)
+		expect(secrets.claimKey).toEqual(CLAIM_KEY)
+		expect(vi.mocked(openPoolClient).mock.calls[0]?.[0]).toMatchObject({ signature: SIGNATURE })
 	})
 })
