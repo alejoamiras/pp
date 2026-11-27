@@ -20,7 +20,7 @@ async function labelAdmin(aspApiUrl: string, route: "approve-label" | "revoke-la
 /** The mock ASP publishes the grown root to the L1 ASPRegistry before it answers. */
 export const approve = (aspApiUrl: string, label: bigint) => labelAdmin(aspApiUrl, "approve-label", label)
 
-/** Publishes the shrunken root before it answers; revoking the last leaf would publish root 0. */
+/** Publishes the shrunken root to L1 before it answers; a leaf must remain, since L1 refuses root 0. */
 export const revoke = (aspApiUrl: string, label: bigint) => labelAdmin(aspApiUrl, "revoke-label", label)
 
 /** A fresh registry whose poster and birth intake are the bot's accounts for `stackRunId`. */
