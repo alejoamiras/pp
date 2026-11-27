@@ -1,8 +1,20 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs"
+import {
+	existsSync,
+	linkSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	renameSync,
+	rmSync,
+	statSync,
+	unlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { withFileLock } from "./lock.ts"
+import { type LockFs, withFileLock } from "./lock.ts"
 
 const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
@@ -52,6 +64,55 @@ test("a holder whose lock was reclaimed neither renews nor removes the new one",
 	})
 	expect(statSync(lock).mtimeMs).toBe(old * 1000)
 })
+
+test("of two processes reclaiming one stale lock, only one holds the lock at a time", async () => {
+	const lock = join(dir, "e.lock")
+	const [aIn, aOut] = ["e.a-in", "e.a-out"].map((f) => join(dir, f))
+	writeFileSync(lock, "a dead holder")
+	const old = (Date.now() - 120_000) / 1000
+	utimesSync(lock, old, old)
+	// A takes the lock with the real calls and holds it for 1.5 s.
+	const holder = `import { writeFileSync } from "node:fs"
+	import { withFileLock } from ${JSON.stringify(join(import.meta.dir, "lock.ts"))}
+	await withFileLock(${JSON.stringify(lock)}, { staleMs: 60_000, waitMs: 10_000 }, async () => {
+		writeFileSync(${JSON.stringify(aIn)}, "")
+		await Bun.sleep(1_500)
+		writeFileSync(${JSON.stringify(aOut)}, "")
+	})`
+	let a: ReturnType<typeof Bun.spawn> | undefined
+	// B judges the dead holder's lock stale, then stalls before its first change to it, long enough for A
+	// to reclaim the lock and take it (or for 3 s, if A cannot).
+	const stall = () => {
+		if (a !== undefined) return
+		a = Bun.spawn(["bun", "-e", holder], { stdout: "inherit", stderr: "inherit" })
+		for (const end = Date.now() + 3_000; !existsSync(aIn) && Date.now() < end; ) Bun.sleepSync(10)
+	}
+	const stalls: LockFs = {
+		stat: (path) => statSync(path),
+		rename: (from, to) => {
+			stall()
+			renameSync(from, to)
+		},
+		link: (existing, path) => linkSync(existing, path),
+		unlink: (path) => {
+			stall()
+			unlinkSync(path)
+		},
+	}
+	let overlapped = false
+	const b = await withFileLock(
+		lock,
+		{ staleMs: 60_000, waitMs: 10_000 },
+		() => {
+			overlapped = existsSync(aIn) && !existsSync(aOut)
+		},
+		stalls,
+	)
+	expect(b).toBeDefined()
+	expect(await a?.exited).toBe(0)
+	expect(overlapped).toBe(false)
+	expect(readdirSync(dir).filter((f) => f.startsWith("e.lock"))).toEqual([])
+}, 30_000)
 
 test("a lock older than staleMs is reclaimed", async () => {
 	const lock = join(dir, "b.lock")
