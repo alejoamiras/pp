@@ -29,7 +29,7 @@ bun run --cwd packages/e2e-kit test:browser reap               # stop networks t
 
 State lives under `.e2e-state/<run>/` (gitignored), or `PP_E2E_STATE_DIR` when set: ports, the
 network's artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the network and prints the line that reattaches to it
-(`PP_E2E_ATTACH=<state dir>`, with `PP_E2E_REBUILD=1` to rebuild); a network that failed to boot is never kept.
+(`PP_E2E_ATTACH=<state dir>`, with `PP_E2E_REBUILD=1` to rebuild); a network whose boot failed or was interrupted is never kept.
 
 ## Stack mode
 

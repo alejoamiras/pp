@@ -24,8 +24,8 @@ KIT_DIR=$(pwd)
 REPO_DIR=$(cd ../.. && pwd)
 APP_DIR="$REPO_DIR/apps/web"
 MODE="${PP_E2E_MODE:-sandbox}"
-# A boot that fails clears this: nothing it left is worth keeping.
-KEEP="${PP_E2E_KEEP:-}"
+# Takes PP_E2E_KEEP only once the network is up: a boot that fails or is interrupted keeps nothing.
+KEEP=""
 case "$MODE" in
   sandbox|stack) ;;
   *) echo "[e2e] FATAL: PP_E2E_MODE is '$MODE'; use sandbox or stack" >&2; exit 2 ;;
@@ -123,10 +123,10 @@ boot_sandbox() {
   echo "$SANDBOX_PID" >"$STATE_DIR/sandbox.pid"
   for _ in $(seq 1 600); do
     if [ -f "$ARTIFACTS/handle.json" ] && grep -q "sandbox up" "$LOG"; then break; fi
-    if ! kill -0 "$SANDBOX_PID" 2>/dev/null; then KEEP=0; log "FATAL: the sandbox died while booting — see $LOG"; tail -40 "$LOG" >&2; exit 2; fi
+    if ! kill -0 "$SANDBOX_PID" 2>/dev/null; then log "FATAL: the sandbox died while booting — see $LOG"; tail -40 "$LOG" >&2; exit 2; fi
     sleep 2
   done
-  [ -f "$ARTIFACTS/handle.json" ] || { KEEP=0; log "FATAL: sandbox did not come up in 20 min"; exit 2; }
+  [ -f "$ARTIFACTS/handle.json" ] || { log "FATAL: sandbox did not come up in 20 min"; exit 2; }
 }
 
 attach_sandbox() {
@@ -142,8 +142,8 @@ boot_stack() {
   log "booting the local stack (log: $STATE_DIR/stack.log)"
   # Set first: an interrupt mid-boot must still stop the group `up` has already started.
   STACK_BOOTED=1
-  # A failed `up` has ended its group or left the record `down` retries; either way nothing is kept.
-  bun scripts/e2e/stack.ts up "$STATE_DIR" || { KEEP=0; log "FATAL: the local stack did not come up — see $STATE_DIR/stack.log"; tail -40 "$STATE_DIR/stack.log" >&2; exit 2; }
+  # A failed `up` has ended its group or left the record `down` retries.
+  bun scripts/e2e/stack.ts up "$STATE_DIR" || { log "FATAL: the local stack did not come up — see $STATE_DIR/stack.log"; tail -40 "$STATE_DIR/stack.log" >&2; exit 2; }
 }
 
 build_wallet() {
@@ -190,6 +190,7 @@ WEB_WALLETS="$WALLET_ORIGIN_PLAIN/?profile=plain,$WALLET_ORIGIN_FULL/?profile=fu
 if [ -n "${PP_E2E_ATTACH:-}" ]; then attach_sandbox
 elif [ "$MODE" = stack ]; then boot_stack
 else boot_sandbox; fi
+KEEP="${PP_E2E_KEEP:-}"
 NODE_URL=$(jq -r .nodeUrl "$ARTIFACTS/handle.json")
 STACK_MANIFEST=""
 if [ "$MODE" = stack ]; then STACK_MANIFEST=$(jq -r .manifestPath "$STATE_DIR/stack.json"); fi

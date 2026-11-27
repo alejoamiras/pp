@@ -18,13 +18,18 @@ case "$1:$2" in
     [ "$3" = "$FAKE_OWN" ] || exit 1
     echo "boot failed" > "$3/stack.log"
     if [ -n "$FAKE_LEFT" ]; then echo "$FAKE_LEFT" > "$3/stack.pid"; fi
+    # Ctrl-C reaches the whole foreground group: the runner, and this boot, which dies of it.
+    if [ -n "$FAKE_INTERRUPT" ]; then kill -INT "$PPID"; kill -INT $$; fi
     exit 1 ;;
 esac
 exit 0
 `
 
-/** Runs the stack-mode runner over a boot that fails; `left` is the record `up` could not clear. */
-function failedBoot(o: { keep: boolean; left?: string }) {
+/**
+ * Runs the stack-mode runner over a boot that fails, or that Ctrl-C interrupts; `left` is the record
+ * `up` could not clear.
+ */
+function failedBoot(o: { keep: boolean; left?: string; interrupt?: boolean }) {
 	const base = join(homedir(), ".cache", "pp", "e2e-kit")
 	mkdirSync(base, { recursive: true })
 	const root = mkdtempSync(join(base, "agent-"))
@@ -47,6 +52,7 @@ function failedBoot(o: { keep: boolean; left?: string }) {
 			FAKE_CALLS: calls,
 			FAKE_OWN: state,
 			FAKE_LEFT: o.left ?? "",
+			FAKE_INTERRUPT: o.interrupt ? "1" : "",
 		},
 	})
 	const made = existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : []
@@ -58,6 +64,13 @@ describe("a stack that failed to boot", () => {
 	test("is not kept under PP_E2E_KEEP=1: the runner stops what is left and returns the ports", () => {
 		const r = failedBoot({ keep: true })
 		expect(r.status).toBe(2)
+		expect(r.out).not.toContain("stack kept")
+		expect(r.calls).toContain(`scripts/e2e/stack.ts down ${r.state}`)
+		expect(r.calls).toContain(`scripts/e2e/resolve-ports.ts --release ${r.state}`)
+	})
+
+	test("is not kept under PP_E2E_KEEP=1 when Ctrl-C interrupts the boot", () => {
+		const r = failedBoot({ keep: true, interrupt: true })
 		expect(r.out).not.toContain("stack kept")
 		expect(r.calls).toContain(`scripts/e2e/stack.ts down ${r.state}`)
 		expect(r.calls).toContain(`scripts/e2e/resolve-ports.ts --release ${r.state}`)
