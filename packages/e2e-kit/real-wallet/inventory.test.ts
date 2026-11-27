@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { leakedListeners, type Owned, parseListeners } from "./inventory"
 
 const ss = [
-	'tcp   LISTEN 0      511        127.0.0.1:41001      0.0.0.0:*    users:(("bun",pid=101,fd=20),("bun",pid=102,fd=20))',
+	'tcp   LISTEN 0      511        127.0.0.1:41001      0.0.0.0:*    users:(("bun",pid=101,fd=20),("pid=9",pid=102,fd=20))',
 	"tcp   LISTEN 0      511          0.0.0.0:41002      0.0.0.0:*",
 	'udp   UNCONN 0      0               [::]:41003         [::]:*    users:(("node",pid=103,fd=7))',
 ].join("\n")

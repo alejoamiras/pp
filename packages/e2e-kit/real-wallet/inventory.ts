@@ -41,7 +41,7 @@ export function parseListeners(ss: string): Map<number, number[]> {
 		const local = line.trim().split(/\s+/)[4] ?? ""
 		const port = Number.parseInt(local.slice(local.lastIndexOf(":") + 1), 10)
 		if (!Number.isInteger(port)) continue
-		out.set(port, [...(out.get(port) ?? []), ...Array.from(line.matchAll(/pid=(\d+)/g), (m) => Number(m[1]))])
+		out.set(port, [...(out.get(port) ?? []), ...Array.from(line.matchAll(/,pid=(\d+),/g), (m) => Number(m[1]))])
 	}
 	return out
 }

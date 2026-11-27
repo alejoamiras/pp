@@ -41,7 +41,7 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 
 /** The wallet appends U+FE0F to a lone text-capable pictograph for display; the app does not. */
 export function emojiCells(text: string): string[] {
-	return Array.from(graphemes.segment(text.replace(/\s/g, "").replaceAll("️", "")), (s) => s.segment)
+	return Array.from(graphemes.segment(text.replace(/\s/g, "").replaceAll("\uFE0F", "")), (s) => s.segment)
 }
 
 /** Enabled and clickable: the wallet also disables its buttons with `pointer-events: none`. */

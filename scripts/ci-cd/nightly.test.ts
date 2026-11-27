@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { expect, test } from "bun:test"
+import { REAL_WALLET_TESTS } from "../../packages/e2e-kit/real-wallet/count-reporter"
 import {
 	boundedSuite,
 	expectedPassed,
@@ -88,6 +89,7 @@ test("the sepolia-fork suite gets a committed keyless gateway, and counts only i
 test("the real-wallet suite counts only its reporter's one line, at the reporter's total", () => {
 	const suite = SUITES.find((s) => s.name === "real-wallet")
 	expect(suite).toMatchObject({ cwd: "packages/e2e-kit", command: ["bun", "run", "test:real-wallet"], expected: 3 })
+	expect(suite?.expected, "the suite and the kit's reporter agree on the total").toBe(REAL_WALLET_TESTS)
 	// It starts detached process groups, which a bounded suite's kill would orphan.
 	expect(suite?.command[0]).not.toBe("bash")
 	expect(suite?.prepare?.at(-1)).toEqual(["forge", "build", "--root", "contracts/bridge/evm", "--skip", "test", "script"])

@@ -62,7 +62,7 @@ export default defineConfig({
 		actionTimeout: 60_000,
 		navigationTimeout: 60_000,
 	},
-	// A claim and a ragequit each prove in the wallet's offscreen document; the suite never retries.
+	// Each wallet transaction proves in the wallet's offscreen document, in minutes; the suite never retries.
 	projects: realWallet
 		? [{ name: "real-wallet", testMatch: /\.pw\.ts$/, retries: 0, timeout: 15 * 60_000 }]
 		: [{ name: "chromium", use: { channel: undefined } }],

@@ -97,15 +97,21 @@ export const expectedPassed =
  */
 export const SEPOLIA_FORK_ENDPOINT = "https://sepolia.gateway.tenderly.co/"
 
+/** The forge libraries and remappings a build of contracts/bridge/evm needs. */
+const L1_LIBS: string[][] = [
+	["bash", "contracts/bridge/evm/scripts/install-libs.sh"],
+	["bun", "packages/bridge-core/scripts/gen-remappings.ts"],
+]
+
+/** `real-wallet/count-reporter.ts`'s total; `nightly.test.ts` holds the two equal. */
+const REAL_WALLET_TESTS = 3
+
 export const SUITES: Suite[] = [
 	// contracts/bridge/evm owns the script and the Foundry `nightly` profile it runs; the libraries and
 	// remappings it assumes are prepared here, as the pull-request job prepares them.
 	{
 		name: "bridge-l1-fuzz-invariant",
-		prepare: [
-			["bash", "contracts/bridge/evm/scripts/install-libs.sh"],
-			["bun", "packages/bridge-core/scripts/gen-remappings.ts"],
-		],
+		prepare: [...L1_LIBS],
 		cwd: ".",
 		command: ["bash", "contracts/bridge/evm/scripts/nightly.sh"],
 		passed: forgePassed,
@@ -178,11 +184,7 @@ export const SUITES: Suite[] = [
 	// group and enforces its own deadline with teardown. The workflow has fetched the pool already.
 	{
 		name: "sepolia-fork",
-		prepare: [
-			["bash", "contracts/bridge/evm/scripts/install-libs.sh"],
-			["bun", "packages/bridge-core/scripts/gen-remappings.ts"],
-			["forge", "build", "--root", "contracts/bridge/evm"],
-		],
+		prepare: [...L1_LIBS, ["forge", "build", "--root", "contracts/bridge/evm"]],
 		cwd: "packages/sepolia-fork",
 		command: ["bun", "run", "run", "--require-rpc"],
 		env: { SEPOLIA_RPC_URL: SEPOLIA_FORK_ENDPOINT },
@@ -194,15 +196,11 @@ export const SUITES: Suite[] = [
 	// groups. The stack deploys the bridge from its L1 build, which the workflow does not make.
 	{
 		name: "real-wallet",
-		prepare: [
-			["bash", "contracts/bridge/evm/scripts/install-libs.sh"],
-			["bun", "packages/bridge-core/scripts/gen-remappings.ts"],
-			["forge", "build", "--root", "contracts/bridge/evm", "--skip", "test", "script"],
-		],
+		prepare: [...L1_LIBS, ["forge", "build", "--root", "contracts/bridge/evm", "--skip", "test", "script"]],
 		cwd: "packages/e2e-kit",
 		command: ["bun", "run", "test:real-wallet"],
-		passed: expectedPassed("real-wallet", 3),
-		expected: 3,
+		passed: expectedPassed("real-wallet", REAL_WALLET_TESTS),
+		expected: REAL_WALLET_TESTS,
 	},
 ]
 
