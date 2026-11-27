@@ -1,0 +1,169 @@
+/**
+ * The testnet deployment file: one per target, one writer per section. `network` is the only source of
+ * transport and rollup fields; `expected` is committed before a deploy and never read from the chain;
+ * `pool` and `bridge` are promoted from a keyed run's candidate.
+ */
+import type { Address, Hex } from "viem"
+import z from "zod"
+import { isPinned, LOCAL, loopback, SEPOLIA } from "./network"
+
+const evmAddress = z
+	.string()
+	.regex(/^0x[0-9a-fA-F]{40}$/, "expected a 20-byte 0x hex address")
+	.transform((a) => a as Address)
+const word = z
+	.string()
+	.regex(/^0x[0-9a-fA-F]{64}$/, "expected a 32-byte 0x hex word")
+	.transform((a) => a as Hex)
+const selector = z
+	.string()
+	.regex(/^0x[0-9a-fA-F]{8}$/, "expected a 4-byte 0x hex selector")
+	.transform((a) => a as Hex)
+/** JSON has no bigint, and a JSON number loses precision past 2^53, so bigints travel as decimal strings. */
+const decimal = z
+	.string()
+	.regex(/^(0|[1-9][0-9]*)$/, "expected a non-negative decimal string")
+	.transform((s) => BigInt(s))
+const port = z.number().int().min(1024).max(65_535)
+const url = z.url({ protocol: /^https?$/, error: "expected an http(s) URL" })
+
+/** Transport is checked per mode by `assertTransport`: pinned URLs on Sepolia, loopback in a rehearsal. */
+const networkSchema = z
+	.object({
+		l1ChainId: z.union([z.literal(SEPOLIA), z.literal(LOCAL)]),
+		rollup: evmAddress,
+		l1Registry: evmAddress,
+		inbox: evmAddress,
+		outbox: evmAddress,
+		rollupVersion: z.number().int().positive(),
+		fpc: word,
+		l1Rpc: url,
+		aztecNode: url,
+		/** The bot's snapshot server, on loopback. */
+		botPort: port,
+		/** The own pool's mock ASP, on loopback; operator targets use the operator's API. */
+		aspPort: port.optional(),
+	})
+	.strict()
+
+const amountsSchema = z.object({ debit: decimal, note: decimal, bridge: decimal }).strict()
+
+const expectedSchema = z
+	.object({
+		guardian: evmAddress,
+		lifetimeCap: decimal,
+		l1Deployer: evmAddress,
+		l2Deployer: word,
+		botPoster: word,
+		aspPostman: evmAddress.optional(),
+		canaryOwner: evmAddress,
+		/** Zero keeps shields paused. */
+		birthIntake: word,
+		tokenClassId: word,
+		amounts: amountsSchema,
+	})
+	.strict()
+
+const routeSchema = z.object({ verifier: evmAddress, selector, codeHash: word }).strict()
+
+const operatorSchema = z
+	.object({
+		implementation: evmAddress,
+		implementationCodeHash: word,
+		depositRoute: routeSchema,
+		transactRoute1x1: routeSchema,
+		asset: z.object({ address: evmAddress, vettingFeeBps: z.number().int().min(0).max(10_000), minDeposit: decimal }).strict(),
+		evidence: z.object({ forkBlock: z.number().int().positive(), forkBlockHash: word }).strict(),
+	})
+	.strict()
+
+const poolSchema = z
+	.object({
+		poolVault: evmAddress,
+		entrypoint: evmAddress,
+		aspRegistry: evmAddress,
+		keystore: evmAddress,
+		asset: evmAddress,
+		deployBlock: decimal,
+		aspApiUrl: z.string(),
+	})
+	.strict()
+
+const bridgeSchema = z
+	.object({
+		factory: evmAddress,
+		portal: evmAddress,
+		hub: word,
+		token: word,
+		registry: word,
+		deployBlock: decimal,
+		/** The factory's creation transaction, from the deploy journal. */
+		factoryTx: word,
+	})
+	.strict()
+
+/** What a candidate section may carry: exactly its schema's fields. */
+export const POOL_FIELDS: readonly string[] = Object.keys(poolSchema.shape)
+export const BRIDGE_FIELDS: readonly string[] = Object.keys(bridgeSchema.shape)
+
+export const TARGETS = ["own", "v9", "pool1", "v8"] as const
+
+export const deploymentSchema = z
+	.object({
+		network: networkSchema,
+		target: z.enum(TARGETS),
+		bundle: z.enum(["ceremony", "pre-ceremony"]),
+		expected: expectedSchema.optional(),
+		operator: operatorSchema.optional(),
+		pool: poolSchema.optional(),
+		bridge: bridgeSchema.optional(),
+	})
+	.strict()
+	.superRefine((d, ctx) => {
+		const own = d.target === "own"
+		if (own && d.network.aspPort === undefined)
+			ctx.addIssue({ code: "custom", path: ["network", "aspPort"], message: "the own pool's mock ASP needs a port" })
+		if (own && d.operator) ctx.addIssue({ code: "custom", path: ["operator"], message: "the own pool has no operator section" })
+		if (d.pool) {
+			const want = own && d.network.aspPort !== undefined ? loopback(d.network.aspPort) : undefined
+			const ok = own ? d.pool.aspApiUrl === want : isPinned("aspApi", d.pool.aspApiUrl)
+			if (!ok)
+				ctx.addIssue({ code: "custom", path: ["pool", "aspApiUrl"], message: `not this target's ASP URL: ${d.pool.aspApiUrl}` })
+		}
+	})
+
+export type TestnetDeployment = z.output<typeof deploymentSchema>
+export type Section = "expected" | "operator" | "pool" | "bridge"
+
+/**
+ * Validates a decoded deployment file (the value of `JSON.parse`).
+ * @throws Error naming every offending field
+ */
+export function parseDeployment(json: unknown): TestnetDeployment {
+	const r = deploymentSchema.safeParse(json)
+	if (!r.success) {
+		const issues = r.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")
+		throw new Error(`deployment file failed strict validation — ${issues}`)
+	}
+	return r.data
+}
+
+/** Tab-indented JSON with a trailing newline; validates first, so it never writes what `parseDeployment` refuses. */
+export function serializeDeployment(d: TestnetDeployment): string {
+	const text = `${JSON.stringify(d, (_k, v) => (typeof v === "bigint" ? v.toString() : v), "\t")}\n`
+	parseDeployment(JSON.parse(text))
+	return text
+}
+
+/**
+ * Narrows to a file that carries `sections`.
+ * @throws Error naming every missing section
+ */
+export function requireSections<K extends Section>(
+	d: TestnetDeployment,
+	sections: readonly K[],
+): TestnetDeployment & Required<Pick<TestnetDeployment, K>> {
+	const missing = sections.filter((s) => d[s] === undefined)
+	if (missing.length) throw new Error(`deployment file has no ${missing.join(", ")} section${missing.length > 1 ? "s" : ""}`)
+	return d as TestnetDeployment & Required<Pick<TestnetDeployment, K>>
+}
