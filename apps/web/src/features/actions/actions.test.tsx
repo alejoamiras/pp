@@ -428,6 +428,7 @@ describe("the shield dialog", () => {
 
 	test("a shield whose connection ends while it waits to send sends nothing", async () => {
 		let release = () => {}
+		let entered = false
 		const held = new Promise<void>((r) => {
 			release = r
 		})
@@ -437,6 +438,7 @@ describe("the shield dialog", () => {
 				aztec: {
 					...s.aztec,
 					shield: async (from, amount, on) => {
+						entered = true
 						await held
 						return s.aztec.shield(from, amount, on)
 					},
@@ -447,6 +449,7 @@ describe("the shield dialog", () => {
 		const dialog = await openShield(app)
 		await app.user.type(dialog.getByLabelText(/Amount/), "5")
 		await app.user.click(dialog.getByRole("button", { name: "Shield" }))
+		await waitFor(() => expect(entered).toBe(true))
 		act(() => app.control.disconnectAztec())
 		await act(async () => release())
 		expect(app.control.state().sent.aztec).toBe(0)

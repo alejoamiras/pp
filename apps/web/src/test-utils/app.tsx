@@ -1,7 +1,7 @@
 /**
  * Renders the whole app over a fresh fixture world. A "reload" is a second render over the same store,
- * as the browser's `sessionStorage` carries the world across one. Frames resolve at once and nothing
- * polls unless `poll` sets the production refetch interval, so the only clock is the fixture's chain time.
+ * as the browser's `sessionStorage` carries the world across one. Frames resolve at once, and nothing
+ * polls unless `poll` sets a refetch interval.
  */
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"

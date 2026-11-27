@@ -121,7 +121,7 @@ export function ShieldDialog({ account, amount: available, onClose }: { account:
 	return (
 		<ActionShell
 			title="Shield"
-			description="Moves public balance into a new private label. The label cannot be sent or unshielded until the allow list approves it; it can always leave to Ethereum."
+			description="Moves public balance into a new private label. The label cannot be sent or unshielded until the allow list approves it; leaving to Ethereum never waits for the list."
 			action="shield"
 			state={act.state}
 			onClose={onClose}

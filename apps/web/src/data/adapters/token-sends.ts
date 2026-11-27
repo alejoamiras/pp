@@ -65,8 +65,8 @@ async function pathIn(allowList: TokenSendDeps["allowList"], view: AllowListView
 }
 
 /**
- * The token's spends as payloads paid by the SponsoredFPC, each with a path `checkedPath` read. Building
- * one asks nothing of `wallet`; it only carries the contract handle.
+ * The token's sends as payloads paid by the SponsoredFPC; the label spends carry a path `checkedPath`
+ * read. Building one asks nothing of `wallet`; it only carries the contract handle.
  */
 export function spendPayloads(d: Pick<TokenSendDeps, "sponsoredFpc"> & { token: AztecAddress }) {
 	const fee = { paymentMethod: new SponsoredFeePaymentMethod(sdk(d.sponsoredFpc)) }

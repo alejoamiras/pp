@@ -31,7 +31,7 @@ export function labelView(origin: Origin, state: LabelState): LabelView {
 			tone: "ok",
 			meaning:
 				origin === 1
-					? "A shielded label the posted allow list now includes: sends and unshields work."
+					? "A shielded label the posted allow list now includes: the list no longer holds back its sends and unshields."
 					: "In the posted allow list: sends and unshields work.",
 			can: { send: true, unshield: true, ragequit: true },
 			reason: "",

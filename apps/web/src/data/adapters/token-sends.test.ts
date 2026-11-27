@@ -244,6 +244,7 @@ describe("the shield", () => {
 			[TOKEN, "shield"],
 		])
 		expect(payload.calls[1]?.args.map((a) => a.toBigInt())).toEqual([5n])
+		expect(payload.feePayer?.toString()).toBe(FPC)
 		expect([list.current, list.check].map((f) => f.mock.calls.length)).toEqual([0, 0])
 
 		const refused = rig("2c")

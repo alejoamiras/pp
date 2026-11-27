@@ -1,10 +1,7 @@
 /**
- * The shield on a stack build, against the local stack: a claimed label is partly unshielded, and part
- * of that public balance is shielded back from the public row into a note under a new label. The
- * stack's bot approves the label, the page's regular refetch shows it enabled with no reload, and part
- * of it goes privately to the file's other account with the birth-tree path the page's worker read.
- * Payer: anvil's dev accounts and the SponsoredFPC. Estimated 90 to 120 s, measured 1.5 min alone on
- * a 192-core host, the actors' setup not counted.
+ * The shield on a stack build, against the local stack, through the bot's approval and a private send.
+ * Payer: anvil's dev accounts and the SponsoredFPC. Estimated 90 to 120 s, measured 1.5 min alone on a
+ * 192-core host, the actors' setup not counted.
  */
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import { TxHash } from "@aztec-labs/aztec.js/tx"
@@ -28,7 +25,7 @@ const step = stepLog("shield-spec")
 
 const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 /** A row's amount, which `Amount` renders as the figure followed by the symbol in a `small`. */
-const amountOf = (row: Locator) => row.locator("span:has(> small)").first()
+const amountOf = (row: Locator) => row.locator("span:has(> small)")
 
 // Fails if the wallet's execution refuses the stage's grant or the shield's payload, if the bot never
 // approves the birth or the page's refetch does not show it without a reload, or if the token refuses
@@ -62,9 +59,10 @@ test("shields part of the public balance into a new label that turns Funds enabl
 	const wallet = { profile: "plain", origin: run.testWalletOrigins.plain, account: actor.address } as const
 	const { frame, row } = await bridgeAndClaim(page, { s, note, amount, wallet, l1, step, wait: WAIT })
 	// The page acts as the first account the grant lists; the other one receives.
+	const actors = [actor.address, other.address].map((a) => a.toLowerCase())
 	const sender = await page.getByTestId("aztec-account").first().getAttribute("data-address")
-	const recipient = [actor.address, other.address].map((a) => a.toLowerCase()).find((a) => a !== sender)
-	expect(recipient, "the file's other account").toBeDefined()
+	expect(actors, "the page acts as one of the file's two accounts").toContain(sender)
+	const recipient = actors.find((a) => a !== sender)
 
 	const dialog = page.getByTestId("action-dialog")
 	const publicRow = page.getByTestId("public-row")
@@ -113,6 +111,7 @@ test("shields part of the public balance into a new label that turns Funds enabl
 
 	const txs = await submitted(frame)
 	expect(txs, "the claim, the unshield, the shield and the transfer, each once").toHaveLength(4)
+	expect(new Set(txs.map((tx) => tx.hash)).size, "four distinct transactions").toBe(4)
 	const node = createAztecNodeClient(s.manifest.aztecNode)
 	for (const tx of txs) expect((await node.getTxReceipt(TxHash.fromString(tx.hash))).hasExecutionSucceeded(), tx.hash).toBe(true)
 
