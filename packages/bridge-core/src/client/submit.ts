@@ -259,7 +259,7 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
  * Sends a checked bridge spend and returns the receipt of the verified `BridgedFromPool` event for
  * its nullifier, whichever transaction carried it. Never resubmits by itself: a send whose outcome
  * is unknown ends `UNCERTAIN` and needs `acceptUncertain` to try again. A second call for the same
- * note over the same store while one runs is `IN_FLIGHT`.
+ * note of the same deployment while one runs in this process is `IN_FLIGHT`.
  *
  * Known limit: the journal is authenticated, not fresh. A record deleted or rolled back in the store,
  * or a second process or tab over the same storage, can let a note be sent again while an earlier
@@ -275,7 +275,7 @@ export function submit(
 	return guarded(async () => {
 		// Taken before the first await, so nothing the caller does afterwards changes what is checked or sent.
 		let snap = snapshotSpend(spend)
-		const release = holdNote(ctx.store, snap)
+		const release = holdNote(ctx.deployment.id, snap)
 		try {
 			const run = await openRun(ctx, l1, l1.account, l1.chain, s, o, snap)
 			for (let reproofs = 0; ; reproofs++) {
@@ -296,17 +296,16 @@ export function submit(
 }
 
 /**
- * Notes with a `submit` running in this process, per store, so two calls over one store (one client
- * or several) never both reach the wallet. Separate processes or tabs over one storage are not
- * covered: the journal has no compare-and-set, so both may send, and the vault lets one land.
+ * Notes with a `submit` running in this process, per deployment, so two calls (one client or several,
+ * over one store adapter or several over the same storage) never both reach the wallet. Separate
+ * processes or tabs over one storage are not covered: the journal has no compare-and-set, so both
+ * may send, and the vault lets one land.
  */
-const running = new WeakMap<KeyValueStore, Set<bigint>>()
+const running = new Set<string>()
 
-function holdNote(store: KeyValueStore, s: PreparedBridgeSpend): () => void {
-	const nullifier = s.proof.pubSignals[0]?.[0] ?? s.nullifier
-	const held = running.get(store) ?? new Set<bigint>()
-	running.set(store, held)
-	if (held.has(nullifier)) throw new BridgeClientError("IN_FLIGHT")
-	held.add(nullifier)
-	return () => held.delete(nullifier)
+function holdNote(deploymentId: string, s: PreparedBridgeSpend): () => void {
+	const key = `${deploymentId}:${s.proof.pubSignals[0]?.[0] ?? s.nullifier}`
+	if (running.has(key)) throw new BridgeClientError("IN_FLIGHT")
+	running.add(key)
+	return () => running.delete(key)
 }

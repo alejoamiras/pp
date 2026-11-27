@@ -16,7 +16,7 @@ import {
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { MAX_UNRESOLVED_ATTEMPTS } from "./attempts"
 import { BridgeClientError } from "./errors"
-import { Journal, type JournalRecord } from "./journal"
+import { Journal, type JournalRecord, type KeyValueStore } from "./journal"
 import { Preflights } from "./preflight"
 import { useSession } from "./session"
 import { MAX_REPROOFS, submit } from "./submit"
@@ -132,11 +132,16 @@ describe("submit: preflight at handoff", () => {
 		expect(t.values.size).toBe(0)
 	})
 
-	it("lets one of two concurrent submits of a note over one store reach the wallet", async () => {
+	it("lets one of two concurrent submits of a note reach the wallet, even through separate store adapters", async () => {
 		const t = await setup()
 		const other = await randomRecipient()
 		t.preflights.record(DEPLOYMENT.id, other, aztecWallet([other]))
-		const second = context(t.chain, t.store, t.preflights)
+		const adapter: KeyValueStore = {
+			getItem: (k) => t.store.getItem(k),
+			setItem: (k, v) => t.store.setItem(k, v),
+			removeItem: (k) => t.store.removeItem(k),
+		}
+		const second = context(t.chain, adapter, t.preflights)
 		const held = Promise.withResolvers<object>()
 		t.chain.simulate.mockReturnValueOnce(held.promise)
 		const first = submit(t.ctx, t.spend, t.chain.wallet(), t.session)
