@@ -26,7 +26,7 @@ export function sentOutcome(action: TxAction, sent: Sent): TxOutcome {
 /**
  * A throw before the handoff: the wallet's no, a coded refusal, or a failed read, build or chunk load.
  * The wallet was never asked to send, so an uncoded one or a chunk that failed to load still sent
- * nothing, and a retry loads the chunk again.
+ * nothing; whether a retry fetches the chunk again is the browser's choice.
  */
 export function beforeHandoffOutcome(err: unknown): TxOutcome {
 	if (isUserRejection(err)) return { ok: false, code: "WALLET_REJECTED" }

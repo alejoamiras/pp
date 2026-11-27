@@ -1,4 +1,5 @@
 import { beforeEach, expect, test, vi } from "vitest"
+import { BridgeFailure } from "../errors"
 import type { DataSource } from "../source"
 import type { AztecAddress } from "../stack-types"
 
@@ -28,12 +29,20 @@ vi.mock("./l1", () => ({ stackL1: () => ({ reads: {} }) }))
 vi.mock("./clock", () => ({ stackClock: () => ({}) }))
 vi.mock("./token", () => ({ readToken: async () => ({ decimals: 18, symbol: "T" }) }))
 
+/** What the aztec chunk's build step throws once, after the import succeeded. */
+let buildFailure: Error | null = null
+
 /** Each lazily loaded chunk, as the page would get it once its fetch succeeds. */
 const CHUNKS: Record<string, { path: string; module: Record<string, unknown> }> = {
 	aztec: {
 		path: "./aztec",
 		module: {
-			aztecDeps: () => ({ node: {} }),
+			aztecDeps: () => {
+				const err = buildFailure
+				buildFailure = null
+				if (err) throw err
+				return { node: {} }
+			},
 			stackAztec: () => ({ notesByLabel: async () => [5n] }),
 			readReceipt: async () => ({ status: "success" }),
 		},
@@ -61,6 +70,7 @@ const failing = new Set<string>()
 // A fresh page per case: `resetModules` alone keeps a mocked chunk once it loaded, so each is registered again.
 beforeEach(() => {
 	failing.clear()
+	buildFailure = null
 	vi.resetModules()
 	for (const [name, { path, module }] of Object.entries(CHUNKS))
 		vi.doMock(path, () => {
@@ -93,4 +103,12 @@ test.each([
 	await expect(call(source)).rejects.toMatchObject({ name: "BridgeFailure", code: "PAGE_LOAD_FAILED" })
 	failing.delete(chunk)
 	await expect(call(source)).resolves.toEqual(loaded)
+})
+
+test("a build step that fails after its chunk loaded keeps its own error, and the next call builds again", async () => {
+	const source = await (await import("./index")).loadSource()
+	const own = new BridgeFailure("RPC_INCONSISTENT")
+	buildFailure = own
+	await expect(source.aztec.notesByLabel(OWNER, 1n)).rejects.toBe(own)
+	await expect(source.aztec.notesByLabel(OWNER, 1n)).resolves.toEqual([5n])
 })

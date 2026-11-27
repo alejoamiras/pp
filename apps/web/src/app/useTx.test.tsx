@@ -40,7 +40,7 @@ test.each([
 	expect(result.current.blocked("unshield", FROM)).toBe(held)
 })
 
-test("a receipt read whose chunk failed to load keeps the send held, and the next Refresh reads it again", async () => {
+test("check returns nothing for a receipt read whose chunk failed to load: the send stays held, and a later check reads it again", async () => {
 	const aztec = vi
 		.fn<ReceiptPort["aztec"]>()
 		.mockRejectedValueOnce(new BridgeFailure("PAGE_LOAD_FAILED"))

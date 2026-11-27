@@ -2,7 +2,8 @@ import { BridgeFailure } from "./errors"
 
 /**
  * `load` run once and shared while it runs and after it resolves. A rejection is dropped, so the next
- * call starts over: one failed chunk or read must not fail every later click for the page's life.
+ * call runs `load` again. Whether a chunk the browser failed to fetch is fetched again is the
+ * browser's choice; `PAGE_LOAD_FAILED`'s sentence says to reload.
  */
 export function loadOnce<T>(load: () => Promise<T>): () => Promise<T> {
 	let pending: Promise<T> | undefined

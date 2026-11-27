@@ -6,8 +6,8 @@
  * registry's record and the bot's snapshots, checked in a worker.
  *
  * Everything that carries aztec.js, the contract artifacts, the bridge client or the allow list's
- * reader loads on first use, so the main chunk stays free of them. A failed load is not kept: the next
- * call loads again.
+ * reader loads on first use, so the main chunk stays free of them. A failed load is not kept here: the
+ * next call runs it again.
  */
 import { demoSender } from "#demo-sender"
 import { getAddress } from "viem"
