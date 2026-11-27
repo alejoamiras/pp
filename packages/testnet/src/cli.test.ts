@@ -18,9 +18,12 @@ const OWN = JSON.parse(readFileSync(fileURLToPath(new URL("../deployments/testne
 type Run = { code: number | null; out: string }
 
 /** Runs a CLI under `home` with stdin closed; async, so this process keeps serving the fake L1. */
-function cli(name: string, args: string[], home: string, extra: Record<string, string> = {}): Promise<Run> {
+const cli = (name: string, args: string[], home: string, extra: Record<string, string> = {}): Promise<Run> =>
+	script(join(CLI, `${name}.ts`), args, home, extra)
+
+function script(path: string, args: string[], home: string, extra: Record<string, string> = {}): Promise<Run> {
 	return new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, [join(CLI, `${name}.ts`), ...args], {
+		const child = spawn(process.execPath, [path, ...args], {
 			env: { PATH: process.env.PATH, HOME: home, ...extra },
 			stdio: ["ignore", "pipe", "pipe"],
 		})
@@ -162,6 +165,12 @@ describe("keys", () => {
 		const seeded = await cli("keys", [], home, { SEED: "seed-value-31337" })
 		expect([seeded.code, /refused: env: SEED is set/.test(seeded.out), seeded.out.includes("31337")]).toEqual([2, true, false])
 		expect(existsSync(dirname(keyFilePath(home)))).toBe(false)
+	}, 60_000)
+
+	it("the pins script refuses to run while SEED is set", async () => {
+		const pins = fileURLToPath(new URL("../scripts/pins.ts", import.meta.url))
+		const seeded = await script(pins, ["--check"], scratchHome(), { SEED: "seed-value-31337" })
+		expect([seeded.code, /env: SEED is set/.test(seeded.out), seeded.out.includes("31337")]).toEqual([1, true, false])
 	}, 60_000)
 })
 

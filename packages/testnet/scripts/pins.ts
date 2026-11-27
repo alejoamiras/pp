@@ -3,8 +3,10 @@
 // fetched build and the L2 class ids. Needs pp-env's fetch and the compiled L2 artifacts.
 import { writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
+import { assertNoSeed } from "../src/guards"
 import { classIds, committedClassIds, committedPoolCodes, pinMismatches, poolCreationCodes } from "../src/pins"
 
+assertNoSeed(process.env)
 const pool = poolCreationCodes()
 const classes = await classIds()
 if (process.argv.includes("--check")) {

@@ -116,7 +116,7 @@ export const POOL_FIELDS: readonly string[] = Object.keys(poolSchema.shape)
 export const BRIDGE_FIELDS: readonly string[] = Object.keys(bridgeSchema.shape)
 
 /** `pool1` is the operator's poolId 1, which the operator's own app calls "V8". */
-export const TARGETS = ["own", "v9", "pool1"] as const
+export const TARGETS = ["own", "pool1"] as const
 
 export const deploymentSchema = z
 	.object({
