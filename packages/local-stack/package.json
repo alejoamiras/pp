@@ -8,7 +8,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./cli": "./src/cli.ts",
-		"./seed": "./src/seed.ts"
+		"./accounts": "./src/accounts.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",

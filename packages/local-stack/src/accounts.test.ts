@@ -1,7 +1,20 @@
-import { HARNESS_INDEX } from "@pp/bridge-core/sandbox"
+import { readFileSync } from "node:fs"
+import { anvilKey, HARNESS_INDEX } from "@pp/bridge-core/sandbox"
+import { privateKeyToAccount } from "viem/accounts"
 import { expect, test } from "vitest"
-import { DEMO_SENDER_INDEX, SEED_USER_INDEX } from "./seed.ts"
-import { BRIDGE_DEPLOYER_INDEX, POOL_DEPLOYER_INDEX } from "./stack.ts"
+import { BRIDGE_DEPLOYER_INDEX, DEMO_SENDER_ADDRESS, DEMO_SENDER_INDEX, POOL_DEPLOYER_INDEX, SEED_USER_INDEX } from "./accounts.ts"
+
+// Node loads this module for the web build's config, in jobs that never fetch the pool checkout: a
+// value import here would pull in the sandbox (extensionless imports) or pp-env (the checkout).
+test("the module the web build loads imports types only", () => {
+	const imports = readFileSync(new URL("./accounts.ts", import.meta.url), "utf8").match(/^import .*$/gm) ?? []
+	expect(imports.filter((line) => !line.startsWith("import type "))).toEqual([])
+})
+
+test("the plain values equal what they stand for: the demo sender's derived address and the harness index", () => {
+	expect(DEMO_SENDER_ADDRESS).toBe(privateKeyToAccount(anvilKey(DEMO_SENDER_INDEX)).address)
+	expect(BRIDGE_DEPLOYER_INDEX).toBe(HARNESS_INDEX)
+})
 
 /**
  * The demo stack runs no actors, so its L1 signers are {0, 13, 14, 15}: the node, the seeded user, the
