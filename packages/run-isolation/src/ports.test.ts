@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { claimPort, releasePorts, rowsOwnedBy } from "./ports.ts"
 
-const parent = join(homedir(), ".cache/pp/pp-env")
+const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
 const dir = mkdtempSync(join(parent, "ports-test-"))
 const saved = process.env.PP_PORTS_REGISTRY

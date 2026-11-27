@@ -4,8 +4,9 @@ import type { Hex } from "viem"
 import { mnemonicToAccount } from "viem/accounts"
 import { anvilBin, cleanEnv } from "../tools.ts"
 import type { LocalChainId } from "../types.ts"
-import { claimPort } from "./ports.ts"
-import { type CleanupStack, killGroup, rpc, spawnOwned, waitFor } from "./process.ts"
+import { claimPort } from "@pp/run-isolation/ports"
+import { type CleanupStack, killGroup, spawnOwned } from "@pp/run-isolation/process"
+import { rpc, waitFor } from "./rpc.ts"
 
 export const CHAIN_ID: LocalChainId = 31337
 export const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"

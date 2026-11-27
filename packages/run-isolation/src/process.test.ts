@@ -2,9 +2,9 @@ import { afterAll, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { spawnOwned, waitFor } from "./process.ts"
+import { spawnOwned } from "./process.ts"
 
-const parent = join(homedir(), ".cache/pp/pp-env")
+const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
 const dir = mkdtempSync(join(parent, "process-test-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -15,20 +15,6 @@ test("a command that cannot start ends with a reason instead of an uncaught erro
 	const owned = spawnOwned(join(dir, "no-such-anvil"), [], join(dir, "missing.log"), {})
 	await owned.exited
 	expect(owned.exitReason()).toContain("could not start")
-})
-
-test("a probe still pending at the deadline fails at the deadline", async () => {
-	const t0 = performance.now()
-	await expect(waitFor("stalled", () => new Promise<boolean>(() => {}), 100)).rejects.toThrow("within 100 ms")
-	expect(performance.now() - t0).toBeLessThan(200)
-})
-
-test("a readiness wait that succeeds leaves no timer keeping the process alive", async () => {
-	const script = `import { waitFor } from ${PROCESS_TS}
-	await waitFor("ready", async () => true, 20_000)`
-	const t0 = performance.now()
-	await Bun.spawn(["bun", "-e", script], { stderr: "inherit" }).exited
-	expect(performance.now() - t0).toBeLessThan(5_000)
 })
 
 test("a signal during stop() waits for the whole teardown, and a repeat does not cut it short", async () => {

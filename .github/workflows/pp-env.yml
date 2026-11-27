@@ -49,6 +49,8 @@ jobs:
               - 'packages/pp-env/**'
               - 'packages/pool-client/src/**'
               - 'packages/pool-client/package.json'
+              - 'packages/run-isolation/src/**'
+              - 'packages/run-isolation/package.json'
               - 'vitest.base.ts'
               - 'package.json'
               - 'bun.lock'

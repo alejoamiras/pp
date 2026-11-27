@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { PACKAGE_DIR } from "../checkout.ts"
+import { fileURLToPath } from "node:url"
 import { withFileLock } from "./lock.ts"
 
 /** Ports below the OS dynamic range are never handed to an outgoing connection between probe and spawn. */
@@ -17,7 +17,7 @@ const LOCK_STALE_MS = 15_000
 /** Outlasts the stale threshold, so a dead holder's lock is always reclaimed before a caller gives up. */
 const LOCK_WAIT_MS = LOCK_STALE_MS + 5_000
 
-const REPO_ROOT = join(PACKAGE_DIR, "../..")
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..")
 
 export function registryPath(): string {
 	return process.env.PP_PORTS_REGISTRY ?? join(homedir(), ".agents", "ports.md")

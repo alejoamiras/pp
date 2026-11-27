@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { withFileLock } from "./lock.ts"
 
-const parent = join(homedir(), ".cache/pp/pp-env")
+const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
 const dir = mkdtempSync(join(parent, "lock-test-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
