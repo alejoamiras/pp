@@ -62,10 +62,28 @@ const POLICY = [
 	["form-action", "'none'"],
 ] as const
 
+/**
+ * A stack build's session runs Aztec code in the page, and bb.js fetches its wasm from a `data:` URL
+ * it carries; such a fetch reaches no server. A fixture build never loads it outside the wallet frame.
+ */
+const STACK_SCHEMES = ["data:"] as const
+
+function connectSources(t: PublicTarget): string[] {
+	return ["'self'", ...(t.stack ? STACK_SCHEMES : []), ...connectOrigins(t)]
+}
+
 export function contentSecurityPolicy(t: PublicTarget): string {
 	const frames = frameOrigins(t)
-	const lists = { connect: `'self' ${connectOrigins(t).join(" ")}`, frame: frames.length > 0 ? frames.join(" ") : "'none'" }
+	const lists = { connect: connectSources(t).join(" "), frame: frames.length > 0 ? frames.join(" ") : "'none'" }
 	return POLICY.map(([name, value]) => `${name} ${value === "connect" || value === "frame" ? lists[value] : value}`).join("; ")
+}
+
+/** `'self'`, then a stack target's schemes or none, then at least one exact origin. */
+function isConnectList(sources: readonly string[]): boolean {
+	if (sources[0] !== "'self'") return false
+	const schemes = sources[1] === STACK_SCHEMES[0] ? STACK_SCHEMES.length : 0
+	const origins = sources.slice(1 + schemes)
+	return origins.length > 0 && origins.every(isPublicOrigin)
 }
 
 /**
@@ -79,7 +97,7 @@ export function isBuiltPolicy(csp: string): boolean {
 		POLICY.every(([name, value], i) => {
 			const [head, ...sources] = (parts[i] as string).split(" ")
 			if (head !== name) return false
-			if (value === "connect") return sources[0] === "'self'" && sources.length > 1 && sources.slice(1).every(isPublicOrigin)
+			if (value === "connect") return isConnectList(sources)
 			if (value === "frame") return sources.join(" ") === "'none'" || (sources.length > 0 && sources.every(isPublicOrigin))
 			return sources.join(" ") === value
 		})

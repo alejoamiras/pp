@@ -79,9 +79,11 @@ describe("security headers", () => {
 		])
 		expect(directives(contentSecurityPolicy(remote))["connect-src"]).toEqual(["'self'", "https://node.example:8443"])
 		expect(directives(contentSecurityPolicy(remote))["frame-src"]).toEqual(["'none'"])
-		// The artifact gateway is the page's own origin, so a stack target adds only the ASP API and the bot.
+		// The artifact gateway is the page's own origin, so a stack target adds only bb.js's `data:` wasm,
+		// the ASP API and the bot.
 		expect(directives(contentSecurityPolicy(STACK))["connect-src"]).toEqual([
 			"'self'",
+			"data:",
 			"http://127.0.0.1:8080",
 			"http://127.0.0.1:8545",
 			"http://127.0.0.1:8600",
@@ -119,6 +121,9 @@ describe("security headers", () => {
 			without("connect-src"),
 			csp.replace("frame-src http://127.0.0.1:9001 http://127.0.0.1:9002", "frame-src https://*"),
 			csp.replace("script-src 'self' 'wasm-unsafe-eval'", "script-src 'self' 'unsafe-eval'"),
+			csp.replace("connect-src 'self' ", "connect-src 'self' blob: "),
+			csp.replace("connect-src 'self' ", "connect-src 'self' data: data: "),
+			csp.replace("connect-src 'self' http://127.0.0.1:8080 http://127.0.0.1:8545", "connect-src 'self' data:"),
 			`${csp}; script-src *`,
 		]
 		for (const policy of policies)
