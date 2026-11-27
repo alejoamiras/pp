@@ -255,8 +255,11 @@ type Job = { if?: string; uses?: string; needs?: string | string[]; steps?: Step
 const LOCAL_ACTION = /^\.\/\.github\/actions\/([\w-]+)$/
 const LOCAL_WORKFLOW = /^\.\/\.github\/workflows\/([\w.-]+)$/
 
-/** Every local action a job runs: its steps', a called workflow's jobs', and what each of those runs in turn. */
-function actionsOfJob(job: Job, found = new Set<string>()): Set<string> {
+/**
+ * Every local action a job runs: its steps', a called workflow's jobs', and what each of those runs in
+ * turn. A called workflow's jobs carry no `if`: the caller's gate is the only one this check reads.
+ */
+function actionsOfJob(job: Job, found = new Set<string>(), load = workflow): Set<string> {
 	const visit = (action: string): void => {
 		if (found.has(action)) return
 		found.add(action)
@@ -265,7 +268,10 @@ function actionsOfJob(job: Job, found = new Set<string>()): Set<string> {
 	if (job.uses !== undefined) {
 		const called = LOCAL_WORKFLOW.exec(job.uses)?.[1]
 		if (called === undefined) throw new Error(`a job calls ${job.uses}, not ./.github/workflows/<file>`)
-		for (const inner of Object.values(workflow(called).jobs) as Job[]) actionsOfJob(inner, found)
+		for (const [name, inner] of Object.entries(load(called).jobs) as [string, Job][]) {
+			if (inner.if !== undefined) throw new Error(`${called} ${name}: a called workflow's job carries no if`)
+			actionsOfJob(inner, found, load)
+		}
 		return found
 	}
 	for (const uses of (job.steps ?? []).flatMap((s) => (s.uses?.startsWith("./") ? [s.uses] : []))) {
@@ -291,7 +297,8 @@ function filterKeysOf(wf: { jobs: Record<string, ChangesJob> }, job: Job): strin
 	const out = GATE.exec(job.if ?? "")?.[1]
 	if (out === undefined) throw new Error(`unsupported gate \`${job.if}\`: use needs.changes.outputs.<out> == 'true'`)
 	const steps = wf.jobs.changes?.steps ?? []
-	const isFilter = (id: string) => steps.some((s) => s.id === id && s.uses?.includes("dorny/paths-filter") === true)
+	// A filter or OR step with an `if` of its own may not run on a pull request, and then no key it reads runs anything.
+	const isFilter = (id: string) => steps.some((s) => s.id === id && s.if === undefined && s.uses?.includes("dorny/paths-filter") === true)
 	const body = EXPRESSION.exec((wf.jobs.changes?.outputs?.[out] ?? "").trim())?.[1] ?? ""
 	const terms = body.split(" || ").map((term) => STEP_OUTPUT.exec(term))
 	if (terms.some((term) => term === null)) return []
@@ -309,6 +316,7 @@ function filterKeysOf(wf: { jobs: Record<string, ChangesJob> }, job: Job): strin
 
 /** The filter keys a step's script ORs into its output `name`; none for a script of any other shape. */
 function orredFilters(step: Step | undefined, name: string, isFilter: (id: string) => boolean): string[] {
+	if (step?.if !== undefined) return []
 	const echo = (value: string) => `\\s+echo "${name}=${value}" >> "\\$GITHUB_OUTPUT"\\n`
 	const script = new RegExp(`^if (.+); then\\n${echo("true")}else\\n${echo("false")}fi\\n?$`)
 	const vars = (script.exec(step?.run ?? "")?.[1]?.split(" || ") ?? []).map((test) => /^\[ "\$(\w+)" = "true" \]$/.exec(test)?.[1])
@@ -330,26 +338,29 @@ function upstreamOf(jobs: Record<string, Job>, name: string, seen = new Set<stri
 }
 
 /**
- * Each job of a PR workflow that runs a local action is gated by filters that cover every file of
- * that action. A job with no gate of its own may not wait on a gated one, even through others,
- * whose gate it would inherit unchecked. Returns how many jobs it checked.
+ * The jobs `name` waits on, directly or through others, whose `if` is not its own text: it runs only
+ * when they run, so their conditions AND into the gate its filters are credited with.
  */
-function expectJobsCoverTheirActions(file: string): number {
-	const wf = workflow(file)
+function otherConditionsUpstream(jobs: Record<string, Job>, name: string): string[] {
+	return [...upstreamOf(jobs, name)].filter((n) => jobs[n]?.if !== undefined && jobs[n]?.if !== jobs[name]?.if)
+}
+
+/** The one `if` besides a gate that a job running a local action may carry: true on every pull request. */
+const ON_EVERY_PR = "github.event_name == 'pull_request'"
+
+/**
+ * Each job of a PR workflow that runs a local action has no `if`, or `ON_EVERY_PR`, or is gated by
+ * filters that cover every file of that action, and waits only on jobs with no `if` or its own.
+ * Returns how many gated jobs it checked.
+ */
+function expectJobsCoverTheirActions(file: string, wf = workflow(file)): number {
 	const filters = filtersOf(file)
-	const jobs = Object.entries(wf.jobs) as [string, Job][]
-	const gatedJobs = new Set(jobs.filter(([, j]) => /needs\.changes\.outputs/.test(j.if ?? "")).map(([name]) => name))
 	let checked = 0
-	for (const [name, job] of jobs) {
+	for (const [name, job] of Object.entries(wf.jobs) as [string, Job][]) {
 		const files = [...actionsOfJob(job)].flatMap((a) => filesUnder(`.github/actions/${a}`))
 		if (name === "changes" || files.length === 0) continue
-		if (!gatedJobs.has(name)) {
-			expect(
-				[...upstreamOf(wf.jobs, name)].filter((n) => gatedJobs.has(n)),
-				`${file} ${name}: give it its own gate`,
-			).toEqual([])
-			continue
-		}
+		expect(otherConditionsUpstream(wf.jobs, name), `${file} ${name}: give the jobs it waits on its own if, or none`).toEqual([])
+		if (job.if === undefined || job.if === ON_EVERY_PR) continue
 		const keys = filterKeysOf(wf, job)
 		expect(keys.length, `${file} ${name}: its if reads no filter`).toBeGreaterThan(0)
 		const covered = (path: string) => keys.some((k) => (filters[k] ?? []).some((p) => new Bun.Glob(p).match(path)))
@@ -606,6 +617,57 @@ describe("CI behavior-gating guard", () => {
 		const gated = prWorkflows.filter((f) => workflow(f).jobs.changes !== undefined)
 		expect(gated.sort(), "every PR workflow with a changes job is listed").toEqual([...FILTER_WORKFLOWS].sort())
 		expect(gated.reduce((n, file) => n + expectJobsCoverTheirActions(file), 0)).toBeGreaterThan(gated.length)
+	})
+
+	test("the guard refuses each way a pull request could skip a job it credits", () => {
+		const web = () => structuredClone(workflow("web.yml"))
+		const refusals: [string, (wf: ReturnType<typeof web>) => void, RegExp][] = [
+			[
+				"an upstream gate on another output",
+				(wf) => {
+					wf.jobs.changes.outputs.kit = wf.jobs.changes.outputs.web
+					wf.jobs.build.if = "needs.changes.outputs.kit == 'true'"
+				},
+				/e2e: give the jobs it waits on its own if/,
+			],
+			[
+				"an ungated relay with a condition in another spelling",
+				(wf) => {
+					wf.jobs.relay = { needs: "changes", if: "needs['changes'].outputs.web != 'true'" }
+					wf.jobs.e2e.needs = [...wf.jobs.e2e.needs, "relay"]
+				},
+				/e2e: give the jobs it waits on its own if/,
+			],
+			[
+				"a gate in another spelling",
+				(wf) => (wf.jobs.build.if = "needs['changes'].outputs.web == 'true' && github.event_name == 'workflow_dispatch'"),
+				/unsupported gate/,
+			],
+			[
+				"a filter step that skips pull requests",
+				(wf) => (wf.jobs.changes.steps.find((s: Step) => s.id === "filter").if = "github.event_name == 'workflow_dispatch'"),
+				/build: its if reads no filter/,
+			],
+		]
+		expect(expectJobsCoverTheirActions("web.yml", web())).toBe(2)
+		for (const [what, edit, message] of refusals) {
+			const wf = web()
+			edit(wf)
+			expect(() => expectJobsCoverTheirActions("web.yml", wf), what).toThrow(message)
+		}
+		const quick = structuredClone(workflow("pr-quick.yml"))
+		quick.jobs.changes.steps.find((s: Step) => s.id === "compute").if = "github.event_name == 'workflow_dispatch'"
+		expect(() => expectJobsCoverTheirActions("pr-quick.yml", quick), "an OR step that skips pull requests").toThrow(
+			/build-e2e-kit: its if reads no filter/,
+		)
+		const skipped = (file: string) => {
+			const wf = workflow(file)
+			wf.jobs.forge.if = "github.event_name == 'workflow_dispatch'"
+			return wf
+		}
+		expect(() => actionsOfJob({ uses: "./.github/workflows/_bridge-contracts.yml" }, new Set(), skipped)).toThrow(
+			/forge: a called workflow/,
+		)
 	})
 
 	test("pp-env covers its package, its graph, the shared vitest config, and every action its suites job calls", () => {

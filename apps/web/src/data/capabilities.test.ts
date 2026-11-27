@@ -23,6 +23,7 @@ const A = [fn(T.hub, "claim_from_pool"), fn(T.hub, "ragequit")]
 const B = [fn(T.token, "transfer_private"), fn(T.token, "unshield")]
 const C = [fn(T.token, "shield")]
 const D = [fn(T.hub, "exit_public")]
+const E = [fn(T.hub, "exit_private")]
 const PUBLIC = fn(T.token, "balance_of_public")
 
 describe("the stage manifests", () => {
@@ -31,6 +32,7 @@ describe("the stage manifests", () => {
 		["2b", manifest([...A, PUBLIC, ...B], [...A, ...B])],
 		["2c", manifest([...A, PUBLIC, ...B, ...C], [...A, ...B, ...C])],
 		["2d", manifest([...A, PUBLIC, ...B, ...C, ...D], [...A, ...B, ...C, ...D])],
+		["2e", manifest([...A, PUBLIC, ...B, ...C, ...D, ...E], [...A, ...B, ...C, ...D, ...E])],
 	] as const)("stage %s equals its literal and names no wildcard", (stage, literal) => {
 		const m = stageManifest(stage, T)
 		expect(m).toEqual(literal)

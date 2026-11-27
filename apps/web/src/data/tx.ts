@@ -6,10 +6,10 @@ import { codeOf, isUserRejection, type UiCode } from "./errors"
 import type { Hex } from "viem"
 import type { Sent } from "./ports"
 
-export type TxAction = "transferPrivate" | "unshield" | "shield" | "ragequit" | "exitPublic" | "unshieldAndExit"
+export type TxAction = "transferPrivate" | "unshield" | "shield" | "ragequit" | "exitPublic" | "exitPrivate"
 
 /** What a reverted send of each action says; any other action reads `TX_REVERTED`. */
-const REVERTED: Partial<Record<TxAction, UiCode>> = { unshield: "UNSHIELD_REVERTED", unshieldAndExit: "WITHDRAW_REVERTED" }
+const REVERTED: Partial<Record<TxAction, UiCode>> = { unshield: "UNSHIELD_REVERTED", exitPrivate: "WITHDRAW_REVERTED" }
 
 /** `reason` is untrusted chain text: it reaches the screen only through `revertCopy`. */
 export type TxOutcome = { ok: true } | { ok: false; code: UiCode; reason?: string; txHash?: Hex }
@@ -33,17 +33,17 @@ export function beforeHandoffOutcome(err: unknown): TxOutcome {
 }
 
 /**
- * A reverted unshield leaves the account's notes in a state the wallet settles only once that block is
- * final, so a change-making spend before then could clash with it. Final means the node's proven block
+ * A reverted unshield or private exit leaves the account's notes in a state the wallet settles only once
+ * that block is final, so a change-making spend before then could clash with it. Final means the node's proven block
  * has reached it; an unread proven block is not final.
  */
 export const isFinal = (revertBlock: number, proven: number | undefined): boolean => proven !== undefined && proven >= revertBlock
 
 /** Actions that spend notes and make change; an exact-chunk ragequit leaves none. */
-export const MAKES_CHANGE: ReadonlySet<TxAction> = new Set(["transferPrivate", "unshield", "unshieldAndExit"])
+export const MAKES_CHANGE: ReadonlySet<TxAction> = new Set(["transferPrivate", "unshield", "exitPrivate"])
 
 /**
  * Change-making spends whose public step re-checks the label's roots, so they can land reverted after
  * the wallet proved them; such a revert holds `MAKES_CHANGE` until its block is final.
  */
-export const REVERT_WAITS_FINALITY: ReadonlySet<TxAction> = new Set(["unshield", "unshieldAndExit"])
+export const REVERT_WAITS_FINALITY: ReadonlySet<TxAction> = new Set(["unshield", "exitPrivate"])

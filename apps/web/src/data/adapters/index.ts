@@ -38,7 +38,7 @@ function aztecAddress(value: string, field: string): AztecAddress {
 const deployment: Omit<Deployment, "decimals" | "symbol"> = {
 	id: `${manifest.chainId}:${manifest.bridge.portal.toLowerCase()}:${manifest.bridge.hub.toLowerCase()}`,
 	chainId: manifest.chainId,
-	stage: "2d",
+	stage: "2e",
 	portal: getAddress(manifest.bridge.portal),
 	hub: aztecAddress(manifest.bridge.hub, "bridge.hub"),
 	token: aztecAddress(manifest.bridge.token, "bridge.token"),
@@ -83,7 +83,7 @@ const loadSessions = (): Promise<SessionPort> =>
 
 type ExitSide = {
 	exits: Pick<AztecPort, "ragequit"> & ExitPort
-	withdraw: Pick<AztecPort, "exitPublic" | "unshieldAndExit">
+	withdraw: Pick<AztecPort, "exitPublic" | "exitPrivate">
 }
 let exitsLoad: Promise<ExitSide> | undefined
 /** The exits and the withdrawals share one bridge client, in the chunk the build lets carry it. */
@@ -131,7 +131,7 @@ const aztec: AztecPort = {
 	shield: async (from, amount, on) => (await loadSends()).shield(from, amount, on),
 	ragequit: async (from, a, on) => (await loadExits()).exits.ragequit(from, a, on),
 	exitPublic: async (from, a, on) => (await loadExits()).withdraw.exitPublic(from, a, on),
-	unshieldAndExit: async (from, a, on) => (await loadExits()).withdraw.unshieldAndExit(from, a, on),
+	exitPrivate: async (from, a, on) => (await loadExits()).withdraw.exitPrivate(from, a, on),
 }
 const exits: ExitPort = {
 	tickets: async (payee) => (await loadExits()).exits.tickets(payee),

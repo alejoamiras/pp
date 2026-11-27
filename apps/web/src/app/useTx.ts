@@ -17,8 +17,8 @@ const heldCode = (u: Unsettled | undefined): UiCode | null => (u ? (u.txHash ? "
 
 /**
  * One Aztec send at a time from this page, so a first send to a new recipient always goes alone; and
- * after an unshield reverts, no change-making spend until the node's proven block reaches the block it
- * reverted in. A failed read of the proven block keeps the wait.
+ * after an unshield or a private exit reverts, no change-making spend until the node's proven block
+ * reaches the block it reverted in. A failed read of the proven block keeps the wait.
  *
  * A send that may still land holds its account: no send from it until a Refresh the user makes reads
  * that transaction included or reverted. A pending receipt or a failed read keeps the hold, and one

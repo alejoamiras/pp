@@ -59,9 +59,9 @@ export function LabelRow({ balance, allow, onAction, onCheckAgain }: Props) {
 	const { state, failure, view } = useLabelState(allow, balance)
 	const send = reasonOf("transferPrivate", view)
 	const unshield = reasonOf("unshield", view)
-	// The withdrawal reads the label's notes for its cap, then sends an unshield and a public exit.
+	// The withdrawal reads the label's notes for its cap.
 	const notes = refusal("notes")
-	const exit = (notes === null ? undefined : messageOf(notes)) ?? unshield ?? reasonOf("exitPublic")
+	const exit = (notes === null ? undefined : messageOf(notes)) ?? reasonOf("exitPrivate", view)
 	const shared = send !== undefined && send === unshield
 	const sharedWith = (reason: string | undefined) => (shared && reason === send ? sharedId : undefined)
 	return (
