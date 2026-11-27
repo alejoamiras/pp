@@ -7,7 +7,9 @@
 	"type": "module",
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
-		"test": "bun --bun vitest run"
+		"test": "bun --bun vitest run",
+		"pins": "bun scripts/pins.ts",
+		"pins:check": "bun scripts/pins.ts --check"
 	},
 	"dependencies": {
 		"@aztec-labs/accounts": "6.0.0",
@@ -18,6 +20,7 @@
 		"@pp/asp-bot": "workspace:*",
 		"@pp/bridge-core": "workspace:*",
 		"@pp/label-paths": "workspace:*",
+		"@pp/labelled-token": "workspace:*",
 		"@pp/pp-env": "workspace:*",
 		"@pp/run-isolation": "workspace:*",
 		"viem": "2.57.1",
