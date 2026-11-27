@@ -21,9 +21,9 @@
 	},
 	"dependencies": {
 		"@pp/bridge-spec": "workspace:*",
-		"@nulo-sh/resolve-asset": "0.3.0",
-		"@nulo-sh/wallet-crypto": "0.3.0",
-		"zod": "^4.6.7",
+		"@nulo-sh/resolve-asset": "catalog:",
+		"@nulo-sh/wallet-crypto": "catalog:",
+		"zod": "catalog:",
 		"@pp/run-isolation": "workspace:*",
 		"@aztec-labs/aztec.js": "6.0.0",
 		"@aztec-labs/accounts": "6.0.0",
@@ -36,11 +36,11 @@
 		"@aztec-labs/stdlib": "6.0.0",
 		"@aztec-labs/wallets": "6.0.0",
 		"@aztec-foundation/aztec-standards": "6.0.0",
-		"viem": "2.57.1"
+		"viem": "catalog:"
 	},
 	"devDependencies": {
-		"@types/node": "^24.13.2",
-		"typescript": "^6.0.3",
-		"vitest": "^4.1.12"
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }

@@ -23,12 +23,12 @@
 		"@noble/hashes": "1.8.0",
 		"@zk-kit/lean-imt": "2.2.4",
 		"poseidon-lite": "0.3.0",
-		"viem": "2.57.1"
+		"viem": "catalog:"
 	},
 	"devDependencies": {
-		"@types/node": "^24.13.2",
-		"fast-check": "^4.10.3",
-		"typescript": "^6.0.3",
-		"vitest": "^4.1.12"
+		"@types/node": "catalog:",
+		"fast-check": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }

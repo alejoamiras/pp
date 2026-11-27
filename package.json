@@ -5,6 +5,26 @@
 		"apps/*",
 		"packages/*"
 	],
+	"catalog": {
+		"@biomejs/biome": "2.5.13",
+		"@nulo-sh/resolve-asset": "0.3.0",
+		"@nulo-sh/wallet-crypto": "0.3.0",
+		"@playwright/test": "1.63.0",
+		"@types/bun": "1.4.4",
+		"@types/node": "^24.13.2",
+		"fast-check": "^4.10.3",
+		"typescript": "6.0.3",
+		"viem": "2.57.1",
+		"vite": "^8.3.8",
+		"vite-plugin-node-polyfills": "^0.28.0",
+		"vitest": "^4.1.12",
+		"zod": "4.4.3"
+	},
+	"catalogs": {
+		"pool": {
+			"viem": "2.45.3"
+		}
+	},
 	"scripts": {
 		"lint": "biome check && bun scripts/complexity-baseline/check.ts",
 		"lint:fix": "biome check --fix",
@@ -23,7 +43,7 @@
 		"prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.13",
+		"@biomejs/biome": "catalog:",
 		"@commitlint/cli": "^21.0.2",
 		"@commitlint/config-conventional": "^21.0.2",
 		"@pp/run-isolation": "workspace:*"

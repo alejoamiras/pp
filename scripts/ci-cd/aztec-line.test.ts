@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, join, posix } from "node:path"
+import { resolveSpec } from "../catalog"
 
 /**
  * One Aztec line per install. The line publishes on two version tracks: every `@aztec-labs/*`
@@ -318,7 +319,10 @@ test("the app's dependency closure declares and resolves one exact viem", () => 
 	expect([...members]).toEqual(expect.arrayContaining(["@pp/bridge-core", "@pp/bridge-spec"]))
 	const declared = [...members].flatMap((name) => {
 		const m = workspaces.get(name)?.manifest
-		return SECTIONS.map((section) => m?.[section]).flatMap(viemSpecs)
+		const root = manifest("package.json")
+		return SECTIONS.map((section) => m?.[section])
+			.map((specs) => Object.fromEntries(Object.entries(specs ?? {}).map(([n, s]) => [n, resolveSpec(n, s, root)])))
+			.flatMap(viemSpecs)
 	})
 	const overridden = overrideRules("package.json", manifest("package.json").overrides ?? {}).flatMap(({ target, spec }) =>
 		target === undefined ? [] : viemSpecs({ [target]: spec }),
