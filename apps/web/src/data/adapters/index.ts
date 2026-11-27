@@ -7,6 +7,7 @@
  * Everything that carries aztec.js, the contract artifacts or the bridge client loads on first use,
  * so the main chunk stays free of them.
  */
+import { demoSender } from "#demo-sender"
 import { getAddress } from "viem"
 import { target } from "../../target"
 import { stageManifest } from "../capabilities"
@@ -49,7 +50,11 @@ const deployment: Deployment = {
 	symbol: "",
 }
 
-const l1 = stackL1(target, (globalThis as { ethereum?: InjectedWallet }).ethereum)
+// A local-stack build bundles the demo sender here; every other build bundles the throwing stub.
+const demo = stack.demoSender
+	? demoSender({ l1RpcUrl: manifest.l1Rpc, chainId: manifest.chainId, portal: deployment.portal, address: getAddress(stack.demoSender) })
+	: null
+const l1 = stackL1(target, (globalThis as { ethereum?: InjectedWallet }).ethereum, demo)
 
 /** One connector per page: the adapters send only through the wallet it holds for the live connection. */
 let connector: RealConnector | null = null

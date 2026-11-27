@@ -38,6 +38,7 @@ const STACK: PublicTarget = {
 		},
 		botUrl: "http://127.0.0.1:8700/v1",
 		sponsoredFpc: A32,
+		demoSender: null,
 	},
 }
 

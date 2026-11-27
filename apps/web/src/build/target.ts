@@ -6,6 +6,7 @@
  */
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { getAddress, isAddress } from "viem"
 import { z } from "zod"
 // The config runs under Node, which cannot load `@pp/bridge-core`'s barrel (its imports carry no
 // extensions); this module is self-contained and isomorphic.
@@ -49,6 +50,8 @@ export interface StackTarget {
 	readonly botUrl: string
 	/** The canonical SponsoredFPC, derived at build time so its artifact never ships. */
 	readonly sponsoredFpc: string
+	/** The local demo's dev account, as an address only; `null` off chain 31337 or off a loopback L1 RPC. */
+	readonly demoSender: string | null
 }
 
 export interface PublicTarget {
@@ -155,8 +158,21 @@ function attempt<T>(source: string, f: () => T): T {
 	}
 }
 
+const LOCAL_CHAIN_ID = 31337
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost"])
+
+/** The demo sender rides only on the local stack, chain 31337 over a loopback L1 RPC; anywhere else it is dropped. */
+function localDemoSender(m: { chainId: number; l1Rpc: string }, address: string | undefined): string | null {
+	if (address === undefined || m.chainId !== LOCAL_CHAIN_ID || !LOOPBACK_HOSTS.has(new URL(m.l1Rpc).hostname)) return null
+	if (!isAddress(address) || getAddress(address) !== address) fail("the demo sender", "is not a checksummed address")
+	return address
+}
+
+/** The file `#demo-sender` names under `src/data/adapters/`: the real sender only for a target that carries one. */
+export const demoSenderModule = (t: Pick<PublicTarget, "stack">): string => (t.stack?.demoSender ? "demo-sender.ts" : "demo-sender.stub.ts")
+
 /** The manifest's public fields by name. */
-function stackTarget(file: string, sponsoredFpc: string | undefined): StackTarget {
+function stackTarget(file: string, sponsoredFpc: string | undefined, demoSender: string | undefined): StackTarget {
 	const json = readJson(file)
 	const m = attempt(file, () => requireBlocks(parseStackManifest(json), ["bridge", "bot"]))
 	for (const [field, url] of [
@@ -194,6 +210,7 @@ function stackTarget(file: string, sponsoredFpc: string | undefined): StackTarge
 		},
 		botUrl: m.bot.url,
 		sponsoredFpc,
+		demoSender: localDemoSender(m, demoSender),
 	}
 }
 
@@ -218,12 +235,18 @@ function handleTarget(file: string, local: boolean, env: TargetEnv): PublicTarge
  * real connector and the wallet URLs in `PP_WEB_WALLETS`; it reads the stack manifest at
  * `PP_STACK_MANIFEST` (the stack adapters behind `#data`) or else the sandbox run's handle from
  * `PP_SANDBOX_ARTIFACTS` (the fixture world). Every other build reads `committedHandle` and uses the
- * fixture connector. `sponsoredFpc` is required for a stack target.
+ * fixture connector. `sponsoredFpc` is required for a stack target; `demoSender` is kept only on the local stack.
  *
  * @throws when an input is missing or a field fails validation, and when a stack build would use the
  *   fixture connector.
  */
-export function resolveTarget(o: { local: boolean; env: TargetEnv; committedHandle: string; sponsoredFpc?: string }): PublicTarget {
+export function resolveTarget(o: {
+	local: boolean
+	env: TargetEnv
+	committedHandle: string
+	sponsoredFpc?: string
+	demoSender?: string
+}): PublicTarget {
 	const dataMode = parseDataMode(o.env)
 	if (dataMode === "fixtures") {
 		if (!o.local) return handleTarget(o.committedHandle, false, o.env)
@@ -232,7 +255,7 @@ export function resolveTarget(o: { local: boolean; env: TargetEnv; committedHand
 		return handleTarget(join(dir, "handle.json"), true, o.env)
 	}
 	if (!o.local) fail("PP_DATA=stack", "needs the real connector: build with --mode sandbox")
-	const stack = stackTarget(o.env.PP_STACK_MANIFEST as string, o.sponsoredFpc)
+	const stack = stackTarget(o.env.PP_STACK_MANIFEST as string, o.sponsoredFpc, o.demoSender)
 	return {
 		nodeUrl: stack.manifest.aztecNode,
 		l1RpcUrl: stack.manifest.l1Rpc,

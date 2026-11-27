@@ -132,9 +132,33 @@ describe("the build target", () => {
 				},
 				botUrl: MANIFEST.bot.url,
 				sponsoredFpc: FPC,
+				demoSender: null,
 			},
 		} satisfies PublicTarget)
 		for (const value of Object.values(BOT_SENTINELS)) expect(JSON.stringify(t)).not.toContain(value.slice(2))
+	})
+
+	test("carries the demo sender only on chain 31337 over a loopback L1 RPC, and only a checksummed one", () => {
+		const SENDER = "0xFABB0ac9d68B0B445fB7357272Ff202C5651694a"
+		const withSender = (manifest: unknown, demoSender: string) =>
+			resolveTarget({
+				local: true,
+				env: { PP_STACK_MANIFEST: manifestFile(manifest), PP_WEB_WALLETS: WALLETS.join(",") },
+				committedHandle: "/nonexistent",
+				sponsoredFpc: FPC,
+				demoSender,
+			}).stack?.demoSender
+		const remote = {
+			...MANIFEST,
+			chainId: 11155111,
+			l1Rpc: "https://rpc.example",
+			aztecNode: "https://node.example",
+			pool: { ...MANIFEST.pool, aspApiUrl: "https://asp.example" },
+			bot: { ...MANIFEST.bot, url: "https://bot.example" },
+		}
+		expect(withSender(MANIFEST, SENDER)).toBe(SENDER)
+		expect(withSender(remote, SENDER)).toBeNull()
+		expect(() => withSender(MANIFEST, SENDER.toLowerCase())).toThrow(/demo sender/)
 	})
 
 	test("refuses a stack manifest the schema, the target's URL rule or the build mode does not accept", () => {

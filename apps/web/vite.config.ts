@@ -17,9 +17,16 @@ import { nodePolyfills } from "vite-plugin-node-polyfills"
 import { ISOLATION_HEADERS } from "./src/build/headers.ts"
 import { bufferSubpathAlias, emitSecurityHeaders, previewSecurityHeaders, stackBuildGuard } from "./src/build/plugins.ts"
 import { sponsoredFpcAddress } from "./src/build/sponsored-fpc.ts"
-import { parseDataMode, resolveTarget } from "./src/build/target.ts"
+import { demoSenderModule, parseDataMode, resolveTarget } from "./src/build/target.ts"
 
 const root = dirname(fileURLToPath(import.meta.url))
+
+/** Build-time values a stack target needs; only addresses leave this process, and only for stack builds. */
+async function stackDerivations(): Promise<{ sponsoredFpc: string; demoSender: string }> {
+	const [sponsoredFpc, { DEMO_SENDER_ADDRESS }] = await Promise.all([sponsoredFpcAddress(), import("@pp/local-stack/seed")])
+	return { sponsoredFpc, demoSender: DEMO_SENDER_ADDRESS }
+}
+
 /** `font-src 'self'` refuses `data:` fonts, and small subsets fall under the default inline limit. */
 const FONT_FILE = /\.(woff2?|ttf|otf)$/
 
@@ -29,7 +36,7 @@ export default defineConfig(async ({ mode, isPreview }): Promise<UserConfig> => 
 		local: mode === "sandbox",
 		env: process.env,
 		committedHandle: resolvePackageAsset("@pp/e2e-kit", "fixtures/build-artifacts/handle.json", { from: import.meta.url }),
-		...(parseDataMode(process.env) === "stack" ? { sponsoredFpc: await sponsoredFpcAddress() } : {}),
+		...(parseDataMode(process.env) === "stack" ? await stackDerivations() : {}),
 	})
 	const bufferShim = resolvePackageAsset("vite-plugin-node-polyfills", "shims/buffer/dist/index.js", { from: import.meta.url })
 	return {
@@ -53,6 +60,7 @@ export default defineConfig(async ({ mode, isPreview }): Promise<UserConfig> => 
 					find: /^#data$/,
 					replacement: join(root, "src", "data", target.dataMode === "stack" ? "adapters" : "fixtures", "index.ts"),
 				},
+				{ find: /^#demo-sender$/, replacement: join(root, "src", "data", "adapters", demoSenderModule(target)) },
 				// nodePolyfills injects this shim into every transformed module, dependencies included, and
 				// the isolated linker lets a dependency resolve only what it declares: pin this app's copy.
 				{ find: "vite-plugin-node-polyfills/shims/buffer", replacement: bufferShim },

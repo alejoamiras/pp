@@ -85,6 +85,8 @@ const SESSION_ONLY =
 	/[\\/]@aztec-labs[\\/]noir-contracts\.js[\\/](dest[\\/]SponsoredFPC\.js|artifacts[\\/]sponsored_fpc_contract-SponsoredFPC\.json)$/
 /** The target's own derivation of the same address, which the page receives as a constant. */
 const BUILD_DERIVATION = /[\\/]src[\\/]build[\\/]sponsored-fpc\.ts$/
+/** The stack's own packages: the build reads the demo sender's address from them, and the page carries only that. */
+const STACK_PACKAGES = /[\\/](packages[\\/]|@pp[\\/])(local-stack|pp-env)[\\/]/
 
 const bare = (id: string): string => id.replace(/^\0/, "")
 
@@ -102,13 +104,14 @@ function initialChunks(chunks: readonly ChunkView[]): Set<string> {
 }
 
 /**
- * Build-time-only code in a stack bundle. The derivation and every contract artifact are refused
- * anywhere in the module graph (reachable code, even if tree-shaken, means an import path exists),
+ * Build-time-only code in a stack bundle. The derivation, the stack's own packages and every contract
+ * artifact are refused anywhere in the module graph (reachable code, even if tree-shaken, means an import path exists),
  * except the SponsoredFPC artifact, which may sit only in the chunk `sessionEntry` heads and only
  * while no entry reaches that chunk statically: the page then fetches it at sign-in, never at load.
  */
 export function buildOnlyLeaks(moduleIds: Iterable<string>, chunks: readonly ChunkView[], sessionEntry: string): string[] {
-	const refused = (id: string) => BUILD_DERIVATION.test(id) || (CONTRACT_ARTIFACTS.test(id) && !SESSION_ONLY.test(id))
+	const refused = (id: string) =>
+		BUILD_DERIVATION.test(id) || STACK_PACKAGES.test(id) || (CONTRACT_ARTIFACTS.test(id) && !SESSION_ONLY.test(id))
 	const leaks = [...moduleIds].filter((id) => refused(bare(id))).map((id) => `module ${id}`)
 	const initial = initialChunks(chunks)
 	for (const c of chunks) {

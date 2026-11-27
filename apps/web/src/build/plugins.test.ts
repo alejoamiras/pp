@@ -55,8 +55,15 @@ test("the stack guard lets the SponsoredFPC artifact into the lazy session chunk
 	expect(buildOnlyLeaks([FPC_JS], chunks({ other: [FPC_JS] }), SESSION)).toEqual([`connector.js holds ${FPC_JS}`])
 	// A session chunk the entry reaches statically loads with the page.
 	expect(buildOnlyLeaks([FPC_JS], chunks({ session: [FPC_JS] }, true), SESSION)).toEqual([`session.js holds ${FPC_JS}`])
-	const elsewhere = [join(STORE, "dest", "Token.js"), "\0/app/src/build/sponsored-fpc.ts", "/app/src/data/adapters/index.ts"]
-	expect(buildOnlyLeaks(elsewhere, chunks({}), SESSION)).toEqual([`module ${elsewhere[0]}`, `module ${elsewhere[1]}`])
+	const elsewhere = [
+		join(STORE, "dest", "Token.js"),
+		"\0/app/src/build/sponsored-fpc.ts",
+		"/repo/packages/local-stack/src/seed.ts",
+		"/repo/node_modules/@pp/pp-env/src/index.ts",
+		"/app/src/data/adapters/index.ts",
+		"/app/src/data/adapters/demo-sender.ts",
+	]
+	expect(buildOnlyLeaks(elsewhere, chunks({}), SESSION)).toEqual(elsewhere.slice(0, 4).map((id) => `module ${id}`))
 })
 
 const ARTIFACT = resolveExportedAsset("@aztec-labs/noir-contracts.js", "artifacts/sponsored_fpc_contract-SponsoredFPC", {
