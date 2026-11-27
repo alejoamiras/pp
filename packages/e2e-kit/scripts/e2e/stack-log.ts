@@ -4,7 +4,8 @@ import { setTimeout as sleep } from "node:timers/promises"
 
 /** The rest of the line, so a directory holding spaces survives. */
 const CIRCUITS = /^\[stack\] circuits (.+)$/m
-const READY = /PP_STACK_MANIFEST=(\S+)/
+/** The ready line through its end, so a manifest path holding spaces survives too. */
+const READY = /^\[stack\] ready in .* PP_STACK_MANIFEST=(.+)$/m
 const SEEDED = /pool user (0x[0-9a-fA-F]{40})\b.*bridge sender (0x[0-9a-fA-F]{40})\b/
 
 export interface StackLog {
@@ -51,17 +52,18 @@ function settled(s: StackLog, msSinceReady: number, graceMs: number, log: string
 	return undefined
 }
 
-/** Resolves once the log holds the circuits, ready and seeded lines; rejects as `settled` does, if the CLI exits first, or after `readyMs`. */
+/** Resolves once the log holds the circuits, ready and seeded lines while the CLI runs; rejects as `settled` does, once the CLI has exited, or after `readyMs`. */
 export async function untilReady(log: string, exited: () => number | null, o: ReadyOptions = {}): Promise<ReadyStack> {
 	const { readyMs = 20 * 60_000, seededGraceMs = 5_000, pollMs = 1_000 } = o
 	let readyAt: number | undefined
 	for (const end = Date.now() + readyMs; Date.now() < end; await sleep(pollMs)) {
+		// Read before the log: a CLI that exited after printing ready holds no stack.
+		const code = exited()
 		const s = parseStackLog(existsSync(log) ? readFileSync(log, "utf8") : "")
+		if (code !== null) throw new Error(`stack: the CLI exited (${code}) before it was ready; see ${log}`)
 		if (s.manifestPath) readyAt ??= Date.now()
 		const ready = settled(s, readyAt === undefined ? 0 : Date.now() - readyAt, seededGraceMs, log)
 		if (ready) return ready
-		const code = exited()
-		if (code !== null) throw new Error(`stack: the CLI exited (${code}) before it was ready; see ${log}`)
 	}
 	throw new Error(`stack: not ready within ${readyMs / 60_000} min; see ${log}`)
 }
