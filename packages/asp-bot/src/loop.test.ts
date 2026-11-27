@@ -40,9 +40,10 @@ function chain() {
 		},
 		log: (event) => s.logs.push(event),
 	}
-	/** `set_poster`'s clear, at the next sequence. */
-	const reset = () => {
+	/** `set_poster(next)`: the poster and the cleared record, at the next sequence, in one step. */
+	const reset = (next = s.poster) => {
 		s.record = { sequence: s.record.sequence + 1n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		s.poster = next
 	}
 	return { s, ports, reset }
 }
@@ -79,14 +80,13 @@ describe("a tick", () => {
 		expect(parseAspSnapshot(JSON.parse(fresh.body("latest")!)).sequence).toBe(3n)
 
 		// `set_poster` clears the record; the old poster must stop serving `/latest` at once.
-		s.poster = 0xdeadn
-		reset()
+		reset(0xdeadn)
 		expect(await bot.tick()).toEqual({ post: false, reason: "not_poster" })
 		expect(book.body("latest")).toBeUndefined()
 		ports.selectL1 = async () => {
 			throw new Error("anvil down")
 		}
-		s.poster = SELF
+		reset(SELF)
 		expect(await bot.tick()).toEqual({ post: false, reason: "error" })
 		expect(s.logs).toEqual(["posted", "posted", "asp_root_mismatch", "posted", "not_poster", "tick_failed"])
 	})
@@ -171,6 +171,11 @@ describe("a tick", () => {
 
 	it("stops serving a post that lost to a reset, and posts the sequence after the clear", async () => {
 		const { s, ports, reset } = chain()
+		const errors: unknown[] = []
+		ports.log = (event, f) => {
+			s.logs.push(event)
+			if (event === "tick_failed") errors.push(f?.error)
+		}
 		let t = 0
 		const book = new SnapshotBook()
 		const bot = new Poster(ports, book, { self: SELF, inclusionMarginSec: 144n, leavesFloorMs: 300_000, now: () => t })
@@ -187,12 +192,14 @@ describe("a tick", () => {
 		}
 		t = 300_000
 		expect(await bot.tick()).toEqual({ post: false, reason: "error" })
-		expect(s.record).toMatchObject({ sequence: 2n, poolRoot: 0n })
+		expect([errors, s.record.sequence, s.record.poolRoot]).toEqual([["sequence not next"], 2n, 0n])
+		const status = (n: string) => respond("GET", `/v1/snapshots/${n}`, book).status
+		// Until the bot reads the clear, it still holds the body its fenced post would have named.
+		expect(status("2")).toBe(200)
 		ports.post = send
-		// Inside the floor, so no recovery post hides what the clear leaves served.
+		// Inside the floor, so no recovery post hides what reading the clear leaves served.
 		t = 300_030
 		expect(await bot.tick()).toEqual({ post: false, reason: "asp_deferred" })
-		const status = (n: string) => respond("GET", `/v1/snapshots/${n}`, book).status
 		expect(["latest", "2", "1"].map(status)).toEqual([404, 404, 200])
 		t = 600_000
 		expect((await bot.tick()).post).toBe(true)
@@ -253,12 +260,14 @@ describe("a tick", () => {
 		reset()
 		step(1n)
 		const post = ports.post
-		ports.post = async () => {
+		const attempts: bigint[] = []
+		ports.post = async (a) => {
+			attempts.push(a.sequence)
 			throw new Error("send failed")
 		}
 		expect(await at(1_500_000)).toEqual({ post: false, reason: "error" })
 		expect(await at(1_500_030)).toEqual({ post: false, reason: "error" })
-		expect(s.fetches).toBe(6)
+		expect([attempts, s.fetches]).toEqual([[5n, 5n], 6])
 		// A second reset with no post between drops the list fetched since the first, within the floor.
 		reset()
 		ports.post = post
@@ -283,13 +292,20 @@ describe("a tick", () => {
 		s.l1 = { number: 30n, hash: "0x0b", timestamp: 1_150n }
 		const send = ports.post
 		const sequenceOf = (body: string | undefined) => body && parseAspSnapshot(JSON.parse(body)).sequence
-		let pending = {}
+		const { promise: landed, resolve: land } = Promise.withResolvers<void>()
+		const { promise: checkpointed, resolve: checkpoint } = Promise.withResolvers<void>()
+		// The post lands at once; its checkpoint waits until the test releases it.
 		ports.post = async (a) => {
-			pending = { named: sequenceOf(book.body(a.sequence)), latest: sequenceOf(book.body("latest")) }
-			return send(a)
+			const done = await send(a)
+			land()
+			await checkpointed
+			return done
 		}
-		expect((await bot.tick()).post).toBe(true)
-		expect(pending).toEqual({ named: 2n, latest: 1n })
+		const tick = bot.tick()
+		await landed
+		expect([sequenceOf(book.body(2n)), sequenceOf(book.body("latest"))]).toEqual([2n, 1n])
+		checkpoint()
+		expect((await tick).post).toBe(true)
 		expect(sequenceOf(book.body("latest"))).toBe(2n)
 	})
 })

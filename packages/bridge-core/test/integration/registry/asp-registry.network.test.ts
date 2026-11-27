@@ -154,7 +154,9 @@ describe.skipIf(!process.env.BRIDGE_INTEGRATION)("ASP root registry on a local n
 		expect((await base.node.simulatePublicCalls(proven.tx, false)).revertReason?.message).toMatch(/^Assertion failed/)
 		await base.node.sendTx(proven.tx)
 		// The bot waits like this, so its tick fails instead of logging a post.
-		await expect(waitForTx(base.node, proven.tx.getTxHash(), { waitForStatus: TxStatus.CHECKPOINTED })).rejects.toThrow()
+		await expect(waitForTx(base.node, proven.tx.getTxHash(), { waitForStatus: TxStatus.CHECKPOINTED })).rejects.toThrow(
+			/^Transaction 0x[0-9a-f]+ reverted:/,
+		)
 		const settled = await waitForTx(base.node, proven.tx.getTxHash(), { dontThrowOnRevert: true })
 		expect(settled.executionResult).toBe(TxExecutionResult.REVERTED)
 	})

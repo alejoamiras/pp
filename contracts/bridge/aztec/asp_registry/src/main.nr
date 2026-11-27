@@ -127,7 +127,7 @@ pub contract AspRootRegistry {
 
     /// A dead address freezes posting. Clearing the block and the time lets the next poster recover
     /// from a stolen key's `l1_block = u64::MAX`. The cleared record takes the next sequence, so a post
-    /// prepared against the record it replaces fails as not next. Each post or reset adds one, so the
+    /// prepared against the record it replaces can no longer land. Each post or reset adds one, so the
     /// sequence cannot run out.
     #[external("public")]
     fn set_poster(next: AztecAddress) {
