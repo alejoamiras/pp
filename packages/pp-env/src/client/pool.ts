@@ -26,7 +26,7 @@ import { createProver, openPoolClient, type PoolClient } from "@pp/pool-client"
 import { type Address, createPublicClient, getAddress, type Hex, http, keccak256, toHex, verifyTypedData } from "viem"
 import { secretDerivationTypedData } from "./derivation.ts"
 import { createProofService } from "./prover.ts"
-import { poolClientOptions, toPreparedSpend } from "./spend.ts"
+import { explainSpendError, poolClientOptions, toPreparedSpend } from "./spend.ts"
 import type { ClientConfig, LocalWallet, PoolNote, PoolUser, PreparedSpend, SpendRequest } from "./types.ts"
 
 type SdkPublicClient = ConstructorParameters<typeof ViemRPCInteractor>[0]["publicClient"]
@@ -133,10 +133,21 @@ function pickInput(noteManager: NoteManager, asset: Address, input: bigint | und
 	return note
 }
 
+/** Declared fields only, read once: a later edit to the caller's object must not split one user across two configs. */
+function snapshot(c: ClientConfig): ClientConfig {
+	const d = c.deployment
+	const deployment = {
+		pool: d.pool,
+		entrypoint: d.entrypoint,
+		keystore: d.keystore,
+		aspRegistry: d.aspRegistry,
+		deployBlock: d.deployBlock,
+	}
+	return { rpcUrl: c.rpcUrl, chainId: c.chainId, deployment, aspUrl: c.aspUrl, circuitsDir: c.circuitsDir }
+}
+
 /** One pool-client per asset, opened on first spend; a failed open is retried on the next. */
-function spender(live: ClientConfig, owner: Address, signature: Hex, prover: IGroth16Prover) {
-	// Read once, as the session was: a later edit to the caller's config must not split one user in two.
-	const config = structuredClone(live)
+function spender(config: ClientConfig, owner: Address, signature: Hex, prover: IGroth16Prover) {
 	const clients = new Map<Address, Promise<PoolClient>>()
 	const clientFor = (asset: Address) => {
 		const known = clients.get(asset)
@@ -148,7 +159,12 @@ function spender(live: ClientConfig, owner: Address, signature: Hex, prover: IGr
 	}
 	return async (note: Note, { processor, data, asset, amountOut }: SpendRequest): Promise<PreparedSpend> => {
 		const client = await clientFor(getAddress(asset))
-		return toPreparedSpend(await client.prepareSpend({ note: BigInt(note.commitment), amount: amountOut, processor, data }))
+		const commitment = BigInt(note.commitment)
+		return toPreparedSpend(
+			await client.prepareSpend({ note: commitment, amount: amountOut, processor, data }).catch((e: unknown) => {
+				throw explainSpendError(e, commitment)
+			}),
+		)
 	}
 }
 
@@ -156,12 +172,13 @@ function spender(live: ClientConfig, owner: Address, signature: Hex, prover: IGr
  * Builds a user whose keys derive from `signature`, or from the wallet signing the secret-derivation
  * payload. A supplied signature must be the wallet's own: any other derives keys it cannot reproduce.
  */
-export async function createPoolUser(config: ClientConfig, o: { wallet: LocalWallet; signature?: Hex }): Promise<PoolUser> {
+export async function createPoolUser(live: ClientConfig, o: { wallet: LocalWallet; signature?: Hex }): Promise<PoolUser> {
 	const { wallet } = o
 	const owner = wallet.account.address
 	const typedData = secretDerivationTypedData(owner)
 	if (o.signature && !(await verifyTypedData({ address: owner, signature: o.signature, ...typedData })))
 		throw new Error(`the signature is not ${owner}'s secret-derivation signature`)
+	const config = snapshot(live)
 	const signature = o.signature ?? (await wallet.signTypedData({ account: wallet.account, ...typedData }))
 	const prover = createProver()
 	const cryptoService = new CryptoService()

@@ -23,7 +23,9 @@ await env.submitViaStub(stub, spend, 12)
 await env.stop()
 ```
 
-`@pp/pp-env/client` holds the user-side helpers alone (key derivation from a wallet signature, the SDK wiring, spend proving), with no dependency on the environment.
+`@pp/pp-env/client` holds the user-side helpers alone (key derivation from a wallet signature, the SDK wiring for registration, deposits and note discovery), with no dependency on the environment. Spends are proved and checked by `@pp/pool-client`.
+
+A refused spend rejects with `@pp/pool-client`'s `PoolClientError` and its code: `AMOUNT_OUT_OF_RANGE` for an amount of zero or above the note, `ARTIFACT_MISMATCH` for a circuit file that fails its pin, `NOTE_NOT_FOUND` when pool-client's note discovery disagrees with the user's notes. A zero spend is always refused.
 
 Both entries load under Bun and under native Node with type stripping on by default (22.18+ or 23.6+), since the SDK resolves through `package.json#imports` (`#ppv2/*`) rather than tsconfig paths. Proving and `startPoolEnv` still call Bun's APIs, so they run under Bun only.
 
@@ -45,6 +47,6 @@ Everything after `fetch` runs offline. Each start re-verifies the fetched tree a
 | `typecheck:full`, `test:smoke` | yes | the implementation against the SDK; proving under Bun; both entries under native Node |
 | `test:vitest` | yes | the client under vite's module runner, as a vitest consumer loads it |
 | `test:contracts` | no (Forge) | fixture tests, fuzzed |
-| `test:integration` | yes | parallel envs, attach, teardown; a full spend through the stub and the pool's rejections |
+| `test:integration` | yes | parallel envs, attach, teardown; a full spend through the stub and the pool's rejections; spend refusals |
 
 CI (`.github/workflows/pp-env.yml`) fetches once through `.github/actions/ppv2-fetch`, then runs every post-fetch suite in a network namespace with loopback only.

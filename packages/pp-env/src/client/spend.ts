@@ -1,4 +1,4 @@
-import type { ArtifactSource, PreparedSpend as ClientSpend, PoolConfig } from "@pp/pool-client"
+import { type ArtifactSource, type PreparedSpend as ClientSpend, type PoolConfig, PoolClientError } from "@pp/pool-client"
 import { type Address, getAddress, type Hex } from "viem"
 import type { ClientConfig, PreparedSpend } from "./types.ts"
 
@@ -40,4 +40,16 @@ export function toPreparedSpend(s: ClientSpend): PreparedSpend {
 		asset: getAddress(s.asset),
 		label: s.change.label,
 	}
+}
+
+/**
+ * `NOTE_NOT_FOUND` for a note this user lists as active means pool-client's note discovery (its ASP
+ * events) and the checkout's disagree, not a missing deposit; the code is kept, the message says so.
+ */
+export function explainSpendError(e: unknown, commitment: bigint): unknown {
+	if (!(e instanceof PoolClientError) || e.code !== "NOTE_NOT_FOUND") return e
+	return new PoolClientError(
+		"NOTE_NOT_FOUND",
+		`note ${commitment} is ACTIVE in this user's notes, but pool-client's discovery has no such note: its note-event source (the ASP) and the chain disagree`,
+	)
 }

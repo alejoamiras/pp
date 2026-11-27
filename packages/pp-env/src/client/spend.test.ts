@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
-import type { PreparedSpend as ClientSpend } from "@pp/pool-client"
+import { type PreparedSpend as ClientSpend, PoolClientError } from "@pp/pool-client"
 import { getAddress } from "viem"
-import { poolClientOptions, toPreparedSpend } from "./spend.ts"
+import { explainSpendError, poolClientOptions, toPreparedSpend } from "./spend.ts"
 import type { ClientConfig } from "./types.ts"
 
 // pp-env's viem and pool-client's are different copies, so only plain data may cross between them;
@@ -91,4 +91,12 @@ test("a pool-client spend comes back as plain data in PoolUser's shape, transact
 test("the plain-data check refuses a client-shaped value", () => {
 	expect(() => assertPlain({ pool: { client: new (class Client {})() } })).toThrow("$.pool.client is not plain data")
 	expect(() => assertPlain([() => 1])).toThrow("$[0] is not plain data")
+})
+
+test("a listed note pool-client cannot find keeps its code and reads as a coverage mismatch", () => {
+	const missing = explainSpendError(new PoolClientError("NOTE_NOT_FOUND", "this client holds no such note"), 12n)
+	expect(missing).toBeInstanceOf(PoolClientError)
+	expect(missing).toMatchObject({ code: "NOTE_NOT_FOUND", message: expect.stringContaining("note 12 is ACTIVE") })
+	const other = new PoolClientError("AMOUNT_OUT_OF_RANGE", "amount must be in (0, note value]")
+	expect(explainSpendError(other, 12n)).toBe(other)
 })
