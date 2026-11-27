@@ -90,9 +90,8 @@ function RegisterStep({ session, next, onCheck }: { session: Session; next: Regi
 		<Callout tone="attn" title="Register with the pool" role="status">
 			<div data-testid="register-step" data-next={next} className="grid gap-2">
 				<p>
-					The pool's keystore holds no keys for {shortHex(session.owner)} yet, so it has no pool notes this app can read.
-					Registering sends {calls} from that account, paid in its ETH: one sets the key that authorises your spends, one the key
-					senders encrypt your notes to.
+					The pool's keystore does not hold both of {shortHex(session.owner)}'s keys yet. Registering sends {calls} from that
+					account, paid in its ETH: one sets the key that authorises your spends, one the key senders encrypt your notes to.
 				</p>
 				<div>
 					<ActionButton variant="primary" disabledReason={block} onClick={register}>

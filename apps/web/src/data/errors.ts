@@ -116,7 +116,7 @@ const MESSAGES: Record<UiCode, string> = {
 	REGISTER_FROM_OWNER:
 		"Select your signed-in account in your Ethereum wallet: the keystore registers whichever account sends, so only that one can register.",
 	REGISTRATION_REPLACED:
-		"Your wallet replaced the registration with another transaction, which set nothing in the keystore. Register again when you are ready.",
+		"Your wallet replaced the registration with another transaction, so the key this step sets is still unset. Register again when you are ready.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",
 }
 

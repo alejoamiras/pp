@@ -476,12 +476,18 @@ describe("registration through the stack session", () => {
 	const KEYSTORE: Address = "0x00000000000000000000000000000000000000c3"
 	const call = (from: Address) => ({ function: "setAuthPolicy" as const, from, to: KEYSTORE, data: "0x01" as Hex, value: 0n as const })
 
-	/** The real Ethereum port over an injected wallet on `chainId`, whose sends do `onSend`. */
-	function registering(o: { onSend?: () => unknown; chainId?: number; step?: () => Promise<unknown>; mined?: Hash } = {}) {
+	/**
+	 * The real Ethereum port over an injected wallet on `chainId`, whose sends do `onSend`; `chainRead`
+	 * holds its answer to viem's chain read before the send.
+	 */
+	function registering(
+		o: { onSend?: () => unknown; chainId?: number; step?: () => Promise<unknown>; mined?: unknown; chainRead?: Promise<void> } = {},
+	) {
 		const sends: { method: string; from: unknown }[] = []
 		const wallet: InjectedWallet = {
 			async request({ method, params }) {
-				if (method === "eth_chainId") return `0x${(o.chainId ?? 31337).toString(16)}`
+				if (method === "eth_chainId")
+					return o.chainRead?.then(() => `0x${(o.chainId ?? 31337).toString(16)}`) ?? `0x${(o.chainId ?? 31337).toString(16)}`
 				if (method !== "eth_sendTransaction" && method !== "wallet_sendTransaction") throw new Error(`${method} unexpected`)
 				sends.push({ method, from: (params as [{ from: unknown }])[0].from })
 				return (o.onSend ?? (() => TX))()
@@ -490,7 +496,7 @@ describe("registration through the stack session", () => {
 		const step = o.step ?? (async () => ({ status: "send", call: call(OWNER) }))
 		const open = (async () => ({ l1Address: OWNER, pool: { registrationStep: step } })) as unknown as typeof openBridgeSession
 		const reads = {
-			waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 7n, transactionHash: o.mined ?? TX }),
+			waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 7n, transactionHash: "mined" in o ? o.mined : TX }),
 		} as unknown as SessionDeps["reads"]
 		return { r: rig({ open, reads, l1: stackL1({ l1ChainId: 31337, l1RpcUrl: MANIFEST.l1Rpc }, wallet) }), sends }
 	}
@@ -540,5 +546,25 @@ describe("registration through the stack session", () => {
 		const REPLACEMENT: Hash = `0x${"ee".repeat(32)}`
 		const { r } = registering({ mined: REPLACEMENT })
 		expect(await (await r.open()).registrationReceipt(TX)).toEqual({ status: "success", blockNumber: 7n, hash: REPLACEMENT })
+		const nameless = registering({ mined: undefined })
+		expect(await (await nameless.r.open()).registrationReceipt(TX)).toBeNull()
+	})
+
+	test("never asks the wallet from a session closed while viem read the chain, even with the same owner signed in again", async () => {
+		let release = () => {}
+		const chainRead = new Promise<void>((r) => {
+			release = r
+		})
+		const { r, sends } = registering({ chainRead })
+		const s = await r.open()
+		const handoff = vi.fn()
+		const sent = s.sendRegistration(call(OWNER), handoff).catch((e: unknown) => e)
+		await Promise.resolve()
+		s.close()
+		await r.open()
+		release()
+		expect(await sent).toMatchObject({ code: "SESSION_CLOSED" })
+		expect(handoff).not.toHaveBeenCalled()
+		expect(sends).toEqual([])
 	})
 })

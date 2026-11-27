@@ -70,6 +70,32 @@ describe("the pool registration step", () => {
 		expect(screen.queryByText("Notes by label")).toBeNull()
 	})
 
+	test("shows a sign-in afresh, without the outcome of a run from before a sign-out", async () => {
+		const { user, control } = unregistered()
+		await clickSignIn(user)
+		await screen.findByTestId("register-step")
+		control.failNext("send", "REJECTED")
+		await user.click(registerButton())
+		await screen.findByTestId("register-failed")
+		await user.click(screen.getByRole("button", { name: "Sign out" }))
+		await clickSignIn(user)
+		await screen.findByTestId("register-step")
+		expect(screen.queryByTestId("register-failed")).toBeNull()
+	})
+
+	test("stays blocked across a sign-out and back while the wallet still holds the call", async () => {
+		const { user, control } = unregistered()
+		await clickSignIn(user)
+		await screen.findByTestId("register-step")
+		control.hangNext("send")
+		await user.click(registerButton())
+		await user.click(screen.getByRole("button", { name: "Sign out" }))
+		await clickSignIn(user)
+		await screen.findByTestId("register-step")
+		expect(registerButton().disabled).toBe(true)
+		expect(step().getByText("Your Ethereum wallet has the registration.")).toBeTruthy()
+	})
+
 	test("keeps each account's keys apart", async () => {
 		const { user, control } = unregistered()
 		act(() => control.selectL1Account("sender"))

@@ -85,19 +85,34 @@ export async function registerOwner(d: RegisterDeps): Promise<RegisterResult> {
 	const refused = precheck(d, now)
 	if (refused) return refused
 	const bound = bindRegistration(d, now.demo ?? false)
+	const run = progress()
 	let last: Mined | undefined
-	let done: Hash | undefined
-	const failed = (f: Failed): Failed => (done && done !== f.txHash ? { ...f, done } : f)
 	for (let calls = 0; ; calls++) {
 		const step = await readStep(d, last?.block)
-		if ("ok" in step) return failed(step)
+		if ("ok" in step) return run.failed(step)
 		if (step.status === "registered") return { ok: true }
 		const stop = stopBefore(step.call, last, calls)
-		if (stop) return failed(stop)
+		if (stop) return run.failed(stop)
+		run.movedPast(last)
 		const mined = await sendOne(d, step.call, bound)
-		if ("ok" in mined) return failed(mined)
-		if (!mined.reverted && !mined.replaced) done ??= mined.hash
+		if ("ok" in mined) return run.failed(mined)
+		run.mined(mined)
 		last = mined
+	}
+}
+
+/** The run's first call known to have set its key: at its own successful receipt, or once the chain moved past it. */
+function progress() {
+	let done: Hash | undefined
+	return {
+		mined(m: Mined) {
+			if (!m.reverted && !m.replaced) done ??= m.hash
+		},
+		// What a replacement under another hash did shows only once the next step has moved on.
+		movedPast(last: Mined | undefined) {
+			if (last && !last.reverted) done ??= last.hash
+		},
+		failed: (f: Failed): Failed => (done && done !== f.txHash ? { ...f, done } : f),
 	}
 }
 

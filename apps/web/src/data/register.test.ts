@@ -104,6 +104,12 @@ describe("registerOwner", () => {
 			["setAuthPolicy", "setViewingKey"],
 		],
 		[
+			"a declined second step after a sped-up first, naming the replacement that mined",
+			{ wallets: ["speed-up", "reject"] as Wallet[] },
+			{ code: "WALLET_REJECTED", done: REPLACEMENT },
+			["setAuthPolicy", "setViewingKey"],
+		],
+		[
 			"a read failing after the first receipt, naming the call that mined",
 			{ stepFailsAt: 2 },
 			{ code: "RPC_FAILED", done: hash(1) },

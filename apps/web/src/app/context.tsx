@@ -103,6 +103,10 @@ export function AppProvider({ source, frame, children }: Props) {
 		if (session === null) {
 			queryClient.removeQueries({ queryKey: [POOL_KEY] })
 			queryClient.removeQueries({ queryKey: [REGISTRATION_KEY] })
+			// A run still pending stays: its call may still be with the wallet, so Register stays blocked.
+			const runs = queryClient.getMutationCache()
+			for (const m of runs.findAll({ mutationKey: [REGISTRATION_KEY], predicate: (m) => m.state.status !== "pending" }))
+				runs.remove(m)
 		}
 	}, [session, queryClient])
 

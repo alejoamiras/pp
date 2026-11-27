@@ -32,6 +32,7 @@ import {
 	ChainMismatchError,
 	type Hash,
 	isAddressEqual,
+	isHash,
 	type PublicClient,
 	TransactionNotFoundError,
 	TransactionReceiptNotFoundError,
@@ -165,7 +166,11 @@ function walletError(err: unknown): unknown {
 }
 
 /** Registration's calls go out from the owner through the injected wallet, never the demo sender. */
-function registration(c: Ctx, live: () => void): Pick<Session, "registrationStep" | "sendRegistration" | "registrationReceipt"> {
+function registration(
+	c: Ctx,
+	live: () => void,
+	open: () => boolean,
+): Pick<Session, "registrationStep" | "sendRegistration" | "registrationReceipt"> {
 	const { s, deps, timing } = c
 	return {
 		async registrationStep(after) {
@@ -178,19 +183,26 @@ function registration(c: Ctx, live: () => void): Pick<Session, "registrationStep
 		async sendRegistration(call, handoff) {
 			live()
 			if (!isAddressEqual(call.from, s.l1Address)) throw new BridgeFailure("REGISTER_FROM_OWNER")
-			const wallet = deps.l1.settleWallet({ sender: s.l1Address, demo: false }, handoff)
+			// viem reads the chain before it asks the wallet, so this session can close, and the same owner
+			// sign in again, after the check above; only this session's own state tells the two apart.
+			let closed = false
+			const wallet = deps.l1.settleWallet({ sender: s.l1Address, demo: false }, () => {
+				closed = !open()
+				if (closed) throw new BridgeFailure("SESSION_CLOSED")
+				handoff()
+			})
 			return wallet
 				.sendTransaction({ to: call.to, data: call.data, value: call.value, chain: wallet.chain })
 				.catch((err: unknown) => {
-					throw walletError(err)
+					throw closed ? new BridgeFailure("SESSION_CLOSED") : walletError(err)
 				})
 		},
-		// viem answers a replaced transaction with its replacement's receipt.
+		// viem answers a replaced transaction with its replacement's receipt; one naming no transaction is none.
 		registrationReceipt: (hash) =>
 			deps.reads
 				.waitForTransactionReceipt({ hash, timeout: timing.receiptTimeoutMs, pollingInterval: timing.pollingIntervalMs })
 				.then(
-					(r) => ({ status: r.status, blockNumber: r.blockNumber, hash: r.transactionHash }),
+					(r) => (isHash(r.transactionHash) ? { status: r.status, blockNumber: r.blockNumber, hash: r.transactionHash } : null),
 					() => null,
 				),
 	}
@@ -253,7 +265,7 @@ function stackSession(c: Ctx): Session {
 	}
 	return {
 		owner: s.l1Address,
-		...registration(c, live),
+		...registration(c, live, () => open),
 		notes: () => s.pool.notes(),
 		nullifierOf: (commitment) => s.pool.nullifierOf(commitment),
 		async preflight(recipient, epoch) {
