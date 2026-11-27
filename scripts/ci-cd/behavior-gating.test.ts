@@ -6,7 +6,7 @@
  * gate covers. The unit-test workflow runs this file on every PR; the last test pins that.
  */
 import { describe, expect, test } from "bun:test"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 
 const ROOT = join(import.meta.dir, "..", "..")
@@ -56,12 +56,25 @@ const exportTargets = (e: unknown): string[] => (typeof e === "string" ? [e] : O
 const SOURCE = /\.(ts|tsx|mts|js|mjs)$/
 const INSTALLED = /(^|\/)(node_modules|dist)\//
 
-/** Every file under a repo-relative directory, without installed or built output. */
-function filesUnder(dir: string): string[] {
-  if (!existsSync(join(ROOT, dir))) return []
-  return [...new Bun.Glob("**/*").scanSync({ cwd: join(ROOT, dir), onlyFiles: true, dot: true })]
-    .map((f) => join(dir, f))
-    .filter((f) => !INSTALLED.test(f))
+/**
+ * Files a change can touch: tracked, or untracked and not ignored. A filter only ever matches changed
+ * tracked files, and an ignored tree (a local browser run's state, build output) can hold thousands.
+ */
+function listWalkable(root = ROOT): string[] {
+  // The ceiling keeps git from taking an enclosing repository for one at `root`.
+  const env = { ...process.env, GIT_CEILING_DIRECTORIES: dirname(root) }
+  const ls = Bun.spawnSync(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, env })
+  if (!ls.success) throw new Error(`git ls-files exited ${ls.exitCode}: ${ls.stderr.toString().trim()}`)
+  return ls.stdout
+    .toString()
+    .split("\0")
+    .filter((f) => f && !INSTALLED.test(f) && existsSync(join(root, f)))
+}
+let walkable: string[] | undefined
+
+/** Every walkable file under a repo-relative directory. */
+function filesUnder(dir: string, files: readonly string[] = (walkable ??= listWalkable())): string[] {
+  return files.filter((f) => f.startsWith(`${dir}/`))
 }
 
 /** The repo file a specifier names, trying TypeScript's extension and index rules. */
@@ -244,8 +257,13 @@ describe("CI behavior-gating guard", () => {
   })
 
   test("every filter that gates a package whole gates every file that package can load", () => {
+    const gaps: Record<string, string[]> = {}
     for (const wf of FILTER_WORKFLOWS)
-      for (const [name, patterns] of Object.entries(filtersOf(wf))) expect(closureGaps(patterns), `${wf} → ${name}`).toEqual([])
+      for (const [name, patterns] of Object.entries(filtersOf(wf))) {
+        const left = closureGaps(patterns)
+        if (left.length > 0) gaps[`${wf} → ${name}`] = left
+      }
+    expect(gaps).toEqual({})
   })
 
   test("the closure pin names what a filter leaves out", () => {
@@ -264,6 +282,41 @@ describe("CI behavior-gating guard", () => {
     // A package without `exports` counts whole however it is named, and `bun run --cwd` reaches what its script runs.
     expect(entriesOf("e2e-kit", "/fixtures/egress")).toContain("packages/e2e-kit/fixtures/build-artifacts/handle.json")
     expect(closureGaps(["packages/e2e-kit/**"])).toContain("packages/bridge-core/scripts/sandbox/cli.ts")
+    // An ignored file is never read, however much a local run leaves there. The probe goes through the
+    // default inventory and imports a source file e2e-kit does not reach without it, found from the walk
+    // itself: which files those are depends on the branch's dependency graph.
+    walkable = undefined
+    const reached = reachedFiles("e2e-kit").files
+    const unreached = filesUnder("packages").find((f) => SOURCE.test(f) && !f.startsWith("packages/e2e-kit/") && !reached.has(f))
+    if (unreached === undefined) throw new Error("every package source file is in e2e-kit's reach; the probe has nothing to import")
+    const state = join(ROOT, "packages/e2e-kit/.e2e-state")
+    mkdirSync(state, { recursive: true })
+    const probes = mkdtempSync(join(state, "walk-probe-"))
+    try {
+      const ignored = relative(ROOT, join(probes, "probe.ts"))
+      const spec = relative(dirname(ignored), unreached)
+      writeFileSync(join(ROOT, ignored), `import ${JSON.stringify(spec)}\n`)
+      expect(resolveFile(join(dirname(ignored), spec)), "the probe imports a file e2e-kit never reaches").toBe(unreached)
+      walkable = undefined
+      expect(reachedFiles("e2e-kit").files).not.toContain(unreached)
+    } finally {
+      walkable = undefined
+      rmSync(probes, { recursive: true, force: true })
+    }
+    // An untracked file that is not ignored is listed before it is committed. It gets a repository of its
+    // own, inside this checkout's ignored state: an untracked probe in the checkout could be listed by
+    // another run walking it and be gone when read.
+    const repo = mkdtempSync(join(state, "walk-repo-"))
+    try {
+      expect(() => listWalkable(repo), "a directory inside a repository is not one").toThrow(/git ls-files exited 128/)
+      expect(Bun.spawnSync(["git", "init", "-q"], { cwd: repo }).success).toBe(true)
+      mkdirSync(join(repo, "ignored"))
+      writeFileSync(join(repo, ".gitignore"), "ignored/\n")
+      for (const f of ["untracked.ts", "ignored/probe.ts"]) writeFileSync(join(repo, f), "")
+      expect(listWalkable(repo).sort()).toEqual([".gitignore", "untracked.ts"])
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
     // A glob that names the directory but matches no file in it.
     expect(closureGaps([...stack.filter((p) => p !== "packages/run-isolation/src/**"), "packages/run-isolation/src/*/**/*.ts"])).toContain(
       "packages/run-isolation/src/process-group.ts",
