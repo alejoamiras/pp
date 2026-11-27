@@ -4,6 +4,7 @@
 #
 #   bun run --cwd packages/e2e-kit test:browser [-- <playwright args, e.g. --shard=1/2>]
 #   bun run --cwd packages/e2e-kit test:browser reap    # stop every network a run of THIS checkout left behind
+#                                                       # (a live run's too: only when none is active)
 #
 # PP_E2E_MODE picks the network. `sandbox` (the default): the bridge sandbox, and `apps/web`'s
 # `build:local` against PP_SANDBOX_ARTIFACTS (the fixture world). `stack`: the local stack
@@ -35,14 +36,18 @@ esac
 # attach reads them from ports.json, and the `reap` that stops that stack releases them then.
 release_ports() {
   [ -f "$1/ports.json" ] || return 0
-  if [ -f "$1/stack.pid" ]; then echo "[e2e] ports kept: $1/stack.pid still names a stack"; return 0; fi
-  bun scripts/e2e/resolve-ports.ts --release "$1" 2>/dev/null || true
+  if [ -f "$1/stack.pid" ]; then echo "[e2e] ports kept: $1/stack.pid still names a stack"; return 1; fi
+  bun scripts/e2e/resolve-ports.ts --release "$1" && return 0
+  echo "[e2e] FATAL: the ports $1/ports.json names were not released; once the registry answers, run from packages/e2e-kit: bun scripts/e2e/resolve-ports.ts --release $1" >&2
+  return 1
 }
 
 # Orphan recovery by OWNERSHIP: only the pgids this checkout's runs wrote to their pid files — never
 # a name match, which would take down another agent's network on the same host.
 if [ "${1:-}" = "reap" ]; then
+  echo "[e2e] reap stops every recorded network of this checkout, a live run's included; run it only when no run of this checkout is active"
   found=0
+  failed=0
   for pidfile in "$KIT_DIR"/.e2e-state/*/sandbox.pid; do
     [ -f "$pidfile" ] || continue
     pgid=$(cat "$pidfile")
@@ -59,18 +64,18 @@ if [ "${1:-}" = "reap" ]; then
     fi
     rm -f "$pidfile"
     # The run's browser ports: ports.json names the owner its rows were claimed under.
-    release_ports "$statedir"
+    release_ports "$statedir" || failed=1
   done
   # Stacks: `stack.ts down` stops a group only while it still leads the CLI that state dir started.
   for pidfile in "$KIT_DIR"/.e2e-state/*/stack.pid ${PP_E2E_STATE_DIR:+"$PP_E2E_STATE_DIR/stack.pid"}; do
     [ -f "$pidfile" ] || continue
     found=1
     statedir=$(dirname "$pidfile")
-    bun scripts/e2e/stack.ts down "$statedir" || true
-    release_ports "$statedir"
+    bun scripts/e2e/stack.ts down "$statedir" || failed=1
+    release_ports "$statedir" || failed=1
   done
   [ "$found" = 1 ] || echo "[e2e] nothing to reap"
-  exit 0
+  exit "$failed"
 fi
 RUN_ID="browser-e2e-$$-$(date +%s | tail -c 6)"
 STATE_DIR="${PP_E2E_ATTACH:-${PP_E2E_STATE_DIR:-$KIT_DIR/.e2e-state/$RUN_ID}}"
@@ -92,16 +97,20 @@ stop_stack() {
     log "stack kept — attach with: PP_E2E_MODE=stack PP_E2E_ATTACH=$STATE_DIR bun run --cwd packages/e2e-kit test:browser -- <args>; stop with: bun run --cwd packages/e2e-kit test:browser reap (with PP_E2E_STATE_DIR=$STATE_DIR)"
     return 0
   fi
-  bun scripts/e2e/stack.ts down "$STATE_DIR" || log "WARN: the stack did not stop cleanly — run: PP_E2E_STATE_DIR=$STATE_DIR bun run --cwd packages/e2e-kit test:browser reap"
+  bun scripts/e2e/stack.ts down "$STATE_DIR" && return 0
+  log "FATAL: the stack did not stop cleanly (above); then run: PP_E2E_STATE_DIR=$STATE_DIR bun run --cwd packages/e2e-kit test:browser reap"
+  return 1
 }
 
+# Every step runs; the status says whether any failed.
 # shellcheck disable=SC2317,SC2329  # invoked by the EXIT trap; shellcheck before 0.11 calls it SC2317
 reap() {
-  stop_stack
+  local failed=0
+  stop_stack || failed=1
   if [ -n "$SANDBOX_PID" ] && kill -0 "$SANDBOX_PID" 2>/dev/null; then
     if [ "$KEEP" = "1" ]; then
       log "sandbox kept (pgid $SANDBOX_PID) — attach with: PP_E2E_ATTACH=$STATE_DIR bun run --cwd packages/e2e-kit test:browser -- <args>; stop with: kill -TERM -- -$SANDBOX_PID"
-      return
+      return "$failed"
     fi
     log "stopping sandbox (pgid $SANDBOX_PID)"
     kill -TERM -- "-$SANDBOX_PID" 2>/dev/null || true
@@ -112,9 +121,21 @@ reap() {
   # ours alone: an attached run never booted the sandbox it used and leaves the keeper's file be.
   if [ -n "$SANDBOX_PID" ] && [ "$KEEP" != "1" ]; then rm -f "$STATE_DIR/sandbox.pid"; fi
   # The browser ports' registry rows belong to this run alone; a kept run keeps them claimed.
-  if [ "$KEEP" != "1" ] && [ -z "${PP_E2E_ATTACH:-}" ]; then release_ports "$STATE_DIR"; fi
+  if [ "$KEEP" != "1" ] && [ -z "${PP_E2E_ATTACH:-}" ]; then release_ports "$STATE_DIR" || failed=1; fi
+  return "$failed"
 }
-trap reap EXIT
+
+# A run whose tests passed still fails when its teardown leaves a group, a listener or a port row.
+# shellcheck disable=SC2317,SC2329  # invoked by the EXIT trap; shellcheck before 0.11 calls it SC2317
+finish() {
+  local status=$1
+  if ! reap && [ "$status" = 0 ]; then
+    log "FATAL: the run passed, but its teardown failed (above)"
+    status=1
+  fi
+  exit "$status"
+}
+trap 'finish $?' EXIT
 
 boot_sandbox() {
   log "booting the sandbox (log: $LOG)"

@@ -25,7 +25,7 @@ bun run --cwd packages/e2e-kit test:browser reap               # stop networks t
    or the stack's `PP_STACK_MANIFEST`, then a check that both bundles name the node, then
    Playwright with one server per build: `vite preview` for a fixture build, the app's own `serve`
    for a stack build.
-5. Reap.
+5. Reap. A run whose tests passed still exits 1 when a stop or a port release fails.
 
 State lives under `.e2e-state/<run>/` (gitignored), or `PP_E2E_STATE_DIR` when set: ports, the
 network's artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the network and prints the line that reattaches to it
@@ -43,8 +43,17 @@ the circuits line did not precede. From the spawn on, `<state>/stack.pid` record
 group and its leader's start time. `stack.ts down` sends SIGTERM to that group only while its
 leader still has that start time and runs the CLI, and waits up to three minutes: the CLI tears
 down every group it started itself, which SIGKILL would orphan. A live group led by anything else
-is left alone, and so is its record. `reap` runs `down` for every stack state under `.e2e-state/`
-and under `PP_E2E_STATE_DIR`; a state's ports go back to the registry only once its `stack.pid` is gone.
+is left alone, and so is its record. Once the stack is ready, `up` writes `<state>/stack-owned.json`:
+every port claimed by a registry owner on one of the ports the handle and manifest name, with its
+listeners then. Once the group is gone, `down` fails if the CLI logged a failed teardown, or if any
+of those ports still keeps a listener of the stack's or a row of its owners after 45 s (a service's
+watcher ends its group and releases its rows after the CLI dies); it also fails on a `stack.pid` it
+cannot resolve to this state's group, and signals nothing then. `stack.pid` stays until the check
+passes, holding `gone` once the group is, so a later `down` checks the ports again without
+resolving a pid; the CLI's report fails only the first. `reap` runs `down` for every stack state under `.e2e-state/`
+and under `PP_E2E_STATE_DIR`, and exits 1 if any stop, check or release failed; a state's ports go
+back to the registry only once its `stack.pid` is gone. `reap` takes every recorded stack in the
+checkout, a live run's included, so run it only when no run of this checkout is active.
 
 On the stack, `Network.l1(0)` is the seeded pool user and `l1(1)` its sender, the stack runs its own
 block heartbeat, and actors are sponsor-deployed through bridge-core's `connectL2` and
