@@ -8,6 +8,7 @@ import { TxHash } from "@aztec-labs/stdlib/tx"
 import { deriveNuloAccountKeys } from "@nulo-sh/wallet-crypto"
 import { account, device, type ProvenTx } from "@pp/bridge-core/account"
 import {
+	BridgeClientError,
 	type BridgeReceipt,
 	type BridgeSession,
 	openBridgeSession,
@@ -136,7 +137,14 @@ async function bridge(c: CanaryContext, h: Holder, s: BridgeSession, note: { com
 		portal: c.d.bridge.portal,
 		recipient: h.account.address,
 	})
-	const receipt = await c.client.submit(spend, c.sender, s)
+	const receipt = await c.client.submit(spend, c.sender, s).catch((e: unknown) => {
+		// An UNCERTAIN end that knows its hash names a transaction that may still land.
+		if (e instanceof BridgeClientError && e.l1TxHash) {
+			c.report.set("bridgeL1Tx", e.l1TxHash)
+			c.report.flush()
+		}
+		throw e
+	})
 	// On file before any further read: a failure from here on strands the amount, and the hash names it.
 	c.report.set("bridgeL1Tx", receipt.l1TxHash)
 	c.report.flush()

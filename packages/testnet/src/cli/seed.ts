@@ -83,6 +83,8 @@ await main(async () => {
 	const value = d.expected.amounts.note
 	if (keys.demo) await (await userOf(keys.demo)).registerKeystore()
 	else if (!recipient) await user.registerKeystore()
+	// A registration takes blocks, and the SDK sizes its approval from the fee it reads next.
+	if (keys.demo || !recipient) await checkDepositDebit(l1, entrypoint, asset, d.expected.amounts)
 	const { label, commitment } = recipient ? await user.depositFor({ asset, value, recipient }) : await user.deposit({ asset, value })
 	const debit = before - (await balance())
 	report("seeded", { owner, recipient: recipient ?? owner, label, commitment, debit })
