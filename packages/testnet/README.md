@@ -2,7 +2,8 @@
 
 The bridge on Sepolia and the public Aztec testnet: one committed deployment file per target, the key file,
 and the guarded commands that deploy, open, run the canary and pause. Sepolia only: every command that signs
-refuses any other L1 chain, mainnet by name, and any Aztec node but the pinned testnet one.
+refuses any other L1 chain, mainnet by name, and any Aztec node but the pinned testnet one. `keys` and
+`addresses` read keys but sign nothing and do no network I/O, so neither checks what an endpoint serves.
 
 ## Targets
 
@@ -28,13 +29,13 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
 - `keys` creates the file and appends a key for every missing name, drawn from the OS's CSPRNG, and prints
   addresses only. It never rewrites a name.
 - Each command parses the file itself and keeps only the names it needs. It refuses a file or directory
-  another user owns or that group or others can read, and a link. Only `deploy-pool`'s Forge child gets a key
-  in its environment.
+  another user owns or that group or others can read, a link, and a file with a second hard link. Only
+  `deploy-pool`'s Forge child gets a key in its environment.
 - No value is ever formatted into output; every line a command prints is also scrubbed of the values it
   loaded. Every command refuses to run while `SEED` is set, which makes Aztec's randomness predictable.
-- One address is funded by hand: the L1 deployer. `fund` tops each other L1 key up to its gas budget
-  (`src/funding.ts`) at twice the fee estimate, never below 1 gwei; `fund --quote` reads no key and prints
-  what the deployer must hold.
+- One address is funded by hand: the L1 deployer. `fund` tops each other L1 address up, once, to the summed
+  gas budgets of the roles it holds (`src/funding.ts`) at twice the fee estimate, never below 1 gwei;
+  `fund --quote` reads no key and prints what the deployer must hold, the top-ups' own gas included.
 
 ## Commands
 
@@ -45,8 +46,8 @@ hashes and allowlisted URLs only. A guard refusal exits 2 before any key is read
 |---|---|---|
 | `keys` | writes every missing name | creates the key file; prints addresses |
 | `addresses` | every name | prints every key's address, for `expected`; no network |
-| `fund [--quote]` | L1 deployer | tops the other L1 keys up to their budgets |
-| `verify-inputs` | none | frozen lockfile, the pinned Forge binary with FFI off, a forced bridge build and the pool build against their pins, L2 class ids, and both endpoints' reads by block hash |
+| `fund [--quote]` | L1 deployer | tops the other L1 addresses up to their roles' budgets |
+| `verify-inputs` | none | a clean working tree (naming HEAD), frozen lockfile, the pinned Forge binary with FFI off, a forced bridge build and the pool build against their pins, L2 class ids, and both endpoints' reads by block hash |
 | `deploy-pool` (own) | pool deployer | the pinned pool, the test token minted to the canary owner, the postman role for the ASP key, every contract's runtime code checked against the build |
 | `asp --owner <address>` (own) | ASP postman | the mock ASP on its loopback port: approves only that owner's deposits, posts roots, serves reads only |
 | `seed [--recipient <address>]` | canary owner | registers and makes the canary deposit; with `--recipient`, deposits it for that registered address instead |
@@ -69,15 +70,16 @@ Run order for the own target: `keys`, `addresses` (commit `expected`), `fund`, `
 `deploy-pool`, `verify-deployment --pool-only`, `asp`, `seed`, `deploy`, `verify-deployment`, `bot`,
 `open`, `canary`, `pause`.
 
-`--rehearse <stack manifest>` runs a command against the local stack with sandbox keys from
-`PP_REHEARSE_<name>` (L1 keys must be anvil's) and never opens a key file. `--rehearse-fork <url>` runs it
-against a loopback anvil fork of Sepolia with the key file of a scratch `$HOME`, refusing this account's
-own home.
+`--rehearse <stack manifest>` runs a command against the local stack, at exactly that manifest's L1 and
+node URLs, with sandbox keys from `PP_REHEARSE_<name>` (L1 keys must be anvil's) and never opens a key file.
+`--rehearse-fork <url>` runs an L1 command against a loopback anvil fork of Sepolia, once the URL answers as
+the pinned anvil, with the key file of a scratch `$HOME`, refusing this account's own home. A fork has no
+Aztec node of its own, so commands that use L2 rehearse on the local stack only.
 
 ## Tests
 
 | Script | What |
 |---|---|
-| `test` | unit tests, including every key-reading command spawned against a fake loopback L1 with sentinel keys |
+| `test` | unit tests, including the key-reading commands spawned with sentinel keys, those that reach L1 against a fake loopback one |
 | `pins`, `pins:check` | rewrite or compare the pool creation codes and class ids (needs pp-env's fetch and the L2 artifacts) |
 | `rehearse pause` | the guardian's failure and recovery cases (a pending open with a lost send, a nonce gap, an occupied nonce and both manual branches, a finality time-out, a stalled pause) and `deploy`'s stale-build refusal, through the real CLIs with real sends, each on a bare local anvil; about 33 min, since the CLI's own 10- and 30-minute budgets run in full (needs `contracts/bridge/evm/out` at the committed build) |
