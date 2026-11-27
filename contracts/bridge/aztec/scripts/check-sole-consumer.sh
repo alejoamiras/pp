@@ -148,9 +148,11 @@ check_claim() {
 	assert_bound "$body" "$r $p $k $s $c" claim_from_pool || return 1
 	assert_bound "$body" "$args" claim_from_pool 0 || return 1
 
-	[ "$(count 'consume_l1_to_l2_message\(' "$body")" -eq 1 ] &&
-		printf '%s' "$body" | grep -qE "consume_l1_to_l2_message\($c, \[$s\], $p, message_leaf_index\)" ||
-		{ violation "claim_from_pool does not consume (content, [secret], portal, message_leaf_index)"; return 1; }
+	if [ "$(count 'consume_l1_to_l2_message\(' "$body")" -ne 1 ] ||
+		! printf '%s' "$body" | grep -qE "consume_l1_to_l2_message\($c, \[$s\], $p, message_leaf_index\)"; then
+		violation "claim_from_pool does not consume (content, [secret], portal, message_leaf_index)"
+		return 1
+	fi
 	printf '%s' "$body" | grep -qE "self\.call\(LabelledToken::at\(token\)\.mint_from_bridge\($r, amount, label\)\);" ||
 		{ violation "claim_from_pool does not mint with self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label))"; return 1; }
 }
@@ -249,6 +251,8 @@ expect() {
 	fi
 }
 
+# The fixtures are perl substitutions: `$1` is a capture group, never a shell expansion.
+# shellcheck disable=SC2016
 self_test() {
 	tmp=$(mktemp -d)
 	trap 'rm -rf "$tmp"' EXIT
