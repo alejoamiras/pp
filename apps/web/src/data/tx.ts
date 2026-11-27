@@ -23,10 +23,13 @@ export function sentOutcome(action: TxAction, sent: Sent): TxOutcome {
 	return { ok: false, code: REVERTED[action] ?? "TX_REVERTED", ...(sent.reason ? { reason: sent.reason } : {}) }
 }
 
-/** A thrown send: the wallet's no, a coded refusal, or an outcome the page cannot know. */
-export function thrownOutcome(err: unknown): TxOutcome {
+/**
+ * A throw before the handoff: the wallet's no, a coded refusal, or a failed read or build. The wallet
+ * was never asked to send, so an uncoded one still sent nothing.
+ */
+export function beforeHandoffOutcome(err: unknown): TxOutcome {
 	if (isUserRejection(err)) return { ok: false, code: "WALLET_REJECTED" }
-	return { ok: false, code: codeOf(err) ?? "UNKNOWN" }
+	return { ok: false, code: codeOf(err) ?? "NOT_SENT" }
 }
 
 /**

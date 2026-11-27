@@ -38,6 +38,7 @@ export type AppCode =
 	| "KEYS_REGISTERED_ELSEWHERE"
 	| "REGISTER_FROM_OWNER"
 	| "REGISTRATION_REPLACED"
+	| "NOT_SENT"
 	| "UNKNOWN"
 
 /**
@@ -133,6 +134,8 @@ const MESSAGES: Record<UiCode, string> = {
 		"Select your signed-in account in your Ethereum wallet: the keystore registers whichever account sends, so only that one can register.",
 	REGISTRATION_REPLACED:
 		"Your wallet replaced the registration with another transaction, so the key this step sets is still unset. Register again when you are ready.",
+	NOT_SENT:
+		"Something failed before the transaction reached your wallet, so nothing was sent. Try again; if it fails the same way, reload the page.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",
 }
 
