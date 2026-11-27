@@ -6,7 +6,7 @@
 import { writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { PORTAL_FACTORY_ABI } from "@pp/bridge-core"
+import { PORTAL_FACTORY_ABI, parseStackManifest, serializeStackManifest } from "@pp/bridge-core"
 import { claimPort } from "@pp/run-isolation/ports"
 import { type CleanupStack, killGroup, type OwnedChild } from "@pp/run-isolation/process"
 import {
@@ -103,6 +103,29 @@ export function fixtureFile(o: {
 	}
 }
 
+/**
+ * Writes the stack manifest `--rehearse` names beside the case's file: the file's own endpoints and the
+ * fixture pool, so the guard compares the file with a manifest that passes the strict schema.
+ * @returns the manifest's path
+ */
+export function writeCaseManifest(c: CaseCtx, file: TestnetDeployment): string {
+	const {
+		accessRouter: _router,
+		relay: _relay,
+		...pool
+	} = fixtureFile({ ...file.network, pool: true }).pool as NonNullable<TestnetDeployment["pool"]>
+	const manifest = parseStackManifest(
+		JSON.parse(
+			JSON.stringify({ version: 1, chainId: LOCAL, l1Rpc: file.network.l1Rpc, aztecNode: file.network.aztecNode, pool }, (_k, v) =>
+				typeof v === "bigint" ? v.toString() : v,
+			),
+		),
+	)
+	const path = join(c.dir, `${c.name}.stack.json`)
+	writeFileSync(path, serializeStackManifest(manifest))
+	return path
+}
+
 export type Stage = {
 	c: CaseCtx
 	chain: LocalChain
@@ -110,6 +133,7 @@ export type Stage = {
 	proxy: RpcProxy | undefined
 	factory: Address
 	file: string
+	manifest: string
 	guardian: PrivateKeyAccount
 }
 
@@ -138,8 +162,9 @@ export async function stage(c: CaseCtx, o: { proxy?: boolean } = {}): Promise<St
 		factoryTx: f.tx,
 	}
 	const file = join(c.dir, `${c.name}.json`)
-	writeFileSync(file, serializeDeployment(fixtureFile({ l1Rpc: proxy?.url ?? chain.url, aztecNode: loopback(UNBOUND + 2), bridge })))
-	return { c, chain, miner, proxy, factory: f.factory, file, guardian }
+	const d = fixtureFile({ l1Rpc: proxy?.url ?? chain.url, aztecNode: loopback(UNBOUND + 2), bridge })
+	writeFileSync(file, serializeDeployment(d))
+	return { c, chain, miner, proxy, factory: f.factory, file, manifest: writeCaseManifest(c, d), guardian }
 }
 
 const publicClient = (s: Stage) => createPublicClient({ transport: http(s.chain.url) })
@@ -197,7 +222,7 @@ export function startPause(s: Stage, args: readonly string[]): Running {
 		PP_TESTNET_RUN_ROOT: join(s.c.dir, "runs"),
 		PP_REHEARSE_GUARDIAN_KEY: GUARDIAN_KEY,
 	}
-	const child = startCli("pause", [s.file, "--factory", s.factory, ...args, "--rehearse", s.file], env, logFile)
+	const child = startCli("pause", [s.file, "--factory", s.factory, ...args, "--rehearse", s.manifest], env, logFile)
 	s.c.cleanup.push(async () => void (await killGroup(child)))
 	return { child, logFile, t0: performance.now() }
 }

@@ -17,7 +17,7 @@ import { generateKey } from "../keyfile"
 import { serializeDeployment } from "../schema"
 import { startLocalAnvil } from "./local-chain"
 import { NODE_INFO, startNodeStub } from "./node-stub"
-import { type CaseCtx, check, DEPLOYER_KEY, fixtureFile } from "./pause-stage"
+import { type CaseCtx, check, DEPLOYER_KEY, fixtureFile, writeCaseManifest } from "./pause-stage"
 import { ended, startCli } from "./runner"
 
 /** The build file with the last byte before its CBOR metadata changed: the same layout, other code. */
@@ -54,7 +54,9 @@ export async function staleBuild(c: CaseCtx): Promise<string[]> {
 	const node = await startNodeStub(await claimPort(c.runId, `${c.name}-node`), network)
 	c.cleanup.push(() => node.close())
 	const file = join(c.dir, `${c.name}.json`)
-	writeFileSync(file, serializeDeployment(fixtureFile({ l1Rpc: chain.url, aztecNode: node.url, pool: true })))
+	const d = fixtureFile({ l1Rpc: chain.url, aztecNode: node.url, pool: true })
+	writeFileSync(file, serializeDeployment(d))
+	const manifest = writeCaseManifest(c, d)
 	const deployer = privateKeyToAccount(DEPLOYER_KEY).address
 	const runRoot = join(c.dir, "runs")
 	const env = {
@@ -74,7 +76,7 @@ export async function staleBuild(c: CaseCtx): Promise<string[]> {
 	const t0 = performance.now()
 	let r: Awaited<ReturnType<typeof ended>>
 	try {
-		const child = startCli("deploy", [file, "--rehearse", file], env, logFile)
+		const child = startCli("deploy", [file, "--rehearse", manifest], env, logFile)
 		c.cleanup.push(async () => void (await killGroup(child)))
 		r = await ended(child, logFile, 120_000)
 	} finally {
