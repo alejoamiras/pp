@@ -47,19 +47,20 @@ const ROOT_ABI = [
 	{ type: "error", name: "ASPRegistry_EmptyAssociationSet", inputs: [] },
 ] as const
 
-/** PIDs of anvils this test process spawned; they lead their own groups but keep us as parent. */
-function anvilChildren(): number[] {
-	const pids: number[] = []
+/** Groups this test process spawned that still run an anvil: each is led by our child, the launcher, with anvil under it. */
+function anvilGroups(): number[] {
+	const procs: { pid: number; ppid: number; pgrp: number; running: boolean; comm: string }[] = []
 	for (const entry of readdirSync("/proc")) {
 		if (!/^\d+$/.test(entry)) continue
 		try {
 			const stat = readFileSync(`/proc/${entry}/stat`, "utf8")
+			const [state, ppid, pgrp] = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
 			const comm = stat.slice(stat.indexOf("(") + 1, stat.lastIndexOf(")"))
-			const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1])
-			if (ppid === process.pid && comm.includes("anvil")) pids.push(Number(entry))
+			procs.push({ pid: Number(entry), ppid: Number(ppid), pgrp: Number(pgrp), running: state !== "Z", comm })
 		} catch {}
 	}
-	return pids
+	const leaders = new Set(procs.filter((p) => p.ppid === process.pid).map((p) => p.pid))
+	return [...new Set(procs.filter((p) => p.running && p.comm.includes("anvil") && leaders.has(p.pgrp)).map((p) => p.pgrp))]
 }
 
 const port = (url: string) => new URL(url).port
@@ -114,7 +115,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("pool env", () => {
 		await expect(startPoolEnv({ runId, deployerIndex: 40 })).rejects.toThrow()
 		expect(existsSync(join(LOG_DIR, `${runId}-anvil.log`))).toBe(true)
 		expect(rowsOwnedBy(runId)).toBe(0)
-		expect(anvilChildren()).toHaveLength(2)
+		expect(anvilGroups()).toHaveLength(2)
 		expect(await alive(a.rpcUrl)).toBe(true)
 	})
 
@@ -216,6 +217,6 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("pool env", () => {
 				() => false,
 			),
 		).toBe(false)
-		expect(anvilChildren()).toHaveLength(1)
+		expect(anvilGroups()).toHaveLength(1)
 	})
 })
