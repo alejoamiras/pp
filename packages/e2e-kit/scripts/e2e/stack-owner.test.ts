@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { endGroup, groupAlive, type ProcFs, pidNamespace, startTime } from "@pp/run-isolation/process-group"
 import { describe, expect, test } from "vitest"
-import { recordGroup, stopRecorded } from "./stack-owner"
+import { abandonBoot, recordGroup, stopRecorded } from "./stack-owner"
 
 const procWith = (files: Record<string, string>): ProcFs => ({
 	readdir: () => [],
@@ -121,6 +121,56 @@ describe.skipIf(!existsSync("/proc/self/stat"))("down, on a live group", () => {
 			await stopRecorded(record, CLI, GRACE_MS)
 			expect(groupAlive(pgid)).toBe(false)
 			expect(existsSync(record)).toBe(false)
+		} finally {
+			await endGroup(pgid, GRACE_MS)
+			rmSync(dir, { recursive: true, force: true })
+		}
+	})
+})
+
+describe.skipIf(!existsSync("/proc/self/stat"))("a boot that failed", () => {
+	const boot = (recorded: boolean, unreaped: boolean) => ({ recorded, unreaped, cli: CLI, graceMs: GRACE_MS })
+
+	test("leaves a recorded pgid that a stranger now leads, and keeps the record", async () => {
+		const dir = stateDir()
+		const stranger = fakeCli()
+		try {
+			const record = join(dir, "stack.pid")
+			// The CLI exited and was reaped; its pid now names another process.
+			writeFileSync(record, `${stranger} ${Number(startTime(stranger)) + 1} ${pidNamespace()}\n`)
+			await abandonBoot(record, stranger, boot(true, false))
+			expect(groupAlive(stranger)).toBe(true)
+			expect(existsSync(record)).toBe(true)
+		} finally {
+			await endGroup(stranger, GRACE_MS)
+			rmSync(dir, { recursive: true, force: true })
+		}
+	})
+
+	test("ends the recorded group while it is still the CLI's, and drops the record", async () => {
+		const dir = stateDir()
+		const pgid = fakeCli()
+		try {
+			const record = join(dir, "stack.pid")
+			recordGroup(record, pgid)
+			await abandonBoot(record, pgid, boot(true, false))
+			expect(groupAlive(pgid)).toBe(false)
+			expect(existsSync(record)).toBe(false)
+		} finally {
+			await endGroup(pgid, GRACE_MS)
+			rmSync(dir, { recursive: true, force: true })
+		}
+	})
+
+	test("with no record written, signals the group only while the CLI is unreaped", async () => {
+		const dir = stateDir()
+		const pgid = fakeCli()
+		try {
+			const record = join(dir, "stack.pid")
+			await abandonBoot(record, pgid, boot(false, false))
+			expect(groupAlive(pgid)).toBe(true)
+			await abandonBoot(record, pgid, boot(false, true))
+			expect(groupAlive(pgid)).toBe(false)
 		} finally {
 			await endGroup(pgid, GRACE_MS)
 			rmSync(dir, { recursive: true, force: true })

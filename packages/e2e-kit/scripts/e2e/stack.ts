@@ -10,17 +10,16 @@
  *   bun scripts/e2e/stack.ts up <state-dir>     bun scripts/e2e/stack.ts down <state-dir>
  */
 import { spawn } from "node:child_process"
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseStackManifest, type StackManifest } from "@pp/bridge-core/stack-manifest"
 import { ANVIL_ACCOUNTS, anvilKey } from "@pp/bridge-core/sandbox"
-import { endGroup } from "@pp/run-isolation/process-group"
 import { getAddress } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { type StackRun, stackRun, stackRunFile } from "../../env"
 import { untilReady } from "./stack-log"
-import { recordGroup, stopRecorded } from "./stack-owner"
+import { abandonBoot, recordGroup, stopRecorded } from "./stack-owner"
 
 const CLI = fileURLToPath(import.meta.resolve("@pp/local-stack/cli"))
 /** Longer than the CLI's slowest teardown; its boot steps also finish before a signal takes effect. */
@@ -75,8 +74,10 @@ async function up(stateDir: string): Promise<void> {
 	child.once("exit", (c, signal) => {
 		code = c ?? (signal ? 128 : 1)
 	})
+	let recorded = false
 	try {
 		recordGroup(f.pid, pgid)
+		recorded = true
 		const { circuitsDir, manifestPath, user, sender } = await untilReady(f.log, () => code)
 		const { manifest, rollupVersion } = await checkedManifest(manifestPath)
 		const account = (address: string) => ({ address: getAddress(address), index: anvilIndexOf(address) })
@@ -84,8 +85,7 @@ async function up(stateDir: string): Promise<void> {
 		writeFileSync(f.walletHandle, JSON.stringify({ nodeUrl: manifest.aztecNode, l1ChainId: manifest.chainId, rollupVersion }))
 		writeFileSync(f.run, JSON.stringify(run, null, 2))
 	} catch (err) {
-		await endGroup(pgid, STOP_GRACE_MS)
-		rmSync(f.pid, { force: true })
+		await abandonBoot(f.pid, pgid, { recorded, unreaped: code === null, cli: CLI, graceMs: STOP_GRACE_MS })
 		throw err
 	}
 	child.unref()

@@ -57,6 +57,25 @@ export function ownedBy(r: GroupRecord, cli: string, proc: ProcFs = HOST, namesp
 	}
 }
 
+export interface FailedBoot {
+	/** Whether `recordGroup` wrote the record. */
+	recorded: boolean
+	/** Whether the spawner has not yet reaped the CLI, so no other process can hold its pid. */
+	unreaped: boolean
+	cli: string
+	graceMs: number
+}
+
+/**
+ * Tears down a boot that failed. Once the record is written only `stopRecorded` may end the group: the
+ * CLI can have exited and been reaped, and its pgid can then name a stranger. Without a record, the
+ * group is ended only while the CLI is unreaped. Throws if a group it signals survives.
+ */
+export async function abandonBoot(path: string, pgid: number, b: FailedBoot): Promise<void> {
+	if (b.recorded) return stopRecorded(path, b.cli, b.graceMs)
+	if (b.unreaped && !(await endGroup(pgid, b.graceMs))) throw new Error(`stack: pgid ${pgid} survived SIGKILL`)
+}
+
 /**
  * Ends the group `path` records while it is the one recorded, then drops the record, as it does once
  * that group is gone. A live group led by anything else, and an unreadable record, are left alone.
