@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
+import { type RefObject, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import type { BridgeRecordView, PoolNoteView } from "../data/stack-types"
-import { createBridgeDriver, createOutstanding } from "../data/bridge-driver"
-import { bridgeReducer, initialBridge } from "../data/bridge-machine"
+import { type BridgeDriver, createBridgeDriver, createOutstanding, type Dispatch } from "../data/bridge-driver"
+import { bridgeReducer, initialBridge, offerFor } from "../data/bridge-machine"
 import type { Session } from "../data/ports"
 import type { DataSource } from "../data/source"
 import type { LiveStore } from "./live"
@@ -12,6 +12,8 @@ export interface BridgeSubject {
 	note: PoolNoteView | null
 	/** Fixed at Submit, or the read-back record's amount. */
 	amount: bigint | null
+	/** Fixed at Submit, or the read-back record's; a resend keeps it, as the journal's intent must match. */
+	recipient: string | null
 }
 
 interface Deps {
@@ -49,6 +51,45 @@ function useDriver({ source, live, session, canClaim, frame }: Omit<Deps, "settl
 	)
 }
 
+interface CheckDeps {
+	driver: BridgeDriver | null
+	dispatch: Dispatch
+	settled(): void
+	fresh(): AbortSignal
+	run: RefObject<AbortController>
+	subject: BridgeSubject | null
+	setSubject(s: BridgeSubject): void
+}
+
+/** Check again, which reads the journal and the chain and never proves or sends. */
+function useCheck({ driver, dispatch, settled, fresh, run, subject, setSubject }: CheckDeps) {
+	const look = useCallback(
+		async (note: PoolNoteView, recipient: string, signal: AbortSignal) => {
+			if (!driver) return
+			const record = await driver.check({ note, recipient }, dispatch, signal)
+			settled()
+			if (record && !signal.aborted) await driver.follow(record, dispatch, signal)
+		},
+		[driver, dispatch, settled],
+	)
+	return {
+		/** On the bridge on screen. */
+		check: useCallback(async () => {
+			if (subject?.note && subject.recipient !== null) await look(subject.note, subject.recipient, run.current.signal)
+		}, [subject, look, run]),
+		/** On a note the pool shows unconfirmed: opens it as the pool showed it, then reads. */
+		recheck: useCallback(
+			async (note: PoolNoteView, record: BridgeRecordView) => {
+				const signal = fresh()
+				setSubject({ note, amount: record.amount, recipient: record.recipient })
+				dispatch({ type: "failed", failure: { code: "UNCERTAIN", during: "preparing", offer: offerFor("UNCERTAIN") } })
+				await look(note, record.recipient, signal)
+			},
+			[fresh, setSubject, dispatch, look],
+		),
+	}
+}
+
 /**
  * One bridge on screen at a time: the pure machine in a reducer and one driver per open session. A
  * new session, a new subject or an unmount aborts what is running; the driver's own checks decide
@@ -76,7 +117,7 @@ export function useBridgeFlow({ settled, ...deps }: Deps) {
 	const open = useCallback(
 		(note: PoolNoteView) => {
 			fresh()
-			setSubject({ note, amount: null })
+			setSubject({ note, amount: null, recipient: null })
 		},
 		[fresh],
 	)
@@ -85,7 +126,7 @@ export function useBridgeFlow({ settled, ...deps }: Deps) {
 		(record: BridgeRecordView, note: PoolNoteView | null) => {
 			const signal = fresh()
 			dispatch({ type: "record", record })
-			setSubject({ note, amount: record.amount })
+			setSubject({ note, amount: record.amount, recipient: record.recipient })
 			void driver?.follow(record, dispatch, signal)
 		},
 		[driver, fresh],
@@ -110,21 +151,23 @@ export function useBridgeFlow({ settled, ...deps }: Deps) {
 		async (amount: bigint, recipient: string, acceptUncertain = false) => {
 			const note = subject?.note
 			if (!note) return
-			setSubject({ note, amount })
+			setSubject({ note, amount, recipient })
 			await send(note, amount, recipient, acceptUncertain, run.current.signal)
 		},
 		[subject, send],
 	)
 
-	/** Checks a bridge the page could not confirm (no override) or sends it again (`acceptUncertain`). */
+	/** Sends a bridge the page could not confirm again, with `acceptUncertain`. */
 	const retry = useCallback(
-		async (note: PoolNoteView, record: BridgeRecordView, acceptUncertain: boolean) => {
+		async (note: PoolNoteView, record: BridgeRecordView) => {
 			const signal = fresh()
-			setSubject({ note, amount: record.amount })
-			await send(note, record.amount, record.recipient, acceptUncertain, signal)
+			setSubject({ note, amount: record.amount, recipient: record.recipient })
+			await send(note, record.amount, record.recipient, true, signal)
 		},
 		[fresh, send],
 	)
+
+	const { check, recheck } = useCheck({ driver, dispatch, settled, fresh, run, subject, setSubject })
 
 	const claim = useCallback(async () => {
 		if (!driver || !machine.record) return
@@ -139,6 +182,8 @@ export function useBridgeFlow({ settled, ...deps }: Deps) {
 		resume,
 		submit,
 		retry,
+		check,
+		recheck,
 		claim,
 		preflight: useCallback((recipient: string) => void driver?.preflight(recipient, dispatch, run.current.signal), [driver]),
 		invalidate: useCallback(() => dispatch({ type: "invalidate" }), []),

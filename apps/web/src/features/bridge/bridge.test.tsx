@@ -32,12 +32,13 @@ async function submit(app: Awaited<ReturnType<typeof openBridge>>) {
 	await app.user.click(button())
 }
 
-/** Records the options of every `Session.submit`, so a test sees what reached the session. */
-function submitsOf(): { options: unknown[]; patch(s: DataSource): DataSource } {
-	const options: unknown[] = []
-	return {
-		options,
-		patch: (s) => ({
+/** What reached the session: the options of every `submit`, and how many proofs and journal reads. */
+function submitsOf() {
+	const seen = {
+		options: [] as unknown[],
+		proves: 0,
+		reads: 0,
+		patch: (s: DataSource): DataSource => ({
 			...s,
 			sessions: {
 				...s.sessions,
@@ -45,8 +46,16 @@ function submitsOf(): { options: unknown[]; patch(s: DataSource): DataSource } {
 					const session = await s.sessions.open(a)
 					return {
 						...session,
+						prove: (attempt) => {
+							seen.proves++
+							return session.prove(attempt)
+						},
+						records: () => {
+							seen.reads++
+							return session.records()
+						},
 						submit: (p, attempt, on, o) => {
-							options.push(o)
+							seen.options.push(o)
 							return session.submit(p, attempt, on, o)
 						},
 					}
@@ -54,11 +63,24 @@ function submitsOf(): { options: unknown[]; patch(s: DataSource): DataSource } {
 			},
 		}),
 	}
+	return seen
+}
+
+/** Clicks Check again in `scope` and lets what it started settle: it reads the journal at least once. */
+async function checkAgain(
+	app: Pick<Awaited<ReturnType<typeof openBridge>>, "user">,
+	seen: { reads: number },
+	scope: Pick<typeof screen, "getByRole"> = screen,
+) {
+	const before = seen.reads
+	await app.user.click(scope.getByRole("button", { name: "Check again" }))
+	await waitFor(() => expect(seen.reads).toBeGreaterThan(before))
+	await act(() => new Promise((r) => setTimeout(r, 20)))
 }
 
 /** A second page load over `store`, signed in as the owner with Aztec connected and the sender selected. */
-async function reload(store: ReturnType<typeof memoryStore>) {
-	const app = renderApp({ store })
+async function reload(store: ReturnType<typeof memoryStore>, patch?: (s: DataSource) => DataSource) {
+	const app = renderApp({ store, ...(patch ? { patch } : {}) })
 	act(() => app.control.selectL1Account("owner"))
 	await signIn(app.user)
 	await connectAztec(app.user)
@@ -198,6 +220,38 @@ describe("the bridge screen", () => {
 		// The prove fault is still armed: Send again is the first to prove.
 		await app.user.click(screen.getByRole("button", { name: "Send again" }))
 		await screen.findByText(messageOf("PROVE_FAILED"))
+	})
+
+	test("Check again only reads: with the journal cleared in another tab, it proves and sends nothing and still shows UNCERTAIN", async () => {
+		const seen = submitsOf()
+		const app = await openBridge(memoryStore(), seen.patch)
+		app.control.failNext("send", "LOST")
+		await submit(app)
+		await screen.findByText("We can't see your transaction yet")
+		await app.source.sessions.forget()
+		await checkAgain(app, seen)
+		expect([seen.proves, seen.options.length, app.control.state().sent.l1]).toEqual([1, 1, 0])
+		screen.getByText("We can't see your transaction yet")
+		await app.user.click(screen.getByRole("button", { name: "Send again" }))
+		await landed()
+		expect(seen.options.at(-1)).toEqual({ acceptUncertain: true })
+	})
+
+	test("Check again on a reloaded note only reads, even once the journal is cleared in another tab", async () => {
+		const store = memoryStore()
+		const first = await openBridge(store)
+		first.control.hangNext("send")
+		await submit(first)
+		await screen.findByText("Sent: waiting for the Ethereum transaction to be mined")
+		first.unmount()
+
+		const seen = submitsOf()
+		const second = await reload(store, seen.patch)
+		await waitFor(() => noteRow(NOTE).getByText("We can't see your transaction yet"))
+		await second.source.sessions.forget()
+		await checkAgain(second, seen, noteRow(NOTE))
+		expect([seen.proves, seen.options.length, second.control.state().sent.l1]).toEqual([0, 0, 0])
+		await screen.findByText("We can't see your transaction yet")
 	})
 
 	test("a resend that reverts leaves the earlier unconfirmed send on the note, with its controls", async () => {

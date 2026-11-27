@@ -139,6 +139,7 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 		},
 		preflight: () => driver.preflight(RECIPIENT, dispatch, run.signal),
 		submit: (input: SubmitInput = INPUT, flags: { acceptUncertain?: true } = {}) => driver.submit(input, dispatch, run.signal, flags),
+		check: () => driver.check({ note: NOTE, recipient: RECIPIENT }, dispatch, run.signal),
 		claim: (r: BridgeRecordView = CLAIMABLE) => driver.claim(r, dispatch, run.signal),
 		/** What opening another bridge does: aborts the running flow and resets the screen. */
 		supersede: () => {
@@ -409,7 +410,7 @@ describe("the bridge driver", () => {
 		expect(h.order).toEqual(["preflight", "prove"])
 	})
 
-	test("after UNCERTAIN a check without the override still reaches the session and the override is passed on; after IN_FLIGHT nothing is sent", async () => {
+	test("after UNCERTAIN a Submit without the override still reaches the session and the override is passed on; after IN_FLIGHT nothing is sent", async () => {
 		const h = harness({ submitThrows: new BridgeFailure("UNCERTAIN") })
 		await h.submit()
 		expect(h.machine().failure).toMatchObject({ code: "UNCERTAIN", offer: "send-again" })
@@ -449,6 +450,42 @@ describe("the bridge driver", () => {
 		expect(h.session.prove).not.toHaveBeenCalled()
 		if (code === null) expect([record?.step, h.machine().step]).toEqual(["mined", "mined"])
 		else expect(h.machine().failure?.code).toBe(code)
+	})
+
+	test.each([
+		["its last attempt reverted and none open", { reverted: true }, "REVERTED"],
+		["no record left and its note unspent", {}, "UNCERTAIN"],
+		["no record left and its note spent", { spent: true }, "CONSUMED_ELSEWHERE"],
+		["no record left and the bridge's event for the recipient", { seen: true }, null],
+	] as const)("Check again with %s shows that and never proves or submits", async (_name, o, code) => {
+		const h = harness()
+		const base = { id: "r0", nullifier: NOTE.commitment + 1n, recipient: RECIPIENT, amount: 70n }
+		const hash = `0x${"ef".repeat(32)}` as Hex
+		if ("reverted" in o) h.session.records = async () => [{ ...base, l1TxHash: hash, step: { error: "REVERTED" } }]
+		if ("seen" in o) h.session.recover = async () => [{ ...base, l1TxHash: hash, step: "mined" }]
+		if ("spent" in o) h.session.notes = async () => [{ ...NOTE, status: "spent" }]
+		const record = await h.check()
+		expect(h.session.prove).not.toHaveBeenCalled()
+		expect(h.session.submit).not.toHaveBeenCalled()
+		expect(h.sent).toEqual([])
+		if (code === null) expect([record?.step, h.machine().step]).toEqual(["mined", "mined"])
+		else expect(h.machine().failure?.code).toBe(code)
+	})
+
+	test("a Check again answer that lands after a Submit started is dropped: the Submit owns the screen", async () => {
+		const h = harness()
+		let release = () => {}
+		const held = new Promise<void>((r) => (release = r))
+		h.session.records = async () => {
+			await held
+			return []
+		}
+		const checking = h.check()
+		await h.submit(INPUT, { acceptUncertain: true })
+		expect(h.machine().step).toBe("mined")
+		release()
+		await expect(checking).resolves.toBeNull()
+		expect([h.machine().step, h.machine().failure]).toEqual(["mined", null])
 	})
 
 	test("a wallet rejection on claim returns to claimable", async () => {

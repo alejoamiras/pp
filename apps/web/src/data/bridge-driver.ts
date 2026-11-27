@@ -11,7 +11,7 @@ import { offerFor } from "./bridge-machine"
 import { codeOf, isUserRejection, type UiCode } from "./errors"
 import { parseAztecAddress } from "./parse"
 import type { Attempt, Deployment, Proved, Sent, Session, SubmitHooks, Timer } from "./ports"
-import { type Prior, type PriorKind, priorAttempt } from "./reconcile"
+import { checkAttempt, type Found, type PriorKind, priorAttempt } from "./reconcile"
 
 /** The prover hangs without an error on some internal failures; 60 s covers the first use's 21 MB fetch. */
 export const PROVE_DEADLINE_MS = 60_000
@@ -118,6 +118,12 @@ export interface SubmitInput {
 	note: PoolNoteView
 	amount: bigint
 	/** As typed or as the connection lists it; parsed here. */
+	recipient: string
+}
+
+export interface CheckInput {
+	note: PoolNoteView
+	/** The attempt's recipient, for `recover` once the journal holds no record of the note. */
 	recipient: string
 }
 
@@ -235,9 +241,9 @@ function extraOf(err: unknown): Partial<Failure> {
 const CLOSES: ReadonlySet<UiCode> = new Set(["CONSUMED_ELSEWHERE"])
 
 /** Remembers what a code means for the note's next Submit. */
-function remember(st: State, code: UiCode, a: Attempt): void {
-	if (code === "IN_FLIGHT") st.inFlight = new Set([...st.inFlight, a.note])
-	if (CLOSES.has(code)) st.closed.set(a.note, code)
+function remember(st: State, code: UiCode, note: bigint): void {
+	if (code === "IN_FLIGHT") st.inFlight = new Set([...st.inFlight, note])
+	if (CLOSES.has(code)) st.closed.set(note, code)
 	if (code === "PREFLIGHT_REQUIRED") st.binding = null
 }
 
@@ -249,7 +255,7 @@ function outcome(st: State, err: unknown, a: Attempt, during: Failure["during"],
 	if (handedOff && isUserRejection(err)) return { type: "declined" }
 	// Past the handoff, an error without a code may hide a sent transaction with no hash: UNCERTAIN.
 	const code = codeOf(err) ?? (handedOff ? "UNCERTAIN" : during === "preparing" ? "PROVE_FAILED" : "RPC_FAILED")
-	remember(st, code, a)
+	remember(st, code, a.note)
 	return failure(code, code === "REVERTED" ? "submitted" : during, extraOf(err))
 }
 
@@ -283,22 +289,47 @@ const PRIOR_CODES: Record<Exclude<PriorKind, "bridge">, UiCode> = {
 	consumed: "CONSUMED_ELSEWHERE",
 }
 
-/**
- * Without the override, the note's earlier attempt answers first, from the session's journal and the
- * chain, so a check never waits on or fails in a proof. `null`: none is open, so prove and send.
- */
+/** What the journal and the chain show for a note, on screen: a record as it stands, or why nothing may send. */
+function foundEvent(st: State, found: Found, note: bigint): BridgeEvent {
+	if (found.kind === "bridge" || found.kind === "closed") return { type: "record", record: found.record }
+	const code = PRIOR_CODES[found.kind]
+	remember(st, code, note)
+	return failure(code, "preparing")
+}
+
+/** Without the override, the note's open attempt answers a Submit first. `null`: none is open, so prove and send. */
 async function priorOutcome(st: State, a: Attempt): Promise<BridgeEvent | null> {
-	let prior: Prior | null
 	try {
-		prior = await priorAttempt(st.deps.session, a.note)
+		const prior = await priorAttempt(st.deps.session, a.note)
+		return prior === null ? null : foundEvent(st, prior, a.note)
 	} catch (err) {
 		return failure(codeOf(err) ?? "RPC_FAILED", "preparing")
 	}
-	if (prior === null) return null
-	if (prior.kind === "bridge") return { type: "record", record: prior.record }
-	const code = PRIOR_CODES[prior.kind]
-	remember(st, code, a)
-	return failure(code, "preparing")
+}
+
+/**
+ * Check again: what the journal and the chain show for the note, and nothing more. It never proves or
+ * sends, whatever it finds; Send again is the one way to send while an attempt may be out. An answer
+ * that lands after any Submit has started is dropped, since that Submit owns the screen.
+ */
+async function check(st: State, input: CheckInput, dispatch: Dispatch, signal: AbortSignal): Promise<BridgeRecordView | null> {
+	const n = input.note.commitment
+	if (st.active.has(n)) return null
+	const recipient = parseAztecAddress(input.recipient)
+	if (recipient === null) {
+		dispatch({ type: "refused", code: "RECIPIENT_INVALID" })
+		return null
+	}
+	const seq = st.seq
+	let event: BridgeEvent
+	try {
+		event = foundEvent(st, await checkAttempt(st.deps.session, n, recipient), n)
+	} catch (err) {
+		event = failure(codeOf(err) ?? "RPC_FAILED", "preparing")
+	}
+	if (signal.aborted || st.seq !== seq) return null
+	dispatch(event)
+	return event.type === "record" ? event.record : null
 }
 
 async function prepareAndProve(st: State, a: Attempt, dispatch: Dispatch, signal: AbortSignal): Promise<Proved> {
@@ -452,6 +483,8 @@ export function createBridgeDriver(deps: DriverDeps) {
 		/** A second call for a note whose Submit is under way is ignored. */
 		submit: (input: SubmitInput, dispatch: Dispatch, signal: AbortSignal, flags: Flags = {}) =>
 			submit(st, input, dispatch, signal, flags),
+		/** Reads only; the record when it found one to follow. */
+		check: (input: CheckInput, dispatch: Dispatch, signal: AbortSignal) => check(st, input, dispatch, signal),
 		follow: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => follow(st, record, dispatch, signal),
 		claim: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => claim(st, record, dispatch, signal),
 		/** The notes with a Submit under way here, which reconciliation must not take for unconfirmed. */

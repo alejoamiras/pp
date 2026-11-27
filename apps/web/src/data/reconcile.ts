@@ -80,15 +80,45 @@ export interface Prior {
 	record: BridgeRecordView
 }
 
-/** The note's open journal record, read against the chain exactly as `reconcile` reads it; `null` when it has none. */
-export async function priorAttempt(session: Session, commitment: bigint): Promise<Prior | null> {
+/**
+ * What Check again found for a note: a `Prior`, a `closed` record (the note's last, when none is open),
+ * or, with no record at all, what the chain shows for the note.
+ */
+export type Found = { kind: "bridge" | "closed"; record: BridgeRecordView } | { kind: Exclude<PriorKind, "bridge"> }
+
+async function journalOf(session: Session, commitment: bigint) {
 	const [nullifier, records, notes] = await Promise.all([session.nullifierOf(commitment), session.records(), session.notes()])
-	const r = records.find((x) => isOpen(x) && x.nullifier === nullifier)
-	if (!r) return null
+	const note = notes.find((n) => n.commitment === commitment)
+	return { nullifier, mine: records.filter((x) => x.nullifier === nullifier), unspent: note !== undefined && !GONE.has(note.status) }
+}
+
+async function readOpen(session: Session, r: BridgeRecordView, unspent: boolean): Promise<Prior> {
 	const [recovered, tx] = await Promise.all([session.recover(r.recipient), r.l1TxHash ? session.l1TxState(r.l1TxHash) : undefined])
 	const seen = recovered.find((x) => x.id === r.id)
-	const note = notes.find((n) => n.commitment === commitment)
-	return { kind: classify(seen !== undefined, tx, note !== undefined && !GONE.has(note.status)), record: seen ?? r }
+	return { kind: classify(seen !== undefined, tx, unspent), record: seen ?? r }
+}
+
+/** The note's open journal record, read against the chain exactly as `reconcile` reads it; `null` when it has none. */
+export async function priorAttempt(session: Session, commitment: bigint): Promise<Prior | null> {
+	const { mine, unspent } = await journalOf(session, commitment)
+	const r = mine.find(isOpen)
+	return r ? readOpen(session, r, unspent) : null
+}
+
+/**
+ * Check again's reading, which sends nothing: the open record as `priorAttempt` reads it; else the
+ * note's last record (a revert, say); else, with none left (a journal cleared elsewhere), `recover` for
+ * `recipient` and the note, as `classify` reads a record with no hash.
+ */
+export async function checkAttempt(session: Session, commitment: bigint, recipient: AztecAddress): Promise<Found> {
+	const { nullifier, mine, unspent } = await journalOf(session, commitment)
+	const open = mine.find(isOpen)
+	if (open) return readOpen(session, open, unspent)
+	const last = mine.at(-1)
+	if (last) return { kind: "closed", record: last }
+	const seen = (await session.recover(recipient)).find((x) => x.nullifier === nullifier)
+	if (seen) return { kind: "bridge", record: seen }
+	return { kind: unspent ? "uncertain" : "consumed" }
 }
 
 /**

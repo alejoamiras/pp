@@ -51,12 +51,12 @@ function SendingNote() {
 	)
 }
 
-/** A record the chain shows nothing for: Check again asks the session without the override; Send again passes it. */
+/** A record the chain shows nothing for: Check again reads the journal and the chain; Send again sends with the override. */
 function UncertainNote({ note, record }: { note: PoolNoteView; record: BridgeRecordView }) {
 	const { bridge, go } = useApp()
 	const block = useBridgeBlock()
-	const retry = (acceptUncertain: boolean) => {
-		void bridge.retry(note, record, acceptUncertain)
+	const retry = (resend: boolean) => {
+		void (resend ? bridge.retry(note, record) : bridge.recheck(note, record))
 		go("bridge")
 	}
 	return (
