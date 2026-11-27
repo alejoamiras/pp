@@ -7,10 +7,10 @@ import type {
 	PoolCodeTargets,
 	SepoliaChainId,
 	SepoliaPool,
+	SepoliaPoolUser,
 	SepoliaUserOptions,
 	StartMockAspOptions,
 } from "../src/sepolia/types.js"
-import type { PoolUser } from "../src/client/types.js"
 
 export type {
 	CodeMatch,
@@ -19,15 +19,17 @@ export type {
 	PoolCodeTargets,
 	SepoliaChainId,
 	SepoliaPool,
+	SepoliaPoolUser,
 	SepoliaUserOptions,
 	StartMockAspOptions,
 } from "../src/sepolia/types.js"
 
 /**
  * A pool user for `key` on chain 11155111, proving with the fetched checkout's circuits. The wallet is built
- * inside pp-env, so only plain data crosses to the caller. Refuses any other chain.
+ * inside pp-env, so only plain data crosses to the caller. Its `depositFor` deposits into a note another
+ * registered address owns and refuses an unregistered one. Refuses any other chain.
  */
-export declare function sepoliaPoolUser(o: SepoliaUserOptions): Promise<PoolUser>
+export declare function sepoliaPoolUser(o: SepoliaUserOptions): Promise<SepoliaPoolUser>
 
 /**
  * Deploys the pinned pool to chain 11155111 through the local env's forge path, without cheat codes;

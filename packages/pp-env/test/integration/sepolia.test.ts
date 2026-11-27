@@ -18,7 +18,15 @@ import { ANVIL_ACCOUNTS, anvilKey, DEPLOYER_INDEX, LOG_DIR, USER_INDEX } from ".
 import { rpc, waitFor } from "../../src/env/harness/rpc.ts"
 import { RUNS_DIR } from "../../src/env/index.ts"
 import { anvilBin, cleanEnv } from "../../src/env/tools.ts"
-import { deployPoolOn, type MockAsp, type SepoliaPool, sepoliaPoolUser, startMockAsp, verifyPoolCode } from "../../src/sepolia/index.ts"
+import {
+	deployPoolOn,
+	type MockAsp,
+	type SepoliaPool,
+	type SepoliaPoolUser,
+	sepoliaPoolUser,
+	startMockAsp,
+	verifyPoolCode,
+} from "../../src/sepolia/index.ts"
 
 const CHAIN = 11155111
 const ANNOUNCER = "0x55649E01B5Df198D18D95b5cc5051630cfD45564"
@@ -35,7 +43,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 	let pool: SepoliaPool
 	let asp: MockAsp
 	let aspPort: number
-	let owner: PoolUser
+	let owner: SepoliaPoolUser
 	let stranger: PoolUser
 	let ownerLabel: bigint
 	let strangerLabel: bigint
@@ -167,6 +175,22 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 		expect(asp.approved()).toEqual([ownerLabel])
 		expect(await rootPosts()).toHaveLength(posts)
 	})
+
+	test("a deposit for a registered recipient is the recipient's active note; an unregistered one is refused unsigned", async () => {
+		const unregistered = privateKeyToAccount(generatePrivateKey()).address
+		const nonce = await client.getTransactionCount({ address: owner.address })
+		await expect(owner.depositFor({ asset: pool.asset, value: VALUE, recipient: unregistered })).rejects.toThrow(
+			"has no on-chain viewing key",
+		)
+		expect(await client.getTransactionCount({ address: owner.address })).toBe(nonce)
+		const { label } = await owner.depositFor({ asset: pool.asset, value: VALUE, recipient: stranger.address })
+		await scannedPast(await client.getBlockNumber())
+		expect(asp.approved()).toEqual([ownerLabel, label])
+		await stranger.sync()
+		expect(stranger.notes()).toContainEqual(expect.objectContaining({ label, value: VALUE, status: NoteStatus.ACTIVE }))
+		await owner.sync()
+		expect(owner.notes().map((n) => n.label)).not.toContain(label)
+	}, 300_000)
 
 	test("code that is not the build's is named", async () => {
 		const relay = pool.deployment.relay as Address

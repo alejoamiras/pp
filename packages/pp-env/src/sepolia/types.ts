@@ -1,6 +1,6 @@
 // The Sepolia entry's public types. No SDK import, so dependents typecheck without the pool checkout.
 import type { Address, Hex } from "viem"
-import type { CircuitBundleName, ClientDeployment } from "../client/types.ts"
+import type { CircuitBundleName, ClientDeployment, PoolUser } from "../client/types.ts"
 import type { PoolDeployment } from "../env/types.ts"
 
 /** Sepolia's chain id. Nothing in `@pp/pp-env/sepolia` accepts another chain, mainnet least of all. */
@@ -63,6 +63,16 @@ export interface MockAsp {
 	scanned(): bigint
 	/** Stops polling, lets a root post in flight finish, then closes the server. Idempotent. */
 	stop(): Promise<void>
+}
+
+/** A Sepolia pool user that can also deposit for another registered address. */
+export type SepoliaPoolUser = PoolUser & {
+	/**
+	 * Deposits `value` of `asset` from this user's wallet into a note `recipient` owns, encrypted to the
+	 * viewing key `recipient` registered in the keystore. The ASP sees this user as the depositor.
+	 * @throws Error naming the recipient when it has no registered viewing key; nothing is sent then
+	 */
+	depositFor(p: { asset: Address; value: bigint; recipient: Address }): Promise<{ label: bigint; commitment: bigint }>
 }
 
 export type SepoliaUserOptions = {

@@ -8,6 +8,7 @@ export type {
 	PoolCodeTargets,
 	SepoliaChainId,
 	SepoliaPool,
+	SepoliaPoolUser,
 	SepoliaUserOptions,
 	StartMockAspOptions,
 } from "./types.ts"
