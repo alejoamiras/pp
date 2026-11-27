@@ -1,11 +1,13 @@
-import { readdirSync, readFileSync } from "node:fs"
+import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { ANVIL_CLIENT_VERSION } from "@pp/sepolia-fork/src/anvil.ts"
 import type { Address, Hex } from "viem"
 import { generatePrivateKey, mnemonicToAccount, privateKeyToAccount } from "viem/accounts"
 import { describe, expect, it } from "vitest"
 import {
 	accountHome,
+	assertForkNode,
 	assertL1Chain,
 	assertNode,
 	assertScratchKeyFile,
@@ -29,6 +31,14 @@ const REHEARSE: Mode = { kind: "rehearse", manifest: "/m.json" }
 const FORK: Mode = { kind: "rehearse-fork", url: "http://127.0.0.1:1" }
 
 const withNetwork = (n: Partial<TestnetDeployment["network"]>): TestnetDeployment => ({ ...own, network: { ...own.network, ...n } })
+/** A stack manifest at `n`'s endpoints, in a scratch directory; returns its path. */
+const stackManifest = (n: TestnetDeployment["network"]): string => {
+	const path = join(scratchHome(), "manifest.json")
+	const a = n.rollup
+	const pool = { poolVault: a, entrypoint: a, aspRegistry: a, keystore: a, asset: a, deployBlock: "1", aspApiUrl: loopback(9000) }
+	writeFileSync(path, JSON.stringify({ version: 1, chainId: n.l1ChainId, l1Rpc: n.l1Rpc, aztecNode: n.aztecNode, pool }))
+	return path
+}
 const refusedBy = (guard: string) => expect.objectContaining({ name: "GuardError", guard })
 const addressOf = (k: Hex) => privateKeyToAccount(k).address
 
@@ -100,12 +110,38 @@ describe("the guards", () => {
 		)
 		expect(() => assertTransport(withNetwork({ aztecNode: "https://evil.example" }), LIVE, true)).toThrow(refusedBy("transport"))
 		const local = withNetwork({ l1ChainId: 31337, l1Rpc: "http://127.0.0.1:8545", aztecNode: "http://127.0.0.1:8080" })
-		expect(() => assertTransport(local, REHEARSE, true)).not.toThrow()
+		const stack: Mode = { kind: "rehearse", manifest: stackManifest(local.network) }
+		expect(() => assertTransport(local, stack, true)).not.toThrow()
 		expect(() => assertTransport(local, LIVE, true)).toThrow(refusedBy("transport"))
-		expect(() => assertTransport(own, REHEARSE, true)).toThrow(refusedBy("transport"))
+		expect(() => assertTransport(own, stack, true)).toThrow(refusedBy("transport"))
 		const fork: Mode = { kind: "rehearse-fork", url: "http://127.0.0.1:9545" }
 		expect(() => assertTransport(withNetwork({ l1Rpc: "http://127.0.0.1:9545" }), fork, false)).not.toThrow()
 		expect(() => assertTransport(own, fork, false)).toThrow(refusedBy("transport"))
+	})
+
+	it("refuses every L2 command on a fork, whose node would be the real testnet's", () => {
+		const fork: Mode = { kind: "rehearse-fork", url: "http://127.0.0.1:9545" }
+		expect(() => assertTransport(withNetwork({ l1Rpc: fork.url }), fork, true)).toThrow(/local stack with --rehearse/)
+	})
+
+	it("holds a stack rehearsal to the L1 and node of the manifest named in argv", () => {
+		const local = withNetwork({ l1ChainId: 31337, l1Rpc: "http://127.0.0.1:8545", aztecNode: "http://127.0.0.1:8080" })
+		const other = (n: Partial<TestnetDeployment["network"]>): Mode => ({
+			kind: "rehearse",
+			manifest: stackManifest({ ...local.network, ...n }),
+		})
+		expect(() => assertTransport(local, other({ l1Rpc: "http://127.0.0.1:8546" }), false)).toThrow(/not the stack's/)
+		expect(() => assertTransport(local, other({ aztecNode: "http://localhost:8080" }), false)).toThrow(/not the stack's/)
+		expect(() => assertTransport(local, REHEARSE, false)).toThrow(/cannot be read/)
+	})
+
+	it("on a fork, refuses an L1 that is not the pinned anvil, and asks nothing in any other mode", async () => {
+		const answering = (version: string) => ({ request: async () => version })
+		await expect(assertForkNode(answering(ANVIL_CLIENT_VERSION), FORK)).resolves.toBeUndefined()
+		await expect(assertForkNode(answering("Geth/v1.14.0"), FORK)).rejects.toThrow(refusedBy("fork"))
+		await expect(assertForkNode(answering("anvil/v1.8.5"), FORK)).rejects.toThrow(refusedBy("fork"))
+		const unasked = { request: () => Promise.reject(new Error("asked")) }
+		for (const mode of [LIVE, REHEARSE]) await expect(assertForkNode(unasked, mode)).resolves.toBeUndefined()
 	})
 
 	it("refuses mainnet by name and any chain but the mode's", async () => {

@@ -1,7 +1,9 @@
 /** The checks every testnet CLI runs before it reads a key, and the one place that reads keys. */
-import { realpathSync } from "node:fs"
+import { readFileSync, realpathSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { dirname } from "node:path"
+import { parseStackManifest } from "@pp/bridge-core"
+import { ANVIL_CLIENT_VERSION } from "@pp/sepolia-fork/src/anvil.ts"
 import { type Address, type Hex, isAddressEqual } from "viem"
 import { mnemonicToAccount } from "viem/accounts"
 import { GuardError } from "./errors"
@@ -23,10 +25,11 @@ const isLoopback = (u: string) => URL.canParse(u) && new URL(u).protocol === "ht
 export const chainOf = (mode: Mode): number => (mode.kind === "rehearse" ? LOCAL : SEPOLIA)
 
 /**
- * Live: the file's L1 and node URLs are pinned and its chain is Sepolia. Rehearse: chain 31337 on
- * loopback. Rehearse-fork: Sepolia's id on the loopback anvil named in argv, and the pinned testnet node
- * for a CLI that uses L2 (the fork-node guard, which checks the anvil's owner and version, runs where
- * the fork is used).
+ * The file's endpoints are the mode's. Live: pinned URLs on Sepolia. Rehearse: chain 31337 on loopback,
+ * at exactly the L1 and node URLs of the stack manifest named in argv. Rehearse-fork: Sepolia's id on
+ * the loopback URL named in argv, for L1 commands only: a fork has no Aztec node of its own, so an L2
+ * command would reach the real testnet. That the URL serves the pinned anvil is {@link assertForkNode}'s
+ * check, which needs the network.
  * @throws GuardError `transport`
  */
 export function assertTransport(d: TestnetDeployment, mode: Mode, usesL2: boolean): void {
@@ -38,14 +41,42 @@ export function assertTransport(d: TestnetDeployment, mode: Mode, usesL2: boolea
 		if (!isPinned("aztecNode", n.aztecNode)) throw new GuardError("transport", `${n.aztecNode} is not a pinned node URL`)
 		return
 	}
-	if (mode.kind === "rehearse-fork" && (n.l1Rpc !== mode.url || !isLoopback(mode.url)))
-		throw new GuardError("transport", `a fork rehearsal signs only on the loopback anvil it started, not ${n.l1Rpc}`)
-	if (mode.kind === "rehearse-fork" && usesL2 && !isPinned("aztecNode", n.aztecNode))
-		throw new GuardError("transport", `a fork rehearsal's node is the pinned testnet node, not ${n.aztecNode}`)
-	if (mode.kind === "rehearse" && !isLoopback(n.l1Rpc))
-		throw new GuardError("transport", `a rehearsal's L1 must be loopback, not ${n.l1Rpc}`)
-	if (usesL2 && mode.kind === "rehearse" && !isLoopback(n.aztecNode))
-		throw new GuardError("transport", `a rehearsal's node must be loopback, not ${n.aztecNode}`)
+	if (mode.kind === "rehearse-fork") {
+		if (usesL2)
+			throw new GuardError(
+				"transport",
+				"a fork rehearsal has no Aztec node of its own; L2 commands rehearse on the local stack with --rehearse",
+			)
+		if (n.l1Rpc !== mode.url || !isLoopback(mode.url))
+			throw new GuardError("transport", `a fork rehearsal signs only on the loopback anvil it started, not ${n.l1Rpc}`)
+		return
+	}
+	if (!isLoopback(n.l1Rpc)) throw new GuardError("transport", `a rehearsal's L1 must be loopback, not ${n.l1Rpc}`)
+	if (usesL2 && !isLoopback(n.aztecNode)) throw new GuardError("transport", `a rehearsal's node must be loopback, not ${n.aztecNode}`)
+	assertStackEndpoints(n, mode.manifest)
+}
+
+function assertStackEndpoints(n: TestnetDeployment["network"], manifest: string): void {
+	let m: { l1Rpc: string; aztecNode: string }
+	try {
+		m = parseStackManifest(JSON.parse(readFileSync(manifest, "utf8")))
+	} catch (e) {
+		throw new GuardError("transport", `the stack manifest ${manifest} cannot be read: ${e instanceof Error ? e.message : String(e)}`)
+	}
+	if (n.l1Rpc !== m.l1Rpc) throw new GuardError("transport", `the file's L1 ${n.l1Rpc} is not the stack's ${m.l1Rpc}`)
+	if (n.aztecNode !== m.aztecNode) throw new GuardError("transport", `the file's node ${n.aztecNode} is not the stack's ${m.aztecNode}`)
+}
+
+/**
+ * On a fork, the L1 answers `web3_clientVersion` with exactly the pinned anvil's version, so a loopback
+ * proxy to a public chain is refused before a key is read. A no-op in any other mode.
+ * @throws GuardError `fork`
+ */
+export async function assertForkNode(l1: { request(args: { method: "web3_clientVersion" }): Promise<unknown> }, mode: Mode): Promise<void> {
+	if (mode.kind !== "rehearse-fork") return
+	const version = await l1.request({ method: "web3_clientVersion" })
+	if (version !== ANVIL_CLIENT_VERSION)
+		throw new GuardError("fork", `the L1 answers ${JSON.stringify(version)?.slice(0, 80)}, not the pinned ${ANVIL_CLIENT_VERSION}`)
 }
 
 /**

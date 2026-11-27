@@ -5,8 +5,9 @@ import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "no
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Fr } from "@aztec-labs/aztec.js/fields"
+import { ANVIL_CLIENT_VERSION } from "@pp/sepolia-fork/src/anvil.ts"
 import { generatePrivateKey } from "viem/accounts"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest"
 import { isKeyValue, KEY_NAMES, keyFilePath } from "./keyfile"
 import { loopback } from "./network"
 import { scratchHome, writeKeyFile } from "./test-support"
@@ -37,8 +38,10 @@ const leaks = (out: string, values: readonly string[]) =>
 // A loopback L1 that answers what the guards and `fund` read before a key is used; anything else errors.
 let server: Server
 let rpc: string
+const answers: Record<string, unknown> = {}
 beforeAll(async () => {
-	const answers: Record<string, unknown> = {
+	Object.assign(answers, {
+		web3_clientVersion: ANVIL_CLIENT_VERSION,
 		eth_chainId: "0xaa36a7",
 		eth_blockNumber: "0x10",
 		eth_getBalance: "0x56bc75e2d63100000",
@@ -51,7 +54,7 @@ beforeAll(async () => {
 			baseFeePerGas: "0x3b9aca00",
 			transactions: [],
 		},
-	}
+	})
 	server = createServer((req, res) => {
 		let body = ""
 		req.on("data", (b) => (body += b))
@@ -208,6 +211,27 @@ describe("every key-reading CLI on a fork", () => {
 				false,
 				true,
 			])
+	}, 60_000)
+
+	it("refuses an L1 that is not the pinned anvil before opening the key file", async () => {
+		const home = scratchHome()
+		const [bare, full] = [deploymentFile(home, { pool: false }), deploymentFile(home, { pool: true })]
+		answers.web3_clientVersion = "Geth/v1.14.0"
+		onTestFinished(() => {
+			answers.web3_clientVersion = ANVIL_CLIENT_VERSION
+		})
+		const runs: [string, string[]][] = [
+			["fund", [bare]],
+			["deploy-pool", [bare]],
+			["asp", [full, "--owner", addr(7)]],
+			["seed", [full]],
+			["verify-deployment", [full, "--pool-only"]],
+		]
+		const results = await Promise.all(
+			runs.map(async ([name, args]) => [name, await cli(name, [...args, "--rehearse-fork", rpc], home)]),
+		)
+		for (const [name, r] of results as [string, Run][])
+			expect([name, r.code, /refused: fork: .*Geth/.test(r.out)]).toEqual([name, 2, true])
 	}, 60_000)
 
 	it("fund --quote reads no key: it answers with no key file at all", async () => {

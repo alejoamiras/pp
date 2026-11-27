@@ -9,7 +9,7 @@ import { type ParseArgsConfig, parseArgs } from "node:util"
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import { laggingTolerant, PUBLIC_CHAIN_TIMING } from "@pp/bridge-core"
 import { createPublicClient, http, type PublicClient } from "viem"
-import { assertL1Chain, assertNode, assertNoSeed, assertTransport, GuardError, type Mode } from "../guards"
+import { assertForkNode, assertL1Chain, assertNode, assertNoSeed, assertTransport, GuardError, type Mode } from "../guards"
 import { redact } from "../redact"
 import { parseDeployment, requireSections, type Section, type TestnetDeployment } from "../schema"
 
@@ -70,8 +70,9 @@ export type Guarded<K extends Section> = {
 
 /**
  * The guard order of every keyed CLI but `pause` and `addresses`: the file and `sections` parse, the
- * transport is the mode's, the L1 serves the mode's chain (mainnet refused by name), and, for a CLI that
- * uses L2, the node follows the file's rollup. Keys are read only after this returns.
+ * transport is the mode's, the L1 serves the mode's chain (mainnet refused by name) and on a fork is
+ * the pinned anvil, and, for a CLI that uses L2, the node follows the file's rollup. Keys are read only
+ * after this returns.
  * @throws GuardError, or Error from the file's parse
  */
 export async function guarded<K extends Section>(file: string, mode: Mode, sections: readonly K[], usesL2: boolean): Promise<Guarded<K>> {
@@ -79,6 +80,7 @@ export async function guarded<K extends Section>(file: string, mode: Mode, secti
 	assertTransport(d, mode, usesL2)
 	const { l1, node } = clientsOf(d)
 	await assertL1Chain(l1, mode)
+	await assertForkNode(l1, mode)
 	if (!usesL2) return { d, l1, node: undefined }
 	const n = node()
 	await assertNode(n as never, d)
