@@ -92,7 +92,7 @@ function rig(check: LabelCheck = ACTIVE, wrong?: Exit) {
 	const aztec: AztecDeps = { deployment: { hub: HUB, token: TOKEN, chainId: 31337 }, node: node as never, current: () => live }
 	const allowList = {
 		current: vi.fn<AllowListPort["current"]>(async () => ({
-			record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n },
+			record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n, poolSize: 1n, birthSize: 0n },
 			nowSec: 2n,
 		})),
 		check: vi.fn<AllowListPort["check"]>(async () => check),
