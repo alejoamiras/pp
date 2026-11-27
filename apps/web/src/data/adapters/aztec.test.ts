@@ -28,6 +28,7 @@ const receipt = (ok: boolean) => ({
 	isDropped: () => false,
 	isMined: () => true,
 	hasExecutionSucceeded: () => ok,
+	blockNumber: 17,
 })
 
 function rig(o: { contracts?: AztecAddress[]; served?: (a: { toString(): string }) => unknown; ok?: boolean } = {}) {
@@ -150,10 +151,10 @@ describe("the Aztec adapter", () => {
 		expect(entries({ storage: [1, 2, 3], len: 2n })).toEqual([1, 2])
 	})
 
-	test("answers a sent transaction's hash with its outcome", async () => {
+	test("answers a sent transaction's hash with its outcome, and a revert with the block it landed in", async () => {
 		const send = (r: ReturnType<typeof rig>) =>
 			sendThroughWallet(r.d, { epoch: 3, from: ME, payload: CLAIM, contracts: ["hub", "token"], handoff: () => {} })
 		await expect(send(rig())).resolves.toEqual({ txHash: at("dd"), status: "success" })
-		await expect(send(rig({ ok: false }))).resolves.toEqual({ txHash: at("dd"), status: "reverted" })
+		await expect(send(rig({ ok: false }))).resolves.toEqual({ txHash: at("dd"), status: "reverted", block: 17 })
 	})
 })

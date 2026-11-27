@@ -24,12 +24,10 @@ export function thrownOutcome(err: unknown): TxOutcome {
 
 /**
  * A reverted unshield leaves the account's notes in a state the wallet settles only once that block is
- * final, so a change-making spend before then could clash with it. Until a port reports the proven
- * block, a revert counts as final two Aztec slots of chain time after it was seen.
+ * final, so a change-making spend before then could clash with it. Final means the node's proven block
+ * has reached it; an unread proven block is not final.
  */
-export const FINALITY_SECONDS = 144n
-
-export const isFinal = (seenAt: bigint, now: bigint): boolean => now >= seenAt + FINALITY_SECONDS
+export const isFinal = (revertBlock: number, proven: number | undefined): boolean => proven !== undefined && proven >= revertBlock
 
 /** Actions that spend notes and make change; an exact-chunk ragequit leaves none. */
 export const MAKES_CHANGE: ReadonlySet<TxAction> = new Set(["transferPrivate", "unshield"])

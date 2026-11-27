@@ -14,6 +14,8 @@ export type KeyValue = Pick<Storage, "getItem" | "setItem" | "removeItem">
 
 export const STORAGE_KEY = "pp.fixtures.world.v1"
 const MS_PER_BLOCK = Number(L1_BLOCK_SECONDS) * 1000
+/** The fixture proves each Aztec block two blocks after it lands; below zero, nothing is proven yet. */
+const PROVEN_LAG = 2
 
 function load(storage: KeyValue | null, chainId: number): WorldState {
 	try {
@@ -131,7 +133,11 @@ export function createWorld(o: { chainId: number; storage: KeyValue | null }): W
 			`0x${update((st) => ++st.counter)
 				.toString(16)
 				.padStart(bytes * 2, "0")}`,
-		clock: { aztecNow: async () => aztecTime(), l1Now: async () => l1Time() },
+		clock: {
+			aztecNow: async () => aztecTime(),
+			l1Now: async () => l1Time(),
+			aztecProven: async () => aztecBlock() - PROVEN_LAG,
+		},
 		timer: virtualTimer(() => s.l1Block * MS_PER_BLOCK, subscribe),
 		reset() {
 			s = seedWorld(o.chainId)

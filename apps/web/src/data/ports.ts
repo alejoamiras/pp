@@ -18,8 +18,13 @@ import type {
 } from "./stack-types"
 import type { AztecConnection, ConfirmEmoji, WalletOption } from "./wallet/types"
 
-/** An Aztec or Ethereum send as the chain reports it. `reason` is untrusted text. */
-export type Sent = { txHash: Hex; status: "success" | "reverted" | "dropped"; reason?: string }
+/**
+ * An Aztec send as the chain reports it. `reason` is untrusted text; `block` is the block a reverted
+ * send landed in, which the finality wait compares with the node's proven block.
+ */
+export type Sent =
+	| { txHash: Hex; status: "success" | "dropped"; reason?: string }
+	| { txHash: Hex; status: "reverted"; block: number; reason?: string }
 
 /**
  * What one bridge spend is bound to, frozen at Submit. `assertCurrent` compares it with the live
@@ -205,6 +210,8 @@ export interface AllowListPort {
 export interface ChainClock {
 	aztecNow(): Promise<bigint>
 	l1Now(): Promise<bigint>
+	/** The Aztec node's proven block number: every block up to it is covered by an epoch proof on Ethereum. */
+	aztecProven(): Promise<number>
 }
 
 /** Waits that are not chain time (the prove deadline, the preflight's age), injected so tests run them virtually. */

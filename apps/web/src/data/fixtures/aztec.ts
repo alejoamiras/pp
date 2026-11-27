@@ -46,9 +46,9 @@ function send(w: World, op: FixtureOp, effect: () => string | null): Sent {
 	const txHash = w.nextHex(32)
 	w.update((s) => void s.sent.aztec++)
 	if (fault === "DROPPED") return { txHash, status: "dropped" }
-	if (fault === "REVERTED") return { txHash, status: "reverted", reason: `${op}: reverted` }
+	if (fault === "REVERTED") return { txHash, status: "reverted", block: w.aztecBlock(), reason: `${op}: reverted` }
 	const reason = effect()
-	return reason === null ? { txHash, status: "success" } : { txHash, status: "reverted", reason }
+	return reason === null ? { txHash, status: "success" } : { txHash, status: "reverted", block: w.aztecBlock(), reason }
 }
 
 /** Takes the largest notes of one label and origin until `amount`, at most 8; returns the change or a revert reason. */

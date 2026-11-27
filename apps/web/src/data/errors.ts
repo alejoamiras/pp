@@ -71,7 +71,7 @@ const MESSAGES: Record<UiCode, string> = {
 	UNSHIELD_REVERTED:
 		"The unshield reverted: the fee was paid; your notes are safe. Sending and unshielding wait until that transaction is final.",
 	TX_DROPPED: "Aztec has not included the transaction yet. The page will not send it again; refresh your balances before you retry.",
-	WAIT_FINALITY: "Send and Unshield wait for finality: the reverted unshield must be final first (chain time). Refresh to check.",
+	WAIT_FINALITY: "Send and Unshield wait for finality: the reverted unshield's block must be proven first. Refresh to check.",
 	TX_BUSY: "Wait for your last Aztec transaction to finish.",
 	BRIDGE_UNAVAILABLE: "Bridging is not available in this version of the app yet. Your notes stay in the pool.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",

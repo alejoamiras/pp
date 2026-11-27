@@ -102,7 +102,9 @@ async function settle(node: AztecDeps["node"], txHash: TxHash): Promise<Sent> {
 	const opts = { waitForStatus: TxStatus.PROPOSED, dontThrowOnRevert: true, timeout: SEND_TIMEOUT_S }
 	try {
 		const receipt = await waitForTx(node as AztecNode, txHash, opts)
-		return { txHash: hash, status: receipt.hasExecutionSucceeded() ? "success" : "reverted" }
+		if (receipt.hasExecutionSucceeded()) return { txHash: hash, status: "success" }
+		if (!receipt.isMined()) throw new BridgeFailure("RPC_INCONSISTENT")
+		return { txHash: hash, status: "reverted", block: Number(receipt.blockNumber) }
 	} catch (err) {
 		if ((await node.getTxReceipt(txHash)).isDropped()) return { txHash: hash, status: "dropped" }
 		throw err

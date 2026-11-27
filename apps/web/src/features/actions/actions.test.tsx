@@ -77,7 +77,10 @@ describe("the action dialogs", () => {
 		/** The failed dialog's text after an unshield the chain reverts with `reason`. */
 		async function revertedWith(reason: string): Promise<string> {
 			const app = renderApp({
-				patch: (s) => ({ ...s, aztec: { ...s.aztec, unshield: async () => ({ txHash: "0x01", status: "reverted", reason }) } }),
+				patch: (s) => ({
+					...s,
+					aztec: { ...s.aztec, unshield: async () => ({ txHash: "0x01", status: "reverted", block: 9, reason }) },
+				}),
 			})
 			await connectAztec(app.user)
 			await screen.findAllByTestId("label-row")
@@ -119,5 +122,53 @@ describe("the action dialogs", () => {
 		act(() => app.control.advance(12))
 		await app.user.click(screen.getByRole("button", { name: "Refresh" }))
 		await waitFor(() => expect(disabled(labelRow(LABELS.active).getByRole("button", { name: "Send privately" }))).toBe(false))
+	})
+
+	test("the finality hold lasts until the node's proven block reaches the revert's block, and through a failed read of it", async () => {
+		const REVERT_BLOCK = 40
+		let proven: number | null = REVERT_BLOCK - 1
+		let reads = 0
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				clock: {
+					...s.clock,
+					aztecProven: async () => {
+						reads++
+						if (proven === null) throw new Error("the node is unreachable")
+						return proven
+					},
+				},
+				aztec: { ...s.aztec, unshield: async () => ({ txHash: "0x01", status: "reverted", block: REVERT_BLOCK }) },
+			}),
+		})
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		const dialog = await openDialog(app, LABELS.active, "Unshield")
+		await app.user.type(dialog.getByLabelText(/Amount/), "5")
+		await app.user.click(dialog.getByRole("button", { name: "Unshield" }))
+		await dialog.findByText(messageOf("UNSHIELD_REVERTED"))
+		await app.user.click(dialog.getByRole("button", { name: "Cancel" }))
+		const held = () => disabled(labelRow(LABELS.active).getByRole("button", { name: "Send privately" }))
+		/** Reads the proven block again, and waits until that read has settled on screen. */
+		const readAgain = async () => {
+			const before = reads
+			await app.user.click(screen.getByRole("button", { name: "Refresh" }))
+			await waitFor(() => expect(reads).toBeGreaterThan(before))
+			await act(async () => {})
+		}
+		await waitFor(() => labelRow(LABELS.active).getByText(messageOf("WAIT_FINALITY")))
+
+		// Three Aztec slots of chain time pass while the node cannot say what is proven: the hold stays.
+		proven = null
+		act(() => app.control.advance(18))
+		await readAgain()
+		expect(held()).toBe(true)
+		proven = REVERT_BLOCK - 1
+		await readAgain()
+		expect(held()).toBe(true)
+		proven = REVERT_BLOCK
+		await readAgain()
+		await waitFor(() => expect(held()).toBe(false))
 	})
 })

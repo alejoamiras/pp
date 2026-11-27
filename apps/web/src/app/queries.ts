@@ -60,8 +60,9 @@ export function useAllowList(source: DataSource, enabled: boolean) {
 	})
 }
 
-export function useAztecNow(source: DataSource) {
-	return useQuery({ queryKey: ["clock", "aztec"], queryFn: () => source.clock.aztecNow() })
+/** A failed refetch keeps the last proven block read, which can only be lower than the node's. */
+export function useAztecProven(source: DataSource, enabled: boolean) {
+	return useQuery({ queryKey: ["clock", "aztec", "proven"], queryFn: () => source.clock.aztecProven(), enabled })
 }
 
 /** `deployment:l2TxHash:messageIndexInTx`: identical exits differ only by their message index. */
