@@ -65,6 +65,12 @@ export function assertCurrent(a: Attempt, ctx: LiveContext): void {
 	if (!isCurrent(a, ctx)) throw new ContextChanged()
 }
 
+/** A run the page replaced (another bridge opened, a sign-out) is stopped like a changed context. */
+function assertLive(st: State, a: Attempt, signal: AbortSignal): void {
+	if (signal.aborted) throw new ContextChanged()
+	assertCurrent(a, st.deps.context())
+}
+
 /**
  * A claim is bound to the context as it stands when the claim starts (after a reload, the current
  * connection), and must still hold right before the Aztec wallet is asked to send.
@@ -256,13 +262,13 @@ function refusalOf(st: State, input: SubmitInput, flags: Flags, ctx: LiveContext
 async function prepareAndProve(st: State, a: Attempt, dispatch: Dispatch, signal: AbortSignal): Promise<Proved> {
 	const { deps } = st
 	if (!fresh(st, a)) await runPreflight(st, a.recipient, a.epoch, dispatch, false)
-	assertCurrent(a, deps.context())
+	assertLive(st, a, signal)
 	dispatch({ type: "proving" })
 	await deps.frame()
 	await deps.frame()
-	assertCurrent(a, deps.context())
+	assertLive(st, a, signal)
 	const proved = await proveWithDeadline(st, a, signal)
-	assertCurrent(a, deps.context())
+	assertLive(st, a, signal)
 	return proved
 }
 
@@ -275,37 +281,43 @@ async function submit(
 ): Promise<BridgeRecordView | null> {
 	const n = input.note.commitment
 	if (st.active.has(n)) return null
+	// A replaced run keeps going in the background but never touches the screen it no longer owns.
+	const emit: Dispatch = (e) => {
+		if (!signal.aborted) dispatch(e)
+	}
 	const ctx = st.deps.context()
 	const refusal = refusalOf(st, input, flags, ctx)
 	if (refusal !== null) {
-		dispatch({ type: "refused", code: refusal })
+		emit({ type: "refused", code: refusal })
 		return null
 	}
 	st.active.add(n)
 	const a = freeze(st, input, ctx)
-	dispatch({ type: "submit", attempt: a })
+	emit({ type: "submit", attempt: a })
 	let during: Failure["during"] = "preparing"
 	let handedOff = false
 	const hooks: SubmitHooks = {
-		reproving: (code) => dispatch({ type: "reproving", code }),
+		reproving: (code) => emit({ type: "reproving", code }),
+		// Aborting stops a wallet request only before it starts; one already issued still needs its
+		// outcome remembered, so the catch below runs `outcome` for an aborted run too.
 		handoff: () => {
-			assertCurrent(a, st.deps.context())
+			assertLive(st, a, signal)
 			handedOff = true
 			if (st.binding) st.binding.consumed = true
 			during = "submitted"
-			dispatch({ type: "handoff" })
+			emit({ type: "handoff" })
 		},
 	}
 	try {
-		const proved = await prepareAndProve(st, a, dispatch, signal)
+		const proved = await prepareAndProve(st, a, emit, signal)
 		during = "prepared"
-		dispatch({ type: "proved" })
+		emit({ type: "proved" })
 		const record = await st.deps.session.submit(proved, a, hooks, flags.acceptUncertain ? { acceptUncertain: true } : undefined)
 		st.uncertain.delete(n)
-		dispatch({ type: "record", record })
+		emit({ type: "record", record })
 		return record
 	} catch (err) {
-		if (!signal.aborted) dispatch(outcome(st, err, a, during, handedOff))
+		emit(outcome(st, err, a, during, handedOff))
 		return null
 	} finally {
 		st.active.delete(n)
@@ -361,7 +373,7 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
 	// A dropped claim keeps its record blocked: the page never resends it.
 	let keep = false
 	const handoff = () => {
-		if (!claimCurrent(c, st.deps.context())) throw new ContextChanged()
+		if (signal.aborted || !claimCurrent(c, st.deps.context())) throw new ContextChanged()
 		handedOff = true
 	}
 	try {

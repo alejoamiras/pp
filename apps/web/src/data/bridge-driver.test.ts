@@ -123,7 +123,7 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 		events.push(e)
 		m = bridgeReducer(m, e)
 	}
-	const signal = new AbortController().signal
+	let run = new AbortController()
 	return {
 		ctx,
 		session,
@@ -137,9 +137,15 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 		denyClaim: () => {
 			canClaim = false
 		},
-		preflight: () => driver.preflight(RECIPIENT, dispatch, signal),
-		submit: (input: SubmitInput = INPUT, flags: { acceptUncertain?: true } = {}) => driver.submit(input, dispatch, signal, flags),
-		claim: (r: BridgeRecordView = CLAIMABLE) => driver.claim(r, dispatch, signal),
+		preflight: () => driver.preflight(RECIPIENT, dispatch, run.signal),
+		submit: (input: SubmitInput = INPUT, flags: { acceptUncertain?: true } = {}) => driver.submit(input, dispatch, run.signal, flags),
+		claim: (r: BridgeRecordView = CLAIMABLE) => driver.claim(r, dispatch, run.signal),
+		/** What opening another bridge does: aborts the running flow and resets the screen. */
+		supersede: () => {
+			run.abort()
+			run = new AbortController()
+			dispatch({ type: "reset" })
+		},
 		machine: () => m,
 		events,
 		/** Puts the machine where a claim starts. */
@@ -236,6 +242,19 @@ describe("each refusal sends nothing", () => {
 		await run
 		expect(h.sent).toEqual([])
 		expect(h.machine().failure).toMatchObject({ code: "CONTEXT_CHANGED", offer: "claim" })
+	})
+
+	test.each(["reprove", "claim"] as const)("a superseded run held at %s never reaches the wallet or the new screen", async (gate) => {
+		const h = harness(gate === "reprove" ? { reproves: ["ASP_ROOT_STALE"] } : {})
+		if (gate === "claim") h.atClaimable()
+		h.hold(gate)
+		const run = gate === "claim" ? h.claim() : h.submit()
+		await h.reached(gate)
+		h.supersede()
+		h.open(gate)
+		await run
+		expect(h.sent).toEqual([])
+		expect(h.machine()).toEqual(initialBridge)
 	})
 
 	test("a claim the wallet did not grant is never asked for", async () => {
