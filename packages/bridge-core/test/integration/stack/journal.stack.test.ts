@@ -35,10 +35,10 @@ const code = (p: Promise<unknown>) =>
 const prepare = (s: BridgeSession, o: Owner, i: number, amount: bigint, recipient: Device["hub"]) =>
 	prepareBridgeSpend(s, { note: o.notes[i]!.commitment, amount, portal: m.bridge.portal, recipient })
 
-/** Every stored value, opened at its own key with the session's journal keys. */
-async function opened(values: ReadonlyMap<string, string>, s: BridgeSession): Promise<(JournalRecord | null)[]> {
+/** Each value, opened at its own key with the session's journal keys. */
+async function opened(entries: Iterable<readonly [string, string]>, s: BridgeSession): Promise<(JournalRecord | null)[]> {
 	const { secrets } = useSession(s, DEPLOYMENT)
-	return Promise.all([...values].map(([k, v]) => openRecord(secrets.journal, k, v)))
+	return Promise.all([...entries].map(([k, v]) => openRecord(secrets.journal, k, v)))
 }
 
 /** A record holds exactly the fields the journal allows, and an attempt only its hash. */
@@ -123,7 +123,7 @@ describe("journal", () => {
 		timings.J2 = Math.round(performance.now() - t0)
 	})
 
-	it("J3 the raw store holds no field value; each record opens to the allowed fields; a value moved to another record's key is skipped and kept", async () => {
+	it("J3 no write to the store holds a field value; each write opens to the allowed fields; a value moved to another record's key is skipped and kept", async () => {
 		const t0 = performance.now()
 		const o = await owner(m, seed, [987_654_321n, 987_654_321n])
 		const s = await sessionOf(m, o)
@@ -152,7 +152,7 @@ describe("journal", () => {
 				label: o.notes[0]!.label,
 			}),
 		).toEqual([])
-		expectAllowed(await opened(values, s))
+		expectAllowed(await opened(written, s))
 
 		const journal = new Journal(store, useSession(s, DEPLOYMENT).secrets.journal, DEPLOYMENT)
 		const [keyA, keyB] = [STORAGE_PREFIX + (await journal.id(a.nullifier)), STORAGE_PREFIX + (await journal.id(b.nullifier))]

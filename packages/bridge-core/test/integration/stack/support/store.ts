@@ -8,13 +8,13 @@ import type { KeyValueStore } from "../../../../src/client/journal"
  */
 export function recordingStore() {
 	const values = new Map<string, string>()
-	const written: string[] = []
+	const written: [string, string][] = []
 	const control = { writes: 0, failWrite: (_n: number) => false }
 	const store: KeyValueStore = {
 		getItem: (k) => values.get(k) ?? null,
 		setItem: (k, v) => {
 			if (control.failWrite(++control.writes)) throw new DOMException("quota", "QuotaExceededError")
-			written.push(k, v)
+			written.push([k, v])
 			values.set(k, v)
 		},
 		removeItem: (k) => void values.delete(k),
@@ -29,9 +29,9 @@ export function encodings(v: bigint | string): string[] {
 	return [v.toString(), `0x${hex}`, toHex(v, { size: 32 }).slice(2), hex].filter((s) => s.length >= 4)
 }
 
-/** The fields whose value shows up, in any encoding, in one of `texts`. */
-export function leaks(texts: readonly string[], fields: Record<string, bigint | string>): string[] {
-	const text = texts.join("\n").toLowerCase()
+/** The fields whose value shows up, in any encoding, in a key or value of `entries`. */
+export function leaks(entries: Iterable<readonly [string, string]>, fields: Record<string, bigint | string>): string[] {
+	const text = [...entries].flat().join("\n").toLowerCase()
 	return Object.entries(fields)
 		.filter(([, v]) => encodings(v).some((e) => text.includes(e)))
 		.map(([name]) => name)

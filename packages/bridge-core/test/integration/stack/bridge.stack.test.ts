@@ -76,7 +76,7 @@ describe("bridge", () => {
 		const fpc = await sponsoredFpcAddress()
 		expect(await feeJuice(dev, recipient)).toBe(0n)
 		const t1 = performance.now()
-		// I10: the account's deployment and its claim in one sponsored transaction.
+		// The account's deployment and its claim in one sponsored transaction.
 		const receipt = await b1Recipient.deployWith(payload)
 		timings.claim = Math.round(performance.now() - t1)
 		const block = Number(receipt.blockNumber)

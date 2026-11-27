@@ -43,7 +43,7 @@ describe("submit re-proves a stale spend", () => {
 		await seed.mint(t.o.address, 100n)
 		let deposits = 0
 		for (; (await known()) && deposits < 100; deposits++) await t.o.deposit(1n)
-		console.log(`[reprove] I-5: the held state root left the vault's history after ${deposits} deposits`)
+		console.log(`[reprove] the held state root left the vault's history after ${deposits} deposits`)
 		expect(await known()).toBe(false)
 		const reproved: string[] = []
 		await expect(t.client.submit(spend, t.l1, t.session, { onReprove: (c) => reproved.push(c) })).resolves.toMatchObject({

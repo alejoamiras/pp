@@ -11,6 +11,7 @@ import {
 	fakePool,
 	manifest,
 	memoryStore,
+	NETWORK,
 	OWNER,
 	openSession,
 	randomRecipient,
@@ -50,7 +51,7 @@ describe("BridgeSession", () => {
 		const chain = new FakeChain()
 		const ctx = context(chain, memoryStore().store)
 		const recipient = await randomRecipient()
-		ctx.preflights.record(DEPLOYMENT.id, recipient, aztecWallet([recipient]))
+		ctx.preflights.record(DEPLOYMENT.id, recipient, aztecWallet([recipient]), NETWORK)
 		await expect(submit(ctx, await bridgeSpend(recipient), chain.wallet(), s)).rejects.toMatchObject({
 			code: "SPEND_MISMATCH",
 			check: "nullifier",

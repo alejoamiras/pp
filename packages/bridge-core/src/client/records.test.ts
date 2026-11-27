@@ -81,6 +81,21 @@ describe("records", () => {
 		expect(await records(t.ctx, t.session)).toEqual([])
 	})
 
+	it("reports a claimed record whose delete fails, and reports it again until the delete succeeds", async () => {
+		const t = await setup()
+		await t.keep([{ l1TxHash: hash(1) }])
+		await t.chain.land(t.spend.secretHash, hash(1), t.spend.proof.pubSignals)
+		t.setClaim("nullified")
+		const remove = t.store.removeItem
+		t.store.removeItem = () => {
+			throw new DOMException("denied", "SecurityError")
+		}
+		expect((await records(t.ctx, t.session)).map((v) => v.step)).toEqual(["claimed"])
+		t.store.removeItem = remove
+		expect((await records(t.ctx, t.session)).map((v) => v.step)).toEqual(["claimed"])
+		expect(await records(t.ctx, t.session)).toEqual([])
+	})
+
 	it("skips and keeps a record that no longer opens", async () => {
 		const t = await setup()
 		await t.keep([{ l1TxHash: hash(1) }])

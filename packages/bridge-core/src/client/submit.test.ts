@@ -9,6 +9,7 @@ import {
 	FakeChain,
 	fakePool,
 	memoryStore,
+	NETWORK,
 	OWNER,
 	openSession,
 	randomRecipient,
@@ -31,7 +32,7 @@ async function setup(o: { pool?: ReturnType<typeof fakePool>; failWrite?: (n: nu
 	const ctx = context(chain, store, preflights)
 	const recipient = await randomRecipient()
 	const wallet = aztecWallet([recipient])
-	preflights.record(DEPLOYMENT.id, recipient, wallet)
+	preflights.record(DEPLOYMENT.id, recipient, wallet, NETWORK)
 	const journal = new Journal(store, useSession(session, DEPLOYMENT.id).secrets.journal, DEPLOYMENT.id)
 	const spend = await bridgeSpend(recipient)
 	return { pool, session, chain, store, values, preflights, ctx, recipient, wallet, journal, spend }
@@ -135,7 +136,7 @@ describe("submit: preflight at handoff", () => {
 	it("lets one of two concurrent submits of a note reach the wallet, even through separate store adapters", async () => {
 		const t = await setup()
 		const other = await randomRecipient()
-		t.preflights.record(DEPLOYMENT.id, other, aztecWallet([other]))
+		t.preflights.record(DEPLOYMENT.id, other, aztecWallet([other]), NETWORK)
 		const adapter: KeyValueStore = {
 			getItem: (k) => t.store.getItem(k),
 			setItem: (k, v) => t.store.setItem(k, v),
@@ -202,9 +203,17 @@ describe("submit: preflight at handoff", () => {
 
 	it("refuses with zero sends when the preflighted wallet no longer lists the recipient", async () => {
 		const t = await setup()
-		t.preflights.record(DEPLOYMENT.id, t.recipient, aztecWallet([]))
+		t.preflights.record(DEPLOYMENT.id, t.recipient, aztecWallet([]), NETWORK)
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("PREFLIGHT_REQUIRED")
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
+	})
+
+	it("refuses with zero sends and nothing journaled when the preflighted wallet moved to another rollup", async () => {
+		const t = await setup()
+		t.wallet.version = 2n
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("CHAIN_MISMATCH")
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+		expect(t.values.size).toBe(0)
 	})
 })
 
@@ -263,7 +272,7 @@ describe("submit: earlier attempts (journal guard)", () => {
 		await held(t, [{ l1TxHash: hash(1) }])
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("IN_FLIGHT")
 		t.chain.revert(hash(1))
-		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet)
+		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet, NETWORK)
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ amount: 70n })
 	})
 
@@ -276,9 +285,9 @@ describe("submit: earlier attempts (journal guard)", () => {
 		await submit(t.ctx, t.spend, t.chain.wallet(), t.session, { acceptUncertain: true }).catch(() => {})
 		expect(t.chain.writeContract).toHaveBeenCalledTimes(1)
 		expect([...t.values.values()]).toEqual(before)
-		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet)
+		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet, NETWORK)
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
-		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet)
+		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet, NETWORK)
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session, { acceptUncertain: true })).resolves.toMatchObject({ amount: 70n })
 		expect((await t.journal.read(t.spend.nullifier)).record?.attempts).toHaveLength(3)
 	})
@@ -289,7 +298,7 @@ describe("submit: earlier attempts (journal guard)", () => {
 		await held(t, [{ l1TxHash: hash(1) }, { l1TxHash: hash(2) }])
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
 		const elsewhere = await randomRecipient()
-		t.preflights.record(DEPLOYMENT.id, elsewhere, aztecWallet([elsewhere]))
+		t.preflights.record(DEPLOYMENT.id, elsewhere, aztecWallet([elsewhere]), NETWORK)
 		const redirected = await bridgeSpend(elsewhere)
 		expect(await code(submit(t.ctx, redirected, t.chain.wallet(), t.session, { acceptUncertain: true }))).toBe("UNCERTAIN")
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
@@ -320,7 +329,7 @@ describe("submit: earlier attempts (journal guard)", () => {
 		expect(record?.attempts).toHaveLength(MAX_UNRESOLVED_ATTEMPTS)
 		expect(record?.attempts[0]?.l1TxHash).toBe(hash(2))
 		for (const n of [2, 3, 4]) t.chain.revert(hash(n))
-		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet)
+		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet, NETWORK)
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
 	})
 })

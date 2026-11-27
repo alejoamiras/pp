@@ -4,7 +4,7 @@ import type { ExecutionPayload } from "@aztec-labs/stdlib/tx"
 import { createPublicClient, http, type WalletClient } from "viem"
 import type { StackManifest } from "../stack-manifest"
 import { translate } from "./boundary"
-import { type ClaimNode, claimPayload, type WaitClaimableOptions, waitClaimable } from "./claim"
+import { abortable, type ClaimNode, claimPayload, type WaitClaimableOptions, waitClaimable } from "./claim"
 import { type ClientDeployment, type DeploymentNode, type DeploymentReader, namedDeployment, verifyDeployment } from "./deployment"
 import type { KeyValueStore } from "./journal"
 import { type PreflightNode, type PreflightWallet, Preflights, preflight } from "./preflight"
@@ -96,7 +96,9 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		preflight: async (a) => preflight({ deployment: await deployment(), node, preflights }, a),
 		submit: (spend, l1, s, o) => submit(submitContext, spend, l1, s, o),
 		waitClaimable: async (r, o) => {
-			await deployment()
+			await abortable(deployment(), o?.signal).catch((e: unknown) => {
+				throw translate(e)
+			})
 			return waitClaimable(node, r, o)
 		},
 		claimPayload: async (s, r) => claimPayload(await deployment(), s, r),

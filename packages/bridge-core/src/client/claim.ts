@@ -38,14 +38,14 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 	})
 }
 
-/** `p`, or the signal's reason as soon as it aborts, so a stalled read cannot outlive a cancel. */
-function abortable<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+/** `p`, or the signal's reason as soon as it aborts, so a stalled read cannot outlive a cancel. `p` is always observed. */
+export function abortable<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
 	if (!signal) return p
 	return new Promise((resolve, reject) => {
 		const done = () => reject(signal.reason)
+		p.then(resolve, reject).finally(() => signal.removeEventListener("abort", done))
 		if (signal.aborted) return done()
 		signal.addEventListener("abort", done, { once: true })
-		p.then(resolve, reject).finally(() => signal.removeEventListener("abort", done))
 	})
 }
 

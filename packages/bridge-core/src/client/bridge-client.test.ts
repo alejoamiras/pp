@@ -122,6 +122,16 @@ describe("createBridgeClient", () => {
 		expect(pool.notes).not.toHaveBeenCalled()
 	})
 
+	it("stops waiting for a claim when aborted while the deployment check stalls", async () => {
+		const t = setup()
+		t.reader.getChainId.mockImplementationOnce(() => new Promise<number>(() => {}))
+		const abort = new AbortController()
+		const receipt = { messageKey: toHex(1n, { size: 32 }) } as BridgeReceipt
+		const waiting = t.client.waitClaimable(receipt, { signal: abort.signal })
+		abort.abort()
+		await expect(waiting).rejects.toMatchObject({ code: "RPC_FAILED" })
+	})
+
 	it("checks again after a check that failed to read", async () => {
 		const t = setup()
 		t.reader.getChainId.mockRejectedValueOnce(new Error("socket hang up"))

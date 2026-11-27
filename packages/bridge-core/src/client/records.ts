@@ -25,7 +25,6 @@ const lastHash = (r: JournalRecord) => {
 
 const STEP_OF_CLAIM = { found: "claimable", missing: "mined", nullified: "claimed" } as const
 
-/** The record's step read from the chain now. */
 async function viewOf(c: Ctx, record: JournalRecord, spentCommitment: bigint): Promise<BridgeRecordView> {
 	const claimSalt = deriveClaimSalt(c.secrets.claimKey, spentCommitment)
 	const secretHash = await claimSecretHash(claimSalt, AztecAddress.fromStringUnsafe(record.recipient))
@@ -55,9 +54,9 @@ async function viewOf(c: Ctx, record: JournalRecord, spentCommitment: bigint): P
 
 /**
  * The session's journal records, pending ones included, each with its step derived from the chain:
- * `submitted`, `mined`, `claimable`, `claimed` (reported once, then the record is deleted), or an
- * error. A reload reads these before offering a bridge, so it never offers a second bridge of a note
- * already sent. A record that no longer opens is skipped and kept.
+ * `submitted`, `mined`, `claimable`, `claimed` (then deleted; a failed delete reports it again), or
+ * an error. A reload reads these before offering a bridge, so it never offers a second bridge of a
+ * note already sent. A record that no longer opens is skipped and kept.
  */
 export function records(ctx: RecordsContext, s: unknown): Promise<BridgeRecordView[]> {
 	return guarded(async () => {
@@ -68,8 +67,8 @@ export function records(ctx: RecordsContext, s: unknown): Promise<BridgeRecordVi
 			const { record } = await c.journal.read(await session.pool.nullifierOf(note.commitment))
 			if (record) views.push(await viewOf(c, record, note.commitment))
 		}
-		// Only after every read passed, so a failed call never drops a claim it did not report.
-		for (const v of views) if (v.step === "claimed") await c.journal.remove(v.nullifier)
+		// After every read, and a failed delete only keeps the record, so no claim is dropped unreported.
+		for (const v of views) if (v.step === "claimed") await c.journal.remove(v.nullifier).catch(() => {})
 		return views
 	})
 }

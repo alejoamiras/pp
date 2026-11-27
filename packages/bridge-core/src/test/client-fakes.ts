@@ -231,8 +231,19 @@ export class FakeChain {
 	}
 }
 
-/** An Aztec wallet that lists `accounts`; mutate the array to drop one. */
-export const aztecWallet = (accounts: AztecAddress[]) => ({ getAccounts: async () => accounts.map((item) => ({ alias: "", item })) })
+/** The network `DEPLOYMENT` is on, as preflight records it. */
+export const NETWORK = { chainId: 31337n, version: 1n }
+
+/** An Aztec wallet on `NETWORK` that lists `accounts`; mutate the array to drop one, or `version` to move it. */
+export function aztecWallet(accounts: AztecAddress[]) {
+	const w = {
+		chainId: NETWORK.chainId,
+		version: NETWORK.version,
+		getAccounts: async () => accounts.map((item) => ({ alias: "", item })),
+		getChainInfo: async () => ({ chainId: { toBigInt: () => w.chainId }, version: { toBigInt: () => w.version } }),
+	}
+	return w
+}
 
 export function context(chain: FakeChain, store: KeyValueStore, preflights = new Preflights()): SubmitContext {
 	return {

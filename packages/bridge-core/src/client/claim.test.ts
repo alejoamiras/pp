@@ -87,4 +87,25 @@ describe("waitClaimable", () => {
 		answer(40n)
 		await expect(waiting).rejects.toMatchObject({ code: "RPC_FAILED" })
 	})
+
+	it("observes a forceBlock that aborts and then rejects, leaving no unhandled rejection", async () => {
+		const node = {
+			getL1ToL2MessageIndex: vi.fn(async () => undefined),
+			getBlockData: vi.fn(async () => undefined),
+		}
+		const abort = new AbortController()
+		const forceBlock = () => {
+			abort.abort()
+			return Promise.reject(new Error("mine failed"))
+		}
+		const unhandled = vi.fn()
+		process.on("unhandledRejection", unhandled)
+		try {
+			await expect(waitClaimable(node, receipt(), { forceBlock, signal: abort.signal })).rejects.toMatchObject({ code: "RPC_FAILED" })
+			await new Promise((r) => setTimeout(r, 0))
+			expect(unhandled).not.toHaveBeenCalled()
+		} finally {
+			process.off("unhandledRejection", unhandled)
+		}
+	})
 })
