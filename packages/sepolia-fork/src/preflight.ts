@@ -222,15 +222,23 @@ function codeProblems(c: PoolContract, got: ContractCode, pinned: ContractCode):
 	return []
 }
 
+/** Exactly 32 bytes; viem's `isHash` rounds an odd length up. */
+const BLOCK_HASH = /^0x[0-9a-f]{64}$/i
+
 /**
- * The bindings to pin for `pins`' addresses at `block`, refused when the result could never be a valid pin:
- * an unfinalized block, empty code, a cleared slot or route, a changed proxy, or wiring that names other
- * contracts than the target's.
+ * The block and bindings to pin for `pins`' addresses at `block`, refused when the result could never be a
+ * valid pin: an unfinalized block, a malformed header, empty code, a cleared slot or route, a changed proxy,
+ * or wiring that names other contracts than the target's.
  */
-export async function enroll(rpc: Rpc, pins: Pins, block: bigint): Promise<Bindings> {
-	const finalized = await rpc<{ number: Hex } | null>("eth_getBlockByNumber", ["finalized", false])
+export async function enroll(rpc: Rpc, pins: Pins, block: bigint): Promise<Pick<Pins, "block" | "bindings">> {
+	const [header, finalized] = await Promise.all([
+		rpc<{ hash: string; number: Hex } | null>("eth_getBlockByNumber", [numberToHex(block), false]),
+		rpc<{ number: Hex } | null>("eth_getBlockByNumber", ["finalized", false]),
+	])
 	// A block that can still reorg could pair its hash with another block's state.
 	if (finalized === null || block > BigInt(finalized.number)) throw new Error(`refusing to pin block ${block}: it is not finalized`)
+	if (header === null || BigInt(header.number) !== block || !BLOCK_HASH.test(header.hash))
+		throw new Error(`refusing to pin block ${block}: the endpoint returned no well-formed header for it`)
 	const bindings = await readBindings(rpc, pins, block)
 	const problems = [
 		...(await wiringMismatches(rpc, pins, block)).map((m) => m.message),
@@ -240,5 +248,5 @@ export async function enroll(rpc: Rpc, pins: Pins, block: bigint): Promise<Bindi
 			.map((k) => `${k} is the hash of empty code`),
 	]
 	if (problems.length > 0) throw new Error(`refusing to pin block ${block}: ${problems.join("; ")}`)
-	return bindings
+	return { block: { number: block, hash: header.hash as Hex }, bindings }
 }

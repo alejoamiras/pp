@@ -3,7 +3,6 @@
 // for a pin refresh. The endpoint comes only from SEPOLIA_RPC_URL; unset, `run` skips unless --require-rpc
 // makes that a failure. Usage errors never echo an argument, which may be a mistyped endpoint.
 import { parseArgs } from "node:util"
-import { isHash } from "viem"
 import { DEFAULT_TARGET, isTargetName, type Pins, TARGETS } from "./pins.ts"
 import { enroll, PreflightError } from "./preflight.ts"
 import { ENDPOINT_RETRIES, hostOf, httpRpc, scrub } from "./rpc.ts"
@@ -62,13 +61,10 @@ function parse(argv: string[]): Command | string {
 
 async function printPins(endpoint: string, pins: Pins, block: bigint): Promise<void> {
 	const rpc = httpRpc(endpoint, { retries: ENDPOINT_RETRIES })
-	const bindings = await enroll(rpc, pins, block)
-	const header = await rpc<{ hash: string; number: string } | null>("eth_getBlockByNumber", [`0x${block.toString(16)}`, false])
-	if (header === null || BigInt(header.number) !== block || !isHash(header.hash))
-		throw new Error(`the endpoint returned no header for block ${block}`)
+	const pin = await enroll(rpc, pins, block)
 	console.log(
 		JSON.stringify(
-			{ block: { number: String(block), hash: header.hash }, bindings },
+			{ block: { number: String(block), hash: pin.block.hash }, bindings: pin.bindings },
 			(_, v) => (typeof v === "bigint" ? `${v}n` : v),
 			2,
 		),

@@ -79,7 +79,7 @@ function chain(b: Chain, o: Options = {}) {
 	const tags: unknown[] = []
 	const handlers: Record<string, (params: unknown[]) => unknown> = {
 		eth_chainId: () => numberToHex(o.chainId ?? 11_155_111),
-		eth_getBlockByNumber: () => ({ hash: o.blockHash ?? TARGET.block.hash, number: "0xba9000" }),
+		eth_getBlockByNumber: ([tag]) => ({ hash: o.blockHash ?? TARGET.block.hash, number: tag === "finalized" ? "0xba9000" : tag }),
 		eth_getStorageAt: ([at, slot]) => storage(at as string, slot),
 		eth_getCode: ([a]) => codeAt(getAddress(a as string)),
 		eth_call: ([c]) => call(c as { to: string; data: string }),
@@ -168,9 +168,11 @@ describe("the preflight", () => {
 		await expect(enroll(rewired, pins, pins.block.number)).rejects.toThrow("refusing to pin block 12224362: wiring.vault.aspRegistry")
 	})
 
-	test("enrollment refuses an unfinalized block, a cleared slot or route, and a proxy other than the pinned one", async () => {
+	test("enrollment refuses an unfinalized block, a truncated hash, a cleared slot or route, and an unpinned proxy", async () => {
 		const { rpc, pins } = chain(BASE)
-		expect((await enroll(rpc, pins, pins.block.number)).code).toEqual(pins.bindings.code)
+		expect(await enroll(rpc, pins, pins.block.number)).toEqual({ block: pins.block, bindings: pins.bindings })
+		const truncated = chain(BASE, { blockHash: `0x${"ab".repeat(31)}a` }).rpc
+		await expect(enroll(truncated, pins, pins.block.number)).rejects.toThrow("no well-formed header")
 		await expect(enroll(rpc, pins, 0xba9001n)).rejects.toThrow("refusing to pin block 12226561: it is not finalized")
 		const cleared = chain({ ...BASE, implementations: { ...BASE.implementations, vault: addr(0) } }).rpc
 		await expect(enroll(cleared, pins, pins.block.number)).rejects.toThrow("vault's EIP-1967 slot is empty")
