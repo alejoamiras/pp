@@ -42,13 +42,16 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const nameOf = (e: unknown) => (e instanceof Error ? e.name : "Error")
 
 /** The bot's first post, which must be checkpointed and successful, as the block that holds it. */
-async function resolvePost(c: CanaryContext): Promise<BlockRef> {
+export async function resolvePost(c: Pick<CanaryContext, "node" | "postHash">): Promise<BlockRef> {
 	const receipt = await c.node.getTxReceipt(TxHash.fromString(c.postHash))
 	const block = receipt.blockNumber
 	if (!["checkpointed", "proven", "finalized"].includes(receipt.status) || receipt.executionResult !== "success" || block === undefined)
 		throw new CanaryError("FAILED", "POST_NOT_CHECKPOINTED", `--post ${c.postHash} is ${receipt.status}`)
 	const data = await c.node.getBlockData(block)
 	if (!data) throw new CanaryError("FAILED", "RPC_EVIDENCE_MISSING", `the node serves no block ${block} for --post`)
+	// A block at the receipt's height that is not the receipt's own block means --post was reorged out.
+	if (receipt.blockHash && data.blockHash.toString() !== receipt.blockHash.toString())
+		throw new CanaryError("FAILED", "POST_REORGED", `--post ${c.postHash}'s block ${block} is no longer the one at that height`)
 	return { block: Number(block), blockHash: data.blockHash.toString() as Hex }
 }
 
@@ -134,9 +137,12 @@ async function bridge(c: CanaryContext, h: Holder, s: BridgeSession, note: { com
 		recipient: h.account.address,
 	})
 	const receipt = await c.client.submit(spend, c.sender, s)
+	// On file before any further read: a failure from here on strands the amount, and the hash names it.
+	c.report.set("bridgeL1Tx", receipt.l1TxHash)
+	c.report.flush()
+	report("bridge-sent", { l1TxHash: receipt.l1TxHash, holder: h.account.address.toString() })
 	const mined = await c.l1.waitForTransactionReceipt({ hash: receipt.l1TxHash })
 	const { timestamp } = await c.l1.getBlock({ blockNumber: mined.blockNumber })
-	c.report.set("bridgeL1Tx", receipt.l1TxHash)
 	c.report.set("bridgeL1Block", mined.blockNumber)
 	report("bridged", { l1TxHash: receipt.l1TxHash, l1Block: mined.blockNumber, amount: receipt.amount })
 	return { receipt, stopFinality: trackFinality(c, mined.blockNumber, timestamp) }

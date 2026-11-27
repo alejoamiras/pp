@@ -63,6 +63,23 @@ describe("canary arguments", () => {
 		})
 		expect([out.code, /refused: argv: burn hash 1/.test(out.text), out.text.includes("SENTINEL")]).toEqual([2, true, false])
 	}, 60_000)
+
+	it("lists --settle's burns when the file cannot load, before any report exists", async () => {
+		const cli = fileURLToPath(new URL("../cli/canary.ts", import.meta.url))
+		const out = await new Promise<{ code: number | null; text: string }>((resolve, reject) => {
+			const child = spawn(process.execPath, [cli, "missing.json", "--settle", h(2), h(3)], {
+				env: { PATH: process.env.PATH, HOME: scratchHome() },
+				stdio: ["ignore", "pipe", "pipe"],
+			})
+			let text = ""
+			child.stdout.on("data", (b) => (text += b))
+			child.stderr.on("data", (b) => (text += b))
+			child.on("error", reject)
+			child.on("close", (code) => resolve({ code, text }))
+		})
+		expect(out.code).toBe(1)
+		expect(out.text).toContain(`"event":"unsettled","burns":"${h(2)} ${h(3)}"`)
+	}, 60_000)
 })
 
 const ticket = (tx: number, o: Partial<{ payee: Address; amount: bigint; label: bigint }> = {}): ExitTicket => ({

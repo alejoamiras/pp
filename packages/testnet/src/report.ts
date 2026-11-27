@@ -3,7 +3,7 @@
  * write, so a value the canary never meant to record (a key, secret, signature or claim salt, or a
  * library's message) has no field to land in; what it writes is also scrubbed of every loaded value.
  */
-import { writeFileSync } from "node:fs"
+import { renameSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { BridgeClientError } from "@pp/bridge-core"
 import { GuardError } from "./errors"
@@ -182,8 +182,11 @@ export class CanaryReport {
 		}
 	}
 
+	/** Written whole and renamed into place, so an interrupted write never loses what an earlier one recorded. */
 	flush(): string {
-		writeFileSync(this.path, reportText(this.raw), { mode: 0o600 })
+		const tmp = `${this.path}.${process.pid}.tmp`
+		writeFileSync(tmp, reportText(this.raw), { mode: 0o600 })
+		renameSync(tmp, this.path)
 		return this.path
 	}
 

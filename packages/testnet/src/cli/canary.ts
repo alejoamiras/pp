@@ -107,10 +107,18 @@ function finish(r: CanaryReport, s: State, failure: unknown): number {
 await main(async () => {
 	const { file, mode, values, rest } = cliArgs(process.argv.slice(2), CANARY_OPTIONS)
 	const a = canaryArgs(mode, values, rest)
-	const d = loadDeployment(file)
 	const command = a.kind === "run" ? "canary" : "canary-settle"
-	const dir = runDir(d, `${command}-${new Date().toISOString().replace(/[:.]/g, "-")}`, mode)
-	const r = new CanaryReport(dir, { command, target: d.target, l1ChainId: d.network.l1ChainId })
+	const r = (() => {
+		try {
+			const d = loadDeployment(file)
+			const dir = runDir(d, `${command}-${new Date().toISOString().replace(/[:.]/g, "-")}`, mode)
+			return new CanaryReport(dir, { command, target: d.target, l1ChainId: d.network.l1ChainId })
+		} catch (e) {
+			// No report can hold them yet: name the burns still to settle before failing.
+			if (a.kind === "settle") emit("unsettled", { burns: a.burns.join(" ") })
+			throw e
+		}
+	})()
 	const s: State = { burns: a.kind === "settle" ? a.burns.map((txHash) => ({ txHash })) : [], settled: new Set() }
 	for (const signal of ["SIGINT", "SIGTERM"] as const)
 		process.once(signal, () => process.exit(finish(r, s, new CanaryError("FAILED", "INTERRUPTED", `stopped by ${signal}`))))
