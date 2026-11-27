@@ -61,6 +61,19 @@ const field = (x: object, key: string): unknown => {
 	}
 }
 
+/**
+ * The innermost error in `e`'s chain that names its kind, as `source`: under viem's send wrappers that
+ * is the class the send failed with (`InsufficientFundsError`, `ChainMismatchError`). Only the name.
+ */
+export function innermostSource(e: unknown): { source?: string } {
+	for (const x of causeChain(e).reverse()) {
+		const ctor = field(x, "constructor")
+		const name = identifier(field(x, "name")) ?? (typeof ctor === "function" ? identifier(field(ctor, "name")) : undefined)
+		if (name !== undefined && name !== "Error") return { source: name }
+	}
+	return {}
+}
+
 /** The error names a decoded revert may carry out: those of the contracts the client calls through viem. */
 const REVERT_NAMES: ReadonlySet<string> = new Set(
 	[...PROCESSOR_PORTAL_ABI, ...PORTAL_FACTORY_ABI, ...OutboxAbi].flatMap((i) => (i.type === "error" ? [i.name] : [])),

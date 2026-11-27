@@ -27,6 +27,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest"
 import { DEPLOYMENT, HUB, PORTAL, SENDER } from "../test/client-fakes"
 import { l1Reader } from "./bridge-client"
 import type { ClientDeployment } from "./deployment"
+import { BridgeClientError } from "./errors"
 import { exitStatusOf, exitState } from "./exits"
 import { assertExitPayee, type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
 import { sponsoredFpcAddress } from "./payload"
@@ -400,6 +401,21 @@ describe("settle", () => {
 			throw new UserRejectedRequestError(new Error("no"))
 		}) as never)
 		await expect(settle(c, t!, l1)).rejects.toMatchObject(refused)
+	})
+
+	it("reads any other failure of the wallet's send as UNCERTAIN naming the class it failed with, and a failed simulate as what it is", async () => {
+		const { c, state, reader, l1, writeContract } = await world()
+		state.posted = true
+		const [t] = await exitTickets(c, {})
+		const named = (name: string, message: string, cause?: Error) => Object.assign(new Error(message, { cause }), { name })
+		const funds = named("InsufficientFundsError", "0xabc has 1 wei", new Error("raw node text"))
+		writeContract.mockRejectedValueOnce(named("ContractFunctionExecutionError", "settle(0x…) failed", funds))
+		const e = await settle(c, t!, l1).catch((x: unknown) => x)
+		expect(e).toBeInstanceOf(BridgeClientError)
+		expect(e).toMatchObject({ code: "UNCERTAIN", source: "InsufficientFundsError", l1TxHash: undefined })
+		expect(String((e as Error).message)).not.toMatch(/wei|0x/)
+		reader.simulateContract.mockRejectedValueOnce(new Error("socket hang up"))
+		await expect(settle(c, t!, l1)).rejects.not.toMatchObject({ code: "UNCERTAIN" })
 	})
 
 	it("keeps the hash as UNCERTAIN when the wallet replaced the send with a transaction that mined without settling", async () => {
