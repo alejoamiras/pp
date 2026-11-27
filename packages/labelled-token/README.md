@@ -3,16 +3,22 @@
 The labelled token's artifact and its tooling. The contract lives in
 [`contracts/bridge/aztec/labelled_token`](../../contracts/bridge/aztec/labelled_token): an Aztec 6.0.0
 token whose every private note carries a deposit **label** and an **origin** (`0` pool, `1` birth).
-Stage A is the hold-and-leave surface:
+Stage A is the hold-and-leave surface; stage B adds spends checked against the ASP root registry
+([`asp_registry`](../../contracts/bridge/aztec/asp_registry)) and a public balance.
 
 | Function | Caller | Effect |
 |---|---|---|
-| `constructor(name, symbol, decimals, minter, registry)` | deployer | Fixes the metadata and `Config { minter, registry }`; refuses a zero minter. Stage A passes `registry = 0` and never reads it. |
+| `constructor(name, symbol, decimals, minter, registry)` | deployer | Fixes the metadata and `Config { minter, registry }`; refuses a zero minter. A stage-A generation passes `registry = 0`; every checked spend then fails with "registry unset". |
 | `mint_from_bridge(to, amount, label)` | minter only | Writes one note of `amount` under `label`, origin pool, to `to`. Refuses a zero amount, a zero label and an off-curve `to`. |
 | `burn_for_exit(from, amount, label)` | minter only | Spends at most 8 of `from`'s notes of `label`, largest first, and returns any change under the same label and origin. Fails with "Balance too low" when 8 notes do not cover `amount`; fails with "mixed origin" when they disagree. |
 | `balance_of_private(owner)` | utility | The owner's total over every label. |
 | `private_balances_by_label(owner, start)` | utility | `(label, origin, balance)` per label, 16 per page, from the `start`-th. Tracks at most 256 labels per owner. |
 | `private_notes_by_label(owner, label, start)` | utility | One label's note values, largest first, 10 per page: the exact chunks a caller can burn. |
+| `transfer_private(to, amount, label, path)` | any holder | Spends the caller's `label` notes as `burn_for_exit` does, then proves `label` is in the registry's tree of those notes' origin at the anchor (`check_label`), which also sets the expiry to anchor + 1800 s. Writes `(label, origin, amount)` to `to` and the change to the caller. Refuses a zero or off-curve `to` and a zero amount. |
+| `unshield(amount, label, path)` | any holder | As `transfer_private`, crediting the caller's public balance instead. Refused in the setup phase. The public step `finish_unshield` (callable only by the token) reverts unless both registry roots are still the ones the spend was checked against; after such a revert the notes stay spendable, and until that tx is final any spend that returns change to the caller fails (the change's delivery must follow the dropped one), so it can leave only in exact chunks. |
+| `transfer_public(to, amount)` | any holder | Moves public balance. Refuses a zero or off-curve `to`, the private-side sentinel address and a zero amount. |
+| `burn_public_for_exit(from, amount)` | minter only | Burns `from`'s public balance. |
+| `balance_of_public(owner)` | public view | The owner's public balance. |
 
 Every balance note is delivered constrained under a non-interactive handshake (`balance_set.nr`,
 `delivery()`), so a recipient finds it from the chain with no registered sender, unless the pair
@@ -28,14 +34,23 @@ already shares an interactive handshake (see below).
 - `scripts/handoff.ts`: `bun run handoff` writes `bench/handoff.json`, the class id and the address a
   hub derives for this token (`deployer = hub`, `salt = erc20`, the factory words as `str<31>`), for
   a zero and a non-zero registry. `test/handoff.test.ts` fails when it is stale.
+- `scripts/fixtures.ts`: `bun run fixtures` renders the TXE suite's LeanIMT trees (path depths 0, 1,
+  3 and 18, a promoted leaf, a pool label inside the birth tree) from `@pp/bridge-spec` into the
+  crate's `src/test/paths.nr`; `fixtures:check` fails when that file is stale.
+- `scripts/prove.ts`: `bun run bench:prove` boots its own local network and measures, on one proving
+  wallet, the whole-tx gates and the client proving time of a 1-note `transfer_private` against the
+  stock token's `transfer_private_to_private`, to a recipient the sender has paid before and to a
+  fresh one, plus an 8-note spend. It writes `bench/proving.json` and fails unless the reused-recipient
+  row stays within stock + 60,000 gates and 1.5 × stock's median proving time.
 
 ## Tests
 
 | Layer | Command | What it proves |
 |---|---|---|
 | Unit | `bun run test` | The ABI surface (no parameter named `offset`, which aztec-nr's call stubs shadow), the gate budgets, the handoff vector. |
-| TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | The contract's rules, against an artifact the runner rebuilds from source (and the test minter's). |
-| Network | `bun run test:net` | Stage A across separate devices on a local network; see below. |
+| TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | The contract's rules, against an artifact the runner rebuilds from source (and those of the test minter and the registry). |
+| Network | `bun run test:net` | Stage A and B across separate devices on a local network: discovery, recovery, spends proven against one registry record and landing under another, expiry, and the setup-phase refusal. |
+| Proving | `bun run bench:prove` | The cost budget against the stock token, with a real prover. |
 
 `test:net` boots one anvil and one local network for the run under the run id `tok-<pid>-<time>` and
 removes every port row and directory it made.

@@ -10,7 +10,7 @@ import { deriveHubTokenInstance, hubTokenSalt } from "./hub-token"
 
 const HUB = AztecAddress.fromBigIntUnsafe(0x1234000000000000000000000000000000000000000000000000000000000abcn)
 const ERC20 = "0x00000000000000000000000000000000000e2c20"
-const TOKEN_CLASS_ID = "0x0ffdf2f819f7dbbeed8dabe38a38a76aef084445509c653762a3e3158fe1aaaa"
+const TOKEN_CLASS_ID = "0x24c218f6ead283941970e94ece49a54679425f150ec5b44741dedebfb4f53d2f"
 const WORDS = {
 	nameWord: "0x005465737420546f6b656e000000000000000000000000000000000000000000",
 	symbolWord: "0x0054535400000000000000000000000000000000000000000000000000000000",
@@ -24,8 +24,8 @@ describe("hub token keystone", () => {
 	})
 
 	it.each([
-		["no registry", AztecAddress.ZERO, "0x28189b2f7821160c75afd58709a863c5c49ccc7680eccc26b728d7858698e38e"],
-		["a registry", REGISTRY, "0x2726ceefe5c0d65f7e5fc95fad27d414ee0568e22c446c947edc14ba230a9616"],
+		["no registry", AztecAddress.ZERO, "0x18c02538f592b6187ff8aed1275cef92497b816ec09b5b96045a39ce09583a06"],
+		["a registry", REGISTRY, "0x1fecd4814e9ad07d78f61c6a85739628ad7f4ab5b06ff54c57e05e12fa3061b4"],
 	])("matches the hub's in-circuit derivation with %s", async (_, registry, address) => {
 		const inst = await deriveHubTokenInstance(HUB, ERC20, WORDS, TOKEN_CLASS_ID, registry)
 		expect(inst.currentContractClassId.toString()).toBe(TOKEN_CLASS_ID)
