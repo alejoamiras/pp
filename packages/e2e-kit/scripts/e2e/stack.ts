@@ -4,8 +4,8 @@
  * written `<state>/stack.json` (the group, the manifest, the seeded accounts' anvil indices) and
  * `<state>/wallet/handle.json` (the three fields the test wallet build reads). `down` ends that group
  * only while it is still the one this state dir started, which `<state>/stack.pid` records from the
- * moment of the spawn (`scripts/e2e/stack-owner.ts`). SIGTERM makes the CLI tear down every group
- * it started itself, so the grace is long: SIGKILL would orphan them and is the last resort.
+ * moment of the spawn (`scripts/e2e/stack-owner.ts`). SIGTERM lets the CLI tear down every group it
+ * started in order, so the grace is long; SIGKILL is the last resort, and those groups still end with the CLI.
  *
  *   bun scripts/e2e/stack.ts up <state-dir>     bun scripts/e2e/stack.ts down <state-dir>
  */
