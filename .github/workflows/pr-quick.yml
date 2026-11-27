@@ -57,6 +57,7 @@ jobs:
               - 'packages/bridge-spec/package.json'
               - 'packages/pool-client/src/**'
               - 'packages/pool-client/package.json'
+              - 'packages/pool-client/test/support/**'
               - 'contracts/bridge/aztec/token_bridge_hub/target/**'
               - 'contracts/bridge/aztec/asp_registry/target/**'
               - 'contracts/bridge/aztec/labelled_token/target/**'
