@@ -138,6 +138,31 @@ describe("exits", () => {
 		alert.getByTitle(L1_TX_2)
 	})
 
+	test("a retry naming the same transaction in other letter case lists it once", async () => {
+		const upper = `0x${L1_TX.slice(2).toUpperCase()}` as const
+		const outcomes = [upper, L1_TX].map((l1TxHash) => new BridgeFailure("UNCERTAIN", { l1TxHash }))
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				exits: {
+					tickets: async () => oneReady(s.deployment),
+					settle: async () => {
+						throw outcomes.shift()
+					},
+				},
+			}),
+		})
+		await app.user.click(screen.getByRole("button", { name: "Exits" }))
+		await confirmCollect(app.user)
+		await within(await screen.findByRole("alert")).findByTitle(L1_TX)
+		await app.user.click(screen.getByRole("button", { name: "Collect on Ethereum" }))
+		await app.user.click(review().getByRole("button", { name: "Collect" }))
+		await waitFor(() => expect(outcomes).toHaveLength(0))
+		const alert = within(await screen.findByRole("alert"))
+		expect(alert.getAllByTitle(L1_TX)).toHaveLength(1)
+		expect(alert.queryByText(/An earlier collect/)).toBeNull()
+	})
+
 	test("a failure read before the exit settled leaves the row once a Refresh reads it collected", async () => {
 		let settled = false
 		const app = renderApp({

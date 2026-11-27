@@ -24,10 +24,10 @@ const STATUS: Record<ExitStatus, { text: string; tone: Tone; note: string }> = {
 type Failed = CollectFailure
 type Collect = { kind: "idle" } | { kind: "collecting" } | ({ kind: "failed" } & Failed)
 
-/** The Ethereum transaction a coded failure names, read as untrusted. */
+/** The Ethereum transaction a coded failure names, read as untrusted and lower-cased so one transaction has one spelling. */
 const hashOf = (err: unknown): Hash | undefined => {
 	const h = typeof err === "object" && err !== null ? (err as { l1TxHash?: unknown }).l1TxHash : undefined
-	return typeof h === "string" && /^0x[0-9a-fA-F]{64}$/.test(h) ? (h as Hash) : undefined
+	return typeof h === "string" && /^0x[0-9a-fA-F]{64}$/.test(h) ? (h.toLowerCase() as Hash) : undefined
 }
 
 function failureOf(err: unknown, refused: "owner" | "context" | null): Failed {
