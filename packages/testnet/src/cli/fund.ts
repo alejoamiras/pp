@@ -1,11 +1,12 @@
 // fund <deployment file> [--quote] [--rehearse-fork <url>]
 // Tops each address in `expected` up to the summed gas budgets of its roles at twice today's fee, from
 // the L1 deployer, the one address the owner funds. `--quote` loads no key and sends nothing: it prints
-// what the deployer must hold, the top-ups' own gas included.
+// what the deployer must hold, the top-ups' own gas included. Before each send the deployer's live
+// balance must keep the run within FUNDING_LIMITS: at most 0.8 ETH spent, at least 1.0 ETH kept.
 import { journalTo } from "@pp/pp-env/send-path"
 import { formatEther } from "viem"
 import { l1AddressOf } from "../accounts"
-import { assertTopUp, fundingPlan, recipientsOf } from "../funding"
+import { assertTopUp, assertWithinLimits, fundingPlan, recipientsOf } from "../funding"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { cliArgs, guarded, main, report, sendLogPath } from "./common"
@@ -51,6 +52,7 @@ await main(async () => {
 	const { L1_DEPLOYER_KEY } = readKeys(RUN_KEYS.fund, mode, { env: process.env }, l1AddressOf)
 	const journal = journalTo(sendLogPath(d, "fund", mode))
 	const { wallet, path } = l1Sender(d, L1_DEPLOYER_KEY as `0x${string}`, "L1 deployer", deployer, journal)
+	let sent = 0n
 	try {
 		for (const s of plan.sends) {
 			const roles = s.roles.join(" ")
@@ -58,7 +60,10 @@ await main(async () => {
 				report("funded", { roles, address: s.address, balanceBefore: s.balance, sent: 0n })
 				continue
 			}
+			const now = await l1.getBalance({ address: deployer })
+			assertWithinLimits({ start: deployerBalance, now, sent, amount: s.amount, gasCost: s.transferGas * fees.maxFeePerGas })
 			const hash = await wallet.sendTransaction({ to: s.address, value: s.amount, chain: wallet.chain })
+			sent += s.amount
 			const accepted = Date.now()
 			const visibleMs = await Promise.race([path.visible(hash), sleep(VISIBLE_WITHIN_MS)])
 			if (visibleMs === undefined)

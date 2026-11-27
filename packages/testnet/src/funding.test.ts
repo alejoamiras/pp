@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import type { Address, Hex } from "viem"
 import { describe, expect, it } from "vitest"
-import { assertTopUp, FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, liveGasOf, needOf, recipientsOf } from "./funding"
+import { assertTopUp, assertWithinLimits, FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, liveGasOf, needOf, recipientsOf } from "./funding"
 import { parseDeployment } from "./schema"
 
 const a = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address
@@ -51,6 +51,28 @@ describe("fundingPlan", () => {
 		expect(plan.sends.map((s) => [s.roles, s.amount])).toEqual([[["poolDeployer", "aspPostman"], shared - 1n]])
 		expect(plan.deployerNeed).toBe(needOf("l1Deployer", fee) + needOf("guardian", fee))
 		expect(plan.total).toBe(plan.deployerNeed + shared - 1n + 21_000n * fee)
+	})
+})
+
+describe("a top-up within the owner's limits", () => {
+	const eth = (x: number) => BigInt(Math.round(x * 1e6)) * 10n ** 12n
+	const at = (o: { start?: number; now: number; sent?: number; amount: number }) => () =>
+		assertWithinLimits({
+			start: eth(o.start ?? 1.873),
+			now: eth(o.now),
+			sent: eth(o.sent ?? 0),
+			amount: eth(o.amount),
+			gasCost: eth(0.001),
+		})
+
+	it("goes while spending stays at most 0.8 ETH and the deployer keeps 1.0 ETH, counting a landed top-up and a pending one", () => {
+		expect(at({ now: 1.6, sent: 0.27, amount: 0.4 })).not.toThrow()
+		// The balance fell by 0.5 although the run thinks it sent 0.27: a top-up it judged lost had landed.
+		expect(at({ now: 1.373, sent: 0.27, amount: 0.35 })).toThrow(/over its 0.8 ETH limit/)
+		// The balance has not fallen yet, but the run already sent 0.6.
+		expect(at({ now: 1.873, sent: 0.6, amount: 0.25 })).toThrow(/over its 0.8 ETH limit/)
+		expect(at({ now: 1.2, sent: 0.67, amount: 0.1 })).not.toThrow()
+		expect(at({ start: 1.1, now: 1.1, amount: 0.1 })).toThrow(/under its 1 ETH floor/)
 	})
 })
 

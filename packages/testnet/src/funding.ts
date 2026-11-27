@@ -1,4 +1,4 @@
-import { type Address, type Hex, isAddressEqual } from "viem"
+import { type Address, formatEther, type Hex, isAddressEqual } from "viem"
 import { GuardError } from "./errors"
 import type { TestnetDeployment } from "./schema"
 
@@ -116,6 +116,31 @@ export function fundingPlan(deployer: Address, recipients: readonly FundedRecipi
 	const sends = [...byAddress.values()].map((s) => ({ ...s, amount: s.balance < s.need ? s.need - s.balance : 0n }))
 	const transferGas = sends.reduce((t, s) => (s.amount > 0n ? t + s.transferGas * maxFeePerGas : t), 0n)
 	return { sends, deployerNeed, transferGas, total: deployerNeed + transferGas + sends.reduce((t, s) => t + s.amount, 0n) }
+}
+
+/** The owner's limits for one `fund` run: what it may send in top-ups, and what the L1 deployer keeps. */
+export const FUNDING_LIMITS = { topUpsWei: 800_000_000_000_000_000n, deployerFloorWei: 1_000_000_000_000_000_000n } as const
+
+/**
+ * A top-up of `amount`, at most `gasCost` in gas, may go only if the deployer's spending since the run
+ * began stays within the top-up limit with it, and the deployer keeps its floor after it. Spending is the
+ * fall of its live balance from `start`, or what this run sent if that is more, so a top-up that landed
+ * after a wrong "not landed" verdict counts.
+ * @throws GuardError `funds` naming the limit and the amounts, never a key
+ */
+export function assertWithinLimits(o: { start: bigint; now: bigint; sent: bigint; amount: bigint; gasCost: bigint }): void {
+	const fallen = o.start > o.now ? o.start - o.now : 0n
+	const spent = fallen > o.sent ? fallen : o.sent
+	if (spent + o.amount > FUNDING_LIMITS.topUpsWei)
+		throw new GuardError(
+			"funds",
+			`a top-up of ${formatEther(o.amount)} ETH would take this run's spending to ${formatEther(spent + o.amount)} ETH, over its ${formatEther(FUNDING_LIMITS.topUpsWei)} ETH limit`,
+		)
+	if (o.now < FUNDING_LIMITS.deployerFloorWei + o.amount + o.gasCost)
+		throw new GuardError(
+			"funds",
+			`a top-up of ${formatEther(o.amount)} ETH would leave the deployer under its ${formatEther(FUNDING_LIMITS.deployerFloorWei)} ETH floor (it holds ${formatEther(o.now)} ETH)`,
+		)
 }
 
 /**

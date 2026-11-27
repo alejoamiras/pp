@@ -45,7 +45,9 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
   gas budgets of the roles it holds (`src/funding.ts`) at twice the fee estimate, never below 1 gwei;
   `fund --quote` reads no key and prints what the deployer must hold, the top-ups' own gas included.
   Each top-up reports the seconds until the read endpoint showed it and until its receipt; one not shown
-  within 60 s stops the run.
+  within 60 s stops the run. Before each send the deployer's live balance must keep the run within the
+  owner's limits (`FUNDING_LIMITS`): at most 0.8 ETH spent, counting what the run already sent, and at
+  least 1.0 ETH kept, so a top-up repeated after a wrong "not landed" verdict is refused.
 - The budgets are Prague gas, which the rehearsals check, times live Sepolia's measured cost over Prague
   for the role's kind of transaction: 7.67 for creations, 5.01 for fresh storage. Sepolia's fork since
   2026-10-06 reprices state creation, which a rehearsal on anvil 1.7.1 cannot show; a role still short
