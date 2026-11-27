@@ -2,6 +2,7 @@ import { useApp } from "../../app/context"
 import { useAllowList, useAllowListProgress, useBalances, usePublicBalance } from "../../app/queries"
 import type { AztecAddress } from "../../data/stack-types"
 import { messageOf } from "../../data/errors"
+import { listPost } from "../../data/list-post"
 import { chainAge } from "../../data/model"
 import type { LabelBalance } from "../../data/ports"
 import { ActionButton, Amount, Callout, EmptyState, Panel, StateBadge, shortHex } from "../../ui"
@@ -39,9 +40,18 @@ function AllowListLine() {
 	if (allow.isError) return <StateBadge tone="bad">Allow list unreadable: refresh to try again</StateBadge>
 	if (!allow.data) return <StateBadge tone="neutral">Reading the allow list</StateBadge>
 	const { record, nowSec } = allow.data
+	const post = listPost(record)
 	return (
-		<span data-testid="allow-list-age">
-			<StateBadge tone="ok">{`Allow list #${record.sequence} posted ${chainAge(record.rootTime, nowSec).text}`}</StateBadge>
+		<span data-testid="allow-list-age" data-post={post}>
+			{post === "posted" ? (
+				<StateBadge tone="ok">{`Allow list #${record.sequence} posted ${chainAge(record.rootTime, nowSec).text}`}</StateBadge>
+			) : (
+				<StateBadge tone="wait">
+					{post === "resetting"
+						? `Allow list #${record.sequence} being reset: wait for its next post`
+						: "No allow list posted yet: wait for its first post"}
+				</StateBadge>
+			)}
 		</span>
 	)
 }

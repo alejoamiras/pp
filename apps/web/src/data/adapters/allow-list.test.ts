@@ -42,6 +42,7 @@ function chain() {
 		blocks,
 		snapshots,
 		holdBot: false,
+		holdNode: false,
 		rpc: [] as { method: string; params: unknown[] }[],
 		bot: [] as string[],
 		/** Runs once, right after a block-data answer: a new block can land between the two reads. */
@@ -57,6 +58,7 @@ function chain() {
 		}
 		const { method, params } = JSON.parse(init?.body as string) as { method: string; params: unknown[] }
 		s.rpc.push({ method, params })
+		if (s.holdNode) return new Promise<Response>(() => {})
 		const at = (p: unknown) => (p === "latest" ? s.tip : (p as { hash: string }).hash)
 		if (method === "node_getBlockData") {
 			const h = at(params[0])
@@ -157,6 +159,55 @@ describe("the stack's allow list", () => {
 		r.port.checkAgain(view)
 		await expect(r.port.check(view, 11n, 0)).rejects.toMatchObject({ code: "LIST_UNAVAILABLE" })
 		expect(r.s.bot.slice(2)).toEqual(["/v1/snapshots/7", "/v1/snapshots/9"])
+	})
+
+	test.each([
+		["being reset", 9n, "LIST_RESETTING"],
+		["never posted", 0n, "LIST_NOT_POSTED"],
+	])("a record with no list, %s, fails every check at once with nothing fetched or held", async (_, sequence, code) => {
+		const r = rig()
+		const none: RootRecord = { sequence, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		for (const nowSec of [1_100n, 1_100n, 1_200n])
+			await expect(r.port.check({ record: none, nowSec }, 11n, 0)).rejects.toMatchObject({ code, retryInMs: 0 })
+		expect([r.s.bot, r.s.rpc, r.w.made]).toEqual([[], [], []])
+		r.s.snapshots.set(10n, body(10n))
+		await expect(r.port.check({ record: recordOf(10n), nowSec: 1_100n }, 11n, 0)).resolves.toMatchObject({ state: "ACTIVE" })
+	})
+
+	test("a 404 whose latest record is a clear reads as being reset, holding nothing", async () => {
+		const r = rig()
+		r.post(41, 1_500, { sequence: 8n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n })
+		const view = { record: recordOf(7n), nowSec: 1_100n }
+		await expect(r.port.check(view, 11n, 0)).rejects.toMatchObject({ code: "LIST_RESETTING", retryInMs: 0 })
+		await expect(r.port.check(view, 11n, 0)).rejects.toMatchObject({ code: "LIST_RESETTING" })
+		expect([r.s.bot, r.w.made]).toEqual([["/v1/snapshots/7", "/v1/snapshots/7"], []])
+	})
+
+	test.each([
+		["returns other lists", () => {}],
+		["fails", (r: ReturnType<typeof rig>) => r.s.blocks.delete(hash(41))],
+	])("a Cancel during the 404 fallback's record read is a held cancel when the read %s", async (_, then) => {
+		const r = rig()
+		r.post(41, 1_500, { ...recordOf(9n, 1_400n), poolRoot: poolRoot + 1n })
+		r.s.afterBlockData = () => {
+			then(r)
+			r.port.cancel()
+		}
+		const view = { record: recordOf(7n), nowSec: 1_100n }
+		await expect(r.port.check(view, 11n, 0)).rejects.toMatchObject({ code: "LIST_CANCELLED" })
+		await expect(r.port.check(view, 11n, 0)).rejects.toMatchObject({ code: "LIST_CANCELLED", retryInMs: 0 })
+		expect(r.s.bot).toEqual(["/v1/snapshots/7"])
+	})
+
+	test("a Cancel while the 404 fallback's record read is still pending answers at once", async () => {
+		const r = rig()
+		r.s.holdNode = true
+		const view = { record: recordOf(7n), nowSec: 1_100n }
+		const checking = r.port.check(view, 11n, 0)
+		await vi.waitFor(() => expect(r.s.rpc).toHaveLength(1))
+		r.port.cancel()
+		await expect(checking).rejects.toMatchObject({ code: "LIST_CANCELLED" })
+		expect(r.s.bot).toEqual(["/v1/snapshots/7"])
 	})
 
 	test("after a 404 fetches nothing more when the latest record keeps the roots but commits to another length", async () => {

@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react"
 import { useApp } from "../../app/context"
 import { useLabelCheck } from "../../app/queries"
-import { AllowListError, messageOf } from "../../data/errors"
+import { AllowListError, HELD_LIST_CODES, messageOf } from "../../data/errors"
 import { labelView, listFailureView } from "../../data/labels"
 import type { AllowListView, LabelBalance } from "../../data/ports"
 import { ActionButton, Amount, LabelChip, StateBadge } from "../../ui"
@@ -37,12 +37,16 @@ function CheckAgain({ waitMs, onClick }: { waitMs: number; onClick(): void }) {
 	)
 }
 
-/** The label's state under `allow`, or why its list could not be checked; neither while the check runs. */
+/**
+ * The label's state under `allow`, or why its list could not be checked; neither while the check runs.
+ * A held failure goes before an earlier state: the adapter refuses every spend of that list until a
+ * Check again, so the row must not offer one. A transient failure keeps the earlier state.
+ */
 function useLabelState(allow: AllowListView | undefined, balance: LabelBalance) {
 	const { source } = useApp()
 	const check = useLabelCheck(source, allow, balance.label, balance.origin)
 	const failure = check.error instanceof AllowListError ? check.error : check.isError ? new AllowListError("LIST_UNAVAILABLE") : null
-	const state = check.data?.state ?? null
+	const state = failure && HELD_LIST_CODES.has(failure.code) ? null : (check.data?.state ?? null)
 	const view = state ? labelView(balance.origin, state) : failure ? listFailureView(failure.code) : null
 	return { state, failure, view }
 }

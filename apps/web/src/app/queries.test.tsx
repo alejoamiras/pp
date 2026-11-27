@@ -35,3 +35,18 @@ test.each(["poolSize", "birthSize"] as const)(
 		expect(check).toHaveBeenCalledTimes(2)
 	},
 )
+
+test("a registry never posted that is then reset at the same time is checked again, so its rows say which", async () => {
+	const { source } = createFixtureSource(null)
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+	const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
+	const none = { poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+	const at = (sequence: bigint): AllowListView => ({ record: { ...none, sequence }, nowSec: 1_000n })
+	const { result, rerender } = renderHook(({ view }) => useLabelCheck(source, view, 5n, 0), {
+		wrapper,
+		initialProps: { view: at(0n) },
+	})
+	await waitFor(() => expect(result.current.error).toMatchObject({ code: "LIST_NOT_POSTED" }))
+	rerender({ view: at(1n) })
+	await waitFor(() => expect(result.current.error).toMatchObject({ code: "LIST_RESETTING" }))
+})

@@ -122,6 +122,7 @@ A balance needs two things:
 | "Switch your Ethereum wallet to a separate account: …" | The owner is selected to pay for a bridge | Select the sender account in MetaMask |
 | "Select your signed-in account in your Ethereum wallet: the keystore registers …" | Another account is selected while registering | Select the owner account in MetaMask, then press **Register** |
 | "The pool's keystore holds other keys for this account, …" | The owner registered with another app's keys | Sign in with an owner this app registered, or a fresh one |
+| "Allow list #… being reset: wait for its next post" | The registry's poster was replaced, which clears the list until the new poster posts | Wait for the next post, then press Refresh; leaving to Ethereum still works |
 | "The Aztec node does not answer. …" | The public testnet node is unreachable | Wait, then try again |
 | "The Aztec node serves L1 chain …; this app is built for …" | The node is on another network or rollup | Report it: the deployment file is out of date |
 | "That wallet is no longer available. Search again." | Nulo is closed or locked | Open Nulo, unlock it, search again |

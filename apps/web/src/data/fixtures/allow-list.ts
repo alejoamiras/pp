@@ -4,6 +4,8 @@
  * A check answers at once and builds no tree, so its path is a placeholder.
  */
 import type { AspSnapshot, LabelCheck, LabelState, Origin, RootRecord } from "../stack-types"
+import { AllowListError } from "../errors"
+import { noListCode } from "../list-post"
 import { BN254_P } from "../parse"
 import type { AllowListPort } from "../ports"
 import type { World } from "./world"
@@ -21,6 +23,11 @@ interface Posted {
 
 function posted(w: World): Posted {
 	const a = w.s.allowList
+	if (a.cleared)
+		return {
+			record: { sequence: a.sequence, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n },
+			snapshot: { sequence: a.sequence, poolRoot: 0n, birthRoot: 0n, poolLeaves: [], birthLeaves: [] },
+		}
 	const poolRoot = rootOf(a.pool)
 	const birthRoot = rootOf(a.birth)
 	return {
@@ -51,7 +58,7 @@ function checkIn({ record: r, snapshot: s }: Posted, label: bigint, origin: Orig
 	return index < 0 ? { state: "ABSENT" } : { state: "ACTIVE", path: { index, depth: 0, siblings: [] } }
 }
 
-/** The state a checked spend sees now, at the latest Aztec block. */
+/** The state a checked spend sees now, at the latest Aztec block; a cleared record's time 0 reads as stale. */
 export const fixtureLabelState = (w: World, label: bigint, origin: Origin): LabelState =>
 	checkIn(posted(w), label, origin, w.aztecTime()).state
 
@@ -61,9 +68,18 @@ export function approveBirths(w: World): void {
 		const a = s.allowList
 		a.birth = [...a.birth, ...a.pendingBirths.filter((l) => !a.birth.includes(l))]
 		a.pendingBirths = []
+		a.cleared = false
 		a.sequence++
 		a.rootTime = w.aztecTime()
 		a.l1Block = BigInt(s.l1Block)
+	})
+}
+
+/** The registry's poster is replaced: the record is cleared at the next sequence until the next post. */
+export function resetAllowList(w: World): void {
+	w.update((s) => {
+		s.allowList.cleared = true
+		s.allowList.sequence++
 	})
 }
 
@@ -71,7 +87,11 @@ export function fixtureAllowList(w: World): AllowListPort {
 	return {
 		current: async () => ({ record: posted(w).record, nowSec: w.aztecTime() }),
 		// The snapshot is the world's list now, which a view read before a post no longer names.
-		check: async (view, label, origin) => checkIn({ ...posted(w), record: view.record }, label, origin, view.nowSec),
+		check: async (view, label, origin) => {
+			const none = noListCode(view.record)
+			if (none) throw new AllowListError(none)
+			return checkIn({ ...posted(w), record: view.record }, label, origin, view.nowSec)
+		},
 		onProgress: () => () => {},
 		cancel() {},
 		checkAgain: () => true,
