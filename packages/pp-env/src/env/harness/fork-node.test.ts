@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
+import { isRunId } from "../run-id.ts"
 import { assertForkNode } from "./fork-node.ts"
 
 const node =
@@ -10,10 +11,17 @@ const node =
 const ownedBy = (runId: string) => (port: number) => (port === 1234 ? runId : undefined)
 const OWN = { rpcUrl: "http://127.0.0.1:1234", clientVersion: "anvil/v1.7.1", chainId: 11_155_111, runId: "suite-1" }
 
-test("the fork guard accepts only the caller's own loopback anvil, at the version and chain it names", async () => {
+test("the fork guard accepts only the caller's own anvil on 127.0.0.1, at the version and chain it names", async () => {
 	const ok = node("anvil/v1.7.1", "0xaa36a7")
 	await assertForkNode(OWN, ok, ownedBy("suite-1"))
-	await expect(assertForkNode({ ...OWN, rpcUrl: "https://rpc.example" }, ok, ownedBy("suite-1"))).rejects.toThrow("non-loopback")
+	for (const rpcUrl of ["https://rpc.example", "http://[::1]:1234", "http://localhost:1234"])
+		await expect(assertForkNode({ ...OWN, rpcUrl }, ok, ownedBy("suite-1"))).rejects.toThrow("must listen on 127.0.0.1")
+	// An untyped caller with no run id, at a port no run registered.
+	const unset = { ...OWN, runId: undefined as unknown as string }
+	await expect(assertForkNode({ ...unset, rpcUrl: "http://127.0.0.1:4321" }, ok, ownedBy("suite-1"))).rejects.toThrow(
+		"registered to no run",
+	)
+	expect([undefined, null, "undefined", "suite-1"].map(isRunId)).toEqual([false, false, true, true])
 	await expect(assertForkNode(OWN, ok, ownedBy("suite-2"))).rejects.toThrow("port 1234: registered to suite-2, not suite-1")
 	await expect(assertForkNode({ ...OWN, rpcUrl: "http://127.0.0.1:4321" }, ok, ownedBy("suite-1"))).rejects.toThrow(
 		"registered to no run",

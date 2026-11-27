@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { claimPort, claimRows, portOwner, registeredPorts, releasePorts, releaseRows, rowsOwnedBy } from "./ports.ts"
+import { claimPort, claimRows, OwnerHoldsRows, portOwner, registeredPorts, releasePorts, releaseRows, rowsOwnedBy } from "./ports.ts"
 
 const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
@@ -80,4 +80,15 @@ test("a port's owner is the run whose row lists it, until that run releases it",
 	expect(portOwner(port)).toBe("ports-test-owner")
 	await releasePorts("ports-test-owner")
 	expect(portOwner(port)).toBeUndefined()
+})
+
+test("of two concurrent sole claims by one owner, exactly one is written", async () => {
+	const claims = await Promise.allSettled([
+		claimPort("ports-test-sole", "a", { sole: true }),
+		claimPort("ports-test-sole", "b", { sole: true }),
+	])
+	expect(claims.filter((c) => c.status === "fulfilled")).toHaveLength(1)
+	expect(claims.find((c) => c.status === "rejected")?.reason).toBeInstanceOf(OwnerHoldsRows)
+	expect(rowsOwnedBy("ports-test-sole")).toBe(1)
+	await releasePorts("ports-test-sole")
 })

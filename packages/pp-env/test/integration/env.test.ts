@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { anvilKey, LOG_DIR, USER_INDEX } from "../../src/env/harness/anvil.ts"
 import { rowsOwnedBy } from "@pp/run-isolation/ports"
-import { keccak256, toHex } from "viem"
+import { getAddress, keccak256, parseAbiItem, toHex } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { rpc } from "../../src/env/harness/rpc.ts"
 import { attachForkPoolEnv } from "../../src/env/fork.ts"
@@ -41,6 +41,7 @@ const GRANT_ROLE_ABI = [
 		outputs: [],
 	},
 ] as const
+const ROOT_UPDATED = parseAbiItem("event ASPRootUpdated(uint256 indexed _root, bytes _ipfsCID)")
 const ROOT_ABI = [
 	{ type: "function", name: "latestASPRoot", stateMutability: "view", inputs: [], outputs: [{ name: "root", type: "uint256" }] },
 	{ type: "error", name: "ASPRegistry_EmptyAssociationSet", inputs: [] },
@@ -154,11 +155,23 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("pool env", () => {
 		await expect(attachForkPoolEnv({ ...options, clientVersion: `${clientVersion}-other` })).rejects.toThrow(/expected exactly/)
 		await expect(attachForkPoolEnv({ ...options, runId: a.runId })).rejects.toThrow(`registered to ${b.runId}, not ${a.runId}`)
 		expect(rowsOwnedBy(`${b.runId}-pool`)).toBe(0)
-		const fork = await attachForkPoolEnv(options)
+		const attaches = await Promise.allSettled([attachForkPoolEnv(options), attachForkPoolEnv(options)])
+		const won = attaches.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
+		const lost = attaches.flatMap((r) => (r.status === "rejected" ? [r.reason as Error] : []))
+		const fork = won[0]
+		if (won.length !== 1 || !fork) {
+			await Promise.all(won.map((f) => f.stop()))
+			throw new Error(`expected exactly one of two concurrent attaches to win, got ${won.length}`)
+		}
 		try {
-			await expect(attachForkPoolEnv(options)).rejects.toThrow("already has a fork attach")
+			expect(lost.map((e) => e.message)).toEqual([`run ${b.runId} already has a fork attach; stop it first`])
+			expect(rowsOwnedBy(`${b.runId}-pool`)).toBe(1)
 			const root = await fork.asp.approveLabel(789n)
 			expect(await admin.client.readContract({ address: aspRegistry, abi: ROOT_ABI, functionName: "latestASPRoot" })).toBe(root)
+			// The deployer is a postman too, so only the update's sender shows the impersonation published it.
+			const [update] = await admin.client.getLogs({ address: aspRegistry, event: ROOT_UPDATED, args: { _root: root }, fromBlock: 0n })
+			if (!update) throw new Error("no ASPRootUpdated for the approved root")
+			expect(getAddress((await admin.client.getTransaction({ hash: update.transactionHash })).from)).toBe(postman)
 			expect(fork.clientConfig.aspUrl).toBe(fork.asp.url)
 		} finally {
 			await Promise.all([fork.stop(), fork.stop()])

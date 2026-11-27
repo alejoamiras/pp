@@ -1,10 +1,10 @@
 import { EvmDeploymentSnapshotSource, startEvmMockAsp } from "#ppv2/mock-asp/evm"
-import { claimPort, releasePorts, rowsOwnedBy } from "@pp/run-isolation/ports"
+import { claimPort, OwnerHoldsRows, releasePorts } from "@pp/run-isolation/ports"
 import { toHex } from "viem"
 import type { ClientConfig, ClientDeployment } from "../client/types.ts"
 import { stopAsp } from "./asp.ts"
 import { assertForkNode } from "./harness/fork-node.ts"
-import { RUN_ID } from "./run-id.ts"
+import { isRunId, RUN_ID } from "./run-id.ts"
 import type { AttachForkOptions, ForkPoolEnv } from "./types.ts"
 
 export type { AttachForkOptions, ForkPoolEnv } from "./types.ts"
@@ -45,11 +45,13 @@ export async function attachForkPoolEnv(o: AttachForkOptions): Promise<ForkPoolE
 	const { rpcUrl, clientVersion, chainId, postman, circuitsDir, circuitBundle, runId } = o
 	const { pool, entrypoint, keystore, aspRegistry, deployBlock } = o.deployment
 	const deployment: ClientDeployment = { pool, entrypoint, keystore, aspRegistry, deployBlock }
-	if (!RUN_ID.test(runId)) throw new Error(`runId ${JSON.stringify(runId)} must match ${RUN_ID}`)
+	if (!isRunId(runId)) throw new Error(`runId ${JSON.stringify(runId)} must match ${RUN_ID}`)
 	const aspRun = `${runId}-pool`
-	if (rowsOwnedBy(aspRun) > 0) throw new Error(`run ${runId} already has a fork attach; stop it first`)
 	await assertForkNode({ rpcUrl, clientVersion, chainId, runId })
-	const port = await claimPort(aspRun, "pp-env-asp")
+	// Outside the try: a refused claim leaves the other attach's row in place.
+	const port = await claimPort(aspRun, "pp-env-asp", { sole: true }).catch((err: unknown) => {
+		throw err instanceof OwnerHoldsRows ? new Error(`run ${runId} already has a fork attach; stop it first`) : err
+	})
 	try {
 		const asp = await startEvmMockAsp({
 			rpcUrl,

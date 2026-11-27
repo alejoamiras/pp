@@ -259,8 +259,10 @@ export async function openPoolClient(a: {
 }): Promise<PoolClient> {
 	const signature = normaliseSignature(a.signature)
 	const owner = getAddress(a.l1Address)
-	// Read once: the chain the bundle is allowed for is the one the RPC is held to and the session runs on.
-	const pool: PoolConfig = { ...a.pool }
+	// Read once, field by field so prototype getters count: the chain the bundle is allowed for is the one the
+	// RPC is held to and the session runs on.
+	const { chainId: poolChain, l1Rpc, poolVault, entrypoint, aspRegistry, keystore, asset, deployBlock, aspApiUrl } = a.pool
+	const pool: PoolConfig = { chainId: poolChain, l1Rpc, poolVault, entrypoint, aspRegistry, keystore, asset, deployBlock, aspApiUrl }
 	const artifacts = createArtifacts(a.artifacts, { chainId: pool.chainId })
 	await verifySigner(owner, signature)
 	const publicClient = createPublicClient({ transport: http(pool.l1Rpc) })

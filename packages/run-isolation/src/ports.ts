@@ -88,12 +88,22 @@ export class PortClaimConflict extends Error {
 	}
 }
 
+/** A `sole` claim whose owner already held a row: the check and the write share one lock, so two claims cannot both pass. */
+export class OwnerHoldsRows extends Error {
+	constructor(runId: string) {
+		super(`${runId} already holds rows in ${registryPath()}`)
+	}
+}
+
+type ClaimOptions = { readonly sole?: boolean }
+
 /**
  * Claims every port of `rows` (service → port) under `runId` in one write under the registry lock, so
  * other runs pick around them from the moment they are chosen, not from when something listens. Throws
- * `PortClaimConflict` when the registry already lists one, and an `Error` when the lock never came free.
+ * `PortClaimConflict` when the registry already lists one, `OwnerHoldsRows` when `sole` is set and
+ * `runId` already holds a row, and an `Error` when the lock never came free.
  */
-export async function claimRows(runId: string, rows: Record<string, number>, pidHint: number): Promise<void> {
+export async function claimRows(runId: string, rows: Record<string, number>, pidHint: number, opts: ClaimOptions = {}): Promise<void> {
 	const entries = Object.entries(rows)
 	for (const cell of [runId, ...entries.map(([service]) => service)]) {
 		if (!CELL.test(cell))
@@ -101,26 +111,30 @@ export async function claimRows(runId: string, rows: Record<string, number>, pid
 	}
 	const claimed = new Date().toISOString()
 	const wanted = new Set(entries.map(([, port]) => port))
+	const sole = opts.sole === true
 	let conflicts: number[] = []
+	let held = false
 	const written = await withRegistry((lines) => {
 		const body = lines.filter((l) => l.trim().length > 0)
+		held = sole && body.some((l) => ownedBy(l, runId))
 		conflicts = body.map(portOf).filter((p): p is number => p !== undefined && wanted.has(p))
-		if (conflicts.length > 0) return lines
+		if (held || conflicts.length > 0) return lines
 		const added = entries.map(([service, port]) => `| ${port} | ${service} | ${runId} | ${REPO_ROOT} | ${pidHint} | ${claimed} |`)
 		return [...body, ...added, ""]
 	})
 	if (!written) throw new Error(`${registryPath()} stayed locked; could not claim ports ${[...wanted].join(", ")} for ${runId}`)
+	if (held) throw new OwnerHoldsRows(runId)
 	if (conflicts.length > 0) throw new PortClaimConflict(conflicts)
 }
 
 /** A loopback port that binds now and is registered under `runId` before anything listens on it. */
-export async function claimPort(runId: string, service: string): Promise<number> {
+export async function claimPort(runId: string, service: string, opts: ClaimOptions = {}): Promise<number> {
 	const hi = Math.max(STATIC_LO + 256, ephemeralFloor() - FLOOR_GUARD)
 	for (let i = 0; i < MAX_STATIC_TRIES; i++) {
 		const candidate = STATIC_LO + Math.floor(Math.random() * (hi - STATIC_LO))
 		if (registeredPorts().has(candidate) || !(await canBind(candidate))) continue
 		try {
-			await claimRows(runId, { [service]: candidate }, process.pid)
+			await claimRows(runId, { [service]: candidate }, process.pid, opts)
 			return candidate
 		} catch (err) {
 			if (!(err instanceof PortClaimConflict)) throw err

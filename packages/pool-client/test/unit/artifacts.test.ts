@@ -212,13 +212,26 @@ describe("circuit bundles", () => {
 
 	it("make openPoolClient refuse the pre-ceremony keys for a mainnet pool before it reaches the network", async () => {
 		const zero = "0x0000000000000000000000000000000000000001" as const
-		const pool = { chainId: 1, l1Rpc: "http://rpc.invalid", poolVault: zero, entrypoint: zero, aspRegistry: zero, keystore: zero }
+		// A class-backed config: its chain comes from a prototype getter, which a spread would drop.
+		class Pool {
+			get chainId() {
+				return 1
+			}
+			l1Rpc = "http://rpc.invalid"
+			poolVault = zero
+			entrypoint = zero
+			aspRegistry = zero
+			keystore = zero
+			asset = zero
+			deployBlock = 0n
+			aspApiUrl = "http://asp.invalid"
+		}
 		const opened = openPoolClient({
-			pool: { ...pool, asset: zero, deployBlock: 0n, aspApiUrl: "http://asp.invalid" },
+			pool: new Pool(),
 			l1Address: zero,
 			signature: `0x${"11".repeat(65)}`,
 			artifacts: dir("/x", "pre-ceremony"),
 		})
-		await expect(opened).rejects.toMatchObject({ code: "CHAIN_MISMATCH", message: expect.stringMatching(/pre-ceremony/) })
+		await expect(opened).rejects.toMatchObject({ code: "CHAIN_MISMATCH", message: expect.stringMatching(/pre-ceremony.*chain 1$/) })
 	})
 })
