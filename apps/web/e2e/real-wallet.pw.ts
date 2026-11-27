@@ -22,7 +22,8 @@ const CLAIMABLE_MS = 3 * 60_000
 const PROVED_MS = 12 * 60_000
 /** The ragequit's L2→L1 message waits for its epoch's proof on the local stack. */
 const READY_MS = 3 * 60_000
-const SETTLED_MS = 30_000
+/** The app waits up to two minutes for the collect's receipt on the local chain, then refreshes. */
+const SETTLED_MS = 150_000
 const CRS_HOST = /^crs\.aztec/
 /** The wallet's local Presto prover; refused, so it proves in WASM. */
 const PRESTO_PORTS = [59833, 59834]
@@ -30,9 +31,8 @@ const PRESTO_PORTS = [59833, 59834]
 const OBSERVE_MS = 5 * 60_000
 
 /** What `claims` left for `ragequits`: the serial tests share this worker. */
-let claimed: { label: bigint; amount: bigint } | undefined
+let claimed: { label: bigint; amount: bigint; init: bigint } | undefined
 
-/** The sequence number of the wallet's `n`th send through the node recorder. */
 function sendSeq(rw: RealWallet, n: number): number {
 	const seq = rw.node.calls().filter((c) => c.name === "sendTx")[n]?.seq
 	if (seq === undefined) throw new Error(`the wallet made no send number ${n + 1}`)
@@ -75,6 +75,8 @@ test("connects", async ({ realWallet: rw }) => {
 // Fails if the wallet cannot prove or send the claim from the app, if the claim does not also
 // initialize the wallet's account, if anyone but the SponsoredFPC pays, or if proving reached past the seeded points.
 test("claims", async ({ realWallet: rw, run }, testInfo) => {
+	// Its waits run one after another, and the cap must not cut one of them short.
+	test.setTimeout(CLAIMABLE_MS + PROVED_MS + OBSERVE_MS + 2 * 60_000)
 	const began = Date.now()
 	const page = rw.appPage
 	const s = await seededStack(run)
@@ -118,7 +120,7 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 	await screen.getByRole("button", { name: "Back to balances" }).last().click()
 	const shown = formatAmount(amount, s.decimals, 2)
 	await expect(page.locator(`[data-testid="label-row"][data-label="${note.label}"]`)).toContainText(shown, { timeout: 30_000 })
-	claimed = { label: note.label, amount }
+	claimed = { label: note.label, amount, init: BigInt(initialized[0] ?? 0) }
 	expect(
 		refusals(rw).filter((r) => CRS_HOST.test(r.target)),
 		"proving read the seeded points, not the CDN",
@@ -151,22 +153,15 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 // Fails if the wallet cannot prove or send the hub's ragequit from the app, if it initializes its
 // account again, or if the ticket does not collect to the payee on Ethereum for exactly the claim.
 test("ragequits", async ({ realWallet: rw, run }) => {
+	// Its waits run one after another, and the cap must not cut one of them short.
+	test.setTimeout(PROVED_MS + READY_MS + SETTLED_MS + 2 * 60_000)
 	if (!claimed) throw new Error("claims left no label to leave")
-	const { label, amount } = claimed
+	const { label, amount, init } = claimed
 	const page = rw.appPage
 	const s = await seededStack(run)
 	const payee = privateKeyToAccount(generatePrivateKey()).address
-	const [claimHash, ...later] = rw.node.sentTxHashes()
-	expect(later, "the claim is the wallet's only send so far").toEqual([])
-	const claimSeq = sendSeq(rw, 0)
-	const absent = new Set(
-		rw.node
-			.nullifierQueries()
-			.filter((q) => q.found === false && q.answered !== undefined && q.answered < claimSeq)
-			.map((q) => BigInt(q.value)),
-	)
-	const [init] = (await rw.chain.sentTx(claimHash ?? "")).nullifiers.map(BigInt).filter((n) => absent.has(n))
-	if (init === undefined) throw new Error("the claim's effect holds no nullifier the wallet found absent before it")
+	expect(rw.node.sentTxHashes(), "the claim is the wallet's only send so far").toHaveLength(1)
+	const begun = rw.node.calls().at(-1)?.seq ?? -1
 
 	const row = page.locator(`[data-testid="label-row"][data-label="${label}"]`)
 	await row.getByRole("button", { name: "Leave to Ethereum (ragequit)" }).click()
@@ -188,9 +183,10 @@ test("ragequits", async ({ realWallet: rw, run }) => {
 	expect(sent, "the wallet sent exactly one more transaction").toHaveLength(2)
 	const tx = await rw.chain.sentTx(sent[1] ?? "")
 	const ragequitSeq = sendSeq(rw, 1)
+	// The wallet's lookup counts only when made during this flow and answered before it sent.
 	const initReads = rw.node
 		.nullifierQueries()
-		.filter((q) => q.seq > claimSeq && q.answered !== undefined && q.answered < ragequitSeq && BigInt(q.value) === init)
+		.filter((q) => q.seq > begun && q.answered !== undefined && q.answered < ragequitSeq && BigInt(q.value) === init)
 	rw.log(`ragequit: ${JSON.stringify({ hash: tx.hash, succeeded: tx.succeeded, initReads })}`)
 	expect(tx.succeeded, "the ragequit succeeded").toBe(true)
 	expect(
@@ -204,16 +200,24 @@ test("ragequits", async ({ realWallet: rw, run }) => {
 	expect(none, "one ticket to the payee").toEqual([])
 	expect(ticket).toMatchObject({ kind: "ragequit", payee, amount, label })
 	if (!ticket) throw new Error("no ticket")
+	expect(ticket.l2TxHash.toLowerCase(), "the ticket comes from the ragequit the wallet sent").toBe(tx.hash.toLowerCase())
 	await dialog.getByRole("button", { name: "Close" }).click()
 	await page.getByRole("button", { name: "Exits" }).click()
 	const deployment = `${s.manifest.chainId}:${s.manifest.bridge.portal}:${s.manifest.bridge.hub}`.toLowerCase()
 	const exit = page.locator(`[data-testid="exit-row"][data-key="${deployment}:${ticket.l2TxHash}:${ticket.messageIndexInTx}"]`)
 	await expect(exit).toHaveAttribute("data-status", "ready", { timeout: READY_MS })
 	await rw.l1.setAccount(anvilKey(s.stack.accounts.sender.index))
+	const l1Sends = rw.l1.calls("eth_sendTransaction")
 	await exit.getByRole("button", { name: "Collect on Ethereum" }).click()
 	await page.getByTestId("collect-review").getByRole("button", { name: "Collect", exact: true }).click()
 	await expect(exit).toHaveAttribute("data-status", "settled", { timeout: SETTLED_MS })
 	const reads = createPublicClient({ transport: http(s.manifest.l1Rpc) })
 	const paid = await reads.readContract({ address: s.manifest.pool.asset, abi: erc20Abi, functionName: "balanceOf", args: [payee] })
 	expect(paid, "the payee holds exactly the claimed amount").toBe(amount)
+	expect(rw.l1.calls("eth_sendTransaction") - l1Sends, "the collect went out once, from the injected wallet").toBe(1)
+	expect(rw.node.sentTxHashes(), "the wallet sent nothing after the ragequit").toHaveLength(2)
+	expect(
+		rw.context.pages().filter((p) => p.url().includes("/src/popup/index.html#/windows/execute")),
+		"no second execute window waits",
+	).toEqual([])
 })

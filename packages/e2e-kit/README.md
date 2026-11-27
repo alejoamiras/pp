@@ -117,8 +117,9 @@ own windows. `real-wallet/run.ts` gives the run a fresh state directory (a `mkdt
 so `bun run demo:prepare` first) with `PP_E2E_WALLET=real`, then fails if a listener, a port row, a
 browser process or the `real-wallet/` directory of the run survives. Playwright's output ends with
 `real-wallet: N/4 passed as expected`, which `bun run nightly real-wallet` (the suite in
-`scripts/nightly.ts`) requires at 4/4: boot, connects, claims, ragequits. The Aztec side is the wallet, approved in its own windows; the
-Ethereum side is the kit's injected wallet, signing as the stack's seeded accounts.
+`scripts/nightly.ts`) requires at 4/4: boot, connects, claims, ragequits. The Aztec side is the
+wallet, approved in its own windows; the Ethereum side is the kit's injected wallet, signing as the
+stack's seeded accounts.
 
 - **Pins.** `real-wallet/wallet-pin.json` (zip URL, size, sha256, provenance) and
   `real-wallet/crs-pin.json` (the proving points' compressed ranges and the decompressed G1). Bump
