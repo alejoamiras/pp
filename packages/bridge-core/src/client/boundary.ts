@@ -22,6 +22,9 @@ function fromPool(e: PoolClientError): BridgeClientError {
 			return new BridgeClientError("NOTE_NOT_FOUND")
 		case "CHAIN_MISMATCH":
 			return new BridgeClientError("CHAIN_MISMATCH")
+		case "KEYSTORE_MISMATCH":
+			return new BridgeClientError("DEPLOYMENT_MISMATCH")
+		case "REGISTERED_TO_OTHER_KEYS":
 		case "SIGNATURE_INVALID":
 		case "ARTIFACT_MISMATCH":
 		case "ASSET_MISMATCH":

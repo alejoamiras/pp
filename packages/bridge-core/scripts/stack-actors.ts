@@ -54,7 +54,7 @@ export type Owner = {
 	address: Hex
 	signature: Hex
 	notes: Note[]
-	register(): Promise<void>
+	register(): Promise<unknown>
 	/** A further deposit, neither minted for nor approved. */
 	deposit(value: bigint): Promise<{ label: bigint; commitment: bigint }>
 }
