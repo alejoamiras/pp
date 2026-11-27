@@ -24,7 +24,7 @@ package re-derives it rather than trusting a file.
 | `hub-l2.ts` | Reads of the L2 hub: `hubAt`, and an ERC-20's token binding through `token_for` or straight from public storage (`hubBindingAt`). |
 | `l1-receipt.ts` / `l1-to-l2-readiness.ts` | The resilient receipt wait, and when an L1→L2 message becomes consumable. |
 | `hub-token.ts` / `portal-address.ts` | The L2 token the hub derives for an ERC-20 (`LabelledToken`, `deployer = hub`, `salt = erc20`, the hub's ASP registry among its constructor arguments) and the portal clone the factory derives (salt = token). Both pinned against the on-chain derivations. |
-| `register-hash.ts` / `claim-secret.ts` / `content-hash.ts` | The three-toolchain keystones (Solidity ↔ Noir ↔ TS): the factory's `register` message, the recipient-committed private-claim secret (re-exported from `@pp/bridge-spec/claim-secret`), the deposit/withdraw content hashes. |
+| `register-hash.ts` / `claim-secret.ts` | The keystones: the factory's `register` message (Solidity ↔ Noir ↔ TS) and the recipient-committed private-claim secret (Noir ↔ TS, re-exported from `@pp/bridge-spec/claim-secret`). |
 | `factory-abi.ts` / `factory-registry.ts` / `erc20.ts` | Hand-written ABIs pinned against the forge artifacts; the factory's frozen registration; gas-capped ERC-20 metadata reads decoded from the factory's own bytes. |
 | `manifest-v2.ts` | Strict schema for the generation manifest; every derivable address is re-derived on parse. Exported through `./sandbox`. |
 | `wallet-chain-id.ts` / `artifacts.ts` | `walletChainIdOf`, the hub and labelled-token artifacts. |

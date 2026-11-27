@@ -31,9 +31,7 @@ artifact a suite reads in place by path is not rebuilt (the hub's tests read `la
 The crates pin aztec-nr and `compressed_string` (`aztec-labs-eng/aztec-nr`) at the `v6.0.0` tag: the `@aztec-labs/*` version, which the
 local network runs (the `@aztec-foundation/*` packages carry their own number). Every
 manifest names aztec-nr by the identical URL, with no trailing slash: a different spelling makes
-Nargo build a second `aztec` crate. The content-hash library is vendored at
-`token_portal_content_hash_lib/` (its header names the upstream commit and digest) and consumed by
-path. A mismatched toolchain fails with a flood of macro errors
+Nargo build a second `aztec` crate. A mismatched toolchain fails with a flood of macro errors
 (`cannot find self`, `Could not resolve 'at'`). Always compile via `scripts/compile.sh`, which
 selects it:
 
