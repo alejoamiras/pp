@@ -100,7 +100,7 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the pool on the anvil the Az
 
 	beforeAll(async () => {
 		stack = await timed("boot", () =>
-			startStack({ heartbeat: false, onStep: (s) => console.log(`[stack] ${s.step} up in ${s.seconds.toFixed(1)} s`) }),
+			startStack({ heartbeat: false, bot: false, onStep: (s) => console.log(`[stack] ${s.step} up in ${s.seconds.toFixed(1)} s`) }),
 		)
 		client = createPublicClient({ transport: http(stack.manifest.l1Rpc), pollingInterval: 100 })
 	})

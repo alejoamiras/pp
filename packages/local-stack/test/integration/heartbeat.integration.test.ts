@@ -107,7 +107,8 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("the heartbeat mines only for
 	}
 
 	beforeAll(async () => {
-		stack = await startStack()
+		// These cases count every block, so no bot heartbeat may add one.
+		stack = await startStack({ bot: false })
 		client = createPublicClient({ transport: http(stack.manifest.l1Rpc) })
 		// The boot owes one beat after readiness's; let it land and be proven.
 		await Bun.sleep(BEATS_MS / 2)

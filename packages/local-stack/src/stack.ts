@@ -1,5 +1,6 @@
 import { rm } from "node:fs/promises"
 import { join } from "node:path"
+import { type BotHandle, localBotAccounts, startBot } from "@pp/asp-bot"
 import { type StackManifest, serializeStackManifest } from "@pp/bridge-core"
 import {
 	deployBridgeGeneration,
@@ -31,18 +32,28 @@ const STOP_WAIT_MS = 60_000
 const POOL_DEPLOYER_INDEX = 14
 /** The bridge's owner and guardian: bridge-core's harness index, below pp-env's deployer and above the actors. */
 const BRIDGE_DEPLOYER_INDEX = HARNESS_INDEX
-export type StepName = "network" | "pool" | "bridge" | "seed" | "manifest" | "heartbeat"
+/** Covers the post's inclusion after its read; a local post lands about 150 s of chain time later. */
+const BOT_INCLUSION_MARGIN_SEC = 300
+export type StepName = "network" | "pool" | "bridge" | "seed" | "bot" | "manifest" | "heartbeat"
 
 export type StartStackOptions = {
 	/** Defaults to a fresh `stack-<pid>-<time>`; a chosen one must be unique on the host (see the README's teardown notes). */
 	runId?: string
 	/** Parent of the run directory; defaults to `~/.cache/pp/runs`. */
 	runsDir?: string
-	/** Default true. Off, no block is mined unless a consumer asks for one. */
+	/** Default true. Off, no beat runs after the boot; the boot's own mines and a bot's posts still make blocks. */
 	heartbeat?: boolean
+	/**
+	 * Default true. Off, the bridge gets no ASP registry and no bot runs, so no heartbeat post adds
+	 * blocks to a chain a caller counts.
+	 */
+	bot?: boolean
 	/** Tick spacing; defaults to `HEARTBEAT_MS`. */
 	heartbeatMs?: number
-	/** Checked between steps; a step already starting runs to the end first, since neither harness can be cancelled mid-start. */
+	/**
+	 * Checked between steps and by the bot while it starts; any other step already starting runs to its
+	 * end first, since neither harness can be cancelled mid-start.
+	 */
 	signal?: AbortSignal
 	/** Progress for the CLI; a throw aborts the boot. */
 	onStep?: (s: { step: StepName; seconds: number }) => void | Promise<void>
@@ -56,7 +67,10 @@ export interface Stack {
 	pool: PoolEnv
 	/** The demo's pool user and its separate Ethereum sender. */
 	seeded: Seeded
-	/** Idempotent; stops the heartbeat, withdraws the manifest, then stops the pool and the network. */
+	/**
+	 * Idempotent; stops the heartbeat, withdraws the manifest, stops the bot, then the bridge's PXE,
+	 * the pool and the network.
+	 */
 	stop(): Promise<void>
 }
 
@@ -177,7 +191,7 @@ export type BootFaults = {
 	onBridgeFailure?: (u: UnopenedBridge) => void | Promise<void>
 }
 
-type Booted = { runDir: string; net: LocalNetwork; pool: PoolEnv }
+type Booted = { runId: string; runDir: string; net: LocalNetwork; pool: PoolEnv }
 
 /**
  * Deploys the generation with entries paused, hands its PXE to the teardown the moment it exists,
@@ -196,6 +210,7 @@ async function bridgeStep(o: StartStackOptions, faults: BootFaults, b: Booted, t
 			await mineBlock(b.net.nodeUrl, o.signal)
 		},
 		dataDir: join(b.runDir, "bridge"),
+		...(o.bot === false ? {} : { registry: await localBotAccounts(b.runId) }),
 	})
 	teardown.push("bridge deployer", () => u.stop())
 	try {
@@ -226,10 +241,33 @@ async function bootChains(o: StartStackOptions, runId: string, teardown: Teardow
 		() => startPoolEnv({ rpcUrl: net.anvilUrl, deployerIndex: POOL_DEPLOYER_INDEX, runId: `${runId}-pool`, signals: false }),
 		(p) => teardown.push("pool", () => p.stop()),
 	)
-	return { runDir, net, pool }
+	return { runId, runDir, net, pool }
 }
 
-function manifestOf(b: Booted, bridge: StackBridgeBlock): StackManifest {
+/**
+ * Resolves once the bot's first post has landed, so the manifest never names a bot that cannot post.
+ * It needs no beat: the local network builds a block for each pending transaction.
+ */
+function botStep(o: StartStackOptions, b: Booted, bridge: StackBridgeBlock): Promise<BotHandle> {
+	return startBot(
+		{
+			manifest: {
+				l1Rpc: b.net.anvilUrl,
+				aztecNode: b.net.nodeUrl,
+				pool: { aspRegistry: b.pool.deployment.aspRegistry, aspApiUrl: b.pool.asp.url },
+			},
+			registry: bridge.registry,
+			tag: "latest",
+			stackRunId: b.runId,
+			runId: `${b.runId}-bot`,
+			dataDir: join(b.runDir, "bot"),
+			inclusionMarginSec: BOT_INCLUSION_MARGIN_SEC,
+		},
+		{ removeDataOnStop: true, ...(o.signal ? { signal: o.signal } : {}) },
+	)
+}
+
+function manifestOf(b: Booted, bridge: StackBridgeBlock, bot: BotHandle | undefined): StackManifest {
 	const { pool: poolVault, entrypoint, aspRegistry, keystore, deployBlock } = b.pool.deployment
 	return buildManifest({
 		chainId: STACK_CHAIN_ID,
@@ -239,6 +277,7 @@ function manifestOf(b: Booted, bridge: StackBridgeBlock): StackManifest {
 		asset: b.pool.asset,
 		aspUrl: b.pool.asp.url,
 		bridge,
+		...(bot ? { bot: { url: bot.url, poster: bot.poster, birthIntake: bot.birthIntake } } : {}),
 	})
 }
 
@@ -264,7 +303,16 @@ export async function bootStack(o: StartStackOptions, faults: BootFaults): Promi
 			() => seedPool(b.pool),
 			() => {},
 		)
-		const manifest = manifestOf(b, bridge)
+		const bot =
+			o.bot === false
+				? undefined
+				: await runStep(
+						o,
+						"bot",
+						() => botStep(o, b, bridge),
+						(h) => teardown.push("bot", () => h.stop()),
+					)
+		const manifest = manifestOf(b, bridge, bot)
 		const manifestPath = join(b.runDir, "manifest.json")
 		await runStep(
 			o,
@@ -288,9 +336,9 @@ export async function bootStack(o: StartStackOptions, faults: BootFaults): Promi
 
 /**
  * Boots one anvil carrying both the Aztec local network and the pool, opens the bridge, seeds the
- * demo user, writes the manifest once the stack is ready, and keeps blocks coming while work waits
- * on them. Anything started is torn down again when a later step fails or `signal` aborts between
- * steps.
+ * demo user, starts the ASP bot on the bridge's registry, writes the manifest once the stack is
+ * ready, and keeps blocks coming while work waits on them. Anything started is torn down again
+ * when a later step fails or `signal` aborts between steps.
  * @throws Error naming `bun run demo:prepare`, before anything starts, when pp-env's checkout or
  *   the forge artifacts are missing
  * @throws AttachRefused when `SANDBOX_L1_RPC` or `SANDBOX_NODE_URL` is set.

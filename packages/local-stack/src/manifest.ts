@@ -11,6 +11,8 @@ export type ManifestInputs = {
 	aspUrl: string
 	/** Present once the bridge step opened entries. */
 	bridge?: StackManifest["bridge"]
+	/** Present once the bot's first post landed. */
+	bot?: StackManifest["bot"]
 }
 
 /** A local stack's manifest; `serializeStackManifest` validates it. */
@@ -22,5 +24,6 @@ export function buildManifest(i: ManifestInputs): StackManifest {
 		aztecNode: i.aztecNode,
 		pool: { ...i.pool, asset: i.asset, aspApiUrl: i.aspUrl },
 		...(i.bridge ? { bridge: i.bridge } : {}),
+		...(i.bot ? { bot: i.bot } : {}),
 	}
 }

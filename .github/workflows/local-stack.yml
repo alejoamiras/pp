@@ -62,6 +62,11 @@ jobs:
               - 'packages/bridge-spec/package.json'
               - 'packages/pool-client/src/**'
               - 'packages/pool-client/package.json'
+              - 'packages/pool-client/test/support/**'
+              - 'packages/asp-bot/src/**'
+              - 'packages/asp-bot/package.json'
+              - 'packages/label-paths/src/**'
+              - 'packages/label-paths/package.json'
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'
@@ -112,7 +117,7 @@ jobs:
         # runner stays green and a hang fails well inside the job's ceiling. Setup and the pool fetch,
         # cold on every run of a pull request that changes its pin, fall outside it.
         # behavior-gating.test.ts requires an entry per suite file.
-        timeout-minutes: ${{ fromJSON('{"bridge":3,"heartbeat":14,"imports":2,"shared-anvil":12,"teardown":11}')[matrix.suite] || 20 }}
+        timeout-minutes: ${{ fromJSON('{"bridge":4,"heartbeat":14,"imports":2,"shared-anvil":12,"teardown":13}')[matrix.suite] || 20 }}
         # A skipped or todo case is a gate that never ran, and the heartbeat's liveness case must pass by name.
         run: |
           start=$(date +%s)
@@ -138,6 +143,7 @@ jobs:
             integration.log
             integration.json
             ~/.cache/pp/bridge-sandbox/logs/*.log
+            ~/.cache/pp/asp-bot/logs/*.log
           if-no-files-found: ignore
           retention-days: 7
 
@@ -163,7 +169,7 @@ jobs:
 
       - name: Stack suite
         # Twice the measured step time (boot, cases, teardown), rounded up to whole minutes.
-        timeout-minutes: 6
+        timeout-minutes: 7
         working-directory: packages/bridge-core
         # A required case that was skipped, filtered or renamed fails check-cases.
         run: |
@@ -186,6 +192,7 @@ jobs:
             stack.log
             stack.json
             ~/.cache/pp/bridge-sandbox/logs/*.log
+            ~/.cache/pp/asp-bot/logs/*.log
           if-no-files-found: ignore
           retention-days: 7
 

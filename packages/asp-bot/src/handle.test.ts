@@ -63,18 +63,30 @@ describe("startBot", () => {
 		expect(existsSync(c.dataDir as string)).toBe(false)
 	})
 
-	it("cleans up a child that exits before ready", async () => {
-		const c = config("die")
-		const released: string[] = []
-		const start = startBot(c, {
-			command: [process.execPath, FAKE, "die"],
-			removeDataOnStop: true,
-			releasePorts: async (id) => {
-				released.push(id)
-			},
-		})
-		await expect(start).rejects.toThrow("before ready")
-		expect(released).toEqual([c.runId])
-		expect(existsSync(c.dataDir as string)).toBe(false)
+	it("cleans up a child that exits before ready, or one still starting when the signal aborts", async () => {
+		for (const [tag, command, abort, reason] of [
+			["die", [process.execPath, FAKE, "die"], false, "before ready"],
+			["abort", [process.execPath, "-e", "setInterval(() => {}, 1000)"], true, "boot aborted"],
+		] as const) {
+			const c = config(tag)
+			const released: string[] = []
+			const controller = new AbortController()
+			const start = startBot(c, {
+				command: [...command],
+				removeDataOnStop: true,
+				signal: controller.signal,
+				releasePorts: async (id) => {
+					released.push(id)
+				},
+			})
+			if (abort) setTimeout(() => controller.abort(new Error("boot aborted")), 200)
+			await expect(start, tag).rejects.toThrow(reason)
+			expect(released, tag).toEqual([c.runId])
+			expect(existsSync(c.dataDir as string), tag).toBe(false)
+		}
+		const c = config("pre-aborted")
+		const start = startBot(c, { signal: AbortSignal.abort(new Error("already aborted")), command: [process.execPath, FAKE, "ok"] })
+		await expect(start).rejects.toThrow("already aborted")
+		expect(existsSync(c.dataDir as string), "rejected before the data dir is made").toBe(false)
 	})
 })

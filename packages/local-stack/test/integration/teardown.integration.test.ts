@@ -3,6 +3,7 @@ import { type ChildProcess, spawn } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { parseStackManifest } from "@pp/bridge-core"
+import { type Hex, parseAspSnapshot, readRootRecord } from "@pp/label-paths"
 import { type PoolEnv, startPoolEnv } from "@pp/pp-env"
 import { createPublicClient, http, type PublicClient } from "viem"
 import { AttachRefused } from "../../src/attach.ts"
@@ -140,6 +141,12 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("a stack tears down exactly w
 			expect(await client.getCode({ address })).toBeTruthy()
 		expect((await fetch(new URL("/health", m.pool.aspApiUrl))).ok).toBe(true)
 		expect((await nodeInfo(m.aztecNode)).l1ChainId).toBe(31337)
+		const [bot, bridge] = [m.bot, m.bridge]
+		if (!bot || !bridge) throw new Error("the manifest has no bot or bridge block")
+		const snap = parseAspSnapshot(await (await fetch(new URL("/v1/snapshots/latest", bot.url))).json())
+		const record = await readRootRecord({ aztecNode: m.aztecNode, registry: bridge.registry as Hex })
+		expect(record.sequence).toBeGreaterThan(0n)
+		expect([snap.sequence, snap.poolRoot, snap.birthRoot]).toEqual([record.sequence, record.poolRoot, record.birthRoot])
 		const cliPid = Number(run.lines.find((l) => l.startsWith("[stack] run "))?.match(/pid (\d+)$/)?.[1])
 		expect(Number(readFileSync(join(path, "..", "pid"), "utf8"))).toBe(cliPid)
 		const t0 = Date.now()

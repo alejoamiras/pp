@@ -8,11 +8,11 @@ export const RUNS_DIR = join(homedir(), ".cache", "pp", "runs")
 export const newRunId = () => `stack-${process.pid}-${Date.now().toString(36)}`
 
 /**
- * One path segment, short enough that pp-env's `-pool` id stays inside its 64 characters. Both
- * harnesses release registry rows by owner id, so no run id may end in `-pool`: a stack `x-pool`
- * would own the rows of stack `x`'s pool.
+ * One path segment, short enough that pp-env's `-pool` id stays inside its 64 characters. Every
+ * harness releases registry rows by owner id, so no run id may end in `-pool` or `-bot`: a stack
+ * `x-pool` would own the rows of stack `x`'s pool, and `x-bot` those of its bot.
  */
-const RUN_ID = /^(?!.*-pool$)[a-z0-9][a-z0-9-]{0,47}$/
+const RUN_ID = /^(?!.*-(?:pool|bot)$)[a-z0-9][a-z0-9-]{0,47}$/
 
 /** Writes through a sibling temp file and `rename`, so a reader sees the old content or the new, never a prefix. */
 export async function writeAtomic(path: string, text: string): Promise<void> {
