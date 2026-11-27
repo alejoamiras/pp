@@ -25,6 +25,8 @@ const module = join(import.meta.dirname, "local-network.ts")
 // sized for pure units, and a busy host has stretched a nested run past it.
 const CHILD_BUN_MS = 30_000
 const NESTED_VITEST_MS = 60_000
+// vitest's bound cannot interrupt a synchronous child, so each child carries its own, inside the case's.
+const sync = (bound: number) => ({ timeout: bound - 5_000, killSignal: "SIGKILL" as const })
 
 describe("reapOnSignals", () => {
 	it(
@@ -32,7 +34,7 @@ describe("reapOnSignals", () => {
 		() => {
 			// In a child: emitting a signal here would also run the test runner's own handlers.
 			const body = `const { reapOnSignals } = await import(${JSON.stringify(module)}); const n = process.listenerCount("SIGTERM"); reapOnSignals(() => new Promise(() => {})); process.emit("SIGTERM"); console.log(process.listenerCount("SIGTERM") - n)`
-			expect(execFileSync("bun", ["-e", body]).toString().trim()).toBe("1")
+			expect(execFileSync("bun", ["-e", body], sync(CHILD_BUN_MS)).toString().trim()).toBe("1")
 		},
 		CHILD_BUN_MS,
 	)
@@ -54,7 +56,9 @@ describe("teardownNetwork", () => {
 			cwd: join(import.meta.dirname, "../.."),
 			encoding: "utf8",
 			env: { ...process.env, ...env },
+			...sync(NESTED_VITEST_MS),
 		})
+		if (run.error) throw run.error
 		// Not the error's message: under Bun about one run in 25 prints the error without it.
 		expect(run.stdout + run.stderr).toContain("error during close")
 		expect(run.status).toBe(1)
