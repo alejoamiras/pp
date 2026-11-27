@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
-import { existsSync, readFileSync } from "node:fs"
-import { dirname, join, posix } from "node:path"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { basename, dirname, join, posix, relative } from "node:path"
 import { resolveSpec } from "../catalog"
 
 /**
@@ -368,6 +369,86 @@ test("the closure walk finds a nested second viem and stops at a workspace outsi
 		const aliased = new Map(workspaces).set("@pp/bridge-core", { dir: "packages/bridge-core", manifest: aliasing })
 		expect([...appClosure(aliased)].sort(), alias).toEqual(["@pp/bridge-core", "@pp/pp-env"])
 	}
+})
+
+/**
+ * The real directory of every viem the workspaces in `roots` load, followed through the isolated
+ * store's links. Peer variants of one version are separate instances there, invisible in
+ * `bun.lock`; a link out of the store (a workspace) ends that path, and a store entry nothing links
+ * to is never counted, so a store `bun install` left stale entries in still reads true.
+ */
+function viemInstances(store: string, roots: string[]): string[] {
+	const found = new Set<string>()
+	const seen = new Set<string>()
+	const stack = roots.map((r) => join(r, "node_modules"))
+	for (let dir = stack.pop(); dir !== undefined; dir = stack.pop()) {
+		if (seen.has(dir) || !existsSync(dir)) continue
+		seen.add(dir)
+		const entries = readdirSync(dir)
+			.filter((n) => !n.startsWith("."))
+			.flatMap((n) => (n.startsWith("@") ? readdirSync(join(dir, n)).map((m) => join(dir, n, m)) : [join(dir, n)]))
+		for (const entry of entries) {
+			const real = realpathSync(entry)
+			if (!real.startsWith(`${store}/`)) continue
+			if (basename(real) === "viem" && basename(dirname(real)) === "node_modules") found.add(real)
+			stack.push(real.slice(0, real.indexOf("/node_modules/", store.length) + "/node_modules".length))
+		}
+	}
+	return [...found].sort()
+}
+
+test("the app's dependency closure loads one viem instance", () => {
+	const store = join(ROOT, "node_modules", ".bun")
+	expect(existsSync(store), "the isolated store under node_modules/.bun: run bun install").toBe(true)
+	const workspaces = workspacesByName()
+	const roots = [...appClosure(workspaces)].map((name) => join(ROOT, workspaces.get(name)?.dir ?? name))
+	const instances = viemInstances(store, roots).map((real) => relative(store, real))
+	expect(instances, instances.join(", ")).toHaveLength(1)
+})
+
+test("the instance walk counts peer variants a workspace reaches, and no store entry nothing links to", () => {
+	const root = mkdtempSync(join(tmpdir(), "viem-instances-"))
+	try {
+		const store = join(root, "node_modules", ".bun")
+		const pkg = (entry: string, name: string) => {
+			mkdirSync(join(store, entry, "node_modules", name), { recursive: true })
+			return join(store, entry, "node_modules", name)
+		}
+		const link = (target: string, from: string) => {
+			mkdirSync(dirname(from), { recursive: true })
+			symlinkSync(target, from)
+		}
+		const a = pkg("viem@1.0.0+a", "viem")
+		const b = pkg("viem@1.0.0+b", "viem")
+		pkg("viem@1.0.0+stale", "viem")
+		const lib = pkg("@s+lib@1.0.0", "@s/lib")
+		link(b, join(store, "@s+lib@1.0.0", "node_modules", "viem"))
+		link(a, join(root, "app", "node_modules", "viem"))
+		link(lib, join(root, "app", "node_modules", "@s", "lib"))
+		link(join(root, "other"), join(root, "app", "node_modules", "other"))
+		link(pkg("viem@2.0.0+c", "viem"), join(root, "other", "node_modules", "viem"))
+		expect(viemInstances(store, [join(root, "app")]).map((r) => relative(store, r))).toEqual([
+			"viem@1.0.0+a/node_modules/viem",
+			"viem@1.0.0+b/node_modules/viem",
+		])
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test("a non-Aztec dependency two manifests declare comes from a catalog in each", () => {
+	const declarers = new Map<string, { path: string; spec: string }[]>()
+	for (const path of ["package.json", ...workspaceManifests()]) {
+		const m = manifest(path)
+		for (const [name, spec] of SECTIONS.flatMap((section) => Object.entries(m[section] ?? {}))) {
+			if (spec.startsWith("workspace:") || expectedVersion(name) !== undefined) continue
+			declarers.set(name, [...(declarers.get(name) ?? []), { path, spec }])
+		}
+	}
+	const off = [...declarers]
+		.filter(([, by]) => new Set(by.map((d) => d.path)).size > 1)
+		.flatMap(([name, by]) => by.filter((d) => !d.spec.startsWith("catalog:")).map((d) => `${d.path}: ${name}@${d.spec}`))
+	expect(off).toEqual([])
 })
 
 test("the foundation version is the exact one the locked aztec.js requires", () => {
