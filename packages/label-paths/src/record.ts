@@ -65,6 +65,8 @@ function decode(v: unknown, field: string, limit: bigint): bigint {
  * read at it, so the lengths are the ones posted with the roots. Throws `RegistryAddressError` before any
  * request for a malformed `registry`, an `Error` naming the JSON-RPC method on a node error or an
  * out-of-range value, and an `Error` for a pool root without a pool length (a registry that predates them).
+ * Aztec 6.0.0's node checks the hash, then reads each slot by block number, so a reorg during the call can
+ * mix two blocks' values; a read after the reorg settles sees one block.
  */
 export async function readRootRecord(a: { aztecNode: string; registry: Hex; at?: number | Hex }): Promise<RootRecord> {
 	if (typeof a.registry !== "string" || !ADDRESS.test(a.registry) || BigInt(a.registry) >= BN254_P)
