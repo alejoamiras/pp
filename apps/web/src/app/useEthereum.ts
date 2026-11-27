@@ -13,15 +13,18 @@ const signInFailure = (err: unknown): EthStatus => ({
 })
 
 /**
- * A wallet that has not shared an account with this origin answers eth_accounts with none, so the click
- * asks it for one; its answer is the selection until the wallet's own event says otherwise. False when
- * a newer sign-in or a sign-out replaced this one meanwhile.
+ * With no account known yet, the click reads the wallet again, and asks it to share one only when it
+ * still lists none (a locked wallet unlocks then). The selection is what the wallet lists after that,
+ * never the request's own answer, and an account or network event that landed meanwhile is newer than
+ * these reads. False when a newer sign-in or a sign-out replaced this one.
  */
 async function shareAccount(l1: L1Port, live: LiveStore, current: () => boolean): Promise<boolean> {
 	if (live.get().account !== null) return true
-	const [account] = await l1.requestAccounts()
+	if ((await l1.accounts()).length === 0) await l1.requestAccounts()
+	const [[account], chainId] = await Promise.all([l1.accounts(), l1.chainId()])
 	if (!current()) return false
-	live.set({ account: account ?? null })
+	const now = live.get()
+	live.set({ ...(now.account === null ? { account: account ?? null } : {}), ...(now.chainId === null ? { chainId } : {}) })
 	return true
 }
 

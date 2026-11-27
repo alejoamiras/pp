@@ -20,13 +20,14 @@ export function EthereumSignIn() {
 				It derives your pool keys in this page. It sends nothing and costs nothing.
 			</Callout>
 		)
+	// With a wallet but no account, the click is what asks the wallet, and unlocks a locked one.
 	const reason =
 		account === null && !source.l1.hasWallet
 			? messageOf("NO_SENDER")
-			: chainId === null
-				? NETWORK_UNKNOWN
-				: wrongChain
-					? `Switch your wallet to ${chainName(target)} first.`
+			: wrongChain
+				? `Switch your wallet to ${chainName(target)} first.`
+				: account !== null && chainId === null
+					? NETWORK_UNKNOWN
 					: undefined
 	return (
 		<div className="grid justify-items-start gap-3" data-testid="eth-sign-in-panel">

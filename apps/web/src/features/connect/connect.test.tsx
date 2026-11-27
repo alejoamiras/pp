@@ -6,6 +6,8 @@ import { RECOVERY_PLAIN, RECOVERY_PRECISE } from "../../app/copy"
 import { messageOf } from "../../data/errors"
 import { NETWORK_UNKNOWN } from "./EthereumSignIn"
 import { FAKE_SIGNATURE } from "../../data/fixtures/l1"
+import { ACCOUNTS } from "../../data/fixtures/seed"
+import { shortHex } from "../../ui"
 import { clickSignIn, connectAztec, renderApp } from "../../test-utils/app"
 
 afterEach(cleanup)
@@ -62,6 +64,76 @@ describe("connect", () => {
 		await clickSignIn(app.user)
 		await screen.findByText("Notes by label")
 		expect(app.source.l1.requestAccounts).toHaveBeenCalledOnce()
+	})
+
+	test("an account event during the request wins: the session's owner is the wallet's selection at signature, not the account shared", async () => {
+		let shared = false
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: {
+					...s.l1,
+					accounts: async () => (shared ? s.l1.accounts() : []),
+					requestAccounts: async () => {
+						shared = true
+						const answer = await s.l1.accounts()
+						app.control.selectL1Account("sender")
+						return answer
+					},
+				},
+			}),
+		})
+		await clickSignIn(app.user)
+		const pool = within(await screen.findByTestId("pool-panel"))
+		await pool.findByText(shortHex(ACCOUNTS.sender))
+		expect(pool.queryByText(shortHex(ACCOUNTS.owner))).toBeNull()
+	})
+
+	test("Sign in clicked before the first account read lands does not ask a wallet that already shared one", async () => {
+		let first = true
+		const requestAccounts = vi.fn(async (): Promise<never> => {
+			throw Object.assign(new Error("eth_requestAccounts is not supported"), { code: 4200 })
+		})
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: {
+					...s.l1,
+					accounts: () => {
+						if (!first) return s.l1.accounts()
+						first = false
+						return new Promise<never>(() => {})
+					},
+					requestAccounts,
+				},
+			}),
+		})
+		await clickSignIn(app.user)
+		await screen.findByText("Notes by label")
+		expect(requestAccounts).not.toHaveBeenCalled()
+	})
+
+	test("a locked wallet that answers neither an account nor its network can still be asked at Sign in", async () => {
+		let unlocked = false
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: {
+					...s.l1,
+					accounts: async () => (unlocked ? s.l1.accounts() : []),
+					chainId: async () => {
+						if (!unlocked) throw new Error("the wallet is locked")
+						return s.l1.chainId()
+					},
+					requestAccounts: async () => {
+						unlocked = true
+						return s.l1.accounts()
+					},
+				},
+			}),
+		})
+		await clickSignIn(app.user)
+		await screen.findByText("Notes by label")
 	})
 
 	test("an account with no pool notes gets an empty state naming both causes and the pool app", async () => {
