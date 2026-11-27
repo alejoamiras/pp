@@ -1,4 +1,14 @@
-import { encodeAbiParameters, encodeEventTopics, getAbiItem, type Hash, type Hex, RawContractError, toHex } from "viem"
+import {
+	createPublicClient,
+	custom,
+	encodeAbiParameters,
+	encodeEventTopics,
+	getAbiItem,
+	type Hash,
+	type Hex,
+	RawContractError,
+	toHex,
+} from "viem"
 import { describe, expect, it, vi } from "vitest"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { bridgeMessageKey } from "./messages"
@@ -90,5 +100,18 @@ describe("revertCause", () => {
 			),
 		).toBeNull()
 		expect(await revertCause(stale, COPY, () => null)).toBeNull()
+	})
+
+	it("reads the revert bytes a real viem call carries on its innermost error", async () => {
+		const node = createPublicClient({
+			transport: custom({
+				async request({ method }) {
+					if (method === "eth_call") throw Object.assign(new Error("execution reverted"), { code: 3, data: "0xbc158616" })
+					throw new Error(`unexpected ${method}`)
+				},
+			}),
+		})
+		const real = replay(() => node.call({ to: D.portal, data: "0x1234", blockNumber: 150n }))
+		expect(await revertCause(real, COPY, (d) => (d === "0xbc158616" ? "ASP_ROOT_STALE" : null))).toBe("ASP_ROOT_STALE")
 	})
 })

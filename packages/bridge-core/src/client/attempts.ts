@@ -1,6 +1,7 @@
-import type { Hash } from "viem"
+import { BaseError, type Hash, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem"
+import type { JournalAttempt, JournalRecord } from "./journal"
+import type { ResolverClient } from "./resolve"
 import type { BridgeStep } from "./types"
-import type { JournalRecord } from "./journal"
 
 /** What the chain says about one attempt, once the resolver has found no event for the nullifier. */
 export type AttemptState = "pending" | "reverted" | "unknown" | "hashless"
@@ -59,3 +60,27 @@ export function pendingStep(record: JournalRecord, states: readonly AttemptState
 	if (record.evicted || states.some((s) => s !== "reverted")) return "submitted"
 	return record.attempts.length === 0 ? "prepared" : { error: "REVERTED" }
 }
+
+const isNotFound = (e: unknown) =>
+	e instanceof BaseError && e.walk((x) => x instanceof TransactionReceiptNotFoundError || x instanceof TransactionNotFoundError) !== null
+
+const orNull = (e: unknown): null => {
+	if (isNotFound(e)) return null
+	throw e
+}
+
+export type Observed = { state: AttemptState; mined?: { hash: Hash; block: bigint } }
+
+/** What the RPC says about one attempt; a successful receipt sets the resolver's precedence and lower bound on the head. */
+export async function observe(c: Pick<ResolverClient, "getTransactionReceipt" | "getTransaction">, a: JournalAttempt): Promise<Observed> {
+	if (!a.l1TxHash) return { state: "hashless" }
+	const receipt = await c.getTransactionReceipt({ hash: a.l1TxHash }).catch(orNull)
+	if (receipt?.status === "success") return { state: "pending", mined: { hash: a.l1TxHash, block: receipt.blockNumber } }
+	if (receipt) return { state: "reverted" }
+	const tx = await c.getTransaction({ hash: a.l1TxHash }).catch(orNull)
+	return { state: tx ? "pending" : "unknown" }
+}
+
+/** The latest successful attempt, which the resolver must read up to and an error must name. */
+export const latestMined = (o: readonly Observed[]) =>
+	o.reduce<Observed["mined"]>((m, x) => (x.mined && (!m || x.mined.block >= m.block) ? x.mined : m), undefined)

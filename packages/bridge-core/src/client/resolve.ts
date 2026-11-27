@@ -1,5 +1,5 @@
 import type { Address, Hash, Hex, PublicClient } from "viem"
-import { BaseError, ContractFunctionRevertedError, decodeEventLog, getAbiItem, RawContractError } from "viem"
+import { BaseError, ContractFunctionRevertedError, decodeEventLog, getAbiItem, isHex, RawContractError } from "viem"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import type { StaleRootCode } from "./errors"
 import { bridgeMessageKey, type MessageEndpoints } from "./messages"
@@ -37,14 +37,41 @@ const SPENT_NULLIFIERS_ABI = [
 /** Log queries stay within what public RPCs accept. */
 const LOG_WINDOW = 10_000n
 
-async function findEvent(c: ResolverClient, d: ResolverDeployment, nullifier: bigint, head: bigint) {
+/** The portal's `BridgedFromPool` logs for any of `nullifiers` up to `head`, in fixed windows; stops at the first if `first`. */
+async function bridgedLogs(c: ResolverClient, d: ResolverDeployment, nullifiers: readonly bigint[], head: bigint, first: boolean) {
+	const found = []
 	for (let from = d.deployBlock; from <= head; from += LOG_WINDOW) {
 		const to = from + LOG_WINDOW - 1n < head ? from + LOG_WINDOW - 1n : head
-		const logs = await c.getLogs({ address: d.portal, event: BRIDGED, args: { nullifier }, fromBlock: from, toBlock: to })
-		const log = logs.find((l) => !l.removed)
-		if (log) return log
+		const args = { nullifier: [...nullifiers] }
+		const logs = await c.getLogs({ address: d.portal, event: BRIDGED, args, fromBlock: from, toBlock: to })
+		found.push(...logs.filter((l) => !l.removed))
+		if (first && found.length) break
 	}
-	return null
+	return found
+}
+
+type BridgedLog = Awaited<ReturnType<typeof bridgedLogs>>[number]
+
+function receiptOf(d: ResolverDeployment, log: BridgedLog) {
+	const { args } = decodeEventLog({ abi: [BRIDGED], data: log.data, topics: log.topics })
+	const receipt: BridgeReceipt = {
+		l1TxHash: log.transactionHash as Hash,
+		portal: d.portal,
+		messageKey: args.messageKey,
+		leafIndex: args.leafIndex,
+		nullifier: args.nullifier,
+		changeCommitment: args.changeCommitment,
+		amount: args.amount,
+		asset: d.asset,
+	}
+	return { args, receipt }
+}
+
+/** Every bridge of any of `nullifiers` from the portal, unverified: the caller checks each message against its intent. */
+export async function bridgedReceipts(c: ResolverClient, d: ResolverDeployment, nullifiers: readonly bigint[]): Promise<BridgeReceipt[]> {
+	if (nullifiers.length === 0) return []
+	const head = await c.getBlockNumber({ cacheTime: 0 })
+	return (await bridgedLogs(c, d, nullifiers, head, false)).map((l) => receiptOf(d, l).receipt)
 }
 
 /**
@@ -67,24 +94,12 @@ export async function resolveNullifier(
 	// viem caches the block number for a polling interval; a receipt just seen can be past that cache.
 	const latest = await c.getBlockNumber({ cacheTime: 0 })
 	const head = latest > minHead ? latest : minHead
-	const log = await findEvent(c, d, intent.nullifier, head)
+	const [log] = await bridgedLogs(c, d, [intent.nullifier], head, true)
 	if (log) {
-		const { args } = decodeEventLog({ abi: [BRIDGED], data: log.data, topics: log.topics })
+		const { args, receipt } = receiptOf(d, log)
 		const expected = await bridgeMessageKey(d, args, intent.secretHash)
 		if (args.amount !== intent.amount || args.messageKey.toLowerCase() !== expected.toLowerCase()) return { kind: "elsewhere" }
-		return {
-			kind: "bridged",
-			receipt: {
-				l1TxHash: log.transactionHash as Hash,
-				portal: d.portal,
-				messageKey: args.messageKey,
-				leafIndex: args.leafIndex,
-				nullifier: args.nullifier,
-				changeCommitment: args.changeCommitment,
-				amount: args.amount,
-				asset: d.asset,
-			},
-		}
+		return { kind: "bridged", receipt }
 	}
 	// A landed bridge whose log the RPC lost also has a spent nullifier, so this check comes first.
 	if (ownSucceeded) return { kind: "inconsistent" }
@@ -98,13 +113,20 @@ export async function resolveNullifier(
 	return spentAt === 0n ? { kind: "open" } : { kind: "elsewhere" }
 }
 
-/** The raw revert data anywhere in a viem error chain. */
+/**
+ * The raw revert data anywhere in a viem error chain. A contract call carries it on a
+ * `RawContractError`; a plain `call` leaves the node's bytes on the innermost error, as `data` or
+ * `data.data`.
+ */
 export function revertData(e: unknown): Hex | undefined {
 	if (!(e instanceof BaseError)) return undefined
 	const raw = e.walk((x) => x instanceof RawContractError) as RawContractError | null
 	if (raw && typeof raw.data === "string") return raw.data
 	const reverted = e.walk((x) => x instanceof ContractFunctionRevertedError) as ContractFunctionRevertedError | null
-	return reverted?.raw
+	if (reverted?.raw) return reverted.raw
+	const inner = (e.walk() as { data?: unknown } | null)?.data
+	const data = typeof inner === "object" && inner !== null ? (inner as { data?: unknown }).data : inner
+	return typeof data === "string" && isHex(data) ? data : undefined
 }
 
 /**
