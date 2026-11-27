@@ -21,8 +21,6 @@ pub global MAX_NOTES: u32 = 8;
 pub global LABELS_PER_PAGE: u32 = 16;
 /// Note values one `values_of` page returns: one note-viewer page.
 pub global VALUES_PER_PAGE: u32 = 10;
-/// Distinct (label, origin) pairs `labels` can aggregate for one owner.
-pub global MAX_TRACKED_LABELS: u32 = 256;
 
 /// Every balance note is delivered this way. Constrained, so a dishonest sender cannot commit a note
 /// whose log its owner cannot find. A non-interactive handshake, so the wallet cannot pick an
@@ -56,7 +54,8 @@ impl LabelledBalanceSet<&mut PrivateContext> {
     /// Nullifies up to `MAX_NOTES` notes of `label`, largest first, stopping once `amount` is covered.
     /// The PXE picks the notes; the circuit enforces their label and descending value, not that they
     /// are the owner's largest. Returns their total and their common origin; fails if they disagree
-    /// on origin. The total may fall short of `amount`; the caller decides.
+    /// on origin. The total may fall short of `amount`; the caller decides. With no note popped the
+    /// origin reads 0, so it means something only once the total covers a nonzero `amount`.
     pub fn try_sub(self, label: Field, amount: u128) -> (u128, u8) {
         let options = NoteGetterOptions::with_preprocessor(preprocess_min_sum, amount)
             .select(LabelledNote::properties().label, Comparator.EQ, label)
@@ -96,12 +95,13 @@ impl LabelledBalanceSet<UtilityContext> {
     }
 
     /// `(label, origin, balance)` per distinct label, in first-seen order, from the `start`-th label.
-    /// Reads every note page; past `MAX_TRACKED_LABELS` distinct (label, origin) pairs every page fails.
+    /// Reads every note page, so its work grows with the owner's notes and labels.
     pub unconstrained fn labels(
         self,
         start: u32,
     ) -> BoundedVec<(Field, u8, u128), LABELS_PER_PAGE> {
-        let mut seen: BoundedVec<(Field, u8, u128), MAX_TRACKED_LABELS> = BoundedVec::new();
+        // A vector, not a BoundedVec: every shield mints a new label, so no cap on an owner's labels holds.
+        let mut seen: [(Field, u8, u128)] = @[];
         let mut note_offset = 0;
         let mut more = true;
         while more {
@@ -110,15 +110,14 @@ impl LabelledBalanceSet<UtilityContext> {
                 let note = notes.get(i);
                 let mut found = false;
                 for j in 0..seen.len() {
-                    let (label, origin, sum) = seen.get(j);
+                    let (label, origin, sum) = seen[j];
                     if !found & (label == note.label) & (origin == note.origin) {
-                        seen.set(j, (label, origin, sum + note.value));
+                        seen[j] = (label, origin, sum + note.value);
                         found = true;
                     }
                 }
                 if !found {
-                    assert(seen.len() < MAX_TRACKED_LABELS, "too many labels");
-                    seen.push((note.label, note.origin, note.value));
+                    seen = seen.push_back((note.label, note.origin, note.value));
                 }
             }
             note_offset += notes.len();
@@ -127,7 +126,7 @@ impl LabelledBalanceSet<UtilityContext> {
         let mut page = BoundedVec::new();
         for j in start..seen.len() {
             if page.len() < LABELS_PER_PAGE {
-                page.push(seen.get(j));
+                page.push(seen[j]);
             }
         }
         page

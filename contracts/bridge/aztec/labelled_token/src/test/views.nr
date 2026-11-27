@@ -1,8 +1,35 @@
 use crate::{
     LabelledToken,
-    note::ORIGIN_POOL,
-    test::utils::{assert_labels, balance, K, L, mint, ragequit, setup, values},
+    note::{LabelledNote, ORIGIN_POOL},
+    test::utils::{assert_labels, balance, K, L, mint, ragequit, setup, Setup, values},
 };
+use aztec::{
+    note::NoteMessage,
+    protocol::address::AztecAddress,
+    state_vars::{OwnedStateVariable, PrivateSet},
+};
+
+/// `owner` holds `n` notes of one unit, the `i`-th under label `0x1000 + i`, written straight into the
+/// token's storage 16 per block (a call's cap on note hashes): a mint per label would take minutes here.
+unconstrained fn credit_labels(s: Setup, owner: AztecAddress, n: u32) {
+    let slot = LabelledToken::storage_layout().private_balances.slot;
+    let mut i: u32 = 0;
+    while i < n {
+        let end = std::cmp::min(i + 16, n);
+        let written: BoundedVec<NoteMessage<LabelledNote>, 16> = s.env.private_context_at(s.token, |context| {
+            let set = PrivateSet::new(context, slot, owner);
+            let mut out = BoundedVec::new();
+            for k in i..end {
+                out.push(set.insert(LabelledNote { label: 0x1000 + k as Field, origin: ORIGIN_POOL, value: 1 }));
+            }
+            out
+        });
+        for m in 0..written.len() {
+            s.env.discover_note_at(s.token, written.get(m));
+        }
+        i = end;
+    }
+}
 
 #[test]
 unconstrained fn balance_of_private_sums_labels() {
@@ -41,6 +68,28 @@ unconstrained fn private_balances_by_label_aggregates_pages() {
         s.env.execute_utility(LabelledToken::at(s.token).private_balances_by_label(s.user, 1));
     assert_eq(rest.len(), 2);
     assert(rest.get(0) == all.get(1));
+}
+
+// More distinct labels than the 16 × 16 entries of the first sixteen pages: every page lists its
+// share, in first-seen order.
+#[test]
+unconstrained fn private_balances_by_label_lists_past_256_labels() {
+    let s = setup();
+    let n: u32 = 257;
+    credit_labels(s, s.user, n);
+    let mut seen: u32 = 0;
+    while seen < n {
+        let page =
+            s.env.execute_utility(LabelledToken::at(s.token).private_balances_by_label(s.user, seen));
+        assert_eq(page.len(), std::cmp::min(16, n - seen));
+        for j in 0..page.len() {
+            let i = seen + j;
+            assert(page.get(j) == (0x1000 + i as Field, ORIGIN_POOL, 1));
+        }
+        seen += page.len();
+    }
+    let past = s.env.execute_utility(LabelledToken::at(s.token).private_balances_by_label(s.user, n));
+    assert_eq(past.len(), 0);
 }
 
 #[test]
