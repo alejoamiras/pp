@@ -143,6 +143,74 @@ describe("a tick", () => {
 		expect(s.fetches).toBe(2)
 	})
 
+	it("asks the feed at most once per floor, failures included, and never starves the post a reset waits for", async () => {
+		const { s, ports } = chain()
+		const fields: Record<string, unknown>[] = []
+		ports.log = (event, f) => {
+			s.logs.push(event)
+			fields.push(f ?? {})
+		}
+		let t = 0
+		const book = new SnapshotBook()
+		const bot = new Poster(ports, book, { self: SELF, inclusionMarginSec: 144n, leavesFloorMs: 300_000, now: () => t })
+		const at = async (ms: number) => {
+			t = ms
+			return bot.tick()
+		}
+		const step = (n: bigint) => {
+			s.aztecTime += 300n
+			s.l1 = { number: s.l1.number + n, hash: `0x${(s.l1.number + n).toString(16)}`, timestamp: s.aztecTime - 100n }
+		}
+		expect((await at(0)).post).toBe(true)
+		const latest = book.body("latest")
+
+		// A new root inside the floor waits; a mismatch waits a whole floor more; neither posts nor moves /latest.
+		s.chainRoot = root(set2)
+		step(1n)
+		expect(await at(1)).toEqual({ post: false, reason: "asp_deferred" })
+		expect(await at(300_000)).toEqual({ post: false, reason: "asp_root_mismatch" })
+		expect(fields.at(-1)).toMatchObject({ chainRoot: root(set2), aspRoot: root(set1) })
+		expect(fields.at(-1)?.next).toContain("request floor")
+		for (const ms of [300_001, 599_999]) expect(await at(ms)).toEqual({ post: false, reason: "asp_deferred" })
+		expect([s.fetches, s.record.sequence, book.body("latest")]).toEqual([2, 1n, latest])
+		s.aspLeaves = set2
+		expect((await at(600_000)).post).toBe(true)
+
+		// A fetch that fails uses the allowance too.
+		const aspLeaves = ports.aspLeaves
+		ports.aspLeaves = async () => {
+			s.fetches++
+			throw new Error("HTTP 503")
+		}
+		s.chainRoot = root(set1)
+		step(1n)
+		expect(await at(900_000)).toEqual({ post: false, reason: "error" })
+		expect(await at(900_001)).toEqual({ post: false, reason: "asp_deferred" })
+		ports.aspLeaves = aspLeaves
+		s.aspLeaves = set1
+		expect((await at(1_200_000)).post).toBe(true)
+		expect(s.fetches).toBe(5)
+
+		// A reset is fetched again once; when its post fails, the retry reuses that list with no request.
+		s.record = { ...s.record, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		step(1n)
+		const post = ports.post
+		ports.post = async () => {
+			throw new Error("send failed")
+		}
+		expect(await at(1_500_000)).toEqual({ post: false, reason: "error" })
+		ports.post = post
+		expect((await at(1_500_030)).post).toBe(true)
+		expect(s.fetches).toBe(6)
+
+		// A size mismatch drops the list, and the feed is asked again only past the floor.
+		s.record = { ...s.record, poolSize: 9n }
+		expect(await at(1_500_060)).toEqual({ post: false, reason: "size_mismatch" })
+		expect(await at(1_500_090)).toEqual({ post: false, reason: "asp_deferred" })
+		expect(await at(1_800_000)).toEqual({ post: false, reason: "size_mismatch" })
+		expect(s.fetches).toBe(7)
+	})
+
 	it("serves a post's sequence while the post awaits its checkpoint, and moves /latest only after it", async () => {
 		const { s, ports } = chain()
 		const book = new SnapshotBook()

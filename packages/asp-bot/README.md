@@ -89,6 +89,18 @@ The bot reads the pool's leaves from `GET /association-set/leaves`. The standalo
 
 The leaves are used only when they hash to the root the ASP registry holds on Ethereum.
 
+The standalone requests the leaves at most once every 5 minutes, which is the operator's term for its API.
+The 5 minutes count from the start of each attempt, so a failed or timed-out request uses the
+allowance too.
+- **Root changes and mismatches.** The root comes from Ethereum, so leaves are requested only when that
+  root changes, after an admin's reset, or after a list fails a check. When the leaves do not hash to the
+  root, the bot posts nothing new, keeps serving a snapshot it holds, and asks again after the 5
+  minutes.
+- **Resets.** A list fetched since a reset is kept until it is posted.
+- **One process per pool.** The floor lives in the process's memory, so a restart or a second process
+  for the same pool asks again at once. Run one process per pool, and do not restart it in a loop.
+- **The local stack.** Its child bot has no floor.
+
 ## Tests
 
 - Unit: `bun run --cwd packages/asp-bot test`.

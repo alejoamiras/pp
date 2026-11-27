@@ -94,6 +94,9 @@ async function warnMargin(c: StandaloneBotConfig, tag: L1Tag, log: Ports["log"])
 		log("margin_warning", { inclusionMarginSec: c.inclusionMarginSec, tagLagSec: lag, bound: MAX_OBSERVATION_LAG })
 }
 
+/** The operator's term for its API: at most one leaves request per pool every 5 minutes. */
+export const ASP_LEAVES_FLOOR_MS = 300_000
+
 /** How long an abort waits for the in-flight step once the wallet under it has stopped. */
 const DRAIN_MS = 10_000
 
@@ -197,7 +200,11 @@ async function run(
 	cleanup.push(() => live.stop())
 	o.signal.throwIfAborted()
 	await warnMargin(c, tag, log)
-	const poster = new Poster(live.ports, book, { self: live.self, inclusionMarginSec: BigInt(c.inclusionMarginSec) })
+	const poster = new Poster(live.ports, book, {
+		self: live.self,
+		inclusionMarginSec: BigInt(c.inclusionMarginSec),
+		leavesFloorMs: ASP_LEAVES_FLOOR_MS,
+	})
 	const served = () => (o.signal.aborted ? undefined : own.served())
 	const runner = new Runner({
 		// Until its own first post lands, every tick asks for one.
