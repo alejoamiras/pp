@@ -27,6 +27,12 @@ export interface Suite {
 export const forgePassed = (output: string): number =>
 	[...output.matchAll(/Suite result: \w+\. (\d+) passed;/g)].reduce((n, m) => n + Number(m[1]), 0)
 
+/** Reads vitest's last "Tests  N passed" summary line; a CI environment turns its colors on. */
+export const vitestPassed = (output: string): number => {
+	const summary = [...Bun.stripANSI(output).matchAll(/^\s*Tests\s+(.*)$/gm)].at(-1)?.[1] ?? ""
+	return Number(summary.match(/(\d+) passed/)?.[1] ?? 0)
+}
+
 export const SUITES: Suite[] = [
 	// contracts/bridge/evm owns the script and the Foundry `nightly` profile it runs; the libraries and
 	// remappings it assumes are prepared here, as the pull-request job prepares them.
@@ -36,6 +42,14 @@ export const SUITES: Suite[] = [
 		cwd: ".",
 		command: ["bash", "contracts/bridge/evm/scripts/nightly.sh"],
 		passed: forgePassed,
+	},
+	// packages/local-stack owns the case: a stack left idle for 1920 s moves neither chain. It boots the
+	// pool, so the workflow fetches it first.
+	{
+		name: "local-stack-long-idle",
+		cwd: "packages/local-stack",
+		command: ["bun", "run", "test:integration:long"],
+		passed: vitestPassed,
 	},
 ]
 

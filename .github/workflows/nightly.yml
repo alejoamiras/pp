@@ -83,5 +83,10 @@ jobs:
           version: "1.7.1"
           cache: false
 
+      # The local-stack suite boots the pool on its anvil.
+      - uses: ./.nightly-ci/.github/actions/ppv2-fetch
+        with:
+          cache-save: "false"
+
       - name: bun run nightly
         run: bun run nightly

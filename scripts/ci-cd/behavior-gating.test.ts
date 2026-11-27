@@ -322,12 +322,20 @@ test("the nightly reads only: restore-only caches, this commit's actions, no cre
     }
     expect(job.steps.map((s) => s.run)).toContain("bun run nightly")
   }
-  for (const action of ["setup-bun", "setup-aztec"]) {
-    const steps: { if?: string; uses?: string }[] = Bun.YAML.parse(readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")).runs.steps
-    for (const step of steps.filter((s) => s.uses?.startsWith("actions/cache"))) {
-      const restoreOnly = step.if?.includes("inputs.cache-save == 'false'")
-      expect(step.uses?.startsWith("actions/cache/restore@"), `${action}: ${step.if}`).toBe(Boolean(restoreOnly))
-      if (!restoreOnly) expect(step.if, `${action}: a saving cache step must be off when cache-save is false`).toContain("inputs.cache-save != 'false'")
+  // Every composite action the job calls, so a new one cannot bring a saving cache along.
+  const actions = Object.values(wf.jobs as Record<string, { steps: { uses?: string }[] }>)
+    .flatMap((job) => job.steps.map((s) => s.uses?.match(/^\.\/\.nightly-ci\/\.github\/actions\/([^/]+)$/)?.[1]))
+    .filter((name): name is string => Boolean(name))
+  expect(actions).toContain("ppv2-fetch")
+  for (const action of actions) {
+    type Step = { if?: string; uses?: string; with?: Record<string, unknown> }
+    const steps: Step[] = Bun.YAML.parse(readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")).runs.steps
+    for (const step of steps) {
+      const uses = step.uses ?? ""
+      if (/^actions\/cache(\/save)?@/.test(uses))
+        expect(step.if, `${action}: a saving cache step must be off when cache-save is false`).toContain("inputs.cache-save != 'false'")
+      if (uses.startsWith("oven-sh/setup-bun@")) expect(step.with?.["no-cache"], action).toBe("${{ inputs.cache-save == 'false' }}")
+      if (uses.startsWith("foundry-rs/foundry-toolchain@")) expect(step.with?.cache, action).toBe(false)
     }
   }
 })

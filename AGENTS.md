@@ -75,7 +75,8 @@ Suites too slow for a pull request go in `SUITES` in [`scripts/nightly.ts`](scri
 (`bun run nightly`). `nightly.yml` runs it every day from `bridge-v1` when that branch exists, else
 `main`, so a lane adds its deep suite in its own branch; dispatch the workflow with a `ref` to test
 another. A suite that passes no test fails. The L1 fuzz and invariant suites are
-`contracts/bridge/evm/scripts/nightly.sh` at that package's `nightly` Foundry profile.
+`contracts/bridge/evm/scripts/nightly.sh` at that package's `nightly` Foundry profile; local-stack's
+32-minute idle case is its `test:integration:long`.
 
 ## Working in this repo
 
