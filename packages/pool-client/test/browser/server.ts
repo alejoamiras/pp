@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs"
 import { createServer, type Server } from "node:http"
 import { extname, join, normalize } from "node:path"
-import { claimPort, releasePorts } from "../../../pp-env/src/env/harness/ports.ts"
+import { claimPort, releasePorts } from "../../../run-isolation/src/ports.ts"
 import { PINNED_CIRCUITS } from "../../src/runtime/artifacts.ts"
 import { circuitsDir, PACKAGE_DIR } from "../support/paths.ts"
 

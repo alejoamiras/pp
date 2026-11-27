@@ -9,30 +9,21 @@
  */
 import { type ChildProcess, execFileSync, spawn } from "node:child_process"
 import { randomBytes, randomInt } from "node:crypto"
-import {
-	accessSync,
-	closeSync,
-	constants,
-	createWriteStream,
-	existsSync,
-	mkdirSync,
-	openSync,
-	readFileSync,
-	realpathSync,
-	rmSync,
-	statSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs"
+import { accessSync, constants, createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { delimiter, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { groupAlive, signalGroup } from "@pp/run-isolation/process-group"
+import { claimRows, PortClaimConflict, registeredPorts, registryPath, releaseRows, rowsOwnedBy } from "@pp/run-isolation/ports"
+import { killGroup, own as ownChild, type OwnedChild, ownsGroup } from "@pp/run-isolation/process"
 import { ANVIL_ACCOUNTS } from "./constants"
+
+export { killGroup, type OwnedChild } from "@pp/run-isolation/process"
+export { PortClaimConflict, registeredPorts } from "@pp/run-isolation/ports"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const PACKAGE_ROOT = resolve(here, "..", "..")
-const REPO_ROOT = resolve(PACKAGE_ROOT, "..", "..")
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -118,81 +109,6 @@ export async function reserveSandboxPorts(): Promise<SandboxPorts> {
 
 // ─── Host port registry (~/.agents/ports.md) ─────────────────────────────────
 
-const REGISTRY = join(homedir(), ".agents", "ports.md")
-const REGISTRY_LOCK = `${REGISTRY}.lock`
-/** A lock older than this belonged to a run that died holding it; the alternative is a deadlock. */
-const LOCK_STALE_MS = 15_000
-/** Longer than the stale window, so a dead holder's lock clears before a waiter gives up. */
-const LOCK_WAIT_MS = LOCK_STALE_MS + 5_000
-
-function tryAcquireLock(): boolean {
-	try {
-		closeSync(openSync(REGISTRY_LOCK, "wx", 0o600))
-		return true
-	} catch {
-		try {
-			if (Date.now() - statSync(REGISTRY_LOCK).mtimeMs > LOCK_STALE_MS) unlinkSync(REGISTRY_LOCK)
-		} catch {}
-		return false
-	}
-}
-
-const REGISTRY_HEADER = [
-	"# Ports registry — who is RUNNING what, where (atomic-locked)",
-	"| port | service | owner (run) | worktree | pid-hint | claimed |",
-	"|---|---|---|---|---|---|",
-]
-
-/** Rewrites the registry under the lock; `false` when the lock never came free. A host without a
- *  registry gets one — created under that same lock, so two first runs cannot both create it —
- *  because the claims are what keep a run's own ports apart from its next allocation. */
-async function withRegistry(mutate: (lines: string[]) => string[]): Promise<boolean> {
-	mkdirSync(dirname(REGISTRY), { recursive: true })
-	const deadline = Date.now() + LOCK_WAIT_MS
-	for (;;) {
-		if (tryAcquireLock()) {
-			try {
-				const current = existsSync(REGISTRY) ? readFileSync(REGISTRY, "utf8") : `${REGISTRY_HEADER.join("\n")}\n`
-				writeFileSync(REGISTRY, `${mutate(current.split("\n")).join("\n")}`)
-			} finally {
-				try {
-					unlinkSync(REGISTRY_LOCK)
-				} catch {}
-			}
-			return true
-		}
-		if (Date.now() >= deadline) return false
-		await sleep(100)
-	}
-}
-
-const ownerCell = (runId: string) => `| ${runId} |`
-
-const pidsOf = (spawned: readonly OwnedChild[]) => spawned.map((o) => o.child.pid).filter((p): p is number => p !== undefined)
-
-const portOf = (line: string): number | undefined => {
-	const port = Number.parseInt(line.split("|")[1]?.trim() ?? "", 10)
-	return Number.isInteger(port) ? port : undefined
-}
-
-/** Every port the registry lists, whoever claimed it; empty when the host keeps no registry yet. */
-export function registeredPorts(): Set<number> {
-	const ports = new Set<number>()
-	if (!existsSync(REGISTRY)) return ports
-	for (const line of readFileSync(REGISTRY, "utf8").split("\n")) {
-		const port = portOf(line)
-		if (port !== undefined) ports.add(port)
-	}
-	return ports
-}
-
-/** A claim that found one of its ports already owned by another run: pick again. */
-export class PortClaimConflict extends Error {
-	constructor(readonly ports: number[]) {
-		super(`ports already claimed in ${REGISTRY}: ${ports.join(", ")}`)
-	}
-}
-
 /**
  * Claim ports in the host registry under `runId`, one row per service (`<label>-<service>`), so
  * every other run on this host — this package's sandboxes included — picks around them from the
@@ -201,27 +117,16 @@ export class PortClaimConflict extends Error {
  * and a lock that never comes free throws — an unclaimed port is not one to build on.
  */
 export async function registerHostPorts(runId: string, label: string, ports: Record<string, number>, pidHint: number): Promise<void> {
-	const claimed = new Date().toISOString()
-	const wanted = new Set(Object.values(ports))
-	let conflicts: number[] = []
-	const written = await withRegistry((lines) => {
-		const body = lines.filter((l) => l.trim().length > 0)
-		conflicts = body.map(portOf).filter((p): p is number => p !== undefined && wanted.has(p))
-		if (conflicts.length > 0) return lines
-		const rows = Object.entries(ports).map(
-			([service, port]) => `| ${port} | ${label}-${service} | ${runId} | ${REPO_ROOT} | ${pidHint} | ${claimed} |`,
-		)
-		return [...body, ...rows, ""]
-	})
-	if (!written) throw new Error(`${REGISTRY} stayed locked — could not claim ports ${[...wanted].join(", ")} for ${runId}`)
-	if (conflicts.length > 0) throw new PortClaimConflict(conflicts)
+	await claimRows(runId, Object.fromEntries(Object.entries(ports).map(([service, port]) => [`${label}-${service}`, port])), pidHint)
 }
 
-/** Drop every row `runId` owns. Throws when the registry stayed locked past the stale window: the rows
- *  then outlive the run, and the message names them for removal by hand. */
+/** Drop every row whose owner is `runId`. Throws when the registry stayed locked past the stale window:
+ *  the rows then outlive the run, and the message names them for removal by hand. */
 export async function releaseHostPorts(runId: string, ports: Record<string, number>): Promise<void> {
-	if (await withRegistry((lines) => lines.filter((l) => !l.includes(ownerCell(runId))))) return
-	throw new Error(`${REGISTRY} stayed locked — remove the rows owned by ${runId} (ports ${Object.values(ports).join(", ")}) by hand`)
+	if (await releaseRows(runId)) return
+	throw new Error(
+		`${registryPath()} stayed locked — remove the rows owned by ${runId} (ports ${Object.values(ports).join(", ")}) by hand`,
+	)
 }
 
 const releasePorts = (runId: string, ports: SandboxPorts) => releaseHostPorts(runId, ports)
@@ -357,106 +262,21 @@ async function waitHealthy(label: string, probe: () => Promise<boolean>, timeout
 
 // ─── Process ownership ───────────────────────────────────────────────────────
 
-/** A spawned child plus the one authority on whether it is still running: its own `exit` event.
- *  `killed` only records that a signal was sent, and an exited PID may already name someone else. */
-export interface OwnedChild {
-	child: ChildProcess
-	hasExited: () => boolean
-	exited: Promise<void>
-}
+const pidsOf = (spawned: readonly OwnedChild[]) => spawned.map((o) => o.child.pid).filter((p): p is number => p !== undefined)
 
+/** Logs a spawn error with the sandbox's prefix; the child's own exit stays the authority on whether it runs. */
 export function own(child: ChildProcess): OwnedChild {
-	let done = false
-	const exited = new Promise<void>((resolve) => {
-		child.once("exit", () => {
-			done = true
-			resolve()
-		})
-	})
-	// A failed spawn (a missing executable) is an asynchronous `error`; unhandled, it crashes the host
-	// past `stop`. The boot then fails on its health timeout and tears down normally.
 	child.on("error", (e) => console.error(`[sandbox] ${child.spawnfile}: ${e.message}`))
-	return { child, hasExited: () => done, exited }
-}
-
-/** The timer is cleared on exit so a child that goes down at once does not hold the loop open. */
-function exitedWithin(owned: OwnedChild, ms: number): Promise<void> {
-	return new Promise((resolve) => {
-		const timer = setTimeout(resolve, ms)
-		void owned.exited.then(() => {
-			clearTimeout(timer)
-			resolve()
-		})
-	})
-}
-
-/** Whether `-pid` still names the group this module created. Once the leader has exited, a live
- *  member keeps its number reserved, so a live group whose number names no process is ours; a process
- *  holding the number got it after our group died and is a stranger. Assumes the number is not handed
- *  out again, and its new group orphaned, within one run. */
-function ownsGroup(owned: OwnedChild): boolean {
-	const pid = owned.child.pid
-	if (pid === undefined) return false
-	return !owned.hasExited() || (groupAlive(pid) && !processExists(pid))
-}
-
-/** Signals the process GROUP this module created (`detached: true` makes the child a group leader),
- *  so the node's own children die with it, and nothing else on the machine is touched. */
-export async function killGroup(owned: OwnedChild): Promise<void> {
-	const pid = owned.child.pid
-	if (pid === undefined || !ownsGroup(owned)) return
-	const signal = (sig: NodeJS.Signals) => {
-		try {
-			process.kill(-pid, sig)
-		} catch {
-			try {
-				owned.child.kill(sig)
-			} catch {}
-		}
-	}
-	if (!owned.hasExited()) {
-		signal("SIGTERM")
-		await exitedWithin(owned, 5_000)
-	}
-	// The leader going down does not take its group with it: a member that ignores SIGTERM (the
-	// node's AVM simulator does) keeps running.
-	if (!ownsGroup(owned)) return
-	signal("SIGKILL")
-	// A killed member counts in the group until it is reaped; callers check for leftovers next.
-	for (const end = Date.now() + 5_000; groupAlive(pid) && Date.now() < end; ) await sleep(50)
-}
-
-/** Signal 0 probes without delivering: true while any process is still in the group. */
-function groupAlive(pgid: number): boolean {
-	try {
-		process.kill(-pgid, 0)
-		return true
-	} catch {
-		return false
-	}
-}
-
-/** EPERM still means the PID exists, held by another user. */
-function processExists(pid: number): boolean {
-	try {
-		process.kill(pid, 0)
-		return true
-	} catch (e) {
-		return (e as NodeJS.ErrnoException).code === "EPERM"
-	}
+	return ownChild(child)
 }
 
 /** What a stopped run still holds, found by its own identifiers: directories that exist, process
- *  groups with a live member, registry rows naming its run id. */
+ *  groups with a running member, registry rows it owns. */
 export function runLeftovers(run: { runId: string; dirs: readonly string[]; pgids: readonly number[] }): string[] {
 	const left = run.dirs.filter((dir) => existsSync(dir)).map((dir) => `directory ${dir}`)
 	for (const pgid of run.pgids) if (groupAlive(pgid)) left.push(`process group ${pgid}`)
-	const rows = existsSync(REGISTRY)
-		? readFileSync(REGISTRY, "utf8")
-				.split("\n")
-				.filter((l) => l.includes(ownerCell(run.runId)))
-		: []
-	if (rows.length) left.push(`${rows.length} registry row(s) owned by ${run.runId}`)
+	const rows = rowsOwnedBy(run.runId)
+	if (rows) left.push(`${rows} registry row(s) owned by ${run.runId}`)
 	return left
 }
 
@@ -738,9 +558,7 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 	const onExit = () => {
 		for (const owned of spawned) {
 			if (owned.child.pid === undefined || !ownsGroup(owned)) continue
-			try {
-				process.kill(-owned.child.pid, "SIGKILL")
-			} catch {}
+			signalGroup(owned.child.pid, "SIGKILL")
 		}
 		removeDirs()
 	}

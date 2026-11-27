@@ -46,6 +46,8 @@ jobs:
             pool-client:
               - 'packages/pool-client/**'
               - 'packages/pp-env/**'
+              - 'packages/run-isolation/src/**'
+              - 'packages/run-isolation/package.json'
               - 'packages/bridge-core/package.json'
               - 'package.json'
               - 'bun.lock'

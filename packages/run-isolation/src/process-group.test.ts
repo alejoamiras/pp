@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { once } from "node:events"
 import { setTimeout as sleep } from "node:timers/promises"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "bun:test"
 import { endGroup, groupAlive, type ProcFs } from "./process-group"
 
 // Without /proc these semantics do not apply (macOS); CI is Linux, so there the suite always runs.
