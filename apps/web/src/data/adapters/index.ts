@@ -1,8 +1,8 @@
 /**
  * The stack behind `#data`: the deployment and endpoints from the build's stack target, the asset's
  * decimals and symbol from the factory's registration, Ethereum through the page's injected wallet, chain time from both chains, the owner's session over
- * pool-client and the bridge client, and the token's views through the connected Aztec wallet. The
- * exit and allow-list ports have no stack adapter yet and refuse.
+ * pool-client and the bridge client, the token's views and the ragequit through the connected Aztec
+ * wallet, and exit tickets over the bridge client. The allow-list port has no stack adapter yet and refuses.
  *
  * Everything that carries aztec.js, the contract artifacts or the bridge client loads on first use,
  * so the main chunk stays free of them.
@@ -82,6 +82,13 @@ const loadSessions = (): Promise<SessionPort> =>
 		}),
 	))
 
+type ExitSide = Pick<AztecPort, "ragequit"> & ExitPort
+let exitsLoad: Promise<ExitSide> | undefined
+const loadExits = (): Promise<ExitSide> =>
+	(exitsLoad ??= Promise.all([import("./session"), loadAztec()]).then(([m, side]) =>
+		m.stackExits({ manifest, deployment, aztec: side.deps, notes: (owner, label) => side.port.notesByLabel(owner, label), l1 }),
+	))
+
 const sessions: SessionPort = {
 	open: async (a) => (await loadSessions()).open(a),
 	forget: async () => (await loadSessions()).forget(),
@@ -94,10 +101,13 @@ const aztec: AztecPort = {
 	transferPrivate: unavailable("AztecPort.transferPrivate"),
 	unshield: unavailable("AztecPort.unshield"),
 	shield: unavailable("AztecPort.shield"),
-	ragequit: unavailable("AztecPort.ragequit"),
+	ragequit: async (from, a, on) => (await loadExits()).ragequit(from, a, on),
 	exitPublic: unavailable("AztecPort.exitPublic"),
 }
-const exits: ExitPort = { tickets: unavailable("ExitPort.tickets"), settle: unavailable("ExitPort.settle") }
+const exits: ExitPort = {
+	tickets: async (payee) => (await loadExits()).tickets(payee),
+	settle: async (t, sender, on) => (await loadExits()).settle(t, sender, on),
+}
 const allowList: AllowListPort = {
 	current: unavailable("AllowListPort.current"),
 	state: () => {

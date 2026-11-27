@@ -39,6 +39,9 @@ import { PROVED_CIRCUIT } from "./circuit"
 import type { StackL1 } from "./l1"
 import { type DelegatingProver, delegatingProver } from "./prover"
 
+// The exits run over the same bridge-core, whose SponsoredFPC artifact the build lets only this chunk carry.
+export { stackExits } from "./exits"
+
 /** Every journal key this app writes starts with this; nothing else in the page's storage does. */
 export const JOURNAL_PREFIX = "pp.web.bridge."
 

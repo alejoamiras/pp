@@ -1,7 +1,7 @@
 /**
  * Ethereum for a stack build: reads over the target's RPC, signatures and sends through the page's
- * injected wallet (EIP-1193). A bridge spend's wallet client is pinned to the attempt's sender and the
- * target's chain (viem checks the wallet's chain right before it sends) over the deny-by-default guard.
+ * injected wallet (EIP-1193). A bridge spend's or a settle's wallet client is pinned to its sender and
+ * the target's chain (viem checks the wallet's chain right before it sends) over the deny-by-default guard.
  */
 import {
 	type Account,
@@ -80,6 +80,8 @@ export interface StackL1 extends L1Port {
 	 * `hooks.sent` hears the hash.
 	 */
 	spendWallet(a: Attempt, assertCurrent: () => void, hooks: Pick<SubmitHooks, "sent">): WalletClient<Transport, Chain, Account>
+	/** The client a settle sends through: the injected wallet, pinned to `sender` and the target's chain, behind the same guard. */
+	settleWallet(sender: Address, assertCurrent: () => void): WalletClient<Transport, Chain, Account>
 }
 
 export function stackL1(
@@ -117,5 +119,7 @@ export function stackL1(
 				transport: custom(reportSends(guardedProvider(inner, assertCurrent), hooks.sent)),
 			})
 		},
+		settleWallet: (sender, assertCurrent) =>
+			createWalletClient({ account: sender, chain, transport: custom(guardedProvider(need(), assertCurrent)) }),
 	}
 }
