@@ -60,6 +60,8 @@ test("a pool-client spend comes back as plain data in PoolUser's shape, transact
 		pubSignals: [[9n, 10n]],
 	} as const
 	const noteData = [{ hint: "0x01", data: "0x02" }] as const
+	const lowerAsset = "0x00000000000000000000000000000000000abcde"
+	expect(getAddress(lowerAsset)).not.toBe(lowerAsset)
 	const spend: ClientSpend = Object.freeze({
 		proof,
 		noteData,
@@ -69,7 +71,7 @@ test("a pool-client spend comes back as plain data in PoolUser's shape, transact
 		spentCommitment: 12n,
 		change: { commitment: 13n, precommitment: 14n, label: 15n, value: 16n },
 		amount: 17n,
-		asset: addr(8).toLowerCase() as ClientSpend["asset"],
+		asset: lowerAsset,
 		aspRoot: 18n,
 	})
 	const prepared = toPreparedSpend(spend)
@@ -81,7 +83,7 @@ test("a pool-client spend comes back as plain data in PoolUser's shape, transact
 		changeCommitment: 13n,
 		changeValue: 16n,
 		amountOut: 17n,
-		asset: addr(8),
+		asset: getAddress(lowerAsset),
 		label: 15n,
 	})
 })

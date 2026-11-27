@@ -2,11 +2,7 @@ import type { ArtifactSource, PreparedSpend as ClientSpend, PoolConfig } from "@
 import { type Address, getAddress, type Hex } from "viem"
 import type { ClientConfig, PreparedSpend } from "./types.ts"
 
-/**
- * The viem boundary. pp-env runs on its own viem and @pp/pool-client on another, so only plain data
- * (strings, numbers, bigints, and arrays or records of them) crosses here: never a client, an
- * account or a transport. pool-client builds its own RPC client from `pool.l1Rpc`.
- */
+/** The viem boundary: the two sides run different viem copies, so only plain data crosses and pool-client builds its own RPC client from `pool.l1Rpc`. */
 export function poolClientOptions(
 	config: ClientConfig,
 	asset: Address,

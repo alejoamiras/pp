@@ -91,7 +91,10 @@ function contracts(config: ClientConfig, wallet: LocalWallet, merkleService: Mer
 	}
 }
 
-/** The checkout's session: keys, registration, deposits and note discovery. Spends go to @pp/pool-client. */
+/**
+ * Registration, deposits and the notes `pickInput` chooses from. Spends go to @pp/pool-client, which
+ * discovers on its own cursor, so it can refuse a note listed here (not yet seen, revoked, or hidden by the ASP).
+ */
 async function wireSession(
 	config: ClientConfig,
 	wallet: LocalWallet,
@@ -131,7 +134,9 @@ function pickInput(noteManager: NoteManager, asset: Address, input: bigint | und
 }
 
 /** One pool-client per asset, opened on first spend; a failed open is retried on the next. */
-function spender(config: ClientConfig, owner: Address, signature: Hex, prover: IGroth16Prover) {
+function spender(live: ClientConfig, owner: Address, signature: Hex, prover: IGroth16Prover) {
+	// Read once, as the session was: a later edit to the caller's config must not split one user in two.
+	const config = structuredClone(live)
 	const clients = new Map<Address, Promise<PoolClient>>()
 	const clientFor = (asset: Address) => {
 		const known = clients.get(asset)
@@ -182,6 +187,6 @@ export async function createPoolUser(config: ClientConfig, o: { wallet: LocalWal
 			await session.discoverNotes()
 		},
 		notes: () => noteManager.getNotes().map(toPoolNote),
-		prepareSpend: (p) => spend(pickInput(noteManager, p.asset, p.input), p),
+		prepareSpend: async (p) => spend(pickInput(noteManager, p.asset, p.input), p),
 	}
 }
