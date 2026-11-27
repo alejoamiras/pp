@@ -5,7 +5,7 @@
  * creates lives under `<state>/real-wallet/` and is deleted by it; nothing else is.
  */
 import { randomBytes } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { test as base, type BrowserContext, expect, type Page, type TestInfo } from "@playwright/test"
@@ -284,7 +284,9 @@ function digest(rw: RealWallet, testInfo: TestInfo): void {
 		log: rw.lines.slice(-30),
 	}
 	console.log(`[real-wallet] failure digest\n${JSON.stringify(d, null, 2)}`)
-	void testInfo.attach("failure-digest.json", { body: JSON.stringify(d, null, 2), contentType: "application/json" })
+	const path = testInfo.outputPath("failure-digest.json")
+	writeFileSync(path, JSON.stringify(d, null, 2))
+	void testInfo.attach("failure-digest.json", { path, contentType: "application/json" })
 }
 
 export { expect }
