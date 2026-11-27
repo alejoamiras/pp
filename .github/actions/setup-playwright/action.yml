@@ -1,5 +1,10 @@
 name: Setup Playwright
-description: Restore the Playwright browser cache keyed on the e2e kit's pinned version, then install Chromium with its system deps.
+description: Restore the Playwright browser cache keyed on a workspace's pinned version, then install Chromium with its system deps.
+
+inputs:
+  package-dir:
+    description: The workspace whose Playwright pin and binary are used, relative to the repository root.
+    default: packages/e2e-kit
 
 runs:
   using: composite
@@ -8,16 +13,19 @@ runs:
       id: cache
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles('packages/e2e-kit/package.json') }}
+        key: ${{ runner.os }}-playwright-${{ hashFiles(format('{0}/package.json', inputs.package-dir)) }}
         restore-keys: |
           ${{ runner.os }}-playwright-
     # The browser download is skipped on a cache hit; the OS deps are installed either way (they
     # live outside the cache).
     - name: Install Chromium
       shell: bash
+      env:
+        PLAYWRIGHT: ${{ inputs.package-dir }}/node_modules/.bin/playwright
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
       run: |
-        if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
-          packages/e2e-kit/node_modules/.bin/playwright install-deps chromium
+        if [ "$CACHE_HIT" = "true" ]; then
+          "$PLAYWRIGHT" install-deps chromium
         else
-          packages/e2e-kit/node_modules/.bin/playwright install --with-deps chromium
+          "$PLAYWRIGHT" install --with-deps chromium
         fi
