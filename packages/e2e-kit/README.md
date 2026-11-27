@@ -8,33 +8,54 @@ wallet answered from Node (`fixtures/l1-wallet.ts`). The specs live in `apps/web
 
 ```bash
 bun run --cwd packages/e2e-kit test:browser                    # everything, one sandbox
-bun run --cwd packages/e2e-kit test:browser -- --shard=1/2     # a shard (each boots its own sandbox)
-bun run --cwd packages/e2e-kit test:browser reap               # stop sandboxes this checkout left behind
+PP_E2E_MODE=stack bun run --cwd packages/e2e-kit test:browser  # everything, one local stack
+bun run --cwd packages/e2e-kit test:browser -- --shard=1/2     # a shard (each boots its own network)
+bun run --cwd packages/e2e-kit test:browser reap               # stop networks this checkout left behind
 ```
 
 `scripts/e2e/agent.sh` is the whole run:
 
 1. Claim three ports from `~/.agents/ports.md`: the app and one wallet origin per profile.
-2. `sandbox:up` from `packages/bridge-core` (anvil, `aztec start --local-network`, a bridge
-   generation).
+2. Boot the network. `sandbox` mode (the default): `sandbox:up` from `packages/bridge-core`
+   (anvil, `aztec start --local-network`, a bridge generation). `stack` mode: `scripts/e2e/stack.ts
+   up`, which starts `@pp/local-stack`'s CLI (`demo --keep`) as its own process group and waits for
+   its manifest.
 3. `build:test-wallet` with the run's node and app origin baked in.
-4. The app's `build:local` with the node and wallet URLs, then a check that both bundles name the
-   node, then Playwright with one `vite preview` per build.
+4. The app's `build:local` with the wallet URLs and either the sandbox artifacts (the fixture world)
+   or the stack's `PP_STACK_MANIFEST`, then a check that both bundles name the node, then
+   Playwright with one server per build: `vite preview` for a fixture build, the app's own `serve`
+   for a stack build.
 5. Reap.
 
 State lives under `.e2e-state/<run>/` (gitignored), or `PP_E2E_STATE_DIR` when set: ports, the
-sandbox artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the sandbox and prints the line that reattaches to it
+network's artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the network and prints the line that reattaches to it
 (`PP_E2E_ATTACH=<state dir>`, with `PP_E2E_REBUILD=1` to rebuild).
+
+## Stack mode
+
+`bun run --cwd apps/web e2e` runs this mode; it needs what `bun run demo` needs (`bun run
+demo:prepare` once per clone, Foundry 1.7.1 or `FORGE` pointing at it). `stack.ts up` writes
+`<state>/stack.json` (the CLI's process group, the manifest path, the anvil indices of the stack's
+seeded pool user and bridge sender; never a key) and `<state>/wallet/handle.json`, the node, chain
+and rollup version the test wallet builds from. `stack.ts down` sends SIGTERM to that group only
+while its leader is still the CLI this state dir logged, and waits up to three minutes: the CLI
+tears down every group it started itself, which SIGKILL would orphan. `reap` runs `down` for every
+stack state under `.e2e-state/` and under `PP_E2E_STATE_DIR`.
+
+On the stack, `Network.l1(0)` is the seeded pool user and `l1(1)` its sender, the stack runs its own
+block heartbeat, and actors are sponsor-deployed through bridge-core's `connectL2` and
+`createActor`. A spec reads `run.mode` to skip what one mode cannot show.
 
 ## Layout
 
 | Path | Role |
 |---|---|
 | `playwright.config.ts` | Chromium, `workers: 1`, the app and wallet servers, traces on failure; specs come from `apps/web/e2e` or `PP_E2E_SPECS` |
-| `env.ts` | the run's coordinates from the `PP_*` variables the runner sets |
-| `global-setup.ts` | the handle names chain 31337 |
-| `fixtures/test.ts` | the `test` every spec uses: sandbox access, an actor pool per file, a fresh actor per test, the L1 shim, the egress fence, the parked wallet panel |
-| `fixtures/sandbox.ts` | the Node side: `openSandbox` on the handle, `newActor()` (sponsor-deployed, with its own flow context) |
+| `env.ts` | the run's coordinates from the `PP_*` variables the runner sets, its mode, and the stack run record |
+| `global-setup.ts` | the handle or the stack manifest names chain 31337 |
+| `fixtures/test.ts` | the `test` every spec uses: network access, an actor pool per file, a fresh actor per test, the L1 shim, the egress fence, the parked wallet panel |
+| `fixtures/network.ts` | the run's network for either mode: `newActor()`, the L1 account by index, the sandbox's block nudge |
+| `fixtures/sandbox.ts` | the sandbox's Node side: `openSandbox` on the handle, `newActor()` (sponsor-deployed, with its own flow context) |
 | `fixtures/l1-wallet.ts` | `window.ethereum` → `exposeFunction` → viem over anvil: `setChainId`, `setAccount`, `rejectNext`, `holdNext(kind, { to })`, per-method `calls` |
 | `fixtures/egress.ts` | aborts every non-loopback request; the record must be empty at teardown |
 | `fixtures/wallet-panel.ts` | parks the SDK's floating session panel in a corner so it covers no test id |
@@ -43,6 +64,7 @@ sandbox artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the sandbox 
 | `shard-reporter.ts`, `scripts/e2e/shard-plan.ts` | under `--shard`, deal whole spec files by recorded duration instead of test count |
 | `shard-durations.json` | the record `shard-plan.ts` reads; empty until the suite is sharded |
 | `scripts/e2e/resolve-ports.ts` | claims and releases the run's ports in the host registry |
+| `scripts/e2e/stack.ts` | stack mode's `up` and `down` for the local stack's CLI process group |
 
 ## Accounts
 
@@ -72,15 +94,15 @@ the transaction at the node hand-off, never forward it) and `declineNextGrant`.
 ## Blocks come on demand
 
 The local network builds a block only when a transaction arrives, so a claim driven from the UI
-would wait forever on an L1→L2 message. The `test` fixture keeps a heartbeat for the worker's life,
-the same nudge the integration harness uses. This is the one place the suite differs from a real
-network.
+would wait forever on an L1→L2 message. On the sandbox the `test` fixture keeps a heartbeat for the
+worker's life, the same nudge the integration harness uses; the local stack keeps its own. This is
+the one place the suite differs from a real network.
 
 ## CI
 
 `pr-quick.yml` builds the test wallet against `fixtures/build-artifacts` on every change the kit can
-see. `web.yml` runs the whole browser suite, sandbox included, on every change the app or the kit
-can see.
+see. `web.yml` runs the whole browser suite in stack mode, the local stack included, on every change
+the app or the kit can see.
 
 ## Rules
 
@@ -89,4 +111,4 @@ can see.
 - Every test states its expected payer and its balance or note postconditions, read from the chain
   through the harness; the UI's text is never the authority.
 - Nothing here boots a network or picks a port by hand; the runner owns both. Two runs on one
-  machine are two sandboxes on two port sets.
+  machine are two networks on two port sets.
