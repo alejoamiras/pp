@@ -92,6 +92,17 @@ describe("security headers", () => {
 		expect(parseHeaderFile(JSON.stringify(securityHeaders(STACK)))).toEqual(securityHeaders(STACK))
 	})
 
+	test("a stack target differs from a fixture target in connect-src alone, and only there adds data:", () => {
+		const fixture = directives(contentSecurityPolicy(TARGET))
+		const stack = directives(contentSecurityPolicy(STACK))
+		expect(Object.keys(stack)).toEqual(Object.keys(fixture))
+		for (const name of Object.keys(fixture)) if (name !== "connect-src") expect(stack[name], name).toEqual(fixture[name])
+		// img-src's `data:` is every build's; connect-src's is the stack's alone.
+		const withData = (d: Record<string, string[]>) => Object.keys(d).filter((name) => d[name]?.includes("data:"))
+		expect(withData(fixture)).toEqual(["img-src"])
+		expect(withData(stack)).toEqual(["img-src", "connect-src"])
+	})
+
 	test("read back from their file, and any other file is refused", () => {
 		const headers = securityHeaders(TARGET)
 		expect(parseHeaderFile(JSON.stringify(headers))).toEqual(headers)
