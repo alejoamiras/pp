@@ -1,5 +1,5 @@
 # Symlink to the fetched Privacy Pools v2 checkout (outside the repository).
-.ppv2
+.ppv2*
 contracts/out
 contracts/cache
 contracts/lib

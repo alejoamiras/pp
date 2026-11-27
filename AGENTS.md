@@ -50,6 +50,7 @@ with warm package and toolchain caches.
 | Unit (every workspace) | `bun run test:all` | 16 s |
 | CI-gating tests | `bun run test:ci-gating` | < 1 s |
 | Workflow lint | `bun run lint:actions` | < 1 s |
+| Quality and Web build without the pool checkout | `bun run test:unfetched` | 3 min |
 | L1 build + hermetic tests | `forge build && forge test --no-match-contract Fork` in `contracts/bridge/evm` | 2 min |
 | L1 gas snapshot | `bash contracts/bridge/evm/scripts/check-gas.sh` | 1 s |
 | L1 symbolic proofs | `bash contracts/bridge/evm/scripts/check-halmos.sh` | 67 s |
@@ -75,6 +76,11 @@ with warm package and toolchain caches.
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row
 the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml`,
 `pool-client.yml`, `actionlint.yml` and `web.yml`.
+
+Quality's jobs and Web's build job never fetch the pool checkout, so a worktree that ran pp-env's
+`fetch` resolves `#ppv2` where CI cannot. Before a PR whose code can reach `@pp/pp-env`, run
+`bun run test:unfetched`: it runs those jobs' steps with this worktree's checkout link moved aside,
+so run one at a time per worktree.
 
 Suites too slow for a pull request go in `SUITES` in [`scripts/nightly.ts`](scripts/nightly.ts)
 (`bun run nightly`). `nightly.yml` runs it every day from `bridge-v1` when that branch exists, else
