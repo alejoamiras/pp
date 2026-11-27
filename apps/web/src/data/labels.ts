@@ -71,16 +71,24 @@ const FAILURE_TEXT: Record<AllowListCode, string> = {
 	LIST_OVERSIZED: "Allow list too large",
 	LIST_CANCELLED: "Check stopped",
 	LIST_UNAVAILABLE: "Allow list unavailable",
+	LIST_RESETTING: "Allow list being reset",
+	LIST_NOT_POSTED: "No allow list yet",
 }
+
+/** No list to check until a post, which the next refresh reads: nothing to check again. */
+const AWAITING_POST: ReadonlySet<AllowListCode> = new Set(["LIST_RESETTING", "LIST_NOT_POSTED"])
 
 /** A label whose list could not be checked: its state is unknown, so only the ragequit stays open. */
 export function listFailureView(code: AllowListCode): LabelView {
+	const waiting = AWAITING_POST.has(code)
 	return {
 		text: FAILURE_TEXT[code],
-		tone: code === "LIST_CANCELLED" ? "neutral" : "bad",
+		tone: code === "LIST_CANCELLED" ? "neutral" : waiting ? "wait" : "bad",
 		meaning: messageOf(code),
 		can: CLOSED,
-		reason: "Send and Unshield wait until the allow list can be checked",
-		checkAgain: code !== "LIST_UNAVAILABLE",
+		reason: waiting
+			? "Send and Unshield wait for the next allow-list post"
+			: "Send and Unshield wait until the allow list can be checked",
+		checkAgain: code !== "LIST_UNAVAILABLE" && !waiting,
 	}
 }

@@ -181,6 +181,21 @@ describe("the token's checked spends", () => {
 		expect(check.mock.calls.map(([v]) => v.record.poolSize)).toEqual([1n, 2n])
 	})
 
+	test("refuses as stale, checking nothing, a record that carries no list", async () => {
+		const r = rig()
+		const cleared = { sequence: 9n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		const check = vi.fn().mockResolvedValue(ACTIVE)
+		const sends = stackTokenSends({
+			aztec: r.aztec,
+			allowList: { current: async () => ({ record: cleared, nowSec: 2n }), check },
+			sponsoredFpc: FPC,
+			notes: ENOUGH,
+			publicBalance: PUBLIC,
+		})
+		await expect(sends.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())).rejects.toMatchObject({ code: "LIST_STALE" })
+		expect([check.mock.calls.length, r.wallet.sendTx.mock.calls.length]).toEqual([0, 0])
+	})
+
 	test("refuses a path whose roots held through the check but aged past spending by the read after it", async () => {
 		const r = rig()
 		// For rootTime 1, 1501 is the last read time still fresh once the proving budget is added.

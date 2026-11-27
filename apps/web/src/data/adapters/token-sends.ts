@@ -15,6 +15,7 @@ import { labelledTokenArtifact } from "@pp/bridge-core/artifacts"
 import { rootFresh } from "@pp/label-paths"
 import { assertSpendable } from "../chunks"
 import { BridgeFailure } from "../errors"
+import { noListCode } from "../list-post"
 import type { AllowListPort, AllowListView, AztecPort, AztecSendHooks, Sent } from "../ports"
 import type { AztecAddress, LabelPath, Origin } from "../stack-types"
 import { PROVING_BUDGET_SEC } from "./allow-list"
@@ -37,7 +38,7 @@ const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
 /**
  * `label`'s path under `origin` in the latest list.
  * @throws `LABEL_ABSENT` when the list does not hold it, `LIST_STALE` when the list is too old to spend
- *   against, and the allow list's own `LIST_*` failures when it could not be checked
+ *   against or the record carries none, and the allow list's own `LIST_*` failures when it could not be checked
  */
 export async function checkedPath(allowList: TokenSendDeps["allowList"], label: bigint, origin: Origin): Promise<LabelPath> {
 	let view = await allowList.current()
@@ -60,6 +61,8 @@ export async function checkedPath(allowList: TokenSendDeps["allowList"], label: 
 const MAX_CHECKS = 3
 
 async function pathIn(allowList: TokenSendDeps["allowList"], view: AllowListView, label: bigint, origin: Origin): Promise<LabelPath> {
+	// A record with no list, before the first post or while it is being reset, is a list too old to spend against.
+	if (noListCode(view.record)) throw new BridgeFailure("LIST_STALE")
 	const check = await allowList.check(view, label, origin)
 	if (check.state === "ABSENT") throw new BridgeFailure("LABEL_ABSENT")
 	if (check.state === "STALE_ROOT") throw new BridgeFailure("LIST_STALE")

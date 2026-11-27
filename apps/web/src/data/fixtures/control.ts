@@ -4,7 +4,7 @@
  */
 import { type Address, isAddress } from "viem"
 import type { StaleRootCode } from "../stack-types"
-import { approveBirths } from "./allow-list"
+import { approveBirths, resetAllowList } from "./allow-list"
 import { type FixtureOp, isFixtureOp } from "./faults"
 import { selectedAccount } from "./l1"
 import { ACCOUNTS } from "./seed"
@@ -33,8 +33,10 @@ export interface FixtureControl {
 	reproveNext(code: StaleRootCode): void
 	/** The next call of `op` never settles (a `prove` until the page cancels it). */
 	hangNext(op: FixtureOp): void
-	/** Posts a record that approves every pending shield. */
+	/** Posts a record that approves every pending shield; after a reset, it is the next post. */
 	approveBirths(): void
+	/** Replaces the registry's poster: the record is cleared, at the next sequence, until the next post. */
+	resetAllowList(): void
 	/** Mines `blocks` Ethereum blocks (12 s each; an Aztec block every 6). */
 	advance(blocks: number): void
 	state(): FixtureSnapshot
@@ -96,6 +98,7 @@ export function createControl(w: World, wallet: { remoteDisconnect(): void }): F
 		},
 		hangNext: (op) => w.update((s) => void s.faults.hang.push(checkOp(op))),
 		approveBirths: () => approveBirths(w),
+		resetAllowList: () => resetAllowList(w),
 		advance(blocks) {
 			if (!Number.isSafeInteger(blocks) || blocks < 0 || blocks > MAX_ADVANCE)
 				throw new Error("__ppFixtures.advance: blocks must be an integer from 0 to 100000")

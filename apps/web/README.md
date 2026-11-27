@@ -72,7 +72,10 @@ as far as a check needs:
 - A list that timed out, does not match the chain, is too large, or whose check was cancelled fails
   at once, with no work, until Check again, which waits 5 s, then twice as long each time, up to
   5 minutes. One check runs at a time; the page shows its progress and can cancel it, which ends
-  the worker.
+  the worker. Such a failure also closes a label the same list showed active before.
+- A record with no list, before the first post or once the registry's poster is replaced (which
+  clears it until the next post), downloads nothing. Its labels read as not checkable, every spend
+  is refused as on a stale list, and the next post is read on the next refresh.
 
 A testnet build (`build --mode testnet` with `PP_DEPLOYMENT`, a testnet deployment file, into
 `dist-testnet/`) targets the own pool on Sepolia and the public Aztec testnet. Its ASP and bot are

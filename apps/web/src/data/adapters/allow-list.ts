@@ -2,12 +2,14 @@
  * The allow list for a stack build: the registry's record and its time read at one Aztec block, and
  * each label checked in the page's one allow-list worker against the bot's snapshot of that record's
  * lists. Work is keyed by the lists, both roots and both lengths, never the sequence: the bot re-posts
- * the same lists under a new sequence every few minutes, and that costs no download and no hash. A list that failed is not
- * fetched again until a manual Check again, which backs off.
+ * the same lists under a new sequence every few minutes, and that costs no download and no tree build.
+ * A list that failed is not fetched again until a manual Check again, which backs off. A record with no
+ * list checks nothing and fetches nothing.
  */
 import { type Hex, readRootRecord } from "@pp/label-paths"
 import { z } from "zod"
-import { type AllowListCode, AllowListError } from "../errors"
+import { type AllowListCode, AllowListError, HELD_LIST_CODES } from "../errors"
+import { noListCode } from "../list-post"
 import type { AllowListPort, AllowListProgress, AllowListView, Timer } from "../ports"
 import type { LabelCheck, Origin } from "../stack-types"
 import { type DownloadLimits, downloadSnapshot } from "./snapshot-download"
@@ -86,9 +88,6 @@ async function latestBlock(nodeUrl: string, fetchFn: typeof fetch): Promise<{ ha
 	return { hash: blockHash as Hex, timestamp: BigInt(header.globalVariables.timestamp) }
 }
 
-/** A failure that closes a list until Check again: all but an unavailable one, which a refresh reads again. */
-const HELD: ReadonlySet<AllowListCode> = new Set(["LIST_TIMEOUT", "LIST_MISMATCH", "LIST_OVERSIZED", "LIST_CANCELLED"])
-
 const FROM_WORKER: Record<ListFailure, AllowListCode> = {
 	MISMATCH: "LIST_MISMATCH",
 	OVERSIZED: "LIST_OVERSIZED",
@@ -127,6 +126,8 @@ class StackAllowList implements AllowListPort {
 	}
 
 	check(view: AllowListView, label: bigint, origin: Origin): Promise<LabelCheck> {
+		const none = noListCode(view.record)
+		if (none) return Promise.reject(new AllowListError(none))
 		const mine = this.generation
 		const job = this.queue.then(() => {
 			if (mine !== this.generation) throw new AllowListError("LIST_CANCELLED")
@@ -202,7 +203,7 @@ class StackAllowList implements AllowListPort {
 	}
 
 	private failed(key: string, code: AllowListCode): AllowListError {
-		if (!HELD.has(code)) return new AllowListError(code)
+		if (!HELD_LIST_CODES.has(code)) return new AllowListError(code)
 		if (code !== "LIST_CANCELLED") this.attempts.set(key, (this.attempts.get(key) ?? 0) + 1)
 		const held = { code, at: this.d.timer.now() }
 		this.failures.set(key, held)
@@ -217,6 +218,8 @@ class StackAllowList implements AllowListPort {
 		if (text !== null) return text
 		// After a restart the bot serves only what it posts next; a heartbeat keeps the lists.
 		const latest = await readRootRecord({ aztecNode: this.d.nodeUrl, registry: this.d.registry }).catch(() => null)
+		// The read takes no signal: a Cancel during it is still a cancel, whatever it returned.
+		if (signal.aborted) throw new AllowListError("LIST_CANCELLED")
 		if (latest === null || listsKey(latest) !== key) throw new AllowListError("LIST_UNAVAILABLE")
 		const again = await downloadSnapshot(url(latest.sequence), deps)
 		if (again === null) throw new AllowListError("LIST_UNAVAILABLE")
