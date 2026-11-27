@@ -80,11 +80,11 @@ test("withdraws part of a checked label to a fresh payee in one transaction and 
 	expect(ticket.l2TxHash.toLowerCase(), "the ticket is the withdrawal's").toBe(sent[1]?.hash.toLowerCase())
 
 	await dialog.getByRole("button", { name: "Close" }).click()
-	// Whole figures: a substring match would find 0.00 in 10.00 and 0.005.
-	const shown = (v: bigint) => `${formatAmount(v, s.decimals, 2)}${s.symbol}`
-	await expect(amountOf(row)).toHaveText(shown(amount - withdrawn), { timeout: WAIT.read })
-	// The credit and the burn cancel out.
-	await expect(amountOf(page.getByTestId("public-row"))).toHaveText(shown(0n), { timeout: WAIT.read })
+	// The whole figure, which a read from before the send cannot show. With the ticket's amount, it makes
+	// the unshield's credit equal the exit's burn; the public row's 0 cannot, as it read 0 before the send.
+	await expect(amountOf(row)).toHaveText(`${formatAmount(amount - withdrawn, s.decimals, 2)}${s.symbol}`, {
+		timeout: WAIT.read,
+	})
 	step("balances read")
 
 	await page.getByRole("button", { name: "Exits" }).click()

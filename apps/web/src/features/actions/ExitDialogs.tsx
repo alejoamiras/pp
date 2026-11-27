@@ -147,7 +147,8 @@ export function RagequitDialog({ account, balance, onClose }: LabelProps) {
 	const [pick, setPick] = useState<string | null>(null)
 	const [review, setReview] = useState<Reviewed | null>(null)
 	const act = useAction(account)
-	const amount = pick === null ? null : BigInt(pick)
+	// A pick a refetch took out of the choices is no pick, so Review never shows a sum the notes no longer make.
+	const amount = pick !== null && choices.some((c) => c.key === pick) ? BigInt(pick) : null
 	const confirm = async ({ payee: to, amount: value }: Reviewed) => {
 		const on = bound(live, account, act)
 		if (!on) return

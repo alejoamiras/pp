@@ -11,8 +11,8 @@ fixture world keeps chain time (it moves only with blocks) and is driven from te
 console through `window.__ppFixtures`, which fixture builds expose and stack builds cannot contain.
 
 A stack build (`build:local` with `PP_STACK_MANIFEST` from `bun run demo --keep`) reads the local
-stack instead through `src/data/adapters/`: Ethereum through the injected wallet, chain time from
-both chains, the asset's decimals and symbol from the factory's registration, the pool notes by
+stack instead through `src/data/adapters/`: Ethereum reads through the stack's RPC and its signatures
+and sends through the injected wallet, chain time from both chains, the asset's decimals and symbol from the factory's registration, the pool notes by
 label through pool-client with one worker prover per page, the bridge and its claim through
 bridge-core's client, the Aztec balances by label, the public balance, the private send, the
 unshield, the shield, the ragequit and both withdrawals to Ethereum through the connected wallet, and

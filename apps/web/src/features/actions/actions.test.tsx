@@ -60,6 +60,37 @@ describe("the action dialogs", () => {
 		expect(app.control.state().exits).toEqual([])
 	})
 
+	test("a ragequit amount a refetch took out of the notes is no longer picked, so Back does not reopen its review", async () => {
+		// Only intervals are faked, and they still advance with real time, so the wallet, the dialog and waitFor run as usual.
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"], shouldAdvanceTime: true })
+		onTestFinished(() => void vi.useRealTimers())
+		let low = false
+		const app = renderApp({
+			poll: 6_000,
+			patch: (s) => ({
+				...s,
+				aztec: {
+					...s.aztec,
+					notesByLabel: async (owner, label) =>
+						low && label === LABELS.active ? [1_000_000n] : s.aztec.notesByLabel(owner, label),
+				},
+			}),
+		})
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		const dialog = await openDialog(app, LABELS.active, /Leave to Ethereum/)
+		await app.user.click(await dialog.findByLabelText(/40\.00 USDC/))
+		await app.user.clear(dialog.getByLabelText("Payee on Ethereum"))
+		await app.user.type(dialog.getByLabelText("Payee on Ethereum"), ACCOUNTS.sender)
+		await app.user.click(dialog.getByRole("button", { name: "Review" }))
+		low = true
+		await act(() => vi.advanceTimersByTimeAsync(6_000))
+		await app.user.click(within(dialog.getByTestId("exit-review")).getByRole("button", { name: "Back" }))
+		await dialog.findByLabelText(/^1\.00 USDC/)
+		expect(disabled(dialog.getByRole("button", { name: "Review" }))).toBe(true)
+		dialog.getByText("Pick an amount first.")
+	})
+
 	test("a ragequit holds its lock from the click: a second click waits, and Back during the note read sends nothing", async () => {
 		let hold = false
 		const held: (() => void)[] = []
