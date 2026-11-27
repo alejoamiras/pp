@@ -56,7 +56,7 @@ export function ragequitContentPreimageV1(a: RagequitContent): Uint8Array {
 /** Inbox content of a bridge: `H(IN_V1, nullifier, changeCommitment, amount)`. */
 export const bridgeContentV1 = (a: BridgeContent): bigint => sha256ToField(bridgeContentPreimageV1(a))
 
-/** Outbox content of a screened public exit: `H(OUT_V1, payee, amount)`. */
+/** Outbox content of a screened exit (`exit_public` or `exit_private`): `H(OUT_V1, payee, amount)`. */
 export const exitContentV1 = (a: ExitContent): bigint => sha256ToField(exitContentPreimageV1(a))
 
 /** Outbox content of a ragequit: `H(RAGEQUIT_V1, payee, amount, label)`. */

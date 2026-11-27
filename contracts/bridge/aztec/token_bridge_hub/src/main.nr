@@ -31,7 +31,7 @@ pub contract TokenBridgeHub {
     use claim_secret_lib::derive_claim_secret;
     use compressed_string::FieldCompressedString;
     use labelled_token::LabelledToken;
-    use pp_hash::hash_2;
+    use pp_hash::{hash_2, LabelPath};
     use register_hash_lib::{BIND_HARNESS_SECRET, get_register_content_hash, REGISTER_SECRET};
 
     // The public half of a ragequit: enough to settle it on Ethereum from chain data alone. It names
@@ -44,8 +44,8 @@ pub contract TokenBridgeHub {
         label: Field,
     }
 
-    // The payee and amount of the exit's Outbox content, and the token whose portal receives it, so
-    // the exit settles on Ethereum from chain data alone.
+    // The payee and amount of an `exit_content_v1` exit (`exit_public` or `exit_private`), and the
+    // token whose portal receives it, so the exit settles on Ethereum from chain data alone.
     #[event]
     pub struct PublicExitTicket {
         token: AztecAddress,
@@ -227,6 +227,29 @@ pub contract TokenBridgeHub {
         let content = exit_content_v1(payee, amount);
         self.call(LabelledToken::at(token).burn_public_for_exit(self.msg_sender(), amount));
         self.context.message_portal(portal, content);
+        self.emit(PublicExitTicket { token, payee, amount });
+    }
+
+    // ── Private exit ───────────────────────────────────────────────────────────────────────
+
+    // The screened exit without a public balance: the token's checked burn applies `unshield`'s
+    // registry rules, and the public steps run as the token and this hub, so none names the holder.
+    // Refusals come before the burn; the burn, the message and the ticket share one revert phase.
+    #[external("private")]
+    fn exit_private(token: AztecAddress, payee: EthAddress, amount: u128, label: Field, path: LabelPath) {
+        let from = self.msg_sender();
+        let portal = self.storage.portal_of.at(token).read();
+        // The portal refuses to pay itself (`PayeeIsPortal`), so this exit would burn and never settle.
+        assert(payee != portal, "exit payee is the portal");
+        let content = exit_content_v1(payee, amount);
+        self.call(LabelledToken::at(token).burn_checked_for_exit(from, amount, label, path));
+        self.context.message_portal(portal, content);
+        self.enqueue_self._exit_ticket(token, payee, amount);
+    }
+
+    #[external("public")]
+    #[only_self]
+    fn _exit_ticket(token: AztecAddress, payee: EthAddress, amount: u128) {
         self.emit(PublicExitTicket { token, payee, amount });
     }
 

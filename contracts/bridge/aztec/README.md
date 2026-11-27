@@ -12,6 +12,9 @@ fee payer is public, so a ragequit paid from the holder's own Fee Juice names th
 through a fee-paying contract. `exit_public` burns the caller's public balance, which the token's
 checked `unshield` fills, and sends the portal the label-0 exit message with a public
 `PublicExitTicket`; its refusals also come before the burn, and the burn names the caller.
+`exit_private` sends the same message and ticket from the caller's notes in one private call: the
+token's `burn_checked_for_exit` applies `unshield`'s registry check, and its public steps run as the
+token and the hub, so a transaction paid through a fee-paying contract names no Aztec account.
 `bind_token` is the publish-free twin the TXE drives; on a real network no factory leaf can be
 spent through it (pinned). `claim_secret` and `register_hash` are the shared derivation libraries; `keystone` pins
 them against their TypeScript and Solidity mirrors. `bridge_message` (the v1 bridge contents)

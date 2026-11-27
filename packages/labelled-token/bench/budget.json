@@ -1,4 +1,5 @@
 {
+	"burn_checked_for_exit": 110000,
 	"burn_for_exit": 70000,
 	"mint_from_bridge": 36000,
 	"shield": 70000,

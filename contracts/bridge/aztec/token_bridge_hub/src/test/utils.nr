@@ -110,11 +110,17 @@ unconstrained fn deploy_hub(
 /// Posts `pool_root` (and a fixed birth root) as the registry's poster, then anchors the next
 /// private call one second later, inside every freshness window.
 pub unconstrained fn post_pool_root(h: Hub, pool_root: Field) {
+    post_pool_root_at(h, 1, pool_root);
+}
+
+/// As `post_pool_root`, as the registry's `sequence`-th post. Each post names a later Ethereum block,
+/// since `post_root` refuses a new time on the block it already holds.
+pub unconstrained fn post_pool_root_at(h: Hub, sequence: u64, pool_root: Field) {
     let now = h.env.last_block_timestamp() + 100_000;
     h.env.set_next_block_timestamp(now);
     h.env.call_public(
         h.poster,
-        AspRootRegistry::at(h.registry).post_root(1, pool_root, BIRTH_ROOT, 101, now),
+        AspRootRegistry::at(h.registry).post_root(sequence, pool_root, BIRTH_ROOT, 100 + sequence, now),
     );
     h.env.mine_block_at(now + 1);
 }

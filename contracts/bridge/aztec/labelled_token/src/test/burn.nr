@@ -2,11 +2,14 @@ use crate::{
     LabelledToken,
     note::ORIGIN_POOL,
     test::{
-        paths::{BIRTH_ROOT, POOL_ROOT, SOLO_ROOT},
-        utils::{assert_labels, balance, K, L, mint, post, post_now, ragequit, setup, setup_with_registry, t0, values},
+        paths::{BIRTH_ROOT, POOL_PATHS, POOL_ROOT, SOLO_ROOT},
+        utils::{
+            assert_labels, balance, exit_checked, K, L, mint, post, post_now, ragequit, setup, setup_with_registry, t0,
+            values,
+        },
     },
 };
-use asp_registry::AspRootRegistry;
+use asp_registry::{AspRootRegistry, label_check::{AnchorRoots, TreeRoot}};
 use aztec::protocol::{address::AztecAddress, traits::FromField};
 
 // A poster change clears both roots; the exit burn reads neither.
@@ -100,4 +103,38 @@ unconstrained fn burn_for_exit_failure_zero_amount() {
     let s = setup();
     mint(s, s.user, 100, L);
     ragequit(s, s.user, 0, L);
+}
+
+// The screened exit burn; the rest of its check matrix is `_checked_debit`'s (`check.nr`).
+#[test]
+unconstrained fn burn_checked_for_exit_keeps_label_and_origin_on_change() {
+    let s = setup();
+    mint(s, s.user, 100, L);
+    post_now(s, POOL_ROOT, BIRTH_ROOT);
+    exit_checked(s, s.user, 30, L, POOL_PATHS[0]);
+    assert_labels(s, s.user, [(L, ORIGIN_POOL, 70)]);
+}
+
+#[test(should_fail_with = "NotMember")]
+unconstrained fn burn_checked_for_exit_failure_label_not_in_root() {
+    let s = setup();
+    mint(s, s.user, 100, L);
+    post_now(s, SOLO_ROOT, BIRTH_ROOT);
+    exit_checked(s, s.user, 30, L, POOL_PATHS[0]);
+}
+
+#[test(should_fail_with = "caller is not minter")]
+unconstrained fn burn_checked_for_exit_failure_not_minter() {
+    let s = setup();
+    mint(s, s.user, 100, L);
+    post_now(s, POOL_ROOT, BIRTH_ROOT);
+    s.env.call_private(s.user, LabelledToken::at(s.token).burn_checked_for_exit(s.user, 30, L, POOL_PATHS[0]));
+}
+
+#[test(should_fail_with = "Function finish_checked_burn can only be called by the same contract")]
+unconstrained fn finish_checked_burn_failure_not_self() {
+    let s = setup();
+    post_now(s, POOL_ROOT, BIRTH_ROOT);
+    let roots = AnchorRoots { pool: TreeRoot { root: POOL_ROOT, time: 0 }, birth: TreeRoot { root: BIRTH_ROOT, time: 0 } };
+    s.env.call_public(s.user, LabelledToken::at(s.token).finish_checked_burn(roots));
 }

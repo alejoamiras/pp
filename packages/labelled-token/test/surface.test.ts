@@ -14,11 +14,13 @@ const artifact = JSON.parse(
 const DECLARED = [
 	"balance_of_private",
 	"balance_of_public",
+	"burn_checked_for_exit",
 	"burn_for_exit",
 	"burn_public_for_exit",
 	"constructor",
 	"debit_for_shield",
 	"decimals",
+	"finish_checked_burn",
 	"finish_unshield",
 	"mint_from_bridge",
 	"name",
