@@ -2,8 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { anvilKey, LOG_DIR, USER_INDEX } from "../../src/env/harness/anvil.ts"
-import { rowsOwnedBy } from "@pp/run-isolation/ports"
+import { claimPort, registryPath, releasePorts, rowsOwnedBy } from "@pp/run-isolation/ports"
+import { getAddress, keccak256, parseAbiItem, toHex } from "viem"
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { rpc } from "../../src/env/harness/rpc.ts"
+import { attachForkPoolEnv } from "../../src/env/fork.ts"
 import { localClients, type PoolEnv, startPoolEnv } from "../../src/env/index.ts"
 
 const ASSETS_ABI = [
@@ -26,6 +29,19 @@ const ASSETS_ABI = [
 		],
 	},
 ] as const
+const GRANT_ROLE_ABI = [
+	{
+		type: "function",
+		name: "grantRole",
+		stateMutability: "nonpayable",
+		inputs: [
+			{ name: "role", type: "bytes32" },
+			{ name: "account", type: "address" },
+		],
+		outputs: [],
+	},
+] as const
+const ROOT_UPDATED = parseAbiItem("event ASPRootUpdated(uint256 indexed _root, bytes _ipfsCID)")
 const ROOT_ABI = [
 	{ type: "function", name: "latestASPRoot", stateMutability: "view", inputs: [], outputs: [{ name: "root", type: "uint256" }] },
 	{ type: "error", name: "ASPRegistry_EmptyAssociationSet", inputs: [] },
@@ -112,6 +128,81 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("pool env", () => {
 
 	test("attach refuses a non-loopback RPC", async () => {
 		await expect(startPoolEnv({ rpcUrl: "http://10.255.255.1:8545" })).rejects.toThrow(/non-loopback/)
+	})
+
+	test("the fork attach publishes as an impersonated postman with no key, and its stop frees only its own row", async () => {
+		const { pool, entrypoint, keystore, aspRegistry, deployBlock, accessRouter } = b.deployment
+		// A postman no local key controls, so only anvil's impersonation can publish as it.
+		const postman = privateKeyToAccount(generatePrivateKey()).address
+		const admin = localClients(b.rpcUrl, anvilKey(b.deployerIndex))
+		const grant = await admin.wallet.writeContract({
+			address: accessRouter,
+			abi: GRANT_ROLE_ABI,
+			functionName: "grantRole",
+			args: [keccak256(toHex("POSTMAN_ROLE")), postman],
+		})
+		expect((await admin.client.waitForTransactionReceipt({ hash: grant })).status).toBe("success")
+		const clientVersion = await rpc<string>(b.rpcUrl, "web3_clientVersion")
+		const options = {
+			rpcUrl: b.rpcUrl,
+			chainId: b.chainId,
+			postman,
+			circuitsDir: b.clientConfig.circuitsDir,
+			deployment: { pool, entrypoint, keystore, aspRegistry, deployBlock },
+			clientVersion,
+			runId: b.runId,
+		}
+		await expect(attachForkPoolEnv({ ...options, clientVersion: `${clientVersion}-other` })).rejects.toThrow(/expected exactly/)
+		await expect(attachForkPoolEnv({ ...options, runId: a.runId })).rejects.toThrow(`registered to ${b.runId}, not ${a.runId}`)
+		expect(rowsOwnedBy(`${b.runId}:pool`)).toBe(0)
+		// local-stack starts pp-env as `<id>-pool`: an attach whose run id is that stack's must not share its owner.
+		const stackRun = `${b.runId}-pool`
+		await claimPort(stackRun, "stack-pool")
+		let fork: Awaited<ReturnType<typeof attachForkPoolEnv>>
+		try {
+			const attaches = await Promise.allSettled([attachForkPoolEnv(options), attachForkPoolEnv(options)])
+			const won = attaches.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
+			const lost = attaches.flatMap((r) => (r.status === "rejected" ? [r.reason as Error] : []))
+			const winner = won[0]
+			if (won.length !== 1 || !winner) {
+				await Promise.all(won.map((f) => f.stop()))
+				throw new Error(`expected exactly one of two concurrent attaches to win, got ${won.length}`)
+			}
+			fork = winner
+			try {
+				expect(lost.map((e) => e.message)).toEqual([
+					`run ${b.runId} already has a fork attach: ${registryPath()} lists a row owned by ${b.runId}:pool. Stop that attach, or remove the row by hand if no attach is running`,
+				])
+				expect(rowsOwnedBy(`${b.runId}:pool`)).toBe(1)
+				const root = await fork.asp.approveLabel(789n)
+				expect(await admin.client.readContract({ address: aspRegistry, abi: ROOT_ABI, functionName: "latestASPRoot" })).toBe(root)
+				// The deployer is a postman too, so only the update's sender shows the impersonation published it.
+				const [update] = await admin.client.getLogs({
+					address: aspRegistry,
+					event: ROOT_UPDATED,
+					args: { _root: root },
+					fromBlock: 0n,
+				})
+				if (!update) throw new Error("no ASPRootUpdated for the approved root")
+				expect(getAddress((await admin.client.getTransaction({ hash: update.transactionHash })).from)).toBe(postman)
+				expect(fork.clientConfig.aspUrl).toBe(fork.asp.url)
+			} finally {
+				await Promise.all([fork.stop(), fork.stop()])
+			}
+			await expect(fork.asp.approveLabel(790n)).rejects.toThrow("stopped")
+			expect(rowsOwnedBy(`${b.runId}:pool`)).toBe(0)
+			expect(rowsOwnedBy(stackRun)).toBe(1)
+		} finally {
+			await releasePorts(stackRun)
+		}
+		expect(rowsOwnedBy(b.runId)).toBe(2)
+		expect(
+			await fetch(fork.asp.url).then(
+				() => true,
+				() => false,
+			),
+		).toBe(false)
+		expect(await alive(b.rpcUrl)).toBe(true)
 	})
 
 	test("stop is idempotent and frees the run's ports and processes", async () => {

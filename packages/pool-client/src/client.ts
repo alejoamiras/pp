@@ -265,12 +265,15 @@ export async function openPoolClient(a: {
 }): Promise<PoolClient> {
 	const signature = normaliseSignature(a.signature)
 	const owner = getAddress(a.l1Address)
+	// Read once, field by field so prototype getters count: the chain the bundle is allowed for is the one the
+	// RPC is held to and the session runs on.
+	const { chainId: poolChain, l1Rpc, poolVault, entrypoint, aspRegistry, keystore, asset, deployBlock, aspApiUrl } = a.pool
+	const pool: PoolConfig = { chainId: poolChain, l1Rpc, poolVault, entrypoint, aspRegistry, keystore, asset, deployBlock, aspApiUrl }
+	const artifacts = createArtifacts(a.artifacts, { chainId: pool.chainId })
 	await verifySigner(owner, signature)
-	const publicClient = createPublicClient({ transport: http(a.pool.l1Rpc) })
+	const publicClient = createPublicClient({ transport: http(pool.l1Rpc) })
 	const chainId = await publicClient.getChainId()
-	if (chainId !== a.pool.chainId)
-		throw new PoolClientError("CHAIN_MISMATCH", `RPC serves chain ${chainId}, the pool is on ${a.pool.chainId}`)
-	const artifacts = createArtifacts(a.artifacts)
-	const sdk = await createSession({ pool: a.pool, owner, keys: deriveKeys(owner, signature), artifacts, publicClient, prover: a.prover })
-	return client(a.pool, owner, signature, sdk, publicClient, artifacts)
+	if (chainId !== pool.chainId) throw new PoolClientError("CHAIN_MISMATCH", `RPC serves chain ${chainId}, the pool is on ${pool.chainId}`)
+	const sdk = await createSession({ pool, owner, keys: deriveKeys(owner, signature), artifacts, publicClient, prover: a.prover })
+	return client(pool, owner, signature, sdk, publicClient, artifacts)
 }

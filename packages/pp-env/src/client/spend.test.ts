@@ -47,6 +47,8 @@ test("the options pp-env hands pool-client are plain data drawn from the user's 
 		signature,
 		artifacts: { kind: "dir", path: "/circuits" },
 	})
+	const bundled = poolClientOptions({ ...config, circuitBundle: "pre-ceremony" }, addr(5), addr(6), signature)
+	expect(bundled.artifacts).toEqual({ kind: "dir", path: "/circuits", bundle: "pre-ceremony" })
 })
 
 test("a pool-client spend comes back as plain data in PoolUser's shape, transact's arguments intact", () => {

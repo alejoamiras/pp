@@ -36,9 +36,13 @@ Choosing a trusted processor is the caller's job: the proof binds the processor 
 
 ## Circuit files
 
-Files are checked against the SDK's pinned manifest in every runtime: sha256 and size, with a gateway response cut off at the
+Files are checked against a pinned bundle in every runtime: sha256 and size, with a gateway response cut off at the
 file's pinned size. In a browser they are kept in Cache Storage across page loads; a cached entry that fails its digest is
 dropped and fetched again. `{ kind: "dir", path }` reads a local build instead.
+
+Bundles are named in `CIRCUIT_BUNDLES`, and a source picks one with `bundle`; nothing accepts a caller's own manifest.
+`ceremony`, the default, is the SDK's manifest. `pre-ceremony` is the single-party setup the pool's Sepolia verifiers
+hold, and `openPoolClient` refuses it for a pool on any other chain.
 
 Proving runs on the calling thread unless `openPoolClient` gets `prover: workerProver(worker)`, where the worker's module
 imports `@pp/pool-client/prover-worker`. The worker keeps a page responsive; `terminate()` rejects every pending call.

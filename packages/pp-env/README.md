@@ -23,7 +23,9 @@ await env.submitViaStub(stub, spend, 12)
 await env.stop()
 ```
 
-`@pp/pp-env/client` holds the user-side helpers alone (key derivation from a wallet signature, the SDK wiring for registration, deposits and note discovery), with no dependency on the environment. Spends are proved and checked by `@pp/pool-client`.
+`@pp/pp-env/client` holds the user-side helpers alone (key derivation from a wallet signature, the SDK wiring for registration, deposits and note discovery), with no dependency on the environment. Spends are proved and checked by `@pp/pool-client`. `ClientConfig.circuitBundle` names one of pool-client's pinned bundles (default `ceremony`); deposits read their circuit files through pool-client too, hashed against that bundle.
+
+`@pp/pp-env/fork` serves a fork of a live chain that the caller owns. `attachForkPoolEnv` refuses any node but an anvil on 127.0.0.1 (not `localhost` or `[::1]`), on a port registered to the caller's `runId`, reporting the exact `clientVersion` and chain the caller names. It then starts a mock ASP that publishes as the registry's real postman through anvil impersonation, and returns a `ClientConfig` for `createPoolUser`. It starts no anvil and holds no key. Its `stop()` closes the ASP and releases only the `<runId>:pool` port row.
 
 How `prepareSpend` refuses:
 
@@ -35,14 +37,14 @@ How `prepareSpend` refuses:
 
 A zero spend is always refused.
 
-Both entries load under Bun and under native Node with type stripping on by default (22.18+ or 23.6+), since the SDK resolves through `package.json#imports` (`#ppv2/*`) rather than tsconfig paths. Proving and `startPoolEnv` still call Bun's APIs, so they run under Bun only.
+All three entries load under Bun and under native Node with type stripping on by default (22.18+ or 23.6+), since the SDK resolves through `package.json#imports` (`#ppv2/*`) rather than tsconfig paths. Proving and `startPoolEnv` still call Bun's APIs, so they run under Bun only.
 
 Everything after `fetch` runs offline. Each start re-verifies the fetched tree against its pins.
 
 ## Layout
 
 - `src/env/fetch/`: the pinned fetch. It checks the tarball's sha256, verifies git-LFS objects against `CEREMONY.md`, runs a frozen pnpm install, and writes a manifest of every file a later step consumes.
-- `src/env/`: anvil (started or attached), the deploy, the mock ASP, and `startPoolEnv`.
+- `src/env/`: anvil (started or attached), the deploy, the mock ASP, `startPoolEnv`, and the fork attach (`fork.ts`).
 - `src/env/harness/`: anvil and the JSON-RPC readiness helpers. Ports, locks and process groups come from `@pp/run-isolation`.
 - `src/client/`: user-side helpers. `types/` holds the hand-written public types, which need no checkout.
 - `contracts/`: the `StubProcessor` and `TestToken` fixtures. Run forge on them through `bun run forge:fixtures <build|test> …`.
@@ -52,7 +54,7 @@ Everything after `fetch` runs offline. Each start re-verifies the fetched tree a
 | Script | Needs the checkout | What |
 |---|---|---|
 | `test`, `typecheck` | no | unit tests; public types through the export map |
-| `typecheck:full`, `test:smoke` | yes | the implementation against the SDK; proving under Bun; both entries under native Node |
+| `typecheck:full`, `test:smoke` | yes | the implementation against the SDK; proving under Bun; all three entries under native Node |
 | `test:vitest` | yes | the client under vite's module runner, as a vitest consumer loads it |
 | `test:contracts` | no (Forge) | fixture tests, fuzzed |
 | `test:integration` | yes | parallel envs, attach, teardown; a full spend through the stub and the pool's rejections; spend refusals |
