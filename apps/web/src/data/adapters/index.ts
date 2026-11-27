@@ -1,8 +1,11 @@
 /**
  * The stack behind `#data`: the deployment and endpoints from the build's stack target, Ethereum
- * through the page's injected wallet, chain time from both chains, and the owner's session over
- * pool-client and the bridge client. The Aztec, exit and allow-list ports have no stack adapter yet
- * and refuse.
+ * through the page's injected wallet, chain time from both chains, the owner's session over
+ * pool-client and the bridge client, and the token's views through the connected Aztec wallet. The
+ * exit and allow-list ports have no stack adapter yet and refuse.
+ *
+ * Everything that carries aztec.js, the contract artifacts or the bridge client loads on first use,
+ * so the main chunk stays free of them.
  */
 import { getAddress } from "viem"
 import { target } from "../../target"
@@ -12,7 +15,9 @@ import type { AllowListPort, AztecPort, Deployment, ExitPort, SessionPort } from
 import type { DataSource } from "../source"
 import type { AztecAddress } from "../stack-types"
 import { browserTimer } from "../timer"
+import type { HeldWallet, RealConnector } from "../wallet/connector"
 import { loadRealConnector } from "../wallet/load"
+import type { AztecDeps } from "./aztec"
 import { stackClock } from "./clock"
 import { type InjectedWallet, stackL1 } from "./l1"
 
@@ -46,16 +51,33 @@ const deployment: Deployment = {
 
 const l1 = stackL1(target, (globalThis as { ethereum?: InjectedWallet }).ethereum)
 
-type Sessions = Promise<SessionPort>
-let sessionsLoad: Sessions | undefined
+/** One connector per page: the adapters send only through the wallet it holds for the live connection. */
+let connector: RealConnector | null = null
+let connectorLoad: Promise<RealConnector> | undefined
+const loadConnector = (): Promise<RealConnector> =>
+	(connectorLoad ??= loadRealConnector(stageManifest(deployment.stage, deployment)).then((c) => (connector = c)))
+const current = (): HeldWallet | null => connector?.current() ?? null
+
+type AztecSide = { deps: AztecDeps; port: Pick<AztecPort, "balancesByLabel" | "notesByLabel"> }
+let aztecLoad: Promise<AztecSide> | undefined
+const loadAztec = (): Promise<AztecSide> =>
+	(aztecLoad ??= import("./aztec").then((m) => {
+		const deps = m.aztecDeps(target.nodeUrl, deployment, current)
+		return { deps, port: m.stackAztec(deps) }
+	}))
+
+let sessionsLoad: Promise<SessionPort> | undefined
 /** The session module and the page's prover load on first use; proving files come from this page's own server. */
-const loadSessions = (): Sessions =>
-	(sessionsLoad ??= import("./session").then((m) =>
+const loadSessions = (): Promise<SessionPort> =>
+	(sessionsLoad ??= Promise.all([import("./session"), loadAztec()]).then(([m, side]) =>
 		m.stackSessions({
 			manifest,
 			reads: l1.reads,
 			prover: m.proverFor(browserTimer),
 			artifacts: { kind: "gateway", urls: [location.origin] },
+			l1,
+			aztec: side.deps,
+			storage: localStorage,
 		}),
 	))
 
@@ -65,8 +87,8 @@ const sessions: SessionPort = {
 }
 
 const aztec: AztecPort = {
-	balancesByLabel: unavailable("AztecPort.balancesByLabel"),
-	notesByLabel: unavailable("AztecPort.notesByLabel"),
+	balancesByLabel: async (owner) => (await loadAztec()).port.balancesByLabel(owner),
+	notesByLabel: async (owner, label) => (await loadAztec()).port.notesByLabel(owner, label),
 	publicBalance: unavailable("AztecPort.publicBalance"),
 	transferPrivate: unavailable("AztecPort.transferPrivate"),
 	unshield: unavailable("AztecPort.unshield"),
@@ -92,5 +114,5 @@ export const source: DataSource = {
 	aztec,
 	exits,
 	allowList,
-	wallet: () => loadRealConnector(stageManifest(deployment.stage, deployment)),
+	wallet: loadConnector,
 }
