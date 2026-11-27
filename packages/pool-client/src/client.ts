@@ -3,6 +3,7 @@ import {
 	createPublicClient,
 	getAddress,
 	type Hex,
+	hexToBigInt,
 	http,
 	isAddressEqual,
 	isHex,
@@ -233,8 +234,13 @@ export function changeInReceipt(receipt: TransactionReceipt, nullifier: bigint, 
 	return null
 }
 
+/** Not `getBlockNumber`: viem may answer that from its head cache or a head request in flight, even at `cacheTime: 0`. */
+export async function freshHead(client: Pick<PublicClient, "request">): Promise<bigint> {
+	return hexToBigInt(await client.request({ method: "eth_blockNumber" }))
+}
+
 async function changeOpeningOf(nullifier: bigint, pool: PoolConfig, publicClient: PublicClient, keys: SpendKeys): Promise<ChangeOpening> {
-	const latest = await publicClient.getBlockNumber()
+	const latest = await freshHead(publicClient)
 	for (let from = pool.deployBlock; from <= latest; from += LOG_WINDOW) {
 		const to = from + LOG_WINDOW - 1n < latest ? from + LOG_WINDOW - 1n : latest
 		const logs = await publicClient.getLogs({ address: pool.poolVault, event: POOL_VAULT_EVENTS_ABI[0], fromBlock: from, toBlock: to })
