@@ -49,9 +49,6 @@ export const liveGasOf = (role: FundedRole): bigint => (FUNDING_GAS[role] * LIVE
 export const FEE_MARGIN = 2n
 /** Sepolia's fee sits near zero for hours, so pricing at today's estimate alone would underfund every key after a spike. */
 export const FEE_FLOOR_WEI = 1_000_000_000n
-/** A plain ETH transfer's gas, which the deployer pays for each top-up. */
-export const TRANSFER_GAS = 21_000n
-
 export type Recipient = { role: Exclude<FundedRole, "l1Deployer">; address: Address }
 
 /** The keys `fund` tops up from the deployer: the file's committed addresses, never ones a key derives. */
@@ -76,16 +73,22 @@ export const needOf = (role: FundedRole, maxFeePerGas: bigint): bigint =>
 	liveGasOf(role) * (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN
 
 /** One top-up per address: roles that share an address share its balance, so their needs add up. */
-export type Send = { roles: Recipient["role"][]; address: Address; balance: bigint; need: bigint; amount: bigint }
+export type Send = { roles: Recipient["role"][]; address: Address; balance: bigint; need: bigint; amount: bigint; transferGas: bigint }
+
+/**
+ * A recipient as the node sees it: its balance, and the node's gas estimate for a transfer to it, which on
+ * Sepolia is about ten times a plain transfer's when the transfer creates the account.
+ */
+export type FundedRecipient = Recipient & { balance: bigint; transferGas: bigint }
 
 export type Plan = { sends: Send[]; deployerNeed: bigint; transferGas: bigint; total: bigint }
 
 /**
  * What each distinct address lacks of its roles' summed needs, and the total the deployer must hold: its
- * own need, every top-up, and each top-up's gas at `maxFeePerGas`. A role at the deployer's own address
- * adds to the deployer's need and gets no top-up.
+ * own need, every top-up, and each top-up's own gas estimate at `maxFeePerGas`. A role at the deployer's
+ * own address adds to the deployer's need and gets no top-up.
  */
-export function fundingPlan(deployer: Address, recipients: readonly (Recipient & { balance: bigint })[], maxFeePerGas: bigint): Plan {
+export function fundingPlan(deployer: Address, recipients: readonly FundedRecipient[], maxFeePerGas: bigint): Plan {
 	let deployerNeed = needOf("l1Deployer", maxFeePerGas)
 	const byAddress = new Map<string, Send>()
 	for (const r of recipients) {
@@ -95,10 +98,13 @@ export function fundingPlan(deployer: Address, recipients: readonly (Recipient &
 		else if (shared) {
 			shared.roles.push(r.role)
 			shared.need += need
-		} else byAddress.set(r.address.toLowerCase(), { roles: [r.role], address: r.address, balance: r.balance, need, amount: 0n })
+		} else {
+			const { role, address, balance, transferGas } = r
+			byAddress.set(address.toLowerCase(), { roles: [role], address, balance, need, amount: 0n, transferGas })
+		}
 	}
 	const sends = [...byAddress.values()].map((s) => ({ ...s, amount: s.balance < s.need ? s.need - s.balance : 0n }))
-	const transferGas = BigInt(sends.filter((s) => s.amount > 0n).length) * TRANSFER_GAS * maxFeePerGas
+	const transferGas = sends.reduce((t, s) => (s.amount > 0n ? t + s.transferGas * maxFeePerGas : t), 0n)
 	return { sends, deployerNeed, transferGas, total: deployerNeed + transferGas + sends.reduce((t, s) => t + s.amount, 0n) }
 }
 

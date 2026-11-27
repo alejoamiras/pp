@@ -56,6 +56,7 @@ beforeAll(async () => {
 		eth_chainId: "0xaa36a7",
 		eth_blockNumber: "0x10",
 		eth_getBalance: "0x56bc75e2d63100000",
+		eth_estimateGas: "0x5208",
 		eth_maxPriorityFeePerGas: "0x3b9aca00",
 		eth_gasPrice: "0x77359400",
 		eth_getBlockByNumber: {

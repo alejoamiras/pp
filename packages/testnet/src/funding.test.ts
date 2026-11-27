@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import type { Address, Hex } from "viem"
 import { describe, expect, it } from "vitest"
-import { assertTopUp, FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, liveGasOf, needOf, recipientsOf, TRANSFER_GAS } from "./funding"
+import { assertTopUp, FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, liveGasOf, needOf, recipientsOf } from "./funding"
 import { parseDeployment } from "./schema"
 
 const a = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address
@@ -21,16 +21,19 @@ describe("fundingPlan", () => {
 		const need = needOf("guardian", fee)
 		expect(need).toBe(liveGasOf("guardian") * FEE_FLOOR_WEI * 2n)
 		expect(needOf("guardian", 5n * FEE_FLOOR_WEI)).toBe(liveGasOf("guardian") * 10n * FEE_FLOOR_WEI)
+		// Live Sepolia's estimate for a transfer that creates its recipient, against 21,000 for one that exists.
+		const creating = 207_391n
 		const plan = fundingPlan(
 			DEPLOYER,
 			[
-				{ role: "guardian", address: a(1), balance: need + 1n },
-				{ role: "canaryOwner", address: a(2), balance: 5n },
+				{ role: "guardian", address: a(1), balance: need + 1n, transferGas: 21_000n },
+				{ role: "canaryOwner", address: a(2), balance: 0n, transferGas: creating },
 			],
 			fee,
 		)
-		expect(plan.sends.map((s) => s.amount)).toEqual([0n, needOf("canaryOwner", fee) - 5n])
-		expect(plan.total).toBe(needOf("l1Deployer", fee) + needOf("canaryOwner", fee) - 5n + TRANSFER_GAS * fee)
+		expect(plan.sends.map((s) => s.amount)).toEqual([0n, needOf("canaryOwner", fee)])
+		expect(plan.transferGas).toBe(creating * fee)
+		expect(plan.total).toBe(needOf("l1Deployer", fee) + needOf("canaryOwner", fee) + creating * fee)
 	})
 
 	it("sends one top-up per address, for the summed needs of the roles it holds, and pays each top-up's gas", () => {
@@ -39,15 +42,15 @@ describe("fundingPlan", () => {
 		const plan = fundingPlan(
 			DEPLOYER,
 			[
-				{ role: "poolDeployer", address: a(1), balance: 1n },
-				{ role: "aspPostman", address: a(1), balance: 1n },
-				{ role: "guardian", address: DEPLOYER, balance: 0n },
+				{ role: "poolDeployer", address: a(1), balance: 1n, transferGas: 21_000n },
+				{ role: "aspPostman", address: a(1), balance: 1n, transferGas: 21_000n },
+				{ role: "guardian", address: DEPLOYER, balance: 0n, transferGas: 21_000n },
 			],
 			fee,
 		)
 		expect(plan.sends.map((s) => [s.roles, s.amount])).toEqual([[["poolDeployer", "aspPostman"], shared - 1n]])
 		expect(plan.deployerNeed).toBe(needOf("l1Deployer", fee) + needOf("guardian", fee))
-		expect(plan.total).toBe(plan.deployerNeed + shared - 1n + TRANSFER_GAS * fee)
+		expect(plan.total).toBe(plan.deployerNeed + shared - 1n + 21_000n * fee)
 	})
 })
 
@@ -90,7 +93,11 @@ describe("recipientsOf", () => {
 		const expected = { guardian: a(1), canaryOwner: a(2), canarySender: a(3) } as Parameters<typeof recipientsOf>[0]
 		expect(() => recipientsOf({ ...expected, demoOwner: a(4), demoSender: a(0) })).toThrow("demoSender is the zero address")
 		const fee = FEE_FLOOR_WEI
-		const recipients = recipientsOf({ ...expected, demoOwner: a(4), demoSender: a(3) }).map((r) => ({ ...r, balance: 0n }))
+		const recipients = recipientsOf({ ...expected, demoOwner: a(4), demoSender: a(3) }).map((r) => ({
+			...r,
+			balance: 0n,
+			transferGas: 21_000n,
+		}))
 		expect(fundingPlan(DEPLOYER, recipients, fee).sends.map((s) => [s.roles, s.need])).toEqual([
 			[["guardian"], needOf("guardian", fee)],
 			[["canaryOwner"], needOf("canaryOwner", fee)],

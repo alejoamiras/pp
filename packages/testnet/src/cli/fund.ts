@@ -1,7 +1,7 @@
 // fund <deployment file> [--quote] [--rehearse-fork <url>]
-// Tops each address in `expected` up to the summed gas budgets of its roles at twice today's fee, once,
-// from the L1 deployer, the one address the owner funds. `--quote` loads no key and sends nothing: it
-// prints what the deployer must hold, the top-ups' own gas included.
+// Tops each address in `expected` up to the summed gas budgets of its roles at twice today's fee, from
+// the L1 deployer, the one address the owner funds. `--quote` loads no key and sends nothing: it prints
+// what the deployer must hold, the top-ups' own gas included.
 import { formatEther } from "viem"
 import { l1AddressOf } from "../accounts"
 import { assertTopUp, fundingPlan, recipientsOf } from "../funding"
@@ -22,9 +22,11 @@ await main(async () => {
 		l1.getBalance({ address: deployer }),
 		...recipients.map((r) => l1.getBalance({ address: r.address })),
 	])
+	// A nonzero value, so a transfer to an account that does not exist yet is priced as the one creating it.
+	const transferGas = await Promise.all(recipients.map((r) => l1.estimateGas({ account: deployer, to: r.address, value: 1n })))
 	const plan = fundingPlan(
 		deployer,
-		recipients.map((r, i) => ({ ...r, balance: balances[i] as bigint })),
+		recipients.map((r, i) => ({ ...r, balance: balances[i] as bigint, transferGas: transferGas[i] as bigint })),
 		fees.maxFeePerGas,
 	)
 	const short = plan.total > deployerBalance ? plan.total - deployerBalance : 0n
