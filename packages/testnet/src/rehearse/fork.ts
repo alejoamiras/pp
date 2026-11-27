@@ -25,8 +25,6 @@ import { expectedOf, loadScratch, must, promote, type Scratch, writeScratch } fr
 
 const OWN = fileURLToPath(new URL("../../deployments/testnet-own.json", import.meta.url))
 const MINT_ABI = parseAbi(["function mint(address to, uint256 amount)"])
-const NOTE = 100n
-const AMOUNTS = { debit: NOTE, note: NOTE, bridge: NOTE }
 
 export type ForkResult = { block: bigint; gas: Partial<Record<FundedRole, bigint>>; debit: bigint }
 
@@ -41,7 +39,13 @@ async function scratchFile(c: Ctx, scratchHome: string, runId: string): Promise<
 	const aspPort = await claimPort(runId, "rehearse-asp")
 	await releaseNamed([{ port: aspPort, service: "rehearse-asp", owner: runId }])
 	const own = parseDeployment(JSON.parse(readFileSync(OWN, "utf8")))
-	writeScratch(c, { ...own, network: { ...own.network, l1Rpc: c.forkUrl, aspPort }, expected: expectedOf(addresses, AMOUNTS) })
+	// The committed amounts, so the fork moves what the live run will.
+	if (!own.expected) throw new Error(`${OWN} has no expected section; commit it from \`addresses\` first`)
+	writeScratch(c, {
+		...own,
+		network: { ...own.network, l1Rpc: c.forkUrl, aspPort },
+		expected: expectedOf(addresses, own.expected.amounts),
+	})
 	return addresses
 }
 
@@ -66,6 +70,7 @@ async function stranger(c: Ctx) {
 	const key = generateKey("l1")
 	const d = loadScratch(c)
 	const pool = d.pool as NonNullable<TestnetDeployment["pool"]>
+	const note = (d.expected as NonNullable<TestnetDeployment["expected"]>).amounts.note
 	const client = createPublicClient({ transport: http(c.forkUrl) })
 	const account = privateKeyToAccount(key)
 	await client.request({ method: "anvil_setBalance", params: [account.address, numberToHex(parseEther("1"))] } as never)
@@ -75,7 +80,7 @@ async function stranger(c: Ctx) {
 		address: pool.asset,
 		abi: MINT_ABI,
 		functionName: "mint",
-		args: [account.address, 10n * NOTE],
+		args: [account.address, 10n * note],
 	})
 	await client.waitForTransactionReceipt({ hash })
 	const deployment = {
@@ -87,7 +92,7 @@ async function stranger(c: Ctx) {
 	}
 	const user = await sepoliaPoolUser({ rpcUrl: c.forkUrl, chainId: SEPOLIA, deployment, aspUrl: pool.aspApiUrl, key: key as Hex })
 	await user.registerKeystore()
-	return { user, asset: pool.asset }
+	return { user, asset: pool.asset, note }
 }
 
 /** Polls the ASP's leaves until `n` labels are in the set. */
@@ -106,7 +111,7 @@ async function approvals(c: Ctx, url: string): Promise<bigint> {
 	const seeded = await must(c, "seed", [c.file])
 	const debit = BigInt(seeded.find((e) => e.event === "seeded")?.debit as string)
 	const other = await stranger(c)
-	const own = await other.user.deposit({ asset: other.asset, value: NOTE })
+	const own = await other.user.deposit({ asset: other.asset, value: other.note })
 	await must(c, "seed", [c.file, "--recipient", other.user.address])
 	await untilLeaves(url, 2, 300_000)
 	await other.user.sync()

@@ -30,9 +30,9 @@
 		"birthIntake": "0x2a8bf62bfd30dbe6a42a302e51d0d45bc3578d885001c3c30f1a7bc321b8ecce",
 		"tokenClassId": "0x1e897c194970e0f495ca5e73956992f131fc38243e3f5b74812a99b9e86d397f",
 		"amounts": {
-			"debit": "100",
-			"note": "100",
-			"bridge": "100"
+			"debit": "100000000",
+			"note": "100000000",
+			"bridge": "100000000"
 		}
 	}
 }
