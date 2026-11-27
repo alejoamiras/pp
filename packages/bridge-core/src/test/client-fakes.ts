@@ -156,6 +156,16 @@ export const headRequest = (head: () => bigint) =>
 		return numberToHex(head())
 	}) as never
 
+/**
+ * An error chain as another copy of viem builds it: viem's names and fields on plain errors, so no
+ * class of this copy matches. `links` run outermost first.
+ */
+export function foreignError(...links: [name: string, fields?: object][]): Error {
+	let cause: Error | undefined
+	for (const [name, fields] of links.toReversed()) cause = Object.assign(new Error(name), { name, ...fields }, cause ? { cause } : {})
+	return cause as Error
+}
+
 /** One L1 with the portal: what was sent, what landed, what is pending, and the logs the resolver reads. */
 export class FakeChain {
 	head = 200n

@@ -8,6 +8,7 @@ import {
 	DEPLOYMENT,
 	FakeChain,
 	fakePool,
+	foreignError,
 	headRequest,
 	memoryStore,
 	NETWORK,
@@ -175,6 +176,35 @@ describe("submit: preflight at handoff", () => {
 		})
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("RPC_FAILED")
 		expect([...t.values.values()]).toEqual(["theirs"])
+	})
+
+	it("takes a 4001 raised by another copy of viem as the user's rejection, and restores the record", async () => {
+		const t = await setup()
+		t.chain.writeContract.mockRejectedValueOnce(
+			foreignError(["ContractFunctionExecutionError"], ["TransactionExecutionError"], ["UserRejectedRequestError", { code: 4001 }]),
+		)
+		const e = await submit(t.ctx, t.spend, t.chain.wallet(), t.session).catch((x: unknown) => x)
+		expect(e).toMatchObject({ code: "RPC_FAILED", source: "UserRejectedRequestError" })
+		expect(t.values.size).toBe(0)
+	})
+
+	it.each<[string, Parameters<typeof foreignError>]>([
+		["a timeout, which may follow a broadcast", [["TimeoutError"], ["UserRejectedRequestError", { code: 4001 }]]],
+		// Pinned: viem relabels a refusal whose text says "execution reverted"; treating that as a wrapper is a deliberate change.
+		[
+			"viem's ExecutionRevertedError relabel",
+			[
+				["ContractFunctionExecutionError"],
+				["TransactionExecutionError"],
+				["ExecutionRevertedError"],
+				["UserRejectedRequestError", { code: 4001 }],
+			],
+		],
+	])("keeps the attempt as UNCERTAIN when a 4001 sits under %s", async (_, links) => {
+		const t = await setup()
+		t.chain.writeContract.mockRejectedValueOnce(foreignError(...links))
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
+		expect((await t.journal.read(t.spend.nullifier)).record?.attempts).toHaveLength(1)
 	})
 
 	it("refuses a re-proof that is a valid spend of something else, with zero sends", async () => {

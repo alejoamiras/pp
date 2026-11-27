@@ -21,4 +21,9 @@ describe("ragequitChunks", () => {
 		expect(() => ragequitChunks([10n], 0n)).toThrow(/NO_EXACT_CHUNKS/)
 		expect(() => ragequitChunks([10n], 11n)).toThrow(/NO_EXACT_CHUNKS/)
 	})
+
+	it("refuses a note value of zero or below as a caller's error, before any chunking", () => {
+		expect(() => ragequitChunks([5n, 0n])).toThrow(TypeError)
+		expect(() => ragequitChunks([-1n], 1n)).toThrow(TypeError)
+	})
 })

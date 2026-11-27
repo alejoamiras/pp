@@ -1,6 +1,7 @@
+import { OutboxAbi } from "@aztec-foundation/l1-artifacts/OutboxAbi"
 import { SpecRangeError } from "@pp/bridge-spec"
 import { PoolClientError } from "@pp/pool-client"
-import { BaseError, ContractFunctionRevertedError } from "viem"
+import { PORTAL_FACTORY_ABI, PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { BridgeClientError, isSpendCheckName, rebuildError } from "./errors"
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
@@ -34,12 +35,64 @@ function fromPool(e: PoolClientError): BridgeClientError {
 	}
 }
 
-/** viem's revert error anywhere in an error chain: a contract refused the call, as opposed to a transport failure. */
-export const contractRevert = (e: unknown): ContractFunctionRevertedError | null =>
-	e instanceof BaseError ? (e.walk((x) => x instanceof ContractFunctionRevertedError) as ContractFunctionRevertedError | null) : null
+/**
+ * `e` and the errors in its cause chain, outermost first, for matching by shape: a caller's wallet
+ * client or pool-client can bring its own copy of viem, whose error classes `instanceof` misses.
+ * Stops at a cycle, at a throwing `cause`, and after 32 links.
+ */
+function causeChain(e: unknown): object[] {
+	const chain: object[] = []
+	for (let x = e; typeof x === "object" && x !== null && !chain.includes(x) && chain.length < 32; ) {
+		chain.push(x)
+		try {
+			x = (x as { cause?: unknown }).cause
+		} catch {
+			break
+		}
+	}
+	return chain
+}
 
-/** The decoded error name of a contract revert anywhere in a viem error chain, when it is an identifier. */
-export const revertName = (e: unknown): string | undefined => identifier(contractRevert(e)?.data?.errorName)
+const field = (x: object, key: string): unknown => {
+	try {
+		return (x as Record<string, unknown>)[key]
+	} catch {
+		return undefined
+	}
+}
+
+/** The error names a decoded revert may carry out: those of the contracts the client calls through viem. */
+const REVERT_NAMES: ReadonlySet<string> = new Set(
+	[...PROCESSOR_PORTAL_ABI, ...PORTAL_FACTORY_ABI, ...OutboxAbi].flatMap((i) => (i.type === "error" ? [i.name] : [])),
+)
+
+/**
+ * A contract revert anywhere in an error chain, as opposed to a transport failure: viem's
+ * `ContractFunctionRevertedError`, found by name in one walk. `revert` is its decoded error name
+ * when that names an error of a contract the client calls.
+ */
+export function contractRevert(e: unknown): { revert?: string } | null {
+	const found = causeChain(e).find((x) => field(x, "name") === "ContractFunctionRevertedError")
+	if (!found) return null
+	const data = field(found, "data")
+	const name = typeof data === "object" && data !== null ? field(data, "errorName") : undefined
+	return typeof name === "string" && REVERT_NAMES.has(name) ? { revert: name } : {}
+}
+
+/** viem's wrappers around a send's error: they add context and say nothing about whether it was broadcast. */
+const SEND_WRAPPERS: ReadonlySet<unknown> = new Set(["ContractFunctionExecutionError", "TransactionExecutionError"])
+
+/**
+ * Whether the user refused the request: an EIP-1193 4001 with only viem's send wrappers above it.
+ * Anything else above a 4001, such as a timeout, may follow a broadcast, so it is not a refusal.
+ */
+export function isUserRejection(e: unknown): boolean {
+	for (const x of causeChain(e)) {
+		if (field(x, "code") === 4001) return true
+		if (!SEND_WRAPPERS.has(field(x, "name"))) return false
+	}
+	return false
+}
 
 /**
  * Maps any thrown value to a `BridgeClientError` built from allow-listed identifiers only. It never
@@ -60,10 +113,8 @@ function translateOrThrow(e: unknown): BridgeClientError {
 	if (e instanceof BridgeClientError) return rebuildError(e)
 	if (e instanceof PoolClientError) return fromPool(e)
 	if (e instanceof SpecRangeError) return new BridgeClientError("SPEND_MISMATCH", { source: identifier(e.code) ?? "SpecRangeError" })
-	if (contractRevert(e)) {
-		const revert = revertName(e)
-		return new BridgeClientError("SIMULATION_REVERTED", revert ? { revert } : {})
-	}
+	const reverted = contractRevert(e)
+	if (reverted) return new BridgeClientError("SIMULATION_REVERTED", reverted)
 	const name = e instanceof Error ? (identifier(e.constructor?.name) ?? identifier(e.name)) : undefined
 	return new BridgeClientError("RPC_FAILED", name ? { source: name } : {})
 }

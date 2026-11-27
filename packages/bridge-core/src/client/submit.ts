@@ -1,9 +1,9 @@
 import { PoolClientError, spendRevertCode } from "@pp/pool-client"
-import { type Account, BaseError, type Chain, type Hash, hexToBigInt, isAddressEqual, type PublicClient, type WalletClient } from "viem"
+import { type Account, type Chain, type Hash, hexToBigInt, isAddressEqual, type PublicClient, type WalletClient } from "viem"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { sendGasLimit } from "../l1-gas"
 import { type Intent, latestMined, observe, planAttempt } from "./attempts"
-import { contractRevert, guarded, revertName } from "./boundary"
+import { contractRevert, guarded, isUserRejection } from "./boundary"
 import { assertBridgeSpend, snapshotSpend } from "./checks"
 import { BridgeClientError, type StaleRootCode } from "./errors"
 import { Journal, type JournalRecord, type KeyValueStore } from "./journal"
@@ -177,17 +177,12 @@ async function freshness(run: Run, s: PreparedBridgeSpend): Promise<Fresh> {
 		const data = revertData(e)
 		const stale = data ? spendRevertCode(data) : null
 		if (stale) return { kind: "stale", stale }
-		if (data === undefined && !contractRevert(e)) throw e
+		const reverted = contractRevert(e)
+		if (data === undefined && !reverted) throw e
 		const receipt = outcome(await resolveFor(run, s, false))
 		if (receipt) return { kind: "done", receipt }
-		const revert = revertName(e)
-		throw new BridgeClientError("SIMULATION_REVERTED", revert ? { revert } : {})
+		throw new BridgeClientError("SIMULATION_REVERTED", reverted ?? {})
 	}
-}
-
-const isUserRejection = (e: unknown): boolean => {
-	const rejected = (x: unknown) => typeof x === "object" && x !== null && (x as { code?: unknown }).code === 4001
-	return e instanceof BaseError ? e.walk(rejected) !== null : rejected(e)
 }
 
 /** The transaction may be out, so this never reports `RPC_FAILED`: a found event wins, anything else is `UNCERTAIN`. */
