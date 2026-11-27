@@ -74,7 +74,7 @@ describe("planAttempt properties (every reachable record)", () => {
 		import.meta.url,
 		"sends exactly when no earlier send can still land, or the override covers it",
 		1_000,
-		3_000,
+		1_500,
 	)
 	it(
 		"sends exactly when no earlier send can still land, or the override covers it",
@@ -102,7 +102,7 @@ describe("planAttempt properties (every reachable record)", () => {
 		import.meta.url,
 		"a send appends one hashless attempt, drops the oldest only at the cap, and never clears evicted",
 		1_000,
-		3_000,
+		1_500,
 	)
 	it(
 		"a send appends one hashless attempt, drops the oldest only at the cap, and never clears evicted",

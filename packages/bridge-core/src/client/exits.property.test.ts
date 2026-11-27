@@ -1,0 +1,69 @@
+import * as fc from "fast-check"
+import type { Hex } from "viem"
+import { describe, expect, it } from "vitest"
+import { propertyParams } from "../../../../vitest.base"
+import { BridgeClientError } from "./errors"
+import { messageIndices } from "./exits"
+
+/** One to eight hashes (a transaction's message limit), so repeats and shortages occur by construction. */
+const pool = fc.uniqueArray(fc.stringMatching(/^[0-9a-f]{64}$/), { minLength: 1, maxLength: 8, size: "max" })
+// Eight distinct hashes, a transaction's most, with the messages in the reverse of the tickets' order.
+const EIGHT = Array.from({ length: 8 }, (_, i) => `0x${(i + 1).toString(16).padStart(64, "0")}` as Hex)
+const drawn = (hashes: readonly string[]) =>
+	fc.array(
+		fc.mixedCase(fc.constantFrom(...hashes)).map((h) => `0x${h}` as Hex),
+		{ maxLength: 12, size: "max" },
+	)
+
+/** The k-th ticket for a hash takes that hash's k-th occurrence, compared without case. */
+function queued(tickets: readonly Hex[], messages: readonly Hex[]): number[] | "RPC_INCONSISTENT" {
+	const queues = new Map<string, number[]>()
+	for (const [i, m] of messages.entries()) queues.set(m.toLowerCase(), [...(queues.get(m.toLowerCase()) ?? []), i])
+	const out: number[] = []
+	for (const t of tickets) {
+		const next = queues.get(t.toLowerCase())?.shift()
+		if (next === undefined) return "RPC_INCONSISTENT"
+		out.push(next)
+	}
+	return out
+}
+
+const outcome = (tickets: readonly Hex[], messages: readonly Hex[]): number[] | "RPC_INCONSISTENT" => {
+	try {
+		return messageIndices(tickets, messages)
+	} catch (e) {
+		if (e instanceof BridgeClientError && e.code === "RPC_INCONSISTENT") return "RPC_INCONSISTENT"
+		throw e
+	}
+}
+
+describe("messageIndices", () => {
+	const name = "each ticket takes its hash's next unused occurrence, or the read is inconsistent"
+	const p = propertyParams(import.meta.url, name, 300, 1_500)
+	it(
+		name,
+		() => {
+			fc.assert(
+				fc.property(
+					pool.chain((hs) => fc.tuple(drawn(hs), drawn(hs))),
+					([tickets, messages]) => {
+						// Before the call, so an implementation that reorders its inputs cannot move the oracle with it.
+						const expected = queued(tickets, messages)
+						const short = [...new Set(tickets.map((t) => t.toLowerCase()))].some(
+							(h) =>
+								tickets.filter((t) => t.toLowerCase() === h).length > messages.filter((m) => m.toLowerCase() === h).length,
+						)
+						const got = outcome(tickets, messages)
+						expect(got === "RPC_INCONSISTENT", "RPC_INCONSISTENT iff a hash has more tickets than occurrences").toBe(short)
+						expect(got).toEqual(expected)
+						if (got === "RPC_INCONSISTENT") return
+						expect(got, "one index per ticket").toHaveLength(tickets.length)
+						expect(new Set(got).size, "distinct indices").toBe(got.length)
+					},
+				),
+				{ ...p.fc, examples: [[[EIGHT, [...EIGHT].reverse()]]] },
+			)
+		},
+		p.testTimeout,
+	)
+})
