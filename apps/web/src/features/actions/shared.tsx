@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useRef, useState } from "react"
 import { type Address, type Hex, isAddressEqual } from "viem"
-import { useApp } from "../../app/context"
+import { type App, useApp } from "../../app/context"
 import { useLive } from "../../app/live"
 import { useLabelNotes } from "../../app/queries"
 import { spendCap } from "../../data/chunks"
 import { BridgeFailure, codeOf, messageOf, PAYEE_MESSAGES, revertCopy, type UiCode } from "../../data/errors"
 import { parseAmount, parsePayee } from "../../data/parse"
+import { bindAztecSend } from "../../data/sends"
 import type { AztecSendHooks, LabelBalance, Sent } from "../../data/ports"
 import type { AztecAddress } from "../../data/stack-types"
 import type { TxAction, TxOutcome } from "../../data/tx"
@@ -91,6 +92,16 @@ export function useAmount(max: bigint) {
 	const error =
 		text !== "" && amount === null ? `Enter an amount above zero and at most ${plainAmount(max, decimals)} ${symbol}.` : undefined
 	return { text, setText, amount, error, max }
+}
+
+/** The send bound to the connection that lists `account` at the click, or `null` with the dialog failed. */
+export function bound(live: App["live"], account: AztecAddress, act: ReturnType<typeof useAction>): AztecSendHooks | null {
+	try {
+		return bindAztecSend(live.get, account)
+	} catch (err) {
+		act.fail(codeOf(err) ?? "CONTEXT_CHANGED")
+		return null
+	}
 }
 
 /**

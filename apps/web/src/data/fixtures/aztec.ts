@@ -105,6 +105,13 @@ function checkedSpend(w: World, from: AztecAddress, label: bigint, origin: Origi
 	}
 }
 
+/** The stack port's allow-list check before its handoff; the token's own check at inclusion stays in `checkedSpend`. */
+function assertListed(w: World, label: bigint, origin: Origin): void {
+	const state = fixtureLabelState(w, label, origin)
+	if (state === "ABSENT") throw new BridgeFailure("LABEL_ABSENT")
+	if (state === "STALE_ROOT") throw new BridgeFailure("LIST_STALE")
+}
+
 function publicOf(w: World, owner: AztecAddress): bigint {
 	return w.s.publicBalances.find((b) => b.owner === owner)?.amount ?? 0n
 }
@@ -142,6 +149,7 @@ export function fixtureAztec(w: World): AztecPort {
 		async transferPrivate(from, { to, amount, label, origin }, on) {
 			// The wallet refuses an address that cannot receive notes before it proves anything.
 			if (!isAztecPoint(to)) throw new BridgeFailure("RECIPIENT_INVALID")
+			assertListed(w, label, origin)
 			assertSpendable(noteValues(w, from, label), amount)
 			on.handoff()
 			return send(
@@ -151,6 +159,7 @@ export function fixtureAztec(w: World): AztecPort {
 			)
 		},
 		async unshield(from, { amount, label, origin }, on) {
+			assertListed(w, label, origin)
 			assertSpendable(noteValues(w, from, label), amount)
 			on.handoff()
 			return send(

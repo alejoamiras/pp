@@ -9,6 +9,7 @@ import type { PoolState } from "../../data/reconcile"
 import { ActionButton, Amount, Callout, EmptyState, LabelChip, Panel, StateBadge, shortHex } from "../../ui"
 import { TITLES } from "../bridge/Failure"
 import { EthereumSignIn } from "../connect/EthereumSignIn"
+import { RegistrationGate } from "./Registration"
 
 const BUSY = new Set(["starting", "proving", "sending", "preflight"])
 
@@ -166,8 +167,8 @@ function BridgesInProgress({ pool }: { pool: PoolState }) {
 function NoNotes() {
 	return (
 		<EmptyState title="No pool notes found for this account">
-			Either this account has not set up a pool account yet, or it set one up under another app version, whose notes this app cannot
-			read. Deposit through the pool app, or sign in with the account you used there.
+			This account is registered with the pool, but either it has made no deposit yet, or it deposited under another app version,
+			whose notes this app cannot read. Deposit through the pool app, or sign in with the account you used there.
 		</EmptyState>
 	)
 }
@@ -225,7 +226,9 @@ export function PoolPanel() {
 		>
 			{session ? (
 				<div className="grid gap-3">
-					<PoolNotes session={session} />
+					<RegistrationGate session={session}>
+						<PoolNotes session={session} />
+					</RegistrationGate>
 					<div>
 						<ActionButton onClick={eth.signOut}>Sign out</ActionButton>
 					</div>

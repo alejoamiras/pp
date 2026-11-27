@@ -8,7 +8,7 @@ import type { DataSource } from "../data/source"
 import type { AztecConnection } from "../data/wallet/types"
 import { type Connect, useConnect } from "../features/connect/useConnect"
 import { createLiveStore, type LiveStore } from "./live"
-import { POOL_KEY, usePool } from "./queries"
+import { POOL_KEY, REGISTRATION_KEY, usePool } from "./queries"
 import { type BridgeFlow, useBridgeFlow } from "./useBridgeFlow"
 import { type Ethereum, useEthereum } from "./useEthereum"
 import { type InFlight, useInFlight } from "./useInFlight"
@@ -100,7 +100,11 @@ export function AppProvider({ source, frame, children }: Props) {
 	}, [pool, hold])
 
 	useEffect(() => {
-		if (session === null) queryClient.removeQueries({ queryKey: [POOL_KEY] })
+		if (session === null) {
+			queryClient.removeQueries({ queryKey: [POOL_KEY] })
+			// The step only: a run's outcome stays with its owner, so an unconfirmed call's warning outlives a sign-out.
+			queryClient.removeQueries({ queryKey: [REGISTRATION_KEY] })
+		}
 	}, [session, queryClient])
 
 	const { connect } = side

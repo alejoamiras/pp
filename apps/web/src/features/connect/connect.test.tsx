@@ -191,6 +191,36 @@ describe("connect", () => {
 		expect(requestAccounts).not.toHaveBeenCalled()
 	})
 
+	test("a sign-in replaced while the wallet's account prompt is open reads nothing more once it closes", async () => {
+		let answer: () => void = () => {}
+		let reads = 0
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: {
+					...s.l1,
+					accounts: async () => {
+						reads++
+						return []
+					},
+					requestAccounts: () =>
+						new Promise<Address[]>((r) => {
+							answer = () => r([ACCOUNTS.owner])
+						}),
+				},
+			}),
+		})
+		await clickSignIn(app.user)
+		await screen.findByText("Approve the signature in your Ethereum wallet")
+		await app.user.click(button("Details"))
+		await app.user.click(button("Forget this device"))
+		await app.user.click(button("Forget"))
+		const before = reads
+		await act(async () => answer())
+		await act(() => new Promise((r) => setTimeout(r, 20)))
+		expect(reads).toBe(before)
+	})
+
 	test("Sign in clicked before the first account read lands does not ask a wallet that already shared one", async () => {
 		let first = true
 		const requestAccounts = vi.fn(async (): Promise<never> => {
@@ -243,7 +273,7 @@ describe("connect", () => {
 		act(() => app.control.selectL1Account("sender"))
 		await clickSignIn(app.user)
 		await screen.findByText("No pool notes found for this account")
-		screen.getByText(/has not set up a pool account yet, or it set one up under another app version/)
+		screen.getByText(/it has made no deposit yet, or it deposited under another app version/)
 		screen.getByText(/Deposit through the pool app/)
 	})
 
