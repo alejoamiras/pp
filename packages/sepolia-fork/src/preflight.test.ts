@@ -168,11 +168,20 @@ describe("the preflight", () => {
 		await expect(enroll(rewired, pins, pins.block.number)).rejects.toThrow("refusing to pin block 12224362: wiring.vault.aspRegistry")
 	})
 
-	test("enrollment refuses an unfinalized block, a truncated hash, a cleared slot or route, and an unpinned proxy", async () => {
+	test("enrollment reads the header after finality, and refuses an unfinalized block, a malformed hash, a cleared slot or route, and an unpinned proxy", async () => {
 		const { rpc, pins } = chain(BASE)
 		expect(await enroll(rpc, pins, pins.block.number)).toEqual({ block: pins.block, bindings: pins.bindings })
-		const truncated = chain(BASE, { blockHash: `0x${"ab".repeat(31)}a` }).rpc
-		await expect(enroll(truncated, pins, pins.block.number)).rejects.toThrow("no well-formed header")
+		for (const blockHash of [`0x${"ab".repeat(31)}a`, [TARGET.block.hash]]) {
+			const malformed = chain(BASE, { blockHash: blockHash as Hex }).rpc
+			await expect(enroll(malformed, pins, pins.block.number)).rejects.toThrow("no well-formed header")
+		}
+		const order: unknown[] = []
+		const watched: Rpc = async <T>(method: string, params: unknown[] = []) => {
+			if (method === "eth_getBlockByNumber") order.push(params[0])
+			return rpc<T>(method, params)
+		}
+		await enroll(watched, pins, pins.block.number)
+		expect(order).toEqual(["finalized", numberToHex(pins.block.number)])
 		await expect(enroll(rpc, pins, 0xba9001n)).rejects.toThrow("refusing to pin block 12226561: it is not finalized")
 		const cleared = chain({ ...BASE, implementations: { ...BASE.implementations, vault: addr(0) } }).rpc
 		await expect(enroll(cleared, pins, pins.block.number)).rejects.toThrow("vault's EIP-1967 slot is empty")
