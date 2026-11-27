@@ -3,24 +3,27 @@
 The web app for the label bridge. It shows a pool balance by label, bridges part of a pool note to
 Aztec under the same label, connects an Aztec wallet through the wallet SDK, waits for the bridge and
 claims it, lists private balances by label with their allow-list state, and sends privately,
-unshields, shields, leaves to Ethereum (ragequit), withdraws the public balance and collects exits on
-Ethereum.
+unshields, shields, leaves to Ethereum (ragequit), withdraws to Ethereum from a label or from the
+public balance, and collects exits on Ethereum.
 
 Every screen runs on an in-memory fixture world behind the data ports in `src/data/ports.ts`. The
 fixture world keeps chain time (it moves only with blocks) and is driven from tests and the browser
 console through `window.__ppFixtures`, which fixture builds expose and stack builds cannot contain.
 
 A stack build (`build:local` with `PP_STACK_MANIFEST` from `bun run demo --keep`) reads the local
-stack instead through `src/data/adapters/`: Ethereum through the injected wallet, chain time from
-both chains, the asset's decimals and symbol from the factory's registration, the pool notes by
-label through pool-client with one worker prover per page, the bridge and its claim through
-bridge-core's client, the Aztec balances by label, the public balance, the private send, the
-unshield and the ragequit through the connected wallet, and the exit tickets, their status and their
-collection through bridge-core's client. The allow list is the registry's record and its time read
-at one Aztec block, with each label checked against the bot's snapshot of that record's lists in one
-Web Worker (see below). A private send or an unshield checks its label again right before it is
-built and sends nothing for a label the latest list does not hold; both are paid by the
-SponsoredFPC. Shield and the public balance's withdrawal are not wired yet. On the local stack
+stack instead through `src/data/adapters/`: Ethereum reads through the stack's RPC and its signatures
+and sends through the injected wallet, chain time from both chains, the asset's decimals and symbol
+from the factory's registration, the pool notes by label through pool-client with one worker prover
+per page, the bridge and its claim through bridge-core's client, the Aztec balances by label, the
+public balance, the private send, the unshield, the shield, the ragequit and both withdrawals to
+Ethereum through the connected wallet, and the exit tickets, their status and their collection
+through bridge-core's client. The allow list is the registry's record and its time read at one Aztec
+block, with each label checked against the bot's snapshot of that record's lists in one Web Worker
+(see below). A private send, an unshield or a withdrawal from a label checks its label again right
+before it is built and sends nothing for a label the latest list does not hold. A withdrawal from a
+label is one transaction that unshields the amount and withdraws it, so Ethereum sees the payee and
+the amount but not the label. These spends, the shield and the public withdrawal are paid by the
+SponsoredFPC. On the local stack
 (chain 31337 over a loopback RPC) the build can also send a bridge and collect an exit from anvil's
 dev account, so the demo needs no second wallet account. It is served by `serve`, which also serves
 the three proving files of `transact_1x1`, the one circuit the app proves, from `PP_CIRCUITS_DIR`,
