@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest"
 import { DOM_SEP__TOKEN_BRIDGE_PRIVATE_CLAIM_SECRET, deriveTokenClaimSecret, tokenClaimSecretHash } from "./claim-secret"
 
 /**
- * KEYSTONE — the second irreversible-loss gate (recipient-committed private claims). These vectors are
+ * KEYSTONE — an irreversible-loss gate (recipient-committed private claims). These vectors are
  * the single source of truth that the TS `deriveTokenClaimSecret` byte-matches the Noir
  * `claim_secret_lib::derive_claim_secret` (asserted against the SAME literals in
  * contracts/bridge/aztec/keystone/src/main.nr). A change to `@aztec`'s poseidon, the domain string, or

@@ -49,12 +49,7 @@
 		{ "name": "pp_hash", "path": "contracts/bridge/aztec/pp_hash", "kind": "lib", "nargo": { "floor": 8 } },
 		{ "name": "bridge_message", "path": "contracts/bridge/aztec/bridge_message", "kind": "lib" },
 		{ "name": "claim_secret", "path": "contracts/bridge/aztec/claim_secret", "kind": "lib" },
-		{ "name": "register_hash", "path": "contracts/bridge/aztec/register_hash", "kind": "lib" },
-		{
-			"name": "token_portal_content_hash_lib",
-			"path": "contracts/bridge/aztec/token_portal_content_hash_lib",
-			"kind": "lib"
-		}
+		{ "name": "register_hash", "path": "contracts/bridge/aztec/register_hash", "kind": "lib" }
 	],
 	"pins": [
 		{ "repo": "aztec-labs-eng/aztec-nr", "tag": "v6.0.0", "commit": "0472012201fdff1429d184f8d25cecf13ca94326" },

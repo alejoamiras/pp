@@ -10,9 +10,6 @@ import { fileURLToPath } from "node:url"
 import { AZTEC_DIR, nargoTest } from "./nargo"
 
 const LEGACY_TESTS = [
-	"mint_to_public_matches_l1",
-	"mint_to_private_matches_l1",
-	"withdraw_matches_l1",
 	"claim_secret_dom_sep_is_pinned",
 	"claim_secret_vectors_match_ts",
 	"claim_secret_hash_vectors_match_ts",
