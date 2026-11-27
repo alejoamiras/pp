@@ -108,6 +108,41 @@ the one place the suite differs from a real network.
 see. `web.yml` runs the whole browser suite in stack mode, the local stack included, on every change
 the app or the kit can see.
 
+## Real wallet
+
+`bun run --cwd packages/e2e-kit test:real-wallet [-- <playwright args>]` runs
+`apps/web/e2e/real-wallet.pw.ts` against the pinned public release of the wallet, approving in its
+own windows. `real-wallet/run.ts` gives the run a fresh state directory (a `mkdtemp` child of
+`PP_E2E_STATE_DIR`, else of `.e2e-state/`), runs `agent.sh` with `PP_E2E_WALLET=real`, then fails
+if a listener, a port row, a browser process or the `real-wallet/` directory of the run survives.
+Playwright's output ends with `real-wallet: N/4 passed as expected`.
+
+- **Pins.** `real-wallet/wallet-pin.json` (zip URL, size, sha256, provenance) and
+  `real-wallet/crs-pin.json` (the proving points' compressed ranges and the decompressed G1). Bump
+  the wallet with `bun real-wallet/pin-wallet.ts <tag>`, which needs `gh`, refuses a prerelease or a
+  release under seven days old, and checks the build attestation against the tag's commit.
+  Re-measure the points with `bun real-wallet/crs.ts --pin` when bb.js changes.
+- **Fence.** Chromium's proxy is a recorder that refuses everything; only the run's own
+  `127.0.0.1` ports bypass it. Each launch proves it first: a remote host and an unowned loopback
+  port both reach the recorder, that port's listener sees nothing, an owned probe answers. Every
+  refused host must be listed in `real-wallet/declared-refusals.json`, and listed hosts stay refused.
+- **Proving points.** Node downloads the exact pinned ranges from the Aztec CDN, checks them,
+  decompresses G1 with bb.js's WASM backend and checks the result. A launch of its own writes them
+  into the wallet's IndexedDB; the test launch reads them back at their pinned hashes before onboarding.
+- **Secrets.** The wallet's password is random per run and never written; its recovery phrase is
+  the wallet's own, made per run. A trace of a wallet window may show either. Both are worthless
+  outside the run, and the profile is deleted at teardown.
+
+Known limits:
+
+- Chromium's sandbox needs unprivileged user namespaces. Where AppArmor restricts them (Ubuntu
+  23.10 and later with `kernel.apparmor_restrict_unprivileged_userns=1`, as on the agents' Linux
+  host) the suite runs without it, after the canaries pass; no host setting is changed to get it.
+- The wallet's service worker and its first-run tab start with the browser, before the canaries
+  can run. The recorder holds every request from the first.
+- A Playwright worker killed with SIGKILL can leave Chromium running: a persistent context exposes
+  no pid. `run.ts` reports it; nothing kills by name.
+
 ## Rules
 
 - Selectors are `data-testid` only, narrowed by `data-*` attributes on the same element where an id

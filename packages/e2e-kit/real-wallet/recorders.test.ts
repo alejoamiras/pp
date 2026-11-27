@@ -52,7 +52,7 @@ describe("node recorder", () => {
 				const answer = (m: { id: number; method: string; params: unknown[] }) => ({
 					jsonrpc: "2.0",
 					id: m.id,
-					result: m.method === "node_getNullifierMembershipWitness" ? (m.params[1] === "0x01" ? { index: "1" } : null) : null,
+					result: m.method === "aztec_getNullifierMembershipWitness" ? (m.params[1] === "0x01" ? { index: "1" } : null) : null,
 				})
 				const msg = JSON.parse(body)
 				res.setHeader("content-type", "application/json")
@@ -71,14 +71,14 @@ describe("node recorder", () => {
 				r.json(),
 			)
 		const batch = await post([
-			{ jsonrpc: "2.0", id: 1, method: "node_getNullifierMembershipWitness", params: ["latest", "0x02"] },
-			{ jsonrpc: "2.0", id: 2, method: "node_getNullifierMembershipWitness", params: ["latest", "0x01"] },
+			{ jsonrpc: "2.0", id: 1, method: "aztec_getNullifierMembershipWitness", params: ["latest", "0x02"] },
+			{ jsonrpc: "2.0", id: 2, method: "aztec_getNullifierMembershipWitness", params: ["latest", "0x01"] },
 		])
 		expect(batch).toEqual([
 			{ jsonrpc: "2.0", id: 1, result: null },
 			{ jsonrpc: "2.0", id: 2, result: { index: "1" } },
 		])
-		await post({ jsonrpc: "2.0", id: 3, method: "node_sendTx", params: [{ data: "x" }] })
+		await post({ jsonrpc: "2.0", id: 3, method: "aztec_sendTx", params: [{ data: "x" }] })
 
 		expect(rec.nullifierQueries()).toEqual([
 			{ value: "0x02", found: false, seq: 0 },

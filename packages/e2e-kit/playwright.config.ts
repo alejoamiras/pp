@@ -5,6 +5,8 @@ import { PROFILES } from "./test-wallet/profile"
 
 const env = runEnv()
 const here = fileURLToPath(new URL(".", import.meta.url))
+/** `PP_E2E_WALLET=real` (set by `real-wallet/run.ts`) runs only the `.pw.ts` real-wallet specs. */
+const realWallet = process.env.PP_E2E_WALLET === "real"
 /** The web app under test; `agent.sh` builds it and runs this config only once it exists. */
 const appRoot = fileURLToPath(new URL("../../apps/web/", import.meta.url))
 
@@ -47,6 +49,7 @@ export default defineConfig({
 		["list"],
 		...(process.env.CI ? [["html", { open: "never", outputFolder: `${env.stateDir}/playwright-report` }] as const] : []),
 		[`${here}shard-reporter.ts`],
+		...(realWallet ? [[`${here}real-wallet/count-reporter.ts`] as const] : []),
 	],
 	outputDir: `${env.stateDir}/test-results`,
 	use: {
@@ -59,7 +62,10 @@ export default defineConfig({
 		actionTimeout: 60_000,
 		navigationTimeout: 60_000,
 	},
-	projects: [{ name: "chromium", use: { channel: undefined } }],
+	// A claim and a ragequit each prove in the wallet's offscreen document; the suite never retries.
+	projects: realWallet
+		? [{ name: "real-wallet", testMatch: /\.pw\.ts$/, retries: 0, timeout: 15 * 60_000 }]
+		: [{ name: "chromium", use: { channel: undefined } }],
 	webServer: [
 		{
 			// The production-mode local build, served at the exact origin the wallet frames accept.

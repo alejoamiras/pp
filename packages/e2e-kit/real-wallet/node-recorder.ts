@@ -1,8 +1,9 @@
 /**
  * A recording reverse proxy in front of the stack's Aztec node, given to the wallet as its network
  * URL. It forwards every request unchanged and records each JSON-RPC call (batches unwrapped): the
- * method, small params, whether a nullifier witness came back, and the hash of each `node_sendTx`,
- * parsed with stdlib's own `Tx` schema. Responses are relayed byte for byte.
+ * method, small params, whether a nullifier witness came back, and the hash of each `sendTx`, parsed
+ * with stdlib's own `Tx` schema. Responses are relayed byte for byte. Calls are matched by `name`, the
+ * method without its namespace (Aztec 6.0.0's node serves `aztec_*`).
  */
 import { createServer, type IncomingMessage, request } from "node:http"
 import type { Socket } from "node:net"
@@ -10,11 +11,13 @@ import type { Socket } from "node:net"
 export interface NodeCall {
 	seq: number
 	method: string
+	/** `method` without its namespace prefix. */
+	name: string
 	/** Kept when it serializes to at most 4 KiB. */
 	params?: unknown
-	/** `node_getNullifierMembershipWitness` only: whether the node returned a witness. */
+	/** `getNullifierMembershipWitness` only: whether the node returned a witness. */
 	found?: boolean
-	/** `node_sendTx` only. */
+	/** `sendTx` only. */
 	txHash?: string
 	error?: string
 }
@@ -94,13 +97,13 @@ async function record(calls: NodeCall[], reqJson: unknown, resJson: unknown, txH
 	for (const r of reqs) {
 		if (typeof r?.method !== "string") continue
 		const res = ress.find((x) => x?.id === r.id)
-		const call: NodeCall = { seq: calls.length, method: r.method }
+		const call: NodeCall = { seq: calls.length, method: r.method, name: r.method.slice(r.method.indexOf("_") + 1) }
 		calls.push(call)
 		const params = Array.isArray(r.params) ? r.params : []
 		if (JSON.stringify(params).length <= SMALL_PARAMS) call.params = params
 		if (res?.error !== undefined) call.error = JSON.stringify(res.error).slice(0, 500)
-		if (r.method === "node_getNullifierMembershipWitness") call.found = res?.result != null
-		if (r.method === "node_sendTx") call.txHash = await txHashOf(params[0]).catch((e: Error) => `unparsed: ${e.message.slice(0, 200)}`)
+		if (call.name === "getNullifierMembershipWitness") call.found = res?.result != null
+		if (call.name === "sendTx") call.txHash = await txHashOf(params[0]).catch((e: Error) => `unparsed: ${e.message.slice(0, 200)}`)
 	}
 }
 
@@ -117,7 +120,7 @@ export async function startNodeRecorder(target: string, txHashOf: TxHashOf = std
 			res.writeHead(up.status, { ...up.headers, "content-length": String(up.body.length) })
 			res.end(up.body)
 		})().catch((e: Error) => {
-			calls.push({ seq: calls.length, method: "(proxy)", error: e.message.slice(0, 500) })
+			calls.push({ seq: calls.length, method: "(proxy)", name: "(proxy)", error: e.message.slice(0, 500) })
 			if (!res.headersSent) res.writeHead(502)
 			res.end()
 		})
@@ -136,10 +139,10 @@ export async function startNodeRecorder(target: string, txHashOf: TxHashOf = std
 		url: `http://127.0.0.1:${addr.port}`,
 		port: addr.port,
 		calls: () => calls.map((c) => ({ ...c })),
-		sentTxHashes: () => calls.filter((c) => c.method === "node_sendTx").map((c) => c.txHash ?? ""),
+		sentTxHashes: () => calls.filter((c) => c.name === "sendTx").map((c) => c.txHash ?? ""),
 		nullifierQueries: () =>
 			calls
-				.filter((c) => c.method === "node_getNullifierMembershipWitness" && Array.isArray(c.params))
+				.filter((c) => c.name === "getNullifierMembershipWitness" && Array.isArray(c.params))
 				.map((c) => ({ value: String((c.params as unknown[])[1]), found: c.found === true, seq: c.seq })),
 		close: () =>
 			new Promise((resolve) => {

@@ -74,8 +74,11 @@ export async function startEgressRecorder(): Promise<EgressRecorder> {
 	return { port, hits: () => [...hits], close: closer(server, sockets) }
 }
 
-/** A loopback listener nobody owns for the browser: any connection to it proves the bypass list leaks. */
-export async function startTripwire(): Promise<Listener & { connections(): number }> {
+export type CountingListener = Listener & { connections(): number }
+
+const NO_CONTENT = "HTTP/1.1 204 No Content\r\nCross-Origin-Resource-Policy: cross-origin\r\nConnection: close\r\n\r\n"
+
+async function counting(answer: boolean): Promise<CountingListener> {
 	let n = 0
 	const sockets = new Set<Socket>()
 	const server = createServer((socket) => {
@@ -83,8 +86,14 @@ export async function startTripwire(): Promise<Listener & { connections(): numbe
 		sockets.add(socket)
 		socket.on("close", () => sockets.delete(socket))
 		socket.on("error", () => {})
-		socket.destroy()
+		if (answer) socket.once("data", () => socket.end(NO_CONTENT))
+		else socket.destroy()
 	})
 	const port = await listen(server)
 	return { port, connections: () => n, close: closer(server, sockets) }
 }
+
+/** A loopback listener left out of the bypass list: any connection to it proves the fence leaks. */
+export const startTripwire = () => counting(false)
+/** A loopback listener in the bypass list that answers 204: no connection proves the owned path is broken. */
+export const startOwnedProbe = () => counting(true)

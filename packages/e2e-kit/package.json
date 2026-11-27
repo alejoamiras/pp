@@ -8,7 +8,8 @@
 		"preview:test-wallet": "vite preview --config test-wallet/vite.config.mts",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "bun --bun vitest run",
-		"test:browser": "bash scripts/e2e/agent.sh"
+		"test:browser": "bash scripts/e2e/agent.sh",
+		"test:real-wallet": "bun real-wallet/run.ts"
 	},
 	"dependencies": {
 		"@aztec-foundation/bb.js": "6.0.0",
@@ -27,6 +28,7 @@
 		"@nulo-sh/wallet-crypto": "0.3.0",
 		"@nulo-sh/wallet-sdk-schema-patch": "0.3.0",
 		"@pp/bridge-core": "workspace:*",
+		"@pp/run-isolation": "workspace:*",
 		"viem": "2.57.1"
 	},
 	"devDependencies": {
