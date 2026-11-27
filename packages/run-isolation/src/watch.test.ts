@@ -38,7 +38,7 @@ const env = process.env.LIFE_ENV ? JSON.parse(process.env.LIFE_ENV) : undefined
 const c = spawnWatched(cmd, args, { stdio: ["ignore", "pipe", "ignore"], env })
 let out = ""
 c.stdout.on("data", (d) => (out += d))
-c.on("exit", (code, signal) => console.log(JSON.stringify({ out, end: signal ?? code })))
+c.on("close", (code, signal) => console.log(JSON.stringify({ out, end: signal ?? code })))
 `
 const life = join(dir, "life.mjs")
 writeFileSync(life, LIFE)
@@ -124,6 +124,8 @@ describe.skipIf(!proc)("a watched group dies with the process that spawned it", 
 			parents.push(p)
 			const [a, b] = (await until(() => (existsSync(ready) ? readFileSync(ready, "utf8") : undefined), 20_000)).split(" ").map(Number)
 			groups.push(a as number, b as number)
+			// A gone group leaves cleanup: its number may already name someone else's.
+			const retire = (g: number) => groups.splice(groups.indexOf(g), 1)
 			await until(() => (existsSync(`${ready}.watch-a`) && existsSync(`${ready}.watch-b`) ? true : undefined), 20_000)
 			expect(rows(registry, runId).sort()).toEqual(["watch-a", "watch-b"])
 			// Alive while the parent is: the watch must not mistake a quiet pipe for a closed one.
@@ -134,11 +136,13 @@ describe.skipIf(!proc)("a watched group dies with the process that spawned it", 
 			// Within b's grace: a's shutdown write landed, a ended and freed its row; b's leftover member is
 			// still running, so b's row stays claimed.
 			await until(() => (!groupAlive(a as number) && !rows(registry, runId).includes("watch-a") ? true : undefined), 4_000)
+			retire(a as number)
 			expect(groupAlive(b as number)).toBe(true)
 			expect(rows(registry, runId)).toEqual(["watch-b"])
 			expect(readFileSync(`${ready}.a.log`, "utf8")).toBe("bye\n")
 			// The leftover outlives the grace: the whole group goes, its leader with it, and the row stays.
 			expect(await groupGone(b as number, 15_000)).toBe(true)
+			retire(b as number)
 			expect(rows(registry, runId)).toEqual(["watch-b"])
 		}, 60_000)
 	}

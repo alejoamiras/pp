@@ -96,6 +96,17 @@ function procHidesPids(proc: ProcLinks): boolean {
 	return options.split(",").some((o) => o.startsWith("hidepid=") && !/^hidepid=(0|off)$/.test(o))
 }
 
+/** Whether `/proc` can vouch that a pid it does not list is gone: it numbers this process's own pid
+ *  namespace and hides no pid. */
+function procVouches(proc: ProcLinks): boolean {
+	if (!PROC) return false
+	try {
+		return procNumbersOwnNamespace(proc) && !procHidesPids(proc)
+	} catch {
+		return false
+	}
+}
+
 /**
  * The token under which a pid and its `startTime` name one process: this boot, pid namespace and time
  * namespace (which offsets field 22 for its readers). Undefined when `/proc` cannot vouch that a pid it
@@ -103,9 +114,8 @@ function procHidesPids(proc: ProcLinks): boolean {
  * or one mounted with `hidepid`. Another container sharing a directory has another token.
  */
 export function pidNamespace(proc: ProcLinks = HOST): string | undefined {
-	if (!PROC) return undefined
+	if (!procVouches(proc)) return undefined
 	try {
-		if (!procNumbersOwnNamespace(proc) || procHidesPids(proc)) return undefined
 		const boot = proc.readFile("/proc/sys/kernel/random/boot_id").trim()
 		const time = proc.exists("/proc/self/ns/time") ? proc.readlink("/proc/self/ns/time") : ""
 		return `${boot}/${proc.readlink("/proc/self/ns/pid")}/${time}`
@@ -183,11 +193,11 @@ export function groupAlive(pgid: number, proc: ProcFs = HOST): boolean {
 
 /**
  * Whether a member of `pgid` other than `self` is still running, by `groupAlive`'s rules. Always true
- * when `/proc` cannot vouch for a member it does not list (`pidNamespace` is undefined): only the
- * kernel's view of the whole group remains, and `self` is in it.
+ * when `/proc` cannot vouch for a member it does not list (no `/proc`, another pid namespace's, or
+ * `hidepid`): only the kernel's view of the whole group remains, and `self` is in it.
  */
 export function othersRunning(pgid: number, self: number, proc: ProcLinks = HOST): boolean {
-	return pidNamespace(proc) === undefined || hasRunningMember(pgid, proc, self)
+	return !procVouches(proc) || hasRunningMember(pgid, proc, self)
 }
 
 /** Sends `s` to every member of `pgid`; false when the kernel refused it (no such group, or not ours to signal). */

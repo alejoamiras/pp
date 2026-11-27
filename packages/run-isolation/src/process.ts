@@ -42,7 +42,14 @@ export function spawnWatched(
 	options: { stdio: Stdio; env?: NodeJS.ProcessEnv },
 	watch: Watch = {},
 ): ChildProcess {
-	const spec: WatchSpec = { cmd, args, release: watch.release ?? [], registry: registryPath(), graceMs: watch.graceMs ?? 5_000 }
+	const spec: WatchSpec = {
+		cmd,
+		args,
+		parent: process.pid,
+		release: watch.release ?? [],
+		registry: registryPath(),
+		graceMs: watch.graceMs ?? 5_000,
+	}
 	// Bun would load a .env from the working directory into the environment `cmd` inherits; Node warns on
 	// stripping the launcher's types.
 	const flags = process.versions.bun ? ["--no-env-file"] : ["--no-warnings"]

@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { releaseRows, rowsOwnedBy } from "@pp/run-isolation/ports"
 import { groupGone, signalGroup } from "@pp/run-isolation/process-group"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { INTEGRATION } from "./sandbox"
 
 const LOCAL_NETWORK = fileURLToPath(new URL("../../scripts/sandbox/local-network.ts", import.meta.url))
@@ -43,37 +43,45 @@ interface Run {
 	output: string
 }
 
-/** Ends what a run left: its host, its groups (found from the host if boot never got that far), then its
- *  rows and directories once nothing in those groups can hold them. */
+/** Ends what a run left: its host, its groups (found from a host still running if boot never got that far),
+ *  then its rows and directories once nothing in those groups can hold them. */
 async function cleanUp(run: Run): Promise<void> {
-	if (run.pgids.length === 0 && run.host?.pid !== undefined) run.pgids = ledGroups(run.host.pid)
-	run.host?.kill("SIGKILL")
+	const host = run.host
+	const hostRuns = host?.pid !== undefined && host.exitCode === null && host.signalCode === null
+	if (run.pgids.length === 0 && hostRuns) run.pgids = ledGroups(host.pid as number)
+	host?.kill("SIGKILL")
 	for (const pgid of run.pgids) signalGroup(pgid, "SIGKILL")
-	for (const pgid of run.pgids) await groupGone(pgid, 10_000)
-	await releaseRows(run.runId)
+	const gone = await Promise.all(run.pgids.map((pgid) => groupGone(pgid, 10_000)))
+	// A member that outlived SIGKILL may still hold a port, so its rows stay, as its leader's would.
+	if (gone.every(Boolean)) await releaseRows(run.runId)
 	// The host never ran its teardown, so its directories are still there.
 	for (const dir of /, data (\S+), tmp (\S+)/.exec(run.output)?.slice(1) ?? []) rmSync(dir, { recursive: true, force: true })
 }
 
 describe.skipIf(!INTEGRATION || !existsSync("/proc/self/stat"))("a sandbox whose host dies", () => {
-	const root = join(homedir(), ".cache/pp/bridge-core")
-	mkdirSync(root, { recursive: true })
-	const work = mkdtempSync(join(root, "parent-death-"))
-	const script = join(work, "host.ts")
-	writeFileSync(script, HOST)
+	let work = ""
+	let script = ""
 	const runs: Run[] = []
+	beforeAll(() => {
+		const root = join(homedir(), ".cache/pp/bridge-core")
+		mkdirSync(root, { recursive: true })
+		work = mkdtempSync(join(root, "parent-death-"))
+		script = join(work, "host.ts")
+		writeFileSync(script, HOST)
+	})
 	afterAll(async () => {
 		for (const run of runs) await cleanUp(run)
-		rmSync(work, { recursive: true, force: true })
+		if (work) rmSync(work, { recursive: true, force: true })
 	})
 
 	for (const death of ["SIGKILL", "process.exit"] as const) {
 		it(`ends both of its process groups and frees every row it claimed, on ${death}`, async () => {
 			const run: Run = { runId: `bridge-parent-death-${process.pid}-${Date.now().toString(36)}`, pgids: [], output: "" }
 			runs.push(run)
-			// Without the attach pair the host boots its own network rather than reusing the suite's.
+			// Without the attach pair, from the environment or a .env, the host boots its own network rather
+			// than reusing the suite's.
 			const { SANDBOX_L1_RPC: _rpc, SANDBOX_NODE_URL: _node, ...env } = process.env
-			const host = spawn("bun", [script, run.runId], { stdio: ["pipe", "pipe", "inherit"], env })
+			const host = spawn("bun", ["--no-env-file", script, run.runId], { stdio: ["pipe", "pipe", "inherit"], env })
 			run.host = host
 			const exited = new Promise((resolve) => host.once("exit", resolve))
 			await new Promise<void>((resolve, reject) => {
@@ -93,7 +101,11 @@ describe.skipIf(!INTEGRATION || !existsSync("/proc/self/stat"))("a sandbox whose
 			if (death === "SIGKILL") host.kill("SIGKILL")
 			else host.stdin.write("exit\n")
 			await exited
-			for (const pgid of run.pgids) expect(await groupGone(pgid, 60_000)).toBe(true)
+			for (const pgid of [...run.pgids]) {
+				expect(await groupGone(pgid, 60_000)).toBe(true)
+				// A gone group leaves cleanup: its number may already name someone else's.
+				run.pgids = run.pgids.filter((p) => p !== pgid)
+			}
 			console.log(`[parent-death] both groups gone ${Date.now() - killed} ms after the host's ${death}`)
 			// A leader frees its rows before it exits, and only once it has seen its group empty.
 			expect(rowsOwnedBy(run.runId)).toBe(0)

@@ -17,6 +17,8 @@ import { othersRunning } from "./process-group.ts"
 export interface WatchSpec {
 	cmd: string
 	args: string[]
+	/** The spawning process's pid; this process's ppid stops naming it once that process has died. */
+	parent: number
 	/** The registry rows this group's ports hold, released once the group is seen empty after its parent died. */
 	release: RowRef[]
 	/** The registry those rows live in, fixed by the parent: the command's environment need not name it. */
@@ -25,7 +27,7 @@ export interface WatchSpec {
 }
 
 const spec = JSON.parse(process.argv[2] ?? "") as WatchSpec
-const parent = process.ppid
+const parentDied = () => process.ppid !== spec.parent
 
 /** Synchronous, so it lands before an exit; a reader already gone is not this process's concern. */
 const say = (line: string) => {
@@ -45,15 +47,18 @@ try {
 	child = spawn(spec.cmd, spec.args, { stdio: "inherit" })
 } catch (err) {
 	say(`could not start ${spec.cmd}: ${(err as Error).message}`)
+	if (parentDied()) await parentGone()
 	process.exit(127)
 }
+// On a command's exit or failure the parent may be dead with its end-of-file not read yet; the group
+// still needs the orphan path then.
 child.on("error", (err) => {
 	say(`could not start ${spec.cmd}: ${err.message}`)
-	if (!orphaned) process.exit(127)
+	if (parentDied()) void parentGone()
+	else if (!orphaned) process.exit(127)
 })
 child.on("exit", (code, signal) => {
-	// The parent may be dead with its end-of-file not read yet; the group still needs the orphan path.
-	if (process.ppid !== parent) void parentGone()
+	if (parentDied()) void parentGone()
 	else if (!orphaned) mirror(code, signal)
 })
 
@@ -63,7 +68,9 @@ function mirror(code: number | null, signal: NodeJS.Signals | null): void {
 	if ((HELD as readonly string[]).includes(signal)) process.off(signal, hold)
 	process.kill(process.pid, signal)
 	// A signal whose default this runtime ignores (SIGPIPE) never ends it: fall back to the shell's convention.
-	setTimeout(() => process.exit(128 + (constants.signals[signal] ?? 0)), 100)
+	setTimeout(() => {
+		if (!orphaned) process.exit(128 + (constants.signals[signal] ?? 0))
+	}, 100)
 }
 
 /** Waits up to the grace for every other member to stop running. */
