@@ -234,7 +234,8 @@ pub contract TokenBridgeHub {
 
     // The screened exit without a public balance: the token's checked burn applies `unshield`'s
     // registry rules, and the public steps run as the token and this hub, so none names the holder.
-    // Refusals come before the burn; the burn, the message and the ticket share one revert phase.
+    // The hub's input checks come before the burn. The registry checks fail the whole proof, or, at
+    // inclusion, revert the burn, the message and the ticket, which share one revert phase.
     #[external("private")]
     fn exit_private(token: AztecAddress, payee: EthAddress, amount: u128, label: Field, path: LabelPath) {
         let from = self.msg_sender();

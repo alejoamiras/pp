@@ -280,7 +280,11 @@ describe("the hub on a local network", () => {
 
 		const effect = await world.base.node.getTxEffect(proven.tx.getTxHash())
 		if (!effect) throw new Error("the node has no effect for the reverted exit")
+		// Only the setup phase lands: the protocol's own nullifier, and no burn, change note or its log.
 		expect(effect.data.l2ToL1Msgs).toEqual([])
+		expect(effect.data.noteHashes).toEqual([])
+		expect(effect.data.privateLogs).toEqual([])
+		expect(effect.data.nullifiers).toHaveLength(1)
 		expect(effect.data.publicLogs.filter((l) => l.contractAddress.equals(world.hub) || l.contractAddress.equals(world.token))).toEqual(
 			[],
 		)
