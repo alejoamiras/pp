@@ -137,7 +137,26 @@ describe.skipIf(!process.env.BRIDGE_INTEGRATION)("ASP root registry on a local n
 		expect(block).toBeDefined()
 		expect(await read(block)).toMatchObject({ sequence: 1n, poolRoot: 0xa1n, birthRoot: 0xb2n, poolSize: 7n, birthSize: 5n })
 		await fresh.methods.set_poster(from).send(base.relayerOpts as never)
-		expect(await read()).toMatchObject({ sequence: 1n, poolRoot: 0n, birthRoot: 0n, poolSize: 0n, birthSize: 0n })
+		expect(await read()).toMatchObject({ sequence: 2n, poolRoot: 0n, birthRoot: 0n, poolSize: 0n, birthSize: 0n })
+	})
+
+	it("reverts a post proved before a reset that re-sets the same poster", async () => {
+		const checkpointed = { from, fee: base.fee, wait: { waitForStatus: TxStatus.CHECKPOINTED } } as never
+		const fresh = (await Contract.deploy(base.wallet, aspRootRegistryArtifact, [from, from, from]).send(checkpointed)).contract
+		const head = await base.node.getBlockData("latest")
+		if (!head) throw new Error("the node has no latest block")
+		const time = head.header.globalVariables.timestamp
+		const proven = await prove(base, from, fresh.methods.post_root(1n, ROOT, Fr.ZERO, 1n, time, 1, 0))
+		// The node drops assertion messages, so the same bytes passing before the reset and failing after
+		// it is what ties the revert to the reset; the exact message is a TXE case.
+		expect((await base.node.simulatePublicCalls(proven.tx, false)).revertReason).toBeUndefined()
+		await fresh.methods.set_poster(from).send(checkpointed)
+		expect((await base.node.simulatePublicCalls(proven.tx, false)).revertReason?.message).toMatch(/^Assertion failed/)
+		await base.node.sendTx(proven.tx)
+		// The bot waits like this, so its tick fails instead of logging a post.
+		await expect(waitForTx(base.node, proven.tx.getTxHash(), { waitForStatus: TxStatus.CHECKPOINTED })).rejects.toThrow()
+		const settled = await waitForTx(base.node, proven.tx.getTxHash(), { dontThrowOnRevert: true })
+		expect(settled.executionResult).toBe(TxExecutionResult.REVERTED)
 	})
 
 	// Last: the warp cannot be undone, and an attached network is someone else's clock.

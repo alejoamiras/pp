@@ -59,7 +59,8 @@ pub contract AspRootRegistry {
     // The most leaves a label path can prove membership in.
     global MAX_LIST_SIZE: u32 = 1 << MAX_DEPTH;
 
-    /// The record is cleared at `sequence`, which the next post continues from.
+    /// `sequence` is the cleared record's own, one past the record the reset replaced; the next post
+    /// takes the one after it.
     #[event]
     pub struct PosterChanged {
         pub sequence: u64,
@@ -125,11 +126,13 @@ pub contract AspRootRegistry {
     }
 
     /// A dead address freezes posting. Clearing the block and the time lets the next poster recover
-    /// from a stolen key's `l1_block = u64::MAX`; the sequence is kept so posts stay countable.
+    /// from a stolen key's `l1_block = u64::MAX`. The cleared record takes the next sequence, so a post
+    /// prepared against the record it replaces fails as not next. Each post or reset adds one, so the
+    /// sequence cannot run out.
     #[external("public")]
     fn set_poster(next: AztecAddress) {
         assert(self.msg_sender() == self.storage.admin.read(), "not admin");
-        let sequence = self.storage.current.read().get_value().sequence;
+        let sequence = self.storage.current.read().get_value().sequence + 1;
         self.storage.current.write(WithHash::new(
             RootRecord { sequence, pool_root: 0, birth_root: 0, l1_block: 0, root_time: 0 },
         ));

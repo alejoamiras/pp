@@ -35,16 +35,36 @@ unconstrained fn set_poster_rejects_poster() {
 }
 
 #[test]
-unconstrained fn set_poster_resets_record_keeps_sequence() {
+unconstrained fn set_poster_clears_record_at_next_sequence() {
     let mut s = setup();
     let next = s.env.create_light_account();
     post_at(s, s.poster, s.t0, 1, 100, s.t0 - 20);
     post_at(s, s.poster, s.t0 + 1, 2, 101, s.t0 - 10);
     s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(next));
-    assert_eq(current(s), RootRecord { sequence: 2, pool_root: 0, birth_root: 0, l1_block: 0, root_time: 0 });
+    assert_eq(current(s), RootRecord { sequence: 3, pool_root: 0, birth_root: 0, l1_block: 0, root_time: 0 });
     assert_eq(sizes(s), ListSizes { pool: 0, birth: 0 });
     assert_eq(raw_sizes(s), [0, 0]);
     assert_eq(s.env.view_public(AspRootRegistry::at(s.registry).get_poster()), next);
+}
+
+// The poster's own recovery: re-set as poster, its post prepared before the reset must not land.
+#[test(should_fail_with = "sequence not next")]
+unconstrained fn post_root_rejects_post_prepared_before_reset() {
+    let s = setup();
+    post_at(s, s.poster, s.t0, 1, 100, s.t0);
+    s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(s.poster));
+    post_at(s, s.poster, s.t0 + 1, 2, 101, s.t0);
+}
+
+#[test]
+unconstrained fn set_poster_twice_then_post_takes_next_sequence() {
+    let s = setup();
+    post_at(s, s.poster, s.t0, 1, 100, s.t0);
+    s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(s.poster));
+    s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(s.poster));
+    assert_eq(current(s).sequence, 3);
+    post_at(s, s.poster, s.t0 + 1, 4, 101, s.t0);
+    assert_eq(current(s).sequence, 4);
 }
 
 #[test]
@@ -53,7 +73,7 @@ unconstrained fn set_poster_recovers_from_max_l1_block() {
     let next = s.env.create_light_account();
     post_at(s, s.poster, s.t0, 1, 0xffffffffffffffff, s.t0);
     s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(next));
-    post_at(s, next, s.t0 + 1, 2, 100, s.t0);
+    post_at(s, next, s.t0 + 1, 3, 100, s.t0);
     assert_eq(current(s).l1_block, 100);
 }
 
@@ -62,17 +82,18 @@ unconstrained fn post_root_rejects_replaced_poster() {
     let mut s = setup();
     let next = s.env.create_light_account();
     s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(next));
-    post_at(s, s.poster, s.t0, 1, 100, s.t0);
+    // The reset cleared at 1, so 2 is next: only the sender is wrong.
+    post_at(s, s.poster, s.t0, 2, 100, s.t0);
 }
 
 #[test]
-unconstrained fn post_root_accepts_new_poster_next_sequence() {
+unconstrained fn post_root_accepts_new_poster_after_cleared_sequence() {
     let mut s = setup();
     let next = s.env.create_light_account();
     post_at(s, s.poster, s.t0, 1, 100, s.t0);
     s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(next));
-    post_at(s, next, s.t0 + 1, 2, 100, s.t0);
-    assert_eq(current(s).sequence, 2);
+    post_at(s, next, s.t0 + 1, 3, 100, s.t0);
+    assert_eq(current(s).sequence, 3);
 }
 
 #[test(should_fail_with = "not admin")]
@@ -113,7 +134,7 @@ unconstrained fn set_poster_emits_poster_changed() {
     s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(s.intake));
     let logs = event_logs::<PosterChanged, 2>(s);
     assert_eq(logs.len(), 1);
-    assert_eq(logs.get(0), [1, s.intake.to_field()]);
+    assert_eq(logs.get(0), [2, s.intake.to_field()]);
     assert_eq(event_logs::<RootPosted, 7>(s).len(), 0);
 }
 
