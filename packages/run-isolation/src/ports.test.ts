@@ -62,3 +62,15 @@ test("a claim refuses an owner or service a release could not match", async () =
 		await expect(claimRows(owner, { [service]: 40_010 }, process.pid)).rejects.toThrow("cannot be a registry cell")
 	expect(registeredPorts().has(40_010)).toBe(false)
 })
+
+test("a claim writes the rows it checked, though the caller's object changes while it waits for the lock", async () => {
+	const lock = join(dir, "ports.md.lock")
+	writeFileSync(lock, "held")
+	const rows: Record<string, number> = { "pp-env-test": 40_011 }
+	const claim = claimRows("ports-test-snapshot", rows, process.pid)
+	rows["a|b"] = 40_012
+	rmSync(lock)
+	await claim
+	expect([40_011, 40_012].filter((p) => registeredPorts().has(p))).toEqual([40_011])
+	await releasePorts("ports-test-snapshot")
+})

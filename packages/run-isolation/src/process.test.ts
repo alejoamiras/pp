@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { killGroup, spawnOwned } from "./process.ts"
-import { groupAlive, signalGroup } from "./process-group"
+import { groupAlive, signalGroup } from "./process-group.ts"
 
 const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
@@ -11,6 +11,14 @@ const dir = mkdtempSync(join(parent, "process-test-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 const PROCESS_TS = JSON.stringify(join(import.meta.dir, "process.ts"))
+
+async function until(path: string, ms = 10_000): Promise<void> {
+	const deadline = Date.now() + ms
+	while (!existsSync(path)) {
+		if (Date.now() > deadline) throw new Error(`${path} never appeared`)
+		await Bun.sleep(20)
+	}
+}
 
 test("a command that cannot start ends with a reason instead of an uncaught error", async () => {
 	const owned = spawnOwned(join(dir, "no-such-anvil"), [], join(dir, "missing.log"), {})
@@ -52,10 +60,11 @@ test("a CleanupStack built with signals: false installs no signal handler", asyn
 
 test("killGroup ends the members a group keeps after its leader has exited", async () => {
 	// An ignored signal stays ignored across exec, so only SIGKILL ends the orphaned sleep.
-	const owned = spawnOwned("sh", ["-c", "(trap '' TERM; exec sleep 30) & exit 0"], join(dir, "orphan.log"), {
-		PATH: process.env.PATH ?? "",
-	})
+	const ready = join(dir, "orphan-ready")
+	const script = `(trap '' TERM; echo > "$READY"; exec sleep 30) & exit 0`
+	const owned = spawnOwned("sh", ["-c", script], join(dir, "orphan.log"), { PATH: process.env.PATH ?? "", READY: ready })
 	await owned.exited
+	await until(ready)
 	const pgid = owned.child.pid as number
 	try {
 		expect(groupAlive(pgid)).toBe(true)
@@ -67,14 +76,16 @@ test("killGroup ends the members a group keeps after its leader has exited", asy
 })
 
 test("killGroup calls while one is under way share it, so the leader gets one SIGTERM", async () => {
-	const marks = join(dir, "terms")
-	// The second SIGTERM, if any, lands during the leader's graceful exit and is counted.
-	const script = `trap 'echo t >> "$MARKS"; done=1' TERM; while [ -z "$done" ]; do sleep 0.05; done; sleep 0.5`
-	const owned = spawnOwned("sh", ["-c", script], join(dir, "terms.log"), { PATH: process.env.PATH ?? "", MARKS: marks })
-	await Bun.sleep(200)
+	const [ready, marks, release] = ["terms-ready", "terms", "terms-release"].map((f) => join(dir, f))
+	// The leader counts each SIGTERM and stays up until released, so the second call lands mid-teardown.
+	const script = `trap 'echo t >> "$MARKS"' TERM; echo > "$READY"; while [ ! -e "$RELEASE" ]; do sleep 0.05; done`
+	const env = { PATH: process.env.PATH ?? "", READY: ready, MARKS: marks, RELEASE: release }
+	const owned = spawnOwned("sh", ["-c", script], join(dir, "terms.log"), env)
+	await until(ready)
 	const first = killGroup(owned)
-	await Bun.sleep(150)
-	const second = killGroup(owned)
-	expect(await Promise.all([first, second])).toEqual([true, true])
+	await until(marks)
+	expect(killGroup(owned)).toBe(first)
+	writeFileSync(release, "")
+	expect(await first).toBe(true)
 	expect(readFileSync(marks, "utf8").trim().split("\n")).toEqual(["t"])
 })

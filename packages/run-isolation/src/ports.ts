@@ -94,20 +94,19 @@ export class PortClaimConflict extends Error {
  * `PortClaimConflict` when the registry already lists one, and an `Error` when the lock never came free.
  */
 export async function claimRows(runId: string, rows: Record<string, number>, pidHint: number): Promise<void> {
-	for (const cell of [runId, ...Object.keys(rows)]) {
+	const entries = Object.entries(rows)
+	for (const cell of [runId, ...entries.map(([service]) => service)]) {
 		if (!CELL.test(cell))
 			throw new Error(`${JSON.stringify(cell)} cannot be a registry cell: no "|", line break, or leading or trailing space`)
 	}
 	const claimed = new Date().toISOString()
-	const wanted = new Set(Object.values(rows))
+	const wanted = new Set(entries.map(([, port]) => port))
 	let conflicts: number[] = []
 	const written = await withRegistry((lines) => {
 		const body = lines.filter((l) => l.trim().length > 0)
 		conflicts = body.map(portOf).filter((p): p is number => p !== undefined && wanted.has(p))
 		if (conflicts.length > 0) return lines
-		const added = Object.entries(rows).map(
-			([service, port]) => `| ${port} | ${service} | ${runId} | ${REPO_ROOT} | ${pidHint} | ${claimed} |`,
-		)
+		const added = entries.map(([service, port]) => `| ${port} | ${service} | ${runId} | ${REPO_ROOT} | ${pidHint} | ${claimed} |`)
 		return [...body, ...added, ""]
 	})
 	if (!written) throw new Error(`${registryPath()} stayed locked; could not claim ports ${[...wanted].join(", ")} for ${runId}`)
