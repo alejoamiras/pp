@@ -16,22 +16,34 @@ type Meta = { dependencies?: Specs; optionalDependencies?: Specs; peerDependenci
 type Lock = { packages: Record<string, [string, string?, Meta?, string?]> }
 type Root = Catalogs & { overrides?: Record<string, unknown> }
 
+const NAME = /^(?:@[^@/\s>]+\/)?[^@/\s>]+$/
+
 /**
- * The zod override each package gets: `{ "<package>": { "zod": "<spec>" } }`. Any other override that
- * names zod (global, `a>zod`, `zod@<range>`, deeper nesting) is returned as a stray.
+ * The package a Bun override selector targets: the last of its `>`-separated parts, each trimmed and
+ * either a name or `name@range`; undefined when any part is neither.
+ */
+function selectorTarget(selector: string): string | undefined {
+	const names = selector.split(">").map((part) => /^((?:@[^@/\s>]+\/)?[^@/\s>]+)(?:@[^\s>/]+)?$/.exec(part.trim())?.[1])
+	return names.every((n) => n !== undefined) ? names.at(-1) : undefined
+}
+
+/**
+ * The zod override each package gets: `{ "<name>": { "zod": "<spec>" } }`, the parent a bare name.
+ * Any other rule that targets zod at any depth (global, `a>zod`, `zod@<range>`, a `.` self-rule under
+ * zod, deeper nesting, a padded key), and any selector that does not parse, is returned as a stray.
  */
 function zodOverrides(overrides: Record<string, unknown>): { scoped: Map<string, string>; strays: string[] } {
 	const scoped = new Map<string, string>()
 	const strays: string[] = []
-	const names = (s: string) => /(^|[>/])zod($|@)/.test(s)
-	const nested = (key: string, inner: string, spec: unknown) => {
-		if (inner === "zod" && typeof spec === "string") scoped.set(key, spec)
-		else if (names(inner) || JSON.stringify(spec).includes("zod")) strays.push(`${key} > ${inner}`)
+	// A `.` key is the object form's rule for its parent selector.
+	const targetOf = (path: string[], key: string) => selectorTarget(key.trim() === "." ? (path.at(-1) ?? key) : key)
+	const visit = (path: string[], key: string, value: unknown) => {
+		const parent = path.length === 1 ? path[0] : undefined
+		if (parent !== undefined && NAME.test(parent) && key === "zod" && typeof value === "string") scoped.set(parent, value)
+		else if ([undefined, "zod"].includes(targetOf(path, key))) strays.push([...path, key].join(" > "))
+		if (typeof value === "object" && value !== null) for (const [k, v] of Object.entries(value)) visit([...path, key], k, v)
 	}
-	for (const [key, value] of Object.entries(overrides)) {
-		if (names(key)) strays.push(key)
-		if (typeof value === "object" && value !== null) for (const [inner, spec] of Object.entries(value)) nested(key, inner, spec)
-	}
+	for (const [key, value] of Object.entries(overrides)) visit([], key, value)
 	return { scoped, strays }
 }
 
@@ -46,20 +58,24 @@ function aztecZodRanges(lock: Lock): Map<string, string> {
 	return ranges
 }
 
-/** Why the zod override is wrong, or an empty list. */
+/**
+ * Why the zod overrides are wrong, or an empty list. While any Aztec zod range excludes the catalog's
+ * version, every declaring package needs the scoped override at that version; once none does, there
+ * must be no zod override at all.
+ */
 function zodOverrideProblems(root: Root, lock: Lock): string[] {
 	const catalog = resolveSpec("zod", "catalog:", root)
 	const { scoped, strays } = zodOverrides(root.overrides ?? {})
 	const ranges = aztecZodRanges(lock)
 	const problems = strays.map((s) => `override ${s}: only { "<@aztec-labs package>": { "zod": ... } } is held`)
+	const needed = [...ranges.values()].some((r) => !Bun.semver.satisfies(catalog, r))
+	if (!needed) return scoped.size > 0 ? [...problems, `every Aztec zod range admits ${catalog}: delete the zod overrides`] : problems
 	for (const [name, spec] of scoped) {
 		if (!ranges.has(name)) problems.push(`${name}: overridden, but it declares no zod`)
 		const value = resolveSpec("zod", spec, root)
 		if (value !== catalog) problems.push(`${name}: overrides zod to ${value}, the catalog holds ${catalog}`)
 	}
-	for (const name of ranges.keys()) if (!scoped.has(name)) problems.push(`${name}: declares zod ${ranges.get(name)}, not overridden`)
-	if (ranges.size > 0 && [...ranges.values()].every((r) => Bun.semver.satisfies(catalog, r)))
-		problems.push(`every Aztec zod range admits ${catalog}: delete the zod overrides`)
+	for (const [name, range] of ranges) if (!scoped.has(name)) problems.push(`${name}: declares zod ${range}, not overridden`)
 	return problems
 }
 
@@ -69,7 +85,7 @@ test("each Aztec package that declares zod is overridden to the catalog's zod, w
 	expect(zodOverrideProblems(root, lock)).toEqual([])
 })
 
-test("the zod override check refuses a gap, a stale entry, a drifted value, a stray form, and a needless override", () => {
+test("the zod override check refuses a gap, a stale entry, a drifted value and a stray form", () => {
 	const lock = (ranges: Record<string, string>): Lock => ({
 		packages: Object.fromEntries([
 			...Object.entries(ranges).map(([name, range]) => [name, [`${name}@6.0.0`, "", { dependencies: { zod: range } }, ""]]),
@@ -93,11 +109,28 @@ test("the zod override check refuses a gap, a stale entry, a drifted value, a st
 	for (const stray of [
 		{ zod: "4.6.7" },
 		{ "@aztec-labs/stdlib>zod": "4.6.7" },
+		{ "some-pkg> zod": "4.4.3" },
 		{ "zod@~4.4.3": "4.6.7" },
 		{ x: { y: { zod: "4.6.7" } } },
+		{ "@aztec-labs/entrypoints": { " zod": "4.6.7" } },
+		{ zod: { ".": "4.6.7" } },
+		{ "a b": "1.0.0" },
 	])
-		expect(zodOverrideProblems(root({ ...both, ...stray }), two), JSON.stringify(stray)).toHaveLength(1)
-	expect(zodOverrideProblems(root(both), lock({ "@aztec-labs/stdlib": "^4.6.6", "@aztec-labs/foundation": "~4.6.7" }))).toEqual([
+		expect(zodOverrideProblems(root({ ...both, ...stray }), two), JSON.stringify(stray)).not.toHaveLength(0)
+	expect(zodOverrideProblems(root({ ...both, "@example/zod": "1.0.0", "zod-to-json-schema": { ".": "3.24.6" } }), two)).toEqual([])
+})
+
+test("once every Aztec zod range admits the catalog's zod, the overrides must go, and their absence passes", () => {
+	const lock: Lock = {
+		packages: {
+			"@aztec-labs/stdlib": ["@aztec-labs/stdlib@7.0.0", "", { dependencies: { zod: "^4.6.6" } }, ""],
+			"@aztec-labs/foundation": ["@aztec-labs/foundation@7.0.0", "", { peerDependencies: { zod: "~4.6.7" } }, ""],
+		},
+	}
+	const root = (overrides: Record<string, unknown>): Root => ({ catalog: { zod: "4.6.7" }, overrides })
+	expect(zodOverrideProblems(root({ "@aztec-labs/stdlib": { zod: "4.6.7" } }), lock)).toEqual([
 		"every Aztec zod range admits 4.6.7: delete the zod overrides",
 	])
+	expect(zodOverrideProblems(root({ ws: "8.21.0" }), lock)).toEqual([])
+	expect(zodOverrideProblems(root({}), { packages: {} })).toEqual([])
 })

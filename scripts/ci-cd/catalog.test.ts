@@ -13,6 +13,8 @@ test("a catalog reference resolves through the catalog it names, and fails when 
 test("the default catalog has Bun's two spellings and two homes, and only own string entries count", () => {
 	expect(resolveSpec("zod", "catalog:default", { catalog: { zod: "4.6.7" } })).toBe("4.6.7")
 	expect(resolveSpec("zod", "catalog: ", { catalogs: { default: { zod: "4.6.7" } } })).toBe("4.6.7")
+	expect(resolveSpec("zod", " catalog:", { catalog: { zod: "4.6.7" } })).toBe("4.6.7")
+	expect(resolveSpec("zod", " ^4.6.7", { catalog: { zod: "4.6.7" } })).toBe(" ^4.6.7")
 	expect(() => resolveSpec("zod", "catalog:", { catalog: { zod: "4.6.7" }, catalogs: { default: { zod: "4.6.7" } } })).toThrow(
 		/both catalog and catalogs.default/,
 	)

@@ -24,7 +24,7 @@ runs:
         PLAYWRIGHT: ${{ inputs.package-dir }}/node_modules/.bin/playwright
       run: |
         out=$("$PLAYWRIGHT" --version)
-        if [[ ! $out =~ ^Version\ ([0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*)$ ]]; then
+        if [[ ! $out =~ ^Version\ ([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$ ]]; then
           echo "setup-playwright: unexpected version output: $out" >&2
           exit 1
         fi
