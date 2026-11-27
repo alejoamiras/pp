@@ -16,7 +16,6 @@ const CONSUMERS: Record<string, string[]> = {
 	"packages/bridge-core": ["@nulo-sh/resolve-asset", "@nulo-sh/wallet-crypto"],
 	"packages/labelled-token": ["@nulo-sh/resolve-asset"],
 	"packages/asp-bot": ["@nulo-sh/wallet-crypto"],
-	"packages/testnet": ["@nulo-sh/wallet-crypto"],
 	"apps/web": ["@nulo-sh/resolve-asset"],
 }
 const PEERS: Record<string, string[]> = {
