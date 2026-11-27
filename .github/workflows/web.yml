@@ -1,8 +1,8 @@
 name: Web
 
 # PR gate for the web app (apps/web): typecheck, unit and component tests, the production build, its
-# preview headers and the stack-build guard; then the browser suite, which boots a local network,
-# builds the app against it and drives the built bundle through the e2e kit.
+# preview and server headers and the stack-build guard; then the browser suite, which boots the
+# local stack, builds the app against its manifest and drives the built bundle through the e2e kit.
 #
 # NO `branches:` filter, deliberately: see pr-quick.yml.
 
@@ -120,28 +120,21 @@ jobs:
           persist-credentials: false
 
       # setup-aztec shells out to bun, so it has to be on PATH first. Its default version is
-      # bridge-core's @aztec-labs/aztec.js pin, the line the sandbox runs.
+      # bridge-core's @aztec-labs/aztec.js pin, the line the local stack runs.
       - uses: ./.github/actions/setup-bun
       - uses: ./.github/actions/setup-aztec
 
-      # Same pins as _bridge-contracts.yml: the sandbox compiles the L1 contracts from source on
-      # boot (gen-remappings + forge build with the Aztec-bundled forge), and that needs lib/.
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: "1.7.1"
-
-      - name: Install forge libraries
-        working-directory: contracts/bridge/evm
-        run: |
-          forge install \
-            foundry-rs/forge-std@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b \
-            OpenZeppelin/openzeppelin-contracts@cab19933c33c2ad1d4c7a84864a3601dddfd16f3
+      # What the local stack boots from, as in local-stack.yml: the pool's checkout (whose circuits
+      # the app's server also serves) and the bridge's L1 build. Both install Foundry 1.7.1 and the
+      # forge libraries themselves.
+      - uses: ./.github/actions/ppv2-fetch
+      - uses: ./.github/actions/bridge-evm-build
 
       - uses: ./.github/actions/setup-playwright
 
-      # The kit's runner: ports, sandbox, test-wallet build, the app's build:local, Playwright, reap.
-      # Its state goes outside the checkout, where the upload below finds it without hidden paths.
+      # The kit's runner in stack mode: ports, the local stack, the test-wallet build, the app's
+      # build:local against the stack's manifest, Playwright, reap. Its state goes outside the
+      # checkout, where the upload below finds it without hidden paths.
       - name: Browser suite
         env:
           PP_E2E_STATE_DIR: ${{ runner.temp }}/web-e2e
@@ -156,6 +149,9 @@ jobs:
             ${{ runner.temp }}/web-e2e/playwright-report
             ${{ runner.temp }}/web-e2e/test-results
             ${{ runner.temp }}/web-e2e/*.log
+            ${{ runner.temp }}/web-e2e/stack.json
+            ~/.cache/pp/bridge-sandbox/logs/*.log
+            ~/.cache/pp/asp-bot/logs/*.log
           if-no-files-found: ignore
           retention-days: 7
 
