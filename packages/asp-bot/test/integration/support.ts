@@ -8,15 +8,20 @@ import type { L2Base } from "@pp/bridge-core/sandbox"
 import type { Hex } from "@pp/label-paths"
 import { localBotAccounts } from "../../src/index"
 
-/** The mock ASP publishes the grown root to the L1 ASPRegistry before it answers. */
-export async function approve(aspApiUrl: string, label: bigint): Promise<void> {
-	const res = await fetch(`${aspApiUrl}/admin/approve-label`, {
+async function labelAdmin(aspApiUrl: string, route: "approve-label" | "revoke-label", label: bigint): Promise<void> {
+	const res = await fetch(`${aspApiUrl}/admin/${route}`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ label: `0x${label.toString(16)}` }),
 	})
-	if (!res.ok) throw new Error(`approve-label ${label}: ${res.status} ${await res.text()}`)
+	if (!res.ok) throw new Error(`${route} ${label}: ${res.status} ${await res.text()}`)
 }
+
+/** The mock ASP publishes the grown root to the L1 ASPRegistry before it answers. */
+export const approve = (aspApiUrl: string, label: bigint) => labelAdmin(aspApiUrl, "approve-label", label)
+
+/** Publishes the shrunken root to L1 before it answers; a leaf must remain, since L1 refuses root 0. */
+export const revoke = (aspApiUrl: string, label: bigint) => labelAdmin(aspApiUrl, "revoke-label", label)
 
 /** A fresh registry whose poster and birth intake are the bot's accounts for `stackRunId`. */
 export async function deployRegistry(base: L2Base, stackRunId: string): Promise<Hex> {
