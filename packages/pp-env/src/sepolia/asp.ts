@@ -1,12 +1,11 @@
 import { EvmDeploymentSnapshotSource } from "#ppv2/mock-asp/evm"
-import { createPublicClient, createWalletClient, http } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
-import { sendRetrying } from "../send-retry.ts"
 import { createApprover } from "./approver.ts"
-import { assertSepolia, hasPostman, SEPOLIA, sepolia } from "./chain.ts"
+import { hasPostman, SEPOLIA } from "./chain.ts"
 import { startFront } from "./front.ts"
 import { createLabels } from "./labels.ts"
 import type { MockAsp, StartMockAspOptions } from "./types.ts"
+import { journalTo, sepoliaClients, sepoliaWallet } from "./wallet.ts"
 
 const SLOT_MS = 12_000
 
@@ -20,12 +19,16 @@ const SLOT_MS = 12_000
  */
 export async function startMockAsp(o: StartMockAspOptions): Promise<MockAsp> {
 	const log = o.log ?? (() => {})
-	const client = createPublicClient({ transport: http(o.rpcUrl) })
-	await assertSepolia(client, o.chainId)
+	const client = await sepoliaClients(o)
 	const account = privateKeyToAccount(o.postmanKey)
 	if (!(await hasPostman(client, o.deployment.accessRouter, account.address)))
 		throw new Error(`${account.address} does not hold the postman role on ${o.deployment.accessRouter}`)
-	const wallet = createWalletClient({ account, chain: sepolia, transport: sendRetrying(http(o.rpcUrl)) })
+	const { wallet, path } = sepoliaWallet({
+		account,
+		rpcUrl: o.rpcUrl,
+		sendRpcUrl: o.sendRpcUrl,
+		...(o.journalPath && { journal: journalTo(o.journalPath) }),
+	})
 	const labels = await createLabels(o.postmanKey)
 	const approver = createApprover({ client, wallet, labels, owners: o.owners, deployment: o.deployment, log })
 	await approver.tick()
@@ -64,7 +67,10 @@ export async function startMockAsp(o: StartMockAspOptions): Promise<MockAsp> {
 		stop: () => {
 			stopping = true
 			clearTimeout(timer)
-			stopped ??= inflight.then(() => front.stop())
+			stopped ??= inflight.then(() => {
+				path.close()
+				return front.stop()
+			})
 			return stopped
 		},
 	}

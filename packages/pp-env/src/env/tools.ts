@@ -25,7 +25,7 @@ export function anvilBin(): string {
 
 export type RunOptions = { cwd?: string; env?: Record<string, string> }
 
-function tail(text: string, lines = 30): string {
+export function tail(text: string, lines = 30): string {
 	return text.trimEnd().split("\n").slice(-lines).join("\n")
 }
 

@@ -1,12 +1,14 @@
 import { mkdir } from "node:fs/promises"
-import { createPublicClient, createWalletClient, http } from "viem"
+import { join } from "node:path"
+import type { PublicClient } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
-import { sendRetrying } from "../send-retry.ts"
 import { checkout } from "../env/checkout.ts"
 import { deployFixture, deployPool, enableAsset, ensureFixtures, mintTestToken } from "../env/deploy.ts"
-import { ACCESS_ABI, assertCanonicalPoseidon, assertSepolia, hasPostman, POSTMAN_ROLE, sepolia } from "./chain.ts"
+import type { PoolDeployment } from "../env/types.ts"
+import { ACCESS_ABI, assertCanonicalPoseidon, hasPostman, POSTMAN_ROLE } from "./chain.ts"
 import { verifyPoolCode } from "./code.ts"
 import type { DeployPoolOnOptions, SepoliaPool } from "./types.ts"
+import { journalTo, sepoliaClients, sepoliaWallet } from "./wallet.ts"
 
 /**
  * Deploys the pinned pool to Sepolia through `DeployE2ELocal.runLocal()`, the path the local env
@@ -20,14 +22,14 @@ import type { DeployPoolOnOptions, SepoliaPool } from "./types.ts"
  */
 export async function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool> {
 	const log = o.log ?? (() => {})
-	const client = createPublicClient({ transport: http(o.rpcUrl) })
-	await assertSepolia(client, o.chainId)
+	const client = await sepoliaClients(o)
 	const co = checkout()
 	await assertCanonicalPoseidon(client, co)
 	await ensureFixtures()
 	await mkdir(o.runDir, { recursive: true })
 	const account = privateKeyToAccount(o.deployerKey)
 	const before = await client.getBalance({ address: account.address })
+	const journalPath = join(o.runDir, "send-path.jsonl")
 	const deployment = await deployPool({
 		rpcUrl: o.rpcUrl,
 		co,
@@ -38,9 +40,28 @@ export async function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool>
 		checkBuild: o.checkBuild,
 		// Sepolia runs a later fork than the pool's `prague`, which charges far more for state creation.
 		skipSimulation: true,
+		// forge 1.7.1 under `--skip-simulation` re-sends a failed send without its gas limit and waits forever
+		// on a sent transaction the read endpoint never shows, so the relay owns every re-send and read.
+		relay: { sendUrl: o.sendRpcUrl, chainId: o.chainId, senders: [account.address], journalPath },
+		...(o.fees && { fees: o.fees }),
 	})
 	log(`pool deployed: entrypoint ${deployment.entrypoint}, vault ${deployment.pool}, from block ${deployment.deployBlock}`)
-	const wallet = createWalletClient({ account, chain: sepolia, transport: sendRetrying(http(o.rpcUrl)) })
+	const { wallet, path } = sepoliaWallet({ account, rpcUrl: o.rpcUrl, sendRpcUrl: o.sendRpcUrl, journal: journalTo(journalPath) })
+	try {
+		return await finish(o, client, wallet, deployment, before, log)
+	} finally {
+		path.close()
+	}
+}
+
+async function finish(
+	o: DeployPoolOnOptions,
+	client: PublicClient,
+	wallet: ReturnType<typeof sepoliaWallet>["wallet"],
+	deployment: PoolDeployment,
+	before: bigint,
+	log: (line: string) => void,
+): Promise<SepoliaPool> {
 	if (o.postman !== undefined) {
 		const hash = await wallet.writeContract({
 			address: deployment.accessRouter,
@@ -59,5 +80,5 @@ export async function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool>
 	log(`test token ${asset} enabled; ${o.mint.amount} minted to ${o.mint.to}`)
 	await verifyPoolCode({ rpcUrl: o.rpcUrl, chainId: o.chainId, deployment: { ...deployment, asset } })
 	log("every deployed contract's runtime code matches the build")
-	return { deployment, asset, spentWei: before - (await client.getBalance({ address: account.address })) }
+	return { deployment, asset, spentWei: before - (await client.getBalance({ address: wallet.account.address })) }
 }

@@ -1,11 +1,11 @@
 import type { Hex as SdkHex } from "#ppv2/evm-sdk"
-import { createPublicClient, createWalletClient, http, toHex } from "viem"
+import { toHex } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
-import { sendRetrying } from "../send-retry.ts"
 import { openPoolUser } from "../client/pool.ts"
 import { checkout } from "../env/checkout.ts"
-import { assertSepolia, SEPOLIA, sepolia } from "./chain.ts"
+import { SEPOLIA } from "./chain.ts"
 import type { SepoliaPoolUser, SepoliaUserOptions } from "./types.ts"
+import { journalTo, sepoliaClients, sepoliaWallet } from "./wallet.ts"
 
 /**
  * A pool user for `key` on Sepolia, proving with the fetched checkout's circuits under `circuitBundle`.
@@ -13,9 +13,9 @@ import type { SepoliaPoolUser, SepoliaUserOptions } from "./types.ts"
  * @throws Error when either chain id is not 11155111
  */
 export async function sepoliaPoolUser(o: SepoliaUserOptions): Promise<SepoliaPoolUser> {
-	await assertSepolia(createPublicClient({ transport: http(o.rpcUrl) }), o.chainId)
-	const chain = { ...sepolia, rpcUrls: { default: { http: [o.rpcUrl] } } }
-	const wallet = createWalletClient({ account: privateKeyToAccount(o.key), chain, transport: sendRetrying(http(o.rpcUrl)) })
+	await sepoliaClients(o)
+	const journal = o.journalPath ? { journal: journalTo(o.journalPath) } : {}
+	const { wallet } = sepoliaWallet({ account: privateKeyToAccount(o.key), rpcUrl: o.rpcUrl, sendRpcUrl: o.sendRpcUrl, ...journal })
 	const { rpcUrl, deployment, aspUrl, circuitBundle } = o
 	const config = { rpcUrl, chainId: SEPOLIA, deployment, aspUrl, circuitsDir: checkout().circuits }
 	const { user, session } = await openPoolUser(circuitBundle === undefined ? config : { ...config, circuitBundle }, { wallet })

@@ -57,6 +57,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 	const startAsp = () =>
 		startMockAsp({
 			rpcUrl,
+			sendRpcUrl: rpcUrl,
 			chainId: CHAIN,
 			postmanKey,
 			deployment: pool.deployment,
@@ -106,6 +107,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 		let sentBeforeCheck: number | undefined
 		pool = await deployPoolOn({
 			rpcUrl,
+			sendRpcUrl: rpcUrl,
 			chainId: CHAIN,
 			deployerKey: anvilKey(DEPLOYER_INDEX),
 			postman,
@@ -124,7 +126,14 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 			circuitsDir: co.circuits,
 		}
 		const aspUrl = config.aspUrl
-		owner = await sepoliaPoolUser({ rpcUrl, chainId: CHAIN, deployment: pool.deployment, aspUrl, key: anvilKey(USER_INDEX) })
+		owner = await sepoliaPoolUser({
+			rpcUrl,
+			sendRpcUrl: rpcUrl,
+			chainId: CHAIN,
+			deployment: pool.deployment,
+			aspUrl,
+			key: anvilKey(USER_INDEX),
+		})
 		stranger = await createPoolUser(config, { wallet: wallet(anvilKey(STRANGER_INDEX)) })
 		await mintTestToken(wallet(anvilKey(STRANGER_INDEX)), client, pool.asset, stranger.address, 1_000n)
 		asp = await startAsp()
@@ -136,6 +145,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 	test("only chain 11155111 is accepted, and only a postman key starts the ASP", async () => {
 		const wrong = {
 			rpcUrl,
+			sendRpcUrl: rpcUrl,
 			chainId: 1 as typeof CHAIN,
 			deployerKey: anvilKey(DEPLOYER_INDEX),
 			mint: { to: owner.address, amount: 1n },
@@ -145,7 +155,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 		await expect(deployPoolOn(wrong)).rejects.toThrow("chain 1 refused")
 		await expect(
 			startMockAsp({
-				...{ rpcUrl, chainId: CHAIN, deployment: pool.deployment, port: 1, owners: [owner.address] },
+				...{ rpcUrl, sendRpcUrl: rpcUrl, chainId: CHAIN, deployment: pool.deployment, port: 1, owners: [owner.address] },
 				postmanKey: generatePrivateKey(),
 			}),
 		).rejects.toThrow("does not hold the postman role")

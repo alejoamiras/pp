@@ -22,7 +22,7 @@
 			"types": "./types/sepolia.d.ts",
 			"default": "./src/sepolia/index.ts"
 		},
-		"./send-retry": "./src/send-retry.ts"
+		"./send-path": "./src/send-path.ts"
 	},
 	"imports": {
 		"#ppv2/core-sdk": "./.ppv2/packages/core-sdk/dist/index.js",

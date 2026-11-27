@@ -6,10 +6,18 @@ import type { PoolDeployment } from "../env/types.ts"
 /** Sepolia's chain id. Nothing in `@pp/pp-env/sepolia` accepts another chain, mainnet least of all. */
 export type SepoliaChainId = 11155111
 
-export type DeployPoolOnOptions = {
+/** The endpoint every send goes to, through the send path's rules; reads stay on `rpcUrl`. Both must serve chain 11155111. */
+type SendEndpoint = { sendRpcUrl: string }
+
+export type DeployPoolOnOptions = SendEndpoint & {
 	/** An endpoint serving chain 11155111: Sepolia, or a loopback anvil the caller runs with that id. */
 	rpcUrl: string
 	chainId: SepoliaChainId
+	/**
+	 * Caps on forge's script, so a base-fee rise inside them strands no transaction; default forge's own
+	 * estimate. Every send of the deploy is logged to `send-path.jsonl` in `runDir`.
+	 */
+	fees?: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
 	/** Becomes every pool role: admin, ops admin, upgrader, pauser, entrypoint manager and first postman. */
 	deployerKey: Hex
 	/** Also granted the ASP registry's postman role, so the ASP's key need not hold the admin's. */
@@ -44,8 +52,10 @@ export type PoolCodeTargets = Pick<PoolDeployment, "accessRouter" | "keystore" |
 /** One address whose code matched the build: a contract, a proxy, its implementation, a verifier or a linked library. */
 export type CodeMatch = { name: string; address: Address }
 
-export type StartMockAspOptions = {
+export type StartMockAspOptions = SendEndpoint & {
 	rpcUrl: string
+	/** A file each root post's send log is appended to; default none. */
+	journalPath?: string
 	chainId: SepoliaChainId
 	/**
 	 * Holds the registry's postman role. It also seeds the X25519 key deposits encrypt their labels to,
@@ -84,8 +94,10 @@ export type SepoliaPoolUser = PoolUser & {
 	depositFor(p: { asset: Address; value: bigint; recipient: Address }): Promise<{ label: bigint; commitment: bigint }>
 }
 
-export type SepoliaUserOptions = {
+export type SepoliaUserOptions = SendEndpoint & {
 	rpcUrl: string
+	/** A file each send's log is appended to; default none. */
+	journalPath?: string
 	chainId: SepoliaChainId
 	deployment: ClientDeployment
 	aspUrl: string
