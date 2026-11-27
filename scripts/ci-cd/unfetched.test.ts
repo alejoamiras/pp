@@ -15,7 +15,6 @@ const LEFT_OUT: Record<string, string> = {
 	"pr-quick.yml status": "an aggregator",
 	"pr-quick.yml build-e2e-kit": "@pp/e2e-kit and its workspace dependencies declare no @pp/pp-env",
 	"web.yml changes": "a path filter",
-	"web.yml e2e": "needs Aztec, Foundry and Playwright and boots a sandbox (`bun run --cwd apps/web e2e`)",
 	"web.yml status": "an aggregator",
 }
 
