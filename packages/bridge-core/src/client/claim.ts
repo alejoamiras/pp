@@ -26,6 +26,7 @@ const POLL_MS = 1_500
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
+		if (signal?.aborted) return reject(signal.reason)
 		const done = () => {
 			clearTimeout(timer)
 			reject(signal?.reason)

@@ -208,6 +208,21 @@ describe("submit: preflight at handoff", () => {
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
 	})
 
+	it("refuses with zero sends when the recipient leaves the wallet while the handoff reads its network", async () => {
+		const t = await setup()
+		const accounts = [t.recipient]
+		const wallet = aztecWallet(accounts)
+		const network = wallet.getChainInfo
+		wallet.getChainInfo = async () => {
+			accounts.length = 0
+			return network()
+		}
+		t.preflights.record(DEPLOYMENT.id, t.recipient, wallet, NETWORK)
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("PREFLIGHT_REQUIRED")
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+		expect(t.values.size).toBe(0)
+	})
+
 	it("refuses with zero sends and nothing journaled when the preflighted wallet moved to another rollup", async () => {
 		const t = await setup()
 		t.wallet.version = 2n

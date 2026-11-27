@@ -88,6 +88,26 @@ describe("waitClaimable", () => {
 		await expect(waiting).rejects.toMatchObject({ code: "RPC_FAILED" })
 	})
 
+	it("does not wait out the poll delay when the abort lands just before it", async () => {
+		const node = {
+			getL1ToL2MessageIndex: vi.fn(async () => undefined),
+			getBlockData: vi.fn(async () => undefined),
+		}
+		const abort = new AbortController()
+		// Fires after the wrapped forceBlock settled and before the loop enters its delay.
+		const forceBlock = () => {
+			const done = Promise.resolve()
+			queueMicrotask(() => void done.then(() => abort.abort()))
+			return done
+		}
+		const outcome = waitClaimable(node, receipt(), { forceBlock, signal: abort.signal }).then(
+			() => "resolved",
+			(e: { code?: string }) => e.code,
+		)
+		const late = new Promise((r) => setTimeout(() => r("still waiting"), 300))
+		expect(await Promise.race([outcome, late])).toBe("RPC_FAILED")
+	})
+
 	it("observes a forceBlock that aborts and then rejects, leaving no unhandled rejection", async () => {
 		const node = {
 			getL1ToL2MessageIndex: vi.fn(async () => undefined),

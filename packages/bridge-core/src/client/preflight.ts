@@ -69,9 +69,10 @@ export class Preflights {
 		const key = this.#key(deployment, recipient)
 		const entry = this.#live(key)
 		if (!entry) throw required()
+		// The account list is read last, so no other await sits between it and the send.
+		const same = await onNetwork(entry.wallet, entry.network)
 		const wanted = recipient.toString().toLowerCase()
 		const listed = (await entry.wallet.getAccounts()).some((a) => a.item.toString().toLowerCase() === wanted)
-		const same = await onNetwork(entry.wallet, entry.network)
 		if (!listed || this.#live(key) !== entry) throw required()
 		if (!same) throw new BridgeClientError("CHAIN_MISMATCH")
 		this.#entries.delete(key)
