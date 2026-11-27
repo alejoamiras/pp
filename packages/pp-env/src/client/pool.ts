@@ -104,6 +104,9 @@ async function wireSession(
 	prover: IGroth16Prover,
 ) {
 	const noteManager = new NoteManager({})
+	// Discovery scans from this cursor, and the SDK's fall-back to the deploy block never fires for the
+	// "0x0" it starts at: from genesis, a public node with pruned history refuses the first scan.
+	noteManager.setSyncCursor(toHex(config.deployment.deployBlock) as SdkHex)
 	const hashService = await PoseidonHashService.create()
 	const merkleService = new MerkleService({ hashService })
 	const noteComputationService = new NoteComputationService({ hashService, cryptoService })

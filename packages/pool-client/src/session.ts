@@ -1,4 +1,4 @@
-import type { Account, Address, Chain, PublicClient, Transport, WalletClient } from "viem"
+import { type Account, type Address, type Chain, type PublicClient, type Transport, toHex, type WalletClient } from "viem"
 import type { Keys } from "./keys.ts"
 import { createProver } from "./runtime/prover.ts"
 import type { VerifiedArtifacts } from "./runtime/artifacts.ts"
@@ -103,6 +103,9 @@ export async function createSession(d: {
 	wallet?: LocalWallet
 }): Promise<Session> {
 	const noteManager = new NoteManager({})
+	// Discovery scans from this cursor, and the SDK's fall-back to the deploy block never fires for the
+	// "0x0" it starts at: from genesis, a public node with pruned history refuses the first scan.
+	noteManager.setSyncCursor(toHex(d.pool.deployBlock))
 	const hashService = await PoseidonHashService.create()
 	const merkleService = new MerkleService({ hashService })
 	const cryptoService = d.keys.crypto
