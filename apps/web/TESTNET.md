@@ -12,10 +12,14 @@ URLs.
   `bun run --cwd packages/pp-env fetch`. The browser check (step 3) needs Playwright's Chromium:
   `apps/web/node_modules/.bin/playwright install chromium` (add `--with-deps` once on a fresh
   machine; it installs system packages and needs root).
-- **The deployment file:** `packages/testnet/deployments/testnet-own.json`, with its `pool` and
-  `bridge` sections. Use it only after `verify-deployment` passed on it before `open`.
-- **The testnet services:** the testnet lane runs `bot` and `asp --owner <canary owner>` on the host
-  (see `packages/testnet/README.md`), and opens the factory with `open`.
+- **The deployment file:** the own pool's testnet deployment file, with its `pool` and `bridge`
+  sections. Use it only if `verify-deployment` passed on it before the factory was opened with `open`.
+- **The testnet services:** the deployment's operator runs `bot` and `asp --owner <canary owner>` on
+  the host.
+- **Not in this repository yet:** the deployment file and the commands named here (`verify-deployment`,
+  `open`, `bot`, `asp --owner`, `seed`); see `packages/testnet/README.md`. Until they land, step 3's
+  checks run on the fixture file `apps/web/src/build/fixtures/testnet-own.json` in place of
+  `$DEPLOYMENT` (the smoke with `--no-upstreams`).
 - **On your laptop:** Chrome with two extensions.
   - **MetaMask** on Sepolia, with two accounts:
     - the **owner**, who holds the pool note;
@@ -25,19 +29,21 @@ URLs.
 
 ## Start the app on the host
 
-Run every command from the repository's root. `bun run --cwd apps/web` runs in `apps/web`, so each
-file path below is absolute (`$PWD/…`).
+Run every command from the repository's root. `bun run --cwd apps/web` runs in `apps/web`, so every
+file path it is given is absolute.
 
-1. Point `PP_CIRCUITS_DIR` at the fetched pool checkout's circuit builds:
+1. Point `DEPLOYMENT` at the deployment file by its absolute path, and `PP_CIRCUITS_DIR` at the
+   fetched pool checkout's circuit builds:
 
    ```sh
+   export DEPLOYMENT=<absolute path of the deployment file>
    export PP_CIRCUITS_DIR=$(bun -e 'import { checkout } from "./packages/pp-env/src/env/checkout.ts"; console.log(checkout().circuits)')
    ```
 
 2. Build the app. Stop `serve` first if it runs: it holds the headers it loaded at start.
 
    ```sh
-   PP_DEPLOYMENT=$PWD/packages/testnet/deployments/testnet-own.json \
+   PP_DEPLOYMENT="$DEPLOYMENT" \
      bun run --cwd apps/web build --mode testnet --outDir dist-testnet
    ```
 
@@ -46,8 +52,8 @@ file path below is absolute (`$PWD/…`).
    real services, on a port of its own.
 
    ```sh
-   bun run --cwd apps/web test:headers -- --target $PWD/packages/testnet/deployments/testnet-own.json
-   bun run --cwd apps/web test:testnet-smoke -- --target $PWD/packages/testnet/deployments/testnet-own.json
+   bun run --cwd apps/web test:headers -- --target "$DEPLOYMENT"
+   bun run --cwd apps/web test:testnet-smoke -- --target "$DEPLOYMENT"
    ```
 
    Each ends with a `passed` line. In the smoke, a `502` on a `GET /bot/…` or `GET /asp/…` line means
@@ -58,7 +64,7 @@ file path below is absolute (`$PWD/…`).
 
    ```sh
    bun run --cwd apps/web serve -- --outDir dist-testnet \
-     --deployment $PWD/packages/testnet/deployments/testnet-own.json --host 127.0.0.1 --port 28600 --claim
+     --deployment "$DEPLOYMENT" --host 127.0.0.1 --port 28600 --claim
    ```
 
    It claims port 28600 in `~/.agents/ports.md` and prints the run id it claimed it under. It refuses
@@ -88,16 +94,17 @@ file path below is absolute (`$PWD/…`).
 
 2. Open `http://localhost:28600` in Chrome. Always use this exact address. Your wallets' permissions
    and the page's saved bridge progress belong to it. Another port or `127.0.0.1` is a new site to both.
-3. In MetaMask, connect this site by hand (the account menu → connect). Select the owner account.
+3. In MetaMask, select the owner account, then press **Sign in with Ethereum** on the page. MetaMask
+   asks to connect this site, then to sign.
 4. Connect Nulo from the page, and check that the codes match.
 
 ## Get a test balance
 
 A balance needs two things:
-- **The owner registered in the pool's keystore.** Registration in this app arrives with web's arc 2e.
-- **A pool note deposited for the owner.** If your owner account is the canary owner, the testnet
-  lane's canary deposit (`seed`, without `--recipient`) is that note. For any other owner, once it is
-  registered, ask the lane to run `seed --recipient <owner address>`; `--recipient` refuses the
+- **The owner registered in the pool's keystore.** This app cannot register an owner yet.
+- **A pool note deposited for the owner.** If your owner account is the canary owner, the canary
+  deposit (`seed`, without `--recipient`) is that note. For any other owner, once it is registered,
+  the deployment's operator runs `seed --recipient <owner address>`; `--recipient` refuses the
   canary owner. The mock ASP then approves the note.
 
 ## When something fails
@@ -105,7 +112,7 @@ A balance needs two things:
 | You see | It means | Do this |
 |---|---|---|
 | The page does not load | The forward is down, or `serve` stopped | Restart the `ssh` line; check `serve` on the host |
-| "Connect your Ethereum wallet first." | MetaMask has not connected this site | Connect the site in MetaMask ("Open it on your laptop", step 3) |
+| "Connect your Ethereum wallet first." | MetaMask has shared no account with this site | Press **Sign in with Ethereum** and approve MetaMask's request ("Open it on your laptop", step 3) |
 | "Your Ethereum wallet is on another network. …" | MetaMask is not on Sepolia | Switch MetaMask to Sepolia |
 | "Switch your Ethereum wallet to a separate account: …" | The owner is selected to pay for a bridge | Select the sender account in MetaMask |
 | "The Aztec node does not answer. …" | The public testnet node is unreachable | Wait, then try again |

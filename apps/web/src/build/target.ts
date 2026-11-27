@@ -59,7 +59,7 @@ export interface PublicTarget {
 	readonly nodeUrl: string
 	readonly l1RpcUrl: string
 	readonly l1ChainId: number
-	/** `null` on a stack target, whose manifest has none: the page takes the node's once its L1 chain id matches. */
+	/** `null` when the target pins none, as a local stack's manifest does: the page takes the node's once its L1 chain id matches. */
 	readonly rollupVersion: number | null
 	/** Iframe wallets the connector probes, in order; empty outside a local build. */
 	readonly walletUrls: readonly string[]
@@ -237,8 +237,8 @@ function handleTarget(file: string, local: boolean, env: TargetEnv): PublicTarge
  * `PP_SANDBOX_ARTIFACTS` (the fixture world). Every other build reads `committedHandle` and uses the
  * fixture connector. `sponsoredFpc` is required for a stack target; `demoSender` is kept only on the local stack.
  *
- * @throws when an input is missing or a field fails validation, and when a stack build would use the
- *   fixture connector.
+ * @throws when an input is missing or a field fails validation, when a stack build would use the
+ *   fixture connector, and when `PP_DEPLOYMENT` is set, which only `--mode testnet` reads.
  */
 export function resolveTarget(o: {
 	local: boolean
@@ -247,6 +247,7 @@ export function resolveTarget(o: {
 	sponsoredFpc?: string
 	demoSender?: string
 }): PublicTarget {
+	if (o.env.PP_DEPLOYMENT !== undefined) fail("PP_DEPLOYMENT", "is set; only a --mode testnet build reads a deployment file")
 	const dataMode = parseDataMode(o.env)
 	if (dataMode === "fixtures") {
 		if (!o.local) return handleTarget(o.committedHandle, false, o.env)
