@@ -53,6 +53,8 @@ type Setup = {
 	token?: Hex
 	/** The block of the factory's `PortalCreated` for the manifest's portal; the manifest starts its scan at 100. */
 	createdAt?: bigint
+	/** The head viem's block-number cache serves; only a `cacheTime: 0` read sees the chain's own. */
+	cachedHead?: bigint
 }
 
 function setup(o: Setup = {}) {
@@ -69,7 +71,8 @@ function setup(o: Setup = {}) {
 			? [created].filter((l) => l.blockNumber >= q.fromBlock && l.blockNumber <= q.toBlock)
 			: chain.reader.getLogs(q as never),
 	)
-	const reader = { ...chain.reader, getChainId: vi.fn(async () => o.chainId ?? 31337), readContract, getLogs }
+	const getBlockNumber = async (q?: { cacheTime?: number }) => (q?.cacheTime === 0 ? chain.head : (o.cachedHead ?? chain.head))
+	const reader = { ...chain.reader, getChainId: vi.fn(async () => o.chainId ?? 31337), readContract, getLogs, getBlockNumber }
 	const node = {
 		getNodeInfo: vi.fn(async () => ({
 			l1ChainId: o.l1ChainId ?? 31337,
@@ -120,6 +123,11 @@ describe("createBridgeClient", () => {
 		const pool = fakePool()
 		await expect(t.client.records(await openSession(pool))).rejects.toMatchObject({ code })
 		expect(pool.notes).not.toHaveBeenCalled()
+	})
+
+	it("finds a portal created after the head the L1 client has cached", async () => {
+		const t = setup({ createdAt: 150n, cachedHead: 120n })
+		expect(await t.client.records(await openSession(fakePool()))).toEqual([])
 	})
 
 	it("stops waiting for a claim when aborted while the deployment check stalls", async () => {

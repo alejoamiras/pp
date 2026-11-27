@@ -55,7 +55,9 @@ export function verifyDeployment(reader: DeploymentReader, node: DeploymentNode,
 		})
 		const token = await hubBindingAt(node, d.hub, d.asset)
 		if (token === undefined || BigInt(token) !== BigInt(d.token)) throw new BridgeClientError("DEPLOYMENT_MISMATCH")
-		const created = await windowedLogs(d.deployBlock, await reader.getBlockNumber(), true, (fromBlock, toBlock) =>
+		// Uncached: a portal created within viem's cache window must be inside the scan.
+		const head = await reader.getBlockNumber({ cacheTime: 0 })
+		const created = await windowedLogs(d.deployBlock, head, true, (fromBlock, toBlock) =>
 			reader.getLogs({ address: d.factory, event: PORTAL_CREATED, args: { token: d.asset, portal: d.portal }, fromBlock, toBlock }),
 		)
 		if (!created.length) throw new BridgeClientError("DEPLOYMENT_MISMATCH")
