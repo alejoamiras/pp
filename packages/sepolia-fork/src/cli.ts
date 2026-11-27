@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
-// `run [--require-rpc]`: the fork suite. `pins <block>`: every binding as read at <block>, for a pin refresh.
+// `run [--require-rpc] [--prepare-only]`: the fork suite; --prepare-only stops after the fixture. `pins <block>`:
+// every binding as read at <block>, for a pin refresh.
 // The endpoint comes only from SEPOLIA_RPC_URL; unset, `run` skips unless --require-rpc makes that a failure.
 import { PINS } from "./pins.ts"
 import { PreflightError, readBindings } from "./preflight.ts"
 import { ENDPOINT_RETRIES, hostOf, httpRpc, scrub } from "./rpc.ts"
-import { runFork } from "./run.ts"
 
 /** Read once, then removed, so nothing this process starts inherits it. */
 function takeEndpoint(): string | undefined {
@@ -27,7 +27,7 @@ async function main(argv: string[]): Promise<number> {
 	const [command, ...rest] = argv
 	const endpoint = takeEndpoint()
 	if (command !== "run" && command !== "pins") {
-		console.error("usage: cli.ts run [--require-rpc] | pins <block>")
+		console.error("usage: cli.ts run [--require-rpc] [--prepare-only] | pins <block>")
 		return 2
 	}
 	if (!endpoint) {
@@ -40,7 +40,17 @@ async function main(argv: string[]): Promise<number> {
 	}
 	try {
 		if (command === "pins") await pins(endpoint, rest[0])
-		else await runFork({ endpoint })
+		else {
+			// Loaded only for a real run: the pool SDK takes seconds to import, and the skip line should not.
+			const [{ runFork }, { prepare }] = await Promise.all([import("./run.ts"), import("./prepare.ts")])
+			await runFork({
+				endpoint,
+				body: async (fork, run) => {
+					await prepare(fork, run)
+					if (!rest.includes("--prepare-only")) throw new Error("the Forge cases are not wired yet; run with --prepare-only")
+				},
+			})
+		}
 		return 0
 	} catch (err) {
 		const kind = err instanceof PreflightError ? `${err.kind} ` : ""

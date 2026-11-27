@@ -13,7 +13,9 @@
 		"pins": "bun src/cli.ts pins"
 	},
 	"dependencies": {
+		"@pp/bridge-spec": "workspace:*",
 		"@pp/pool-client": "workspace:*",
+		"@pp/pp-env": "workspace:*",
 		"@pp/run-isolation": "workspace:*",
 		"viem": "2.45.3"
 	},
