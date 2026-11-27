@@ -171,15 +171,21 @@ class Proved extends Error {
 	}
 }
 
+/** PXEs a `proveOnly` is patching. Two calls on one PXE would restore each other's patch out of order and let a send broadcast. */
+const patching = new WeakSet<object>()
+
 /**
  * Runs `send` through the wallet up to its proof and returns the transaction it would have broadcast.
  * The wallet's own path (its simulation, gas estimate, fee options and authwits) builds the proof; the
  * proof is taken from its PXE, a protected member of aztec.js's `BaseWallet` that the `Wallet`
- * interface does not offer: re-check it on every `@aztec-labs` bump.
- * @throws whatever `send` throws before its proof; Error when it returns without proving
+ * interface does not offer: re-check it on every `@aztec-labs` bump. One call per wallet at a time.
+ * @throws whatever `send` throws before its proof; Error when it returns without proving, or when
+ * another `proveOnly` is running on the same wallet
  */
 export async function proveOnly(wallet: unknown, send: () => Promise<unknown>): Promise<ProvenTx> {
 	const pxe = (wallet as { pxe: ProvingPxe }).pxe
+	if (patching.has(pxe)) throw new Error("a proveOnly is already running on this wallet; prove one transaction at a time")
+	patching.add(pxe)
 	const own = Object.hasOwn(pxe, "proveTx")
 	const proveTx = pxe.proveTx
 	pxe.proveTx = async (...args) => {
@@ -193,6 +199,7 @@ export async function proveOnly(wallet: unknown, send: () => Promise<unknown>): 
 	} finally {
 		if (own) pxe.proveTx = proveTx
 		else Reflect.deleteProperty(pxe, "proveTx")
+		patching.delete(pxe)
 	}
 	throw new Error("the wallet returned from a send without proving it")
 }

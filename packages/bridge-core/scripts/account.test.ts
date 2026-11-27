@@ -50,6 +50,24 @@ describe("proveOnly", () => {
 		await expect(proveOnly(w.wallet, () => Promise.reject(new Error("simulation reverted")))).rejects.toThrow("simulation reverted")
 		expect(Object.hasOwn(w.pxe, "proveTx")).toBe(false)
 	})
+
+	it("refuses a second call on a wallet while one is running, and broadcasts nothing", async () => {
+		const w = fakeWallet()
+		let release = () => {}
+		const held = new Promise<void>((r) => {
+			release = r
+		})
+		const first = proveOnly(w.wallet, async () => {
+			await held
+			await w.send()
+		})
+		await expect(proveOnly(w.wallet, w.send)).rejects.toThrow("already running on this wallet")
+		release()
+		await first
+		expect(w.broadcast).toEqual([])
+		expect(Object.hasOwn(w.pxe, "proveTx")).toBe(false)
+		await expect(proveOnly(w.wallet, w.send)).resolves.toMatchObject({ txHash: HASH })
+	})
 })
 
 const receipt = (status: string, executionResult?: string) => ({ status, executionResult }) as unknown as TxReceipt
