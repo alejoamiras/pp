@@ -62,6 +62,8 @@ describe("lint-pr-title.sh", () => {
 	const title = (PR_TITLE: string, PR_NUMBER = "123") =>
 		run([join(ROOT, "scripts/ci-cd/lint-pr-title.sh")], ROOT, { PR_TITLE, PR_NUMBER }).status
 
+	// Five commitlint processes in a row: about 3 s at load 250 and past bun's 5 s default near load
+	// 300 on a 192-core host, so the bound is explicit: four times the default.
 	test("the title plus its squash suffix must pass commitlint", () => {
 		expect(title("fix(ci): lint only a pull request's own commits")).toBe(0)
 		expect(title("feat(pp-env): Privacy Pools v2 on a local anvil")).toBe(1)
@@ -75,7 +77,7 @@ describe("lint-pr-title.sh", () => {
 			}).status,
 		).toBe(0)
 		expect(title(long)).toBe(1)
-	})
+	}, 20_000)
 
 	test("a title shaped like shell is data", () => {
 		const dir = tempDir()
