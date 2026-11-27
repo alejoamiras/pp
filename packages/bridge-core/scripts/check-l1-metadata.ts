@@ -66,7 +66,9 @@ function requiredProblems(out: string, files: readonly string[]): string[] {
  * containing a needle, or naming an absolute path. Empty means clean.
  */
 export function metadataLeaks(out: string, needles: readonly string[]): string[] {
-	const files = readdirSync(out, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".json") && !f.startsWith("build-info"))
+	const files = readdirSync(out, { recursive: true, encoding: "utf8" })
+		.filter((f) => f.endsWith(".json") && !f.startsWith("build-info"))
+		.sort()
 	const problems = requiredProblems(out, files)
 	for (const file of files) problems.push(...inspect(file, JSON.parse(readFileSync(join(out, file), "utf8")), needles))
 	return problems
