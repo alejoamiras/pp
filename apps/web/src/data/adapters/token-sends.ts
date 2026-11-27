@@ -32,8 +32,15 @@ const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
  *   against, and the allow list's own `LIST_*` failures when it could not be checked
  */
 export async function checkedPath(allowList: TokenSendDeps["allowList"], label: bigint, origin: Origin): Promise<LabelPath> {
-	const view = await allowList.current()
-	const check = await allowList.check(view, label, origin)
+	await pathAt(allowList, label, origin)
+	// The first check can wait behind others, a download and a tree build, while a new record lands or
+	// this one ages out. A second read of the latest record finds the list already loaded for unchanged
+	// roots, so the path sent is one the record just before the send holds and is fresh for.
+	return pathAt(allowList, label, origin)
+}
+
+async function pathAt(allowList: TokenSendDeps["allowList"], label: bigint, origin: Origin): Promise<LabelPath> {
+	const check = await allowList.check(await allowList.current(), label, origin)
 	if (check.state === "ABSENT") throw new BridgeFailure("LABEL_ABSENT")
 	if (check.state === "STALE_ROOT") throw new BridgeFailure("LIST_STALE")
 	return check.path

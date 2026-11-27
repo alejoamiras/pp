@@ -52,6 +52,7 @@ function rig() {
 	const sends = stackTokenSends({ aztec, allowList, sponsoredFpc: FPC })
 	return {
 		wallet,
+		aztec,
 		sends,
 		release: (c: LabelCheck = ACTIVE) => release(c),
 		reconnect: () => {
@@ -95,6 +96,18 @@ describe("the token's checked spends", () => {
 		r.release()
 		await expect(sent).rejects.toThrow("the page's account changed")
 		expect(handoff).toHaveBeenCalledOnce()
+		expect(r.wallet.sendTx).not.toHaveBeenCalled()
+	})
+
+	test("checks the label again against the record that is latest after the first check, and sends nothing if it left", async () => {
+		const r = rig()
+		const first = { record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n }, nowSec: 2n }
+		const later = { ...first, record: { ...first.record, sequence: 2n, poolRoot: 10n } }
+		const current = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(later)
+		const check = vi.fn().mockResolvedValueOnce(ACTIVE).mockResolvedValueOnce({ state: "ABSENT" })
+		const sends = stackTokenSends({ aztec: r.aztec, allowList: { current, check }, sponsoredFpc: FPC })
+		await expect(sends.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())).rejects.toMatchObject({ code: "LABEL_ABSENT" })
+		expect(check.mock.calls.map(([view]) => view)).toEqual([first, later])
 		expect(r.wallet.sendTx).not.toHaveBeenCalled()
 	})
 
