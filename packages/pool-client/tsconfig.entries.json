@@ -1,5 +1,6 @@
 {
 	"extends": "./tsconfig.json",
+	"compilerOptions": { "paths": { "snarkjs": ["./test/consumer/snarkjs.d.ts"] } },
 	"include": [],
-	"files": ["src/index.ts", "src/prover-worker.ts", "test/support/testing.ts"]
+	"files": ["src/index.ts", "src/prover-worker.ts", "test/support/testing.ts", "test/consumer/uses-snarkjs.ts"]
 }

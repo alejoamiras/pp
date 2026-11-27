@@ -1,7 +1,5 @@
-// snarkjs ships no types; the reference carries its declaration to consumers that compile this file through imports.
-/// <reference path="../snarkjs.d.ts" />
-import { curves } from "snarkjs"
 import { Groth16Prover, type IGroth16Prover } from "../sdk.ts"
+import { curves } from "./snarkjs-curves.js"
 
 let curve: Promise<unknown> | undefined
 
