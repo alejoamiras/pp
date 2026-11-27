@@ -1,12 +1,11 @@
 import { useState } from "react"
-import { type App, useApp } from "../../app/context"
+import { useApp } from "../../app/context"
 import type { AztecAddress } from "../../data/stack-types"
-import { codeOf, messageOf, RECIPIENT_MESSAGE } from "../../data/errors"
+import { messageOf, RECIPIENT_MESSAGE } from "../../data/errors"
 import { isAztecPoint, parseAztecAddress } from "../../data/parse"
-import type { AztecSendHooks, LabelBalance } from "../../data/ports"
-import { bindAztecSend } from "../../data/sends"
+import type { LabelBalance } from "../../data/ports"
 import { ActionButton, Callout, Field, LabelChip } from "../../ui"
-import { ActionShell, AmountField, SpendCapNote, useAction, useAmount, useSpendCap } from "./shared"
+import { ActionShell, AmountField, bound, SpendCapNote, useAction, useAmount, useSpendCap } from "./shared"
 
 interface Props {
 	account: AztecAddress
@@ -15,16 +14,6 @@ interface Props {
 }
 
 const submitReason = (sending: boolean, missing: string | null) => (sending ? "Sending…" : (missing ?? undefined))
-
-/** The send bound to the connection that lists `account` at the click, or `null` with the dialog failed. */
-function bound(live: App["live"], account: AztecAddress, act: ReturnType<typeof useAction>): AztecSendHooks | null {
-	try {
-		return bindAztecSend(live.get, account)
-	} catch (err) {
-		act.fail(codeOf(err) ?? "CONTEXT_CHANGED")
-		return null
-	}
-}
 
 /** A private transfer under the same label. The page sends one transaction at a time, so a first send to a new recipient goes alone. */
 export function SendDialog({ account, balance, onClose }: Props) {
