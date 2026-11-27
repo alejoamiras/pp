@@ -72,10 +72,7 @@ async function walletFor(c: BotConfig, node: Node) {
 	return { wallet, fee, registry: await Contract.at(registry, aspRootRegistryArtifact, wallet) }
 }
 
-/**
- * Registers the intake's keys (its account is never deployed) and each token's instance, so the PXE
- * decrypts what the tokens announce to the intake. With no tokens there are no births to read.
- */
+/** The intake's account is registered locally and never deployed: decrypting needs only its keys. */
 async function birthLeavesFor(
 	c: BotConfig,
 	wallet: BotWallet,
@@ -91,9 +88,11 @@ async function birthLeavesFor(
 	for (const token of tokens) {
 		const instance = await node.getContract(token)
 		if (!instance) throw new Error(`node: no token at ${token}`)
-		// The PXE registers a mismatched artifact silently and fails later on every sync.
-		if (!instance.currentContractClassId.equals(classId))
-			throw new Error(`token ${token} runs class ${instance.currentContractClassId}, not the labelled token's ${classId}`)
+		// The PXE registers a mismatched artifact silently and fails later on every sync. The original
+		// class counts too: the scan reads the token's whole history, events from before an upgrade included.
+		const { currentContractClassId: now, originalContractClassId: first } = instance
+		if (!now.equals(classId) || !first.equals(classId))
+			throw new Error(`token ${token} runs class ${now} (deployed as ${first}), not the labelled token's ${classId}`)
 		await wallet.registerContract(instance, labelledTokenArtifact)
 	}
 	const src = await liveBirthSource({

@@ -1,5 +1,5 @@
 import type { AztecAddress } from "@aztec-labs/aztec.js/addresses"
-import { getPublicEvents } from "@aztec-labs/aztec.js/events"
+import { type EventCursor, getPublicEvents } from "@aztec-labs/aztec.js/events"
 import type { AztecNode } from "@aztec-labs/aztec.js/node"
 import { TxExecutionResult, TxHash } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
@@ -37,12 +37,19 @@ export async function liveBirthSource(o: {
 		async tx(token, txHash): Promise<BirthTx> {
 			const hash = TxHash.fromString(txHash)
 			const receipt = await o.node.getTxReceipt(hash, { includeTxEffect: true })
-			const { events } = await getPublicEvents<RawDebit>(o.node, debited, { contractAddress: token, txHash: hash })
+			const debits: ShieldDebited[] = []
+			// A page holds at most 20 events, and one transaction can shield more often than that.
+			let afterEvent: EventCursor | undefined
+			do {
+				const page = await getPublicEvents<RawDebit>(o.node, debited, { contractAddress: token, txHash: hash, afterEvent })
+				for (const { event: e } of page.events) debits.push({ birthId: e.birth_id, owner: e.owner, amount: e.amount })
+				afterEvent = page.nextCursor
+			} while (afterEvent)
 			return {
 				success: receipt.executionResult === TxExecutionResult.SUCCESS,
 				block: receipt.blockNumber ?? Number.POSITIVE_INFINITY,
 				nullifiers: (receipt.txEffect?.nullifiers ?? []).map((n) => n.toBigInt()),
-				debits: events.map(({ event: e }): ShieldDebited => ({ birthId: e.birth_id, owner: e.owner, amount: e.amount })),
+				debits,
 			}
 		},
 	}
