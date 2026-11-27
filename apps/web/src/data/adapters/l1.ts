@@ -75,8 +75,8 @@ export interface DemoSender {
 export interface StackL1 extends L1Port {
 	readonly reads: PublicClient
 	/**
-	 * The client a bridge spend sends through: the demo sender's provider when the attempt's sender is
-	 * its address, else the injected wallet. `assertCurrent` runs before every send or sign, and
+	 * The client a bridge spend sends through: the demo sender's provider once its `ready` has resolved
+	 * and the attempt's sender is its address, else the injected wallet. `assertCurrent` runs before every send or sign, and
 	 * `hooks.sent` hears the hash.
 	 */
 	spendWallet(a: Attempt, assertCurrent: () => void, hooks: Pick<SubmitHooks, "sent">): WalletClient<Transport, Chain, Account>
@@ -89,6 +89,8 @@ export function stackL1(
 ): StackL1 {
 	const chain = targetChain(t)
 	const reads = createPublicClient({ chain, transport: http(t.l1RpcUrl) })
+	// A wallet may hold the dev account too; only the page's explicit choice routes a spend to the demo sender.
+	let demoChosen = false
 	const need = (): InjectedWallet => {
 		if (!wallet) throw new BridgeFailure("NO_SENDER")
 		return wallet
@@ -107,9 +109,19 @@ export function stackL1(
 		},
 		onAccountsChanged: (f) => follow("accountsChanged", (v) => f(addressesOf(v))),
 		onChainChanged: (f) => follow("chainChanged", (v) => f(Number(v))),
-		...(demo ? { demo: { address: demo.address, ready: () => demo.ready() } } : {}),
+		...(demo
+			? {
+					demo: {
+						address: demo.address,
+						ready: () =>
+							demo.ready().then(() => {
+								demoChosen = true
+							}),
+					},
+				}
+			: {}),
 		spendWallet(a, assertCurrent, hooks) {
-			const inner = demo && isAddressEqual(a.sender, demo.address) ? demo.provider : need()
+			const inner = demoChosen && demo && isAddressEqual(a.sender, demo.address) ? demo.provider : need()
 			return createWalletClient({
 				account: a.sender,
 				chain,
