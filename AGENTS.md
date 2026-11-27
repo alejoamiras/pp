@@ -71,7 +71,8 @@ with warm package and toolchain caches.
 | Local stack prerequisites | `bun run demo:prepare` (once per clone: pp-env's fetch, forge install and build) | 33 s with the pool fetched |
 | Local stack | `bun run demo` (`--keep` holds it up) | 1 min 45 s (ready in 97 s) |
 | Local stack integration | `bun run --cwd packages/local-stack test:integration` | imports 4 s · bridge 1.5 min · teardown 5 min · shared-anvil 6 min · heartbeat 7 min |
-| Bridge stack suite | `bun run --cwd packages/bridge-core test:integration:stack -- deploy` (boots its own stack unless `PP_STACK_MANIFEST` is set) | 2.5 min |
+| Bridge stack suite | `bun run --cwd packages/bridge-core test:integration:stack` (boots its own stack unless `PP_STACK_MANIFEST` is set; `-- deploy` runs one file in 2.5 min) | 15 min (boot 2 min, cases 12 min, stop 1 min) |
+| First-path smoke | `bun run demo:smoke` against a kept stack (`PP_STACK_MANIFEST`) | 30 s |
 | E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | 15 s |
 | Pool client, unit | `bun run --cwd packages/pool-client test` and `test:node` | 10 s |
 | Web e2e (sandbox boot, both builds, Playwright) | `bun run --cwd apps/web e2e` | 4 min |
