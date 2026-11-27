@@ -95,7 +95,7 @@ const loadExits = (): Promise<ExitSide> =>
 		const notes: AztecPort["notesByLabel"] = (owner, label) => side.port.notesByLabel(owner, label)
 		return {
 			exits: m.stackExits({ manifest, deployment, aztec: side.deps, notes, l1, client }),
-			withdraw: m.stackWithdraw({ aztec: side.deps, allowList, sponsoredFpc: deployment.sponsoredFpc, client }),
+			withdraw: m.stackWithdraw({ aztec: side.deps, allowList, sponsoredFpc: deployment.sponsoredFpc, client, notes }),
 		}
 	}))
 

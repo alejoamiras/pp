@@ -12,6 +12,7 @@ import { ExecutionPayload, mergeExecutionPayloads } from "@aztec-labs/aztec.js/t
 import type { BridgeClient } from "@pp/bridge-core"
 import { labelledTokenArtifact, tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
 import type { Address } from "viem"
+import { assertSpendable } from "../chunks"
 import { BridgeFailure } from "../errors"
 import { parseAztecAddress } from "../parse"
 import type { AztecPort, AztecSendHooks, Sent } from "../ports"
@@ -22,6 +23,8 @@ import { checkedPath, spendPayloads, type TokenSendDeps } from "./token-sends"
 export interface WithdrawDeps extends TokenSendDeps {
 	/** Builds `exit_public` with bridge-core's payee and amount refusals; nothing on it writes. */
 	client: Pick<BridgeClient, "exitPublicPayload">
+	/** A label's note values as the connected wallet reports them when called. */
+	notes: AztecPort["notesByLabel"]
 }
 
 /** What the user confirmed; every call in the payload must carry exactly these values. */
@@ -104,6 +107,8 @@ export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "
 				{ to: token, artifact: labelledTokenArtifact, name: "unshield", args: [x.amount, new Fr(x.label), pathArg(path)] },
 				exitCall(x.payee, x.amount),
 			])
+			// The notes as they are now: one spend takes at most the label's 8 largest.
+			assertSpendable(await d.notes(from, x.label), x.amount)
 			return send(d.aztec, from, payload, on)
 		},
 	}

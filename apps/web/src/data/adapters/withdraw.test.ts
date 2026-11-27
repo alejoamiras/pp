@@ -65,7 +65,8 @@ function rig(check: LabelCheck = ACTIVE, wrong?: Exit) {
 		check: vi.fn<AllowListPort["check"]>(async () => check),
 	}
 	const client = { exitPublicPayload: vi.fn((a: { payee: Address; amount: bigint }) => exitPayload(live.wallet, a, wrong)) }
-	return { wallet, allowList, client, port: stackWithdraw({ aztec, allowList, sponsoredFpc: FPC, client }) }
+	const notes = vi.fn(async (_owner: AztecAddress, _label: bigint) => [5n])
+	return { wallet, allowList, client, notes, port: stackWithdraw({ aztec, allowList, sponsoredFpc: FPC, client, notes }) }
 }
 
 const on = (handoff = vi.fn()): AztecSendHooks & { handoff: ReturnType<typeof vi.fn> } => ({ epoch: 3, handoff })
@@ -109,13 +110,19 @@ describe("withdrawals to Ethereum", () => {
 			}
 	})
 
-	test("a refused payee reads no allow list; a label the list does not hold, or a refused handoff, sends nothing", async () => {
+	test("a refused payee reads no allow list; a label the list does not hold, notes that no longer cover it, or a refused handoff send nothing", async () => {
 		const refused = rig()
 		refused.client.exitPublicPayload.mockRejectedValue(Object.assign(new Error("payee"), { code: "SPEND_MISMATCH" }))
 		await expect(refused.port.unshieldAndExit(ME, screened, on())).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
 		expect(refused.allowList.check).not.toHaveBeenCalled()
 		const absent = rig({ state: "ABSENT" })
 		await expect(absent.port.unshieldAndExit(ME, screened, on())).rejects.toMatchObject({ code: "LABEL_ABSENT" })
+		const spent = rig()
+		spent.notes.mockResolvedValue([4n])
+		const late = on()
+		await expect(spent.port.unshieldAndExit(ME, screened, late)).rejects.toMatchObject({ code: "OVER_NOTE_CAP" })
+		expect(spent.notes).toHaveBeenCalledWith(ME, screened.label)
+		expect(late.handoff).not.toHaveBeenCalled()
 		const moved = rig()
 		const hooks = on(
 			vi.fn(() => {
@@ -123,7 +130,7 @@ describe("withdrawals to Ethereum", () => {
 			}),
 		)
 		await expect(moved.port.unshieldAndExit(ME, screened, hooks)).rejects.toThrow("the page's account changed")
-		for (const r of [refused, absent, moved]) expect(r.wallet.sendTx).not.toHaveBeenCalled()
+		for (const r of [refused, absent, spent, moved]) expect(r.wallet.sendTx).not.toHaveBeenCalled()
 	})
 
 	test("the public row's withdraw is exit_public alone, paid by the SponsoredFPC", async () => {
