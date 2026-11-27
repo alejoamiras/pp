@@ -169,6 +169,11 @@ against the keyless public endpoint committed in that file; the real-wallet tier
   catalog's version under each `@aztec-labs/*` package that declares it. Delete those overrides at the
   bump whose Aztec zod ranges all admit the catalog's version; `scripts/ci-cd/aztec-zod.test.ts` fails
   until you do, and also on a new declaring package or a value that drifts from the catalog.
+- **Advisory overrides** lift a vulnerable package past the exact version its parent pins
+  (systeminformation under `@opentelemetry/host-metrics`, underscore under `jsonpath`).
+  `scripts/ci-cd/advisory-overrides.test.ts` lists each with the version that fixes it, and fails
+  once the parent pins that version or declares anything but an exact pin: delete the override then,
+  or re-check it.
 - `bun audit` runs in CI as an advisory step. No Renovate: dependency bumps are manual PRs.
 
 ## Security
