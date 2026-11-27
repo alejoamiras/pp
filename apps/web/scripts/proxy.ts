@@ -17,6 +17,12 @@ export interface ProxyConfig {
 
 export type Upstream = "asp" | "bot"
 
+/** The body of the 502 that stands in for an upstream's unusable answer; the cause goes to the server log. */
+export const UPSTREAM_DOWN: Readonly<Record<Upstream, string>> = {
+	asp: "the pool's ASP does not answer",
+	bot: "the ASP bot does not answer",
+}
+
 const DIGITS = /^[0-9]{1,78}$/
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 const SEQUENCE = /^\/bot\/v1\/snapshots\/(latest|[1-9][0-9]{0,19})$/

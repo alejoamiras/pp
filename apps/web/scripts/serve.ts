@@ -27,7 +27,7 @@ import { claimRows, releaseRows } from "@pp/run-isolation/ports"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build/headers.ts"
 import { PROVED_CIRCUIT, PROVED_PINS } from "../src/data/adapters/circuit.ts"
 import { APP_ROOT } from "./proc"
-import { forward, isProxyPath, type ProxyConfig, proxyRoute, type Upstream } from "./proxy"
+import { forward, isProxyPath, type ProxyConfig, proxyRoute, UPSTREAM_DOWN } from "./proxy"
 import { loadTestnetServing } from "./testnet-serve"
 
 type Getter = "getWasm" | "getProvingKey" | "getVerificationKey"
@@ -137,11 +137,6 @@ const fileReply = (path: string): Reply => ({
 	type: TYPES[extname(path)] ?? "application/octet-stream",
 	body: readFileSync(path),
 })
-
-const UPSTREAM_DOWN: Readonly<Record<Upstream, string>> = {
-	asp: "the pool's ASP does not answer",
-	bot: "the ASP bot does not answer",
-}
 
 async function proxied(method: string | undefined, rawTarget: string, config: ProxyConfig): Promise<Reply> {
 	if (method !== "GET") return text(405, "method not allowed")

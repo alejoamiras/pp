@@ -20,6 +20,7 @@ import { readTestnetDeployment, testnetTarget } from "../src/build/testnet.ts"
 import { PROVED_CIRCUIT } from "../src/data/adapters/circuit.ts"
 import { claimPort } from "./ports"
 import { bunRun, envWithout, type Group, scratchDir } from "./proc"
+import { UPSTREAM_DOWN } from "./proxy"
 import { assertRefusal, assertServed, untilUp } from "./served"
 import { loadTestnetServing } from "./testnet-serve"
 
@@ -54,7 +55,7 @@ function fakeUpstream(port: number, body: string): Promise<Fake> {
 }
 
 /** A copy of `file` whose upstreams are `bot` and `asp` on loopback. */
-function withUpstreams(file: string, dir: string, bot: number, asp: number): string {
+export function withUpstreams(file: string, dir: string, bot: number, asp: number): string {
 	const d = JSON.parse(readFileSync(file, "utf8")) as { network: Record<string, unknown>; pool: Record<string, unknown> }
 	d.network.botPort = bot
 	d.network.aspPort = asp
@@ -179,8 +180,7 @@ async function assertUpstreamDown(port: number, bot: Fake): Promise<void> {
 	await bot.close()
 	const res = await fetch(`http://127.0.0.1:${port}/bot/v1/snapshots/latest`)
 	const body = await res.text()
-	if (res.status !== 502 || body !== "the ASP bot does not answer")
-		throw new Error(`${NAME}: a dead bot gave HTTP ${res.status}: ${body}`)
+	if (res.status !== 502 || body !== UPSTREAM_DOWN.bot) throw new Error(`${NAME}: a dead bot gave HTTP ${res.status}: ${body}`)
 	console.log(`ok   ${NAME}: a dead bot is HTTP 502 with its fixed text`)
 }
 
