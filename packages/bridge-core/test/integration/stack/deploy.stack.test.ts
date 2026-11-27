@@ -38,11 +38,18 @@ describe("the stack's bridge deploy", () => {
 		expect(approved).toHaveLength(2)
 	})
 
-	it("D1a a second generation, built on the stack's beats, refuses to open on a wrong pool and stays paused", async () => {
+	it("D1a a second generation, built on the stack's beats, refuses to open on a wrong pool or another generation's bindings, and stays paused", async () => {
 		const dir = scratch("d1a")
 		const u = await deployBridgeGeneration(generation(11, dir.path))
 		try {
 			await expect(openBridgeEntries(u, { ...u.expected, pool: OTHER_POOL })).rejects.toBeInstanceOf(BindingMismatchError)
+			const stacks = {
+				...u.expected,
+				factory: m.bridge.factory,
+				hub: m.bridge.hub,
+				portals: [{ token: m.pool.asset, portal: m.bridge.portal }],
+			}
+			await expect(openBridgeEntries(u, stacks)).rejects.toThrow(/another generation/)
 			expect(await entriesPaused(u)).toBe(true)
 		} finally {
 			await u.stop()

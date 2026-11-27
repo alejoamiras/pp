@@ -182,6 +182,16 @@ export async function deployBridgeGeneration(o: DeployBridgeOptions): Promise<Un
 	}
 }
 
+/** The checks read `expected` and the opening writes to the handle's factory, so both must be one generation. */
+function assertOwnGeneration(h: Internals, block: StackBridgeBlock, e: ExpectedBindings): void {
+	const own =
+		isAddressEqual(e.factory, block.factory) &&
+		isAddressEqual(e.implementation, h.gen.l1.implementation) &&
+		e.hub.toLowerCase() === block.hub &&
+		e.portals.some((p) => isAddressEqual(p.token, h.asset) && isAddressEqual(p.portal, block.portal))
+	if (!own) throw new Error("the expected bindings name another generation than the one this handle deployed")
+}
+
 async function readBack(h: Internals, block: StackBridgeBlock): Promise<void> {
 	const read = (functionName: "portalOf" | "predictPortal") =>
 		h.l1.pub.readContract({ address: block.factory, abi: PORTAL_FACTORY_ABI, functionName, args: [h.asset] })
@@ -202,6 +212,7 @@ async function readBack(h: Internals, block: StackBridgeBlock): Promise<void> {
 export async function openBridgeEntries(u: UnopenedBridge, expected: ExpectedBindings): Promise<StackBridgeBlock> {
 	const h = internals.get(u)
 	if (!h) throw new Error("openBridgeEntries takes the value deployBridgeGeneration returned")
+	assertOwnGeneration(h, u.block, expected)
 	await readBack(h, u.block)
 	await assertGenerationBindings(h.l1.pub as never, expected, "stack bridge")
 	await assertV1Hub(h.node as never, AztecAddress.fromStringUnsafe(u.block.hub), tokenBridgeHubArtifact)
