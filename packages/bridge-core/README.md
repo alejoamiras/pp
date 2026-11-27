@@ -12,7 +12,7 @@ package re-derives it rather than trusting a file.
 
 | Import | What |
 |---|---|
-| `@pp/bridge-core` | `src/index.ts`: the bridge client (`openBridgeSession`, `prepareBridgeSpend`, `createBridgeClient`), hub reads, readiness, hashes, secrets, journal. |
+| `@pp/bridge-core` | `src/index.ts`: the bridge client (`openBridgeSession`, `prepareBridgeSpend`, `createBridgeClient`), hub reads, readiness, hashes, secrets. |
 | `@pp/bridge-core/artifacts` | The committed hub and labelled-token artifacts. |
 | `@pp/bridge-core/sandbox` | `scripts/sandbox/`: boot a local network, deploy a generation, read its bindings back. Also the generation manifest schema (`manifest-v2`), a per-run handoff. Node only. |
 
@@ -27,8 +27,7 @@ package re-derives it rather than trusting a file.
 | `register-hash.ts` / `claim-secret.ts` / `content-hash.ts` | The three-toolchain keystones (Solidity ↔ Noir ↔ TS): the factory's `register` message, the recipient-committed private-claim secret (re-exported from `@pp/bridge-spec/claim-secret`), the deposit/withdraw content hashes. |
 | `factory-abi.ts` / `factory-registry.ts` / `erc20.ts` | Hand-written ABIs pinned against the forge artifacts; the factory's frozen registration; gas-capped ERC-20 metadata reads decoded from the factory's own bytes. |
 | `manifest-v2.ts` | Strict schema for the generation manifest; every derivable address is re-derived on parse. Exported through `./sandbox`. |
-| `journal.ts` / `backup.ts` / `recovery-crypto.ts` / `seal-trust.ts` | The in-flight journal, the sealed backup file, AES-GCM/PBKDF2 from `@nulo-sh/wallet-crypto`, the per-wallet seal-determinism cache. |
-| `status.ts` / `progress.ts` / `wallet-chain-id.ts` / `artifacts.ts` | Status and progress helpers, `walletChainIdOf`, the hub and labelled-token artifacts. |
+| `wallet-chain-id.ts` / `artifacts.ts` | `walletChainIdOf`, the hub and labelled-token artifacts. |
 
 ## Scripts
 
