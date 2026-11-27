@@ -155,6 +155,7 @@ function postNowChannel(child: ChildProcess) {
  * its `ready` line, which it prints once `/latest` serves. A start that fails cleans up as `stop()` does.
  */
 export async function startBot(c: BotConfig, o: StartOptions = {}): Promise<BotHandle> {
+	o.signal?.throwIfAborted()
 	// Ports are released by owner id, so a shared id would release the stack's rows too.
 	if (c.runId === c.stackRunId) throw new Error(`runId must differ from stackRunId (${c.stackRunId})`)
 	const margin = c.inclusionMarginSec

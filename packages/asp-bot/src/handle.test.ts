@@ -84,5 +84,9 @@ describe("startBot", () => {
 			expect(released, tag).toEqual([c.runId])
 			expect(existsSync(c.dataDir as string), tag).toBe(false)
 		}
+		const c = config("pre-aborted")
+		const start = startBot(c, { signal: AbortSignal.abort(new Error("already aborted")), command: [process.execPath, FAKE, "ok"] })
+		await expect(start).rejects.toThrow("already aborted")
+		expect(existsSync(c.dataDir as string), "rejected before the data dir is made").toBe(false)
 	})
 })

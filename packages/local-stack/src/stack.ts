@@ -41,7 +41,7 @@ export type StartStackOptions = {
 	runId?: string
 	/** Parent of the run directory; defaults to `~/.cache/pp/runs`. */
 	runsDir?: string
-	/** Default true. Off, the stack mines no block itself; a running bot's posts still make blocks. */
+	/** Default true. Off, no beat runs after the boot; the boot's own mines and a bot's posts still make blocks. */
 	heartbeat?: boolean
 	/**
 	 * Default true. Off, the bridge gets no ASP registry and no bot runs, so no heartbeat post adds
@@ -50,7 +50,10 @@ export type StartStackOptions = {
 	bot?: boolean
 	/** Tick spacing; defaults to `HEARTBEAT_MS`. */
 	heartbeatMs?: number
-	/** Checked between steps; a step already starting runs to the end first, since neither harness can be cancelled mid-start. */
+	/**
+	 * Checked between steps and by the bot while it starts; any other step already starting runs to its
+	 * end first, since neither harness can be cancelled mid-start.
+	 */
 	signal?: AbortSignal
 	/** Progress for the CLI; a throw aborts the boot. */
 	onStep?: (s: { step: StepName; seconds: number }) => void | Promise<void>
