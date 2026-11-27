@@ -4,7 +4,8 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { crc32 } from "node:zlib"
 import { afterEach, describe, expect, it } from "vitest"
-import { downloadPinned, fetchWallet, readWalletPin, type WalletPin } from "./fetch-wallet"
+import { downloadPinned } from "./download"
+import { fetchWallet, readWalletPin, type WalletPin } from "./fetch-wallet"
 import { extractZip } from "./zip"
 
 /** A stored (uncompressed) zip; `mode` sets a Unix file type in the external attributes. */
@@ -120,8 +121,9 @@ describe("fetchWallet", () => {
 
 	it("stops a body that runs past the pinned size", async () => {
 		const longer = Buffer.concat([body, Buffer.alloc(64)])
-		await expect(downloadPinned(pin.url, pin.size, pin.sha256, serve(longer))).rejects.toThrow(/more than the pinned/)
-		await expect(downloadPinned(pin.url, pin.size, pin.sha256, serve(body, { "content-length": "999999999" }))).rejects.toThrow(
+		const e = { size: pin.size, sha256: pin.sha256 }
+		await expect(downloadPinned(pin.url, { ...e, fetchImpl: serve(longer) })).rejects.toThrow(/more than the pinned/)
+		await expect(downloadPinned(pin.url, { ...e, fetchImpl: serve(body, { "content-length": "999999999" }) })).rejects.toThrow(
 			/declares/,
 		)
 	})

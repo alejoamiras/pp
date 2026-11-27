@@ -10,7 +10,8 @@ import { execFileSync } from "node:child_process"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { downloadPinned, type WalletPin } from "./fetch-wallet"
+import { downloadPinned } from "./download"
+import type { WalletPin } from "./fetch-wallet"
 
 const REPO = "nulo-sh/nulo"
 const MIN_AGE_MS = 7 * 86_400_000
@@ -42,7 +43,7 @@ async function main(tag: string): Promise<void> {
 	const dir = mkdtempSync(join(homedir(), ".cache/pp/pin-wallet-"))
 	try {
 		const zip = join(dir, asset.name)
-		writeFileSync(zip, await downloadPinned(asset.url, asset.size, sha256))
+		writeFileSync(zip, await downloadPinned(asset.url, { size: asset.size, sha256 }))
 		const [att] = JSON.parse(gh("attestation", "verify", zip, "--repo", REPO, "--format", "json")) as {
 			verificationResult: { signature: { certificate: Record<string, string> } }
 		}[]
