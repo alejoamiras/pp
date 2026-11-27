@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterEach, describe, expect, it } from "vitest"
-import { groupGone, groupMembers } from "./process-group"
+import { groupGone, groupMembers } from "@pp/run-isolation/process-group"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ids: string[] = []

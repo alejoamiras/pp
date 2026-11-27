@@ -150,7 +150,7 @@ export class FakeChain {
 	head = 200n
 	spentAt = 0n
 	readonly logs: Log[] = []
-	readonly receipts = new Map<Hash, { status: "success" | "reverted"; blockNumber: bigint }>()
+	readonly receipts = new Map<Hash, { status: "success" | "reverted"; blockNumber: bigint; transactionHash: Hash }>()
 	readonly pending = new Set<Hash>()
 	readonly simulate = vi.fn(async (_call: unknown) => ({}))
 	/** What a send does once the wallet signed it; by default the bridge lands. */
@@ -176,19 +176,23 @@ export class FakeChain {
 				[e.leafIndex, e.changeCommitment, e.amount],
 			),
 		})
-		this.receipts.set(hash, { status: "success", blockNumber: this.head })
+		this.receipts.set(hash, { status: "success", blockNumber: this.head, transactionHash: hash })
 	}
 
 	revert(hash: Hash): void {
 		this.head += 1n
-		this.receipts.set(hash, { status: "reverted", blockNumber: this.head })
+		this.receipts.set(hash, { status: "reverted", blockNumber: this.head, transactionHash: hash })
 	}
 
 	readonly reader: SubmitReader = {
 		getBlockNumber: async () => this.head,
-		getLogs: (async (q: { fromBlock: bigint; toBlock: bigint; args: { nullifier: bigint } }) =>
+		// viem ORs an array given for an indexed argument.
+		getLogs: (async (q: { fromBlock: bigint; toBlock: bigint; args: { nullifier: bigint | bigint[] } }) =>
 			this.logs.filter(
-				(l) => l.blockNumber >= q.fromBlock && l.blockNumber <= q.toBlock && l.nullifier === q.args.nullifier,
+				(l) =>
+					l.blockNumber >= q.fromBlock &&
+					l.blockNumber <= q.toBlock &&
+					([q.args.nullifier].flat() as bigint[]).includes(l.nullifier),
 			)) as never,
 		readContract: (async () => this.spentAt) as never,
 		getTransaction: (async ({ hash }: { hash: Hash }) => {
@@ -227,8 +231,19 @@ export class FakeChain {
 	}
 }
 
-/** An Aztec wallet that lists `accounts`; mutate the array to drop one. */
-export const aztecWallet = (accounts: AztecAddress[]) => ({ getAccounts: async () => accounts.map((item) => ({ alias: "", item })) })
+/** The network `DEPLOYMENT` is on, as preflight records it. */
+export const NETWORK = { chainId: 31337n, version: 1n }
+
+/** An Aztec wallet on `NETWORK` that lists `accounts`; mutate the array to drop one, or `version` to move it. */
+export function aztecWallet(accounts: AztecAddress[]) {
+	const w = {
+		chainId: NETWORK.chainId,
+		version: NETWORK.version,
+		getAccounts: async () => accounts.map((item) => ({ alias: "", item })),
+		getChainInfo: async () => ({ chainId: { toBigInt: () => w.chainId }, version: { toBigInt: () => w.version } }),
+	}
+	return w
+}
 
 export function context(chain: FakeChain, store: KeyValueStore, preflights = new Preflights()): SubmitContext {
 	return {
@@ -242,3 +257,11 @@ export function context(chain: FakeChain, store: KeyValueStore, preflights = new
 }
 
 export const randomRecipient = () => AztecAddress.random()
+
+/** The smallest x that is no point's x coordinate on the curve: an address that fails `isValid()`. */
+export async function offCurveAddress(): Promise<AztecAddress> {
+	for (let x = 1n; ; x++) {
+		const a = AztecAddress.fromBigIntUnsafe(x)
+		if (!(await a.isValid())) return a
+	}
+}

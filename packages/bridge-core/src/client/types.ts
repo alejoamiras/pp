@@ -26,7 +26,7 @@ export type BridgeRecordView = {
 	/** Equal to the id `recover` gives the same nullifier. */
 	id: string
 	nullifier: bigint
-	recipient: string
+	recipient: AztecAddress
 	amount: bigint
 	l1TxHash?: Hash
 	step: BridgeStep

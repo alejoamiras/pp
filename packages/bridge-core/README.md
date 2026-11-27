@@ -12,7 +12,7 @@ package re-derives it rather than trusting a file.
 
 | Import | What |
 |---|---|
-| `@pp/bridge-core` | `src/index.ts`: hub reads, exit consumption on L1, readiness, hashes, secrets, journal. |
+| `@pp/bridge-core` | `src/index.ts`: the bridge client (`openBridgeSession`, `prepareBridgeSpend`, `createBridgeClient`), hub reads, exit consumption on L1, readiness, hashes, secrets, journal. |
 | `@pp/bridge-core/artifacts` | The committed hub and labelled-token artifacts. |
 | `@pp/bridge-core/sandbox` | `scripts/sandbox/`: boot a local network, deploy a generation, read its bindings back. Also the generation manifest schema (`manifest-v2`), a per-run handoff. Node only. |
 
@@ -20,6 +20,7 @@ package re-derives it rather than trusting a file.
 
 | File | Purpose |
 |---|---|
+| `client/` | The bridge client: the session and its keys, the sealed journal, the spend checks, `submit` and its resolver, claims, `records` and `recover`. `createBridgeClient` wires them over the manifest's RPC and node and checks the deployment once. |
 | `hub-l2.ts` | Reads of the L2 hub: `hubAt`, and an ERC-20's token binding through `token_for` or straight from public storage (`hubBindingAt`). |
 | `flows.ts` / `l1-receipt.ts` / `l1-to-l2-readiness.ts` | `consumeWithdrawal` (the pre-v1 portal's `withdraw`; v1 portals settle with `settleRagequit` and `settlePublicExit`) + `isOutboxMessageConsumed` for exits, the resilient receipt wait, and when an L1→L2 message becomes consumable. |
 | `hub-token.ts` / `portal-address.ts` | The L2 token the hub derives for an ERC-20 (`LabelledToken`, `deployer = hub`, `salt = erc20`, the hub's ASP registry among its constructor arguments) and the portal clone the factory derives (salt = token). Both pinned against the on-chain derivations. |
@@ -42,6 +43,21 @@ package re-derives it rather than trusting a file.
 
 Every harness run reads the forge build (`contracts/bridge/evm/out/`, gitignored): in a fresh clone,
 install the libs and `forge build` first ([`contracts/bridge/evm/README.md`](../../contracts/bridge/evm/README.md)).
+
+## The bridge client
+
+Before its first action, `createBridgeClient` checks that the L1 RPC and the Aztec node are on the
+manifest's chain. It also checks that the portal is the factory's clone for the pool's asset, bound
+to the manifest's hub and vault and to the rollup the node follows; that the hub binds the asset to
+the manifest's token; and that the portal was created at or after the manifest's scan start. Reads
+are trusted beyond that.
+
+Fees: every L2 transaction the client builds pays through the SponsoredFPC: the claim, and with it
+the recipient's account deployment, which the wallet sends in the same transaction (`preflight`
+only simulates the sponsored path). No option takes a fee or a payment method, so the
+holder's own Fee Juice never pays: the fee payer is public, and paying from the account would link
+it to its bridge. This holds only where a sponsored FPC exists, which today means the local network
+and the testnet.
 
 ## The local network
 

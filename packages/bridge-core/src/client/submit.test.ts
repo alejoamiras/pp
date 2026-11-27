@@ -9,6 +9,7 @@ import {
 	FakeChain,
 	fakePool,
 	memoryStore,
+	NETWORK,
 	OWNER,
 	openSession,
 	randomRecipient,
@@ -31,7 +32,7 @@ async function setup(o: { pool?: ReturnType<typeof fakePool>; failWrite?: (n: nu
 	const ctx = context(chain, store, preflights)
 	const recipient = await randomRecipient()
 	const wallet = aztecWallet([recipient])
-	preflights.record(DEPLOYMENT.id, recipient, wallet)
+	preflights.record(DEPLOYMENT.id, recipient, wallet, NETWORK)
 	const journal = new Journal(store, useSession(session, DEPLOYMENT.id).secrets.journal, DEPLOYMENT.id)
 	const spend = await bridgeSpend(recipient)
 	return { pool, session, chain, store, values, preflights, ctx, recipient, wallet, journal, spend }
@@ -135,7 +136,7 @@ describe("submit: preflight at handoff", () => {
 	it("lets one of two concurrent submits of a note reach the wallet, even through separate store adapters", async () => {
 		const t = await setup()
 		const other = await randomRecipient()
-		t.preflights.record(DEPLOYMENT.id, other, aztecWallet([other]))
+		t.preflights.record(DEPLOYMENT.id, other, aztecWallet([other]), NETWORK)
 		const adapter: KeyValueStore = {
 			getItem: (k) => t.store.getItem(k),
 			setItem: (k, v) => t.store.setItem(k, v),
@@ -185,11 +186,49 @@ describe("submit: preflight at handoff", () => {
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
 	})
 
+	it("keys the hold only by a bigint proof nullifier equal to the spend's, refusing anything else with zero sends", async () => {
+		const t = await setup()
+		const rows = (first: unknown[]) => [first, ...t.spend.proof.pubSignals.slice(1)] as bigint[][]
+		const cases: [PreparedBridgeSpend, string, string?][] = [
+			[{ ...t.spend, proof: { ...t.spend.proof, pubSignals: rows([String(t.spend.nullifier)]) } }, "shape"],
+			[{ ...t.spend, nullifier: String(t.spend.nullifier) as unknown as bigint }, "shape"],
+			[{ ...t.spend, proof: { ...t.spend.proof, pubSignals: rows([]) } }, "nullifier"],
+			[{ ...t.spend, nullifier: t.spend.nullifier + 1n }, "nullifier"],
+		]
+		for (const [spend, check] of cases)
+			await expect(submit(t.ctx, spend, t.chain.wallet(), t.session)).rejects.toMatchObject({ code: "SPEND_MISMATCH", check })
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+		expect(t.values.size).toBe(0)
+	})
+
 	it("refuses with zero sends when the preflighted wallet no longer lists the recipient", async () => {
 		const t = await setup()
-		t.preflights.record(DEPLOYMENT.id, t.recipient, aztecWallet([]))
+		t.preflights.record(DEPLOYMENT.id, t.recipient, aztecWallet([]), NETWORK)
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("PREFLIGHT_REQUIRED")
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
+	})
+
+	it("refuses with zero sends when the recipient leaves the wallet while the handoff reads its network", async () => {
+		const t = await setup()
+		const accounts = [t.recipient]
+		const wallet = aztecWallet(accounts)
+		const network = wallet.getChainInfo
+		wallet.getChainInfo = async () => {
+			accounts.length = 0
+			return network()
+		}
+		t.preflights.record(DEPLOYMENT.id, t.recipient, wallet, NETWORK)
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("PREFLIGHT_REQUIRED")
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+		expect(t.values.size).toBe(0)
+	})
+
+	it("refuses with zero sends and nothing journaled when the preflighted wallet moved to another rollup", async () => {
+		const t = await setup()
+		t.wallet.version = 2n
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("CHAIN_MISMATCH")
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+		expect(t.values.size).toBe(0)
 	})
 })
 
@@ -248,7 +287,7 @@ describe("submit: earlier attempts (journal guard)", () => {
 		await held(t, [{ l1TxHash: hash(1) }])
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("IN_FLIGHT")
 		t.chain.revert(hash(1))
-		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet)
+		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet, NETWORK)
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ amount: 70n })
 	})
 
@@ -261,9 +300,9 @@ describe("submit: earlier attempts (journal guard)", () => {
 		await submit(t.ctx, t.spend, t.chain.wallet(), t.session, { acceptUncertain: true }).catch(() => {})
 		expect(t.chain.writeContract).toHaveBeenCalledTimes(1)
 		expect([...t.values.values()]).toEqual(before)
-		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet)
+		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet, NETWORK)
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
-		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet)
+		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet, NETWORK)
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session, { acceptUncertain: true })).resolves.toMatchObject({ amount: 70n })
 		expect((await t.journal.read(t.spend.nullifier)).record?.attempts).toHaveLength(3)
 	})
@@ -274,7 +313,7 @@ describe("submit: earlier attempts (journal guard)", () => {
 		await held(t, [{ l1TxHash: hash(1) }, { l1TxHash: hash(2) }])
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
 		const elsewhere = await randomRecipient()
-		t.preflights.record(DEPLOYMENT.id, elsewhere, aztecWallet([elsewhere]))
+		t.preflights.record(DEPLOYMENT.id, elsewhere, aztecWallet([elsewhere]), NETWORK)
 		const redirected = await bridgeSpend(elsewhere)
 		expect(await code(submit(t.ctx, redirected, t.chain.wallet(), t.session, { acceptUncertain: true }))).toBe("UNCERTAIN")
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
@@ -305,7 +344,7 @@ describe("submit: earlier attempts (journal guard)", () => {
 		expect(record?.attempts).toHaveLength(MAX_UNRESOLVED_ATTEMPTS)
 		expect(record?.attempts[0]?.l1TxHash).toBe(hash(2))
 		for (const n of [2, 3, 4]) t.chain.revert(hash(n))
-		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet)
+		t.preflights.record(DEPLOYMENT.id, t.recipient, t.wallet, NETWORK)
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
 	})
 })
@@ -322,6 +361,18 @@ describe("submit: after the wallet call", () => {
 		const timedOut = await submit(u.ctx, u.spend, u.chain.wallet(), u.session).catch((e: unknown) => e)
 		expect(timedOut).toMatchObject({ code: "UNCERTAIN", l1TxHash: expect.any(String) })
 		expect((await u.journal.read(u.spend.nullifier)).record?.attempts[0]?.l1TxHash).toBe((timedOut as BridgeClientError).l1TxHash)
+	})
+
+	it("is UNCERTAIN with its own hash when the wallet replaced the send with a success that bridged nothing", async () => {
+		const t = await setup()
+		let sent: Hash | undefined
+		t.chain.onSend = (_call, h) => {
+			sent = h
+			t.chain.head += 1n
+			t.chain.receipts.set(h, { status: "success", blockNumber: t.chain.head, transactionHash: hash(999) })
+		}
+		const e = await submit(t.ctx, t.spend, t.chain.wallet(), t.session).catch((x: unknown) => x)
+		expect(e).toMatchObject({ code: "UNCERTAIN", l1TxHash: sent })
 	})
 
 	it("returns the event's receipt when the transaction landed but its hash could not be saved", async () => {

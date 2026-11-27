@@ -135,8 +135,14 @@ export function openBridgeSession(a: {
  *   `SESSION_DEPLOYMENT_MISMATCH` for a session of another deployment
  */
 export function useSession(s: unknown, expectedDeployment: string): { session: BridgeSession; secrets: SessionSecrets } {
+	const used = brandOf(s)
+	if (used.session.deploymentId !== expectedDeployment) throw new BridgeClientError("SESSION_DEPLOYMENT_MISMATCH")
+	return used
+}
+
+/** The brand check alone, for callers that check the deployment their own way. @throws BridgeClientError `FORGED_SESSION` */
+export function brandOf(s: unknown): { session: BridgeSession; secrets: SessionSecrets } {
 	if (typeof s !== "object" || s === null || !sessions.has(s)) throw new BridgeClientError("FORGED_SESSION")
 	const session = s as BridgeSession
-	if (session.deploymentId !== expectedDeployment) throw new BridgeClientError("SESSION_DEPLOYMENT_MISMATCH")
 	return { session, secrets: secretsOf(session) }
 }

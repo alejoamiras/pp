@@ -58,6 +58,8 @@ jobs:
               # pp-env's sources by relative path.
               - 'packages/pool-client/test/support/**'
               - 'packages/pp-env/src/**'
+              - 'packages/run-isolation/src/**'
+              - 'packages/run-isolation/package.json'
               - 'packages/labelled-token/**'
               # labelled-token's dependency library, named as the graph pin requires.
               - 'packages/bridge-core/src/**'
