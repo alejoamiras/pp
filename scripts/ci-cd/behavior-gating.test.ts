@@ -283,15 +283,19 @@ describe("CI behavior-gating guard", () => {
     expect(entriesOf("e2e-kit", "/fixtures/egress")).toContain("packages/e2e-kit/fixtures/build-artifacts/handle.json")
     expect(closureGaps(["packages/e2e-kit/**"])).toContain("packages/bridge-core/scripts/sandbox/cli.ts")
     // An ignored file is never read, however much a local run leaves there. The probe goes through the
-    // default inventory and imports a file e2e-kit never reaches.
+    // default inventory and imports a source file e2e-kit does not reach without it, found from the walk
+    // itself: which files those are depends on the branch's dependency graph.
+    walkable = undefined
+    const reached = reachedFiles("e2e-kit").files
+    const unreached = filesUnder("packages").find((f) => SOURCE.test(f) && !f.startsWith("packages/e2e-kit/") && !reached.has(f))
+    if (unreached === undefined) throw new Error("every package source file is in e2e-kit's reach; the probe has nothing to import")
     const state = join(ROOT, "packages/e2e-kit/.e2e-state")
     mkdirSync(state, { recursive: true })
     const probes = mkdtempSync(join(state, "walk-probe-"))
-    const unreached = "packages/pool-client/src/index.ts"
     try {
       const ignored = relative(ROOT, join(probes, "probe.ts"))
       const spec = relative(dirname(ignored), unreached)
-      writeFileSync(join(ROOT, ignored), `import "${spec}"\n`)
+      writeFileSync(join(ROOT, ignored), `import ${JSON.stringify(spec)}\n`)
       expect(resolveFile(join(dirname(ignored), spec)), "the probe imports a file e2e-kit never reaches").toBe(unreached)
       walkable = undefined
       expect(reachedFiles("e2e-kit").files).not.toContain(unreached)
