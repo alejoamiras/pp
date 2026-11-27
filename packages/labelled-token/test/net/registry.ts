@@ -41,6 +41,8 @@ export interface Registry {
 	 * `root_time` posted.
 	 */
 	post(pool: bigint, birth: bigint): Promise<bigint>
+	/** Points shields anchored after it at `intake`; zero pauses them. */
+	setIntake(intake: AztecAddress): Promise<void>
 }
 
 /** Deploys a registry with `d` as its admin, poster and birth intake. */
@@ -57,6 +59,9 @@ export async function deployRegistry(d: Device, node: L2Base["node"]): Promise<R
 			// The sequence doubles as the L1 block, which must rise whenever the time does.
 			await contract.methods.post_root(sequence, pool, birth, sequence, rootTime).send(sendOpts(d) as never)
 			return rootTime
+		},
+		async setIntake(intake) {
+			await contract.methods.set_birth_intake(intake).send(sendOpts(d) as never)
 		},
 	}
 }

@@ -8,36 +8,36 @@
 		"transfer_private, reused": {
 			"gates": 318671,
 			"provingMs": {
-				"median": 5528,
-				"samples": [6336, 5528, 5673, 5216, 5140]
+				"median": 7698,
+				"samples": [9282, 7698, 7484, 9582, 7544]
 			}
 		},
 		"transfer_private_to_private (stock), reused": {
 			"gates": 268964,
 			"provingMs": {
-				"median": 4043,
-				"samples": [4076, 4043, 4103, 3977, 4000]
+				"median": 7457,
+				"samples": [7457, 7966, 9435, 7208, 7266]
 			}
 		},
 		"transfer_private, first contact": {
 			"gates": 362185,
 			"provingMs": {
-				"median": 5135,
-				"samples": [4987, 5146, 5138, 5086, 5135]
+				"median": 6750,
+				"samples": [6750, 7899, 5889, 6864, 5554]
 			}
 		},
 		"transfer_private_to_private (stock), first contact": {
 			"gates": 312478,
 			"provingMs": {
-				"median": 4632,
-				"samples": [4537, 4606, 4632, 4794, 4645]
+				"median": 5520,
+				"samples": [6809, 7023, 5520, 5112, 5369]
 			}
 		},
 		"transfer_private, 8 notes with change": {
 			"gates": 367316,
 			"provingMs": {
-				"median": 5093,
-				"samples": [5196, 5210, 5093, 5047, 4973]
+				"median": 6166,
+				"samples": [6511, 5792, 5466, 6166, 7198]
 			}
 		}
 	},
@@ -47,8 +47,8 @@
 			"limit": 328964
 		},
 		"provingMedianMs": {
-			"measured": 5528,
-			"limit": 6065
+			"measured": 7698,
+			"limit": 11186
 		}
 	}
 }

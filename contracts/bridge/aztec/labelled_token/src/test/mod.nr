@@ -4,6 +4,7 @@ mod metadata;
 mod mint;
 pub mod paths;
 mod public;
+mod shield;
 mod transfer;
 pub mod utils;
 mod views;
