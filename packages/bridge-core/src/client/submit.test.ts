@@ -152,9 +152,9 @@ describe("submit: preflight at handoff", () => {
 		expect(t.chain.writeContract).toHaveBeenCalledTimes(1)
 	})
 
-	it("holds a note across generations over one vault", async () => {
+	it("holds a note across generations and whatever vault a context names", async () => {
 		const t = await setup()
-		const otherGeneration = { ...DEPLOYMENT, portal: OWNER, id: "another generation" }
+		const otherGeneration = { ...DEPLOYMENT, portal: OWNER, poolVault: OWNER, id: "another generation" }
 		const second = { ...context(t.chain, t.store, t.preflights), deployment: otherGeneration }
 		const held = Promise.withResolvers<object>()
 		t.chain.simulate.mockReturnValueOnce(held.promise)
