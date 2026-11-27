@@ -22,6 +22,7 @@ import {
 	type ConfirmEmoji,
 	ConnectError,
 	emojiMismatchError,
+	type Grant,
 	noAccountsError,
 	supersededError,
 	type WalletOption,
@@ -36,6 +37,18 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 
 export function emojiGrid(verificationHash: string): string[] {
 	return Array.from(graphemes.segment(hashToEmoji(verificationHash, EMOJI_CELLS)), (s) => s.segment).slice(0, EMOJI_CELLS)
+}
+
+/** The live connection's wallet handle, for the stack adapters only: screens see `AztecConnection`. */
+export interface HeldWallet {
+	readonly epoch: number
+	readonly wallet: Wallet
+	readonly grant: Grant
+}
+
+export interface RealConnector extends WalletPort {
+	/** The live connection's wallet; `null` from the moment a newer connect, a disconnect or a remote disconnect starts. */
+	current(): HeldWallet | null
 }
 
 /** The SDK's discovery, narrowed to what the connector uses; tests pass their own. */
@@ -93,6 +106,7 @@ function connectorState(t: PublicTarget, discover: Discover) {
 		owner: new Map<WalletProvider, number>(),
 		unsubscribe: new Map<WalletProvider, () => void>(),
 		live: null as WalletProvider | null,
+		held: null as HeldWallet | null,
 		listeners: new Set<() => void>(),
 		assertCurrent(mine: number) {
 			if (mine !== s.run) throw supersededError()
@@ -102,8 +116,12 @@ function connectorState(t: PublicTarget, discover: Discover) {
 			s.owner.delete(provider)
 			s.unsubscribe.get(provider)?.()
 			s.unsubscribe.delete(provider)
-			if (s.live === provider) s.live = null
+			if (s.live === provider) s.drop()
 			await provider.disconnect().catch(() => {})
+		},
+		drop() {
+			s.live = null
+			s.held = null
 		},
 		async releaseLive() {
 			const current = s.live
@@ -124,9 +142,9 @@ function connectorState(t: PublicTarget, discover: Discover) {
 			return option
 		},
 		async discover(onOption: (o: WalletOption) => void, signal: AbortSignal): Promise<void> {
-			await assertNodeServesTarget(t, signal)
+			const { rollupVersion } = await assertNodeServesTarget(t, signal)
 			s.providers.clear()
-			const chainInfo: ChainInfo = { chainId: new Fr(BigInt(t.l1ChainId)), version: new Fr(BigInt(t.rollupVersion)) }
+			const chainInfo: ChainInfo = { chainId: new Fr(BigInt(t.l1ChainId)), version: new Fr(BigInt(rollupVersion)) }
 			const session = discover(t, chainInfo)
 			const stop = () => session.cancel()
 			signal.addEventListener("abort", stop, { once: true })
@@ -145,7 +163,7 @@ function connectorState(t: PublicTarget, discover: Discover) {
 	return s
 }
 
-export function createRealConnector(t: PublicTarget, manifest: Manifest, discover: Discover = sdkDiscover): WalletPort {
+export function createRealConnector(t: PublicTarget, manifest: Manifest, discover: Discover = sdkDiscover): RealConnector {
 	const s = connectorState(t, discover)
 
 	async function verify(mine: number, pending: PendingConnection, confirm: ConfirmEmoji): Promise<void> {
@@ -167,7 +185,7 @@ export function createRealConnector(t: PublicTarget, manifest: Manifest, discove
 			s.owner.delete(provider)
 			s.unsubscribe.delete(provider)
 			off()
-			if (s.live === provider) s.live = null
+			if (s.live === provider) s.drop()
 			if (mine === s.run) s.run++
 			for (const f of [...s.listeners]) f()
 		})
@@ -197,6 +215,7 @@ export function createRealConnector(t: PublicTarget, manifest: Manifest, discove
 			const granted = parseGrant(manifest, answer)
 			if (granted.accounts.length === 0) throw noAccountsError()
 			s.live = provider
+			s.held = { epoch: mine, wallet, grant: granted }
 			return { epoch: mine, walletName: option.name, accounts: granted.accounts, grant: granted }
 		} catch (err) {
 			await s.release(provider, mine)
@@ -224,5 +243,6 @@ export function createRealConnector(t: PublicTarget, manifest: Manifest, discove
 			s.listeners.add(f)
 			return () => s.listeners.delete(f)
 		},
+		current: () => (s.held !== null && s.held.epoch === s.run ? s.held : null),
 	}
 }

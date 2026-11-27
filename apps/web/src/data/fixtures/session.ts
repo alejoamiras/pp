@@ -1,6 +1,7 @@
 /**
  * The fixture bridge session. It keeps the rules the driver depends on (a preflight bound to its
- * recipient for 10 minutes and consumed by a send, at most two internal re-proofs, the journal's
+ * recipient for 10 minutes and consumed by a send, a proof spent once and only under the attempt it
+ * was made for, at most two internal re-proofs, the journal's
  * `IN_FLIGHT` and `UNCERTAIN` for an earlier attempt, the send going through the guarded wallet so
  * `handoff` runs first, a journal record written before the send and restored on a refusal), and holds
  * the signature it was opened with in its closure only.
@@ -220,7 +221,8 @@ function makeSession(c: Ctx, signature: Hex): Session {
 	const live = () => {
 		if (held === null) fail("FORGED_SESSION")
 	}
-	const proofs = new WeakSet<Proved>()
+	// Each proof answers for the attempt it was made under, once.
+	const proofs = new WeakMap<Proved, Attempt>()
 	return {
 		owner: c.owner,
 		async notes() {
@@ -251,7 +253,7 @@ function makeSession(c: Ctx, signature: Hex): Session {
 			const note = w.s.notes.find((n) => n.commitment === a.note && n.status === "approved" && n.value >= a.amount)
 			if (!note) return fail("NOTE_NOT_FOUND")
 			const proved = { note: a.note, label: note.label, amount: a.amount, change: note.value - a.amount } as Proved
-			proofs.add(proved)
+			proofs.set(proved, a)
 			return proved
 		},
 		cancelProve() {
@@ -260,7 +262,9 @@ function makeSession(c: Ctx, signature: Hex): Session {
 		},
 		async submit(p, a, on, o) {
 			live()
-			if (!proofs.has(p)) fail("SPEND_MISMATCH")
+			const bound = proofs.get(p)
+			proofs.delete(p)
+			if (bound !== a) fail("SPEND_MISMATCH")
 			return submit(c, a, on, o)
 		},
 		waitClaimable: (id, signal) => waitClaimable(c, id, signal),
@@ -279,7 +283,8 @@ function makeSession(c: Ctx, signature: Hex): Session {
 		async l1TxState(hash) {
 			live()
 			const b = w.s.bridges.find((x) => x.l1TxHash === hash)
-			return b === undefined ? "unknown" : b.state === "sent" ? "pending" : "mined"
+			if (b === undefined) return "unknown"
+			return b.state === "sent" ? "pending" : b.state === "reverted" ? "reverted" : "mined"
 		},
 		close() {
 			held = null

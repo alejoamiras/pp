@@ -21,6 +21,7 @@ const fakeStack = (stopped: string[]): CliStack => ({
 	manifestPath: "/runs/stack-1-test/manifest.json",
 	manifest: { l1Rpc: "http://127.0.0.1:1", aztecNode: "http://127.0.0.1:2" },
 	seeded: { user: "0x000000000000000000000000000000000000000d", sender: "0x000000000000000000000000000000000000000c" },
+	pool: { clientConfig: { circuitsDir: "/checkout/ppv2/packages/circuits/build" } },
 	stop: async () => {
 		stopped.push("stop")
 	},
@@ -60,6 +61,14 @@ describe("demo CLI", () => {
 		expect(h.lines.some((l) => l.endsWith("PP_STACK_MANIFEST=/runs/stack-1-test/manifest.json"))).toBe(true)
 		expect(h.lines.some((l) => l.includes("pool user 0x000000000000000000000000000000000000000d"))).toBe(true)
 		expect(h.lines.at(-1)).toBe("SANDBOX_L1_RPC=http://127.0.0.1:1 SANDBOX_NODE_URL=http://127.0.0.1:2")
+	})
+
+	test("prints the pool checkout's circuits directory before the ready line", async () => {
+		const h = harness(async () => fakeStack([]))
+		expect(await runCli(["demo"], h.deps)).toBe(0)
+		const circuits = h.lines.indexOf("[stack] circuits /checkout/ppv2/packages/circuits/build")
+		expect(circuits).toBeGreaterThan(-1)
+		expect(circuits).toBeLessThan(h.lines.findIndex((l) => l.includes("PP_STACK_MANIFEST=")))
 	})
 
 	test("with --keep it holds until a signal, then tears down and exits 130", async () => {

@@ -1,15 +1,38 @@
+import { fileURLToPath } from "node:url"
 import { defineConfig, devices } from "@playwright/test"
-import { runEnv } from "./env"
+import { runEnv, stackRun } from "./env"
 import { PROFILES } from "./test-wallet/profile"
 
 const env = runEnv()
-const here = new URL(".", import.meta.url).pathname
+const here = fileURLToPath(new URL(".", import.meta.url))
 /** The web app under test; `agent.sh` builds it and runs this config only once it exists. */
-const appRoot = new URL("../../apps/web/", import.meta.url).pathname
+const appRoot = fileURLToPath(new URL("../../apps/web/", import.meta.url))
+
+/** POSIX single quotes: Playwright runs each webServer command through a shell, and a path may hold spaces, quotes or `$`. */
+const q = (path: string) => `'${path.replaceAll("'", `'\\''`)}'`
 
 /**
- * One sandbox, one browser, one worker: every spec file owns a context, every test a fresh actor,
- * and parallelism is `--shard` (each shard is its own `agent.sh` run with its own sandbox), split by
+ * A fixture-world build is served by Vite's preview; a stack build by the app's own server, which also
+ * serves the proving files from the directory the stack's CLI printed (a record without one makes it refuse).
+ */
+const appServer: { command: string; env: Record<string, string> } =
+	env.mode === "stack"
+		? {
+				command: `bun run --cwd ${q(appRoot)} serve --outDir ${q(env.appDist)} ${hostFlags(env.appPort)}`,
+				env: { PP_CIRCUITS_DIR: stackRun(env).circuitsDir ?? "" },
+			}
+		: {
+				command: `bun run --cwd ${q(appRoot)} vite preview --outDir ${q(env.appDist)} ${hostFlags(env.appPort)}`,
+				env: { PP_SANDBOX_ARTIFACTS: env.artifactsDir },
+			}
+
+function hostFlags(port: number | string): string {
+	return `--host 127.0.0.1 --port ${port} --strictPort`
+}
+
+/**
+ * One network, one browser, one worker: every spec file owns a context, every test a fresh actor,
+ * and parallelism is `--shard` (each shard is its own `agent.sh` run with its own network), split by
  * recorded duration through `shard-reporter.ts`.
  */
 export default defineConfig({
@@ -40,15 +63,14 @@ export default defineConfig({
 	webServer: [
 		{
 			// The production-mode local build, served at the exact origin the wallet frames accept.
-			command: `bun run --cwd ${appRoot} vite preview --outDir ${env.appDist} --host 127.0.0.1 --port ${env.appPort} --strictPort`,
+			...appServer,
 			url: `${env.appOrigin}/`,
 			reuseExistingServer: false,
 			timeout: 60_000,
-			env: { PP_SANDBOX_ARTIFACTS: env.artifactsDir },
 		},
 		// The one wallet build, served once per profile so each has its own origin.
 		...PROFILES.map((profile) => ({
-			command: `bun run --cwd ${here} vite preview --config test-wallet/vite.config.mts --outDir ${env.testWalletDist} --host 127.0.0.1 --port ${new URL(env.testWalletOrigins[profile]).port} --strictPort`,
+			command: `bun run --cwd ${q(here)} vite preview --config test-wallet/vite.config.mts --outDir ${q(env.testWalletDist)} ${hostFlags(new URL(env.testWalletOrigins[profile]).port)}`,
 			url: `${env.testWalletOrigins[profile]}/`,
 			reuseExistingServer: false,
 			timeout: 60_000,

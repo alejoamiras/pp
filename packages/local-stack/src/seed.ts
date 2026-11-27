@@ -1,11 +1,7 @@
-import { anvilKey, type PoolEnv } from "@pp/pp-env"
+import type { PoolEnv } from "@pp/pp-env"
 import type { Address } from "viem"
-import { privateKeyToAccount } from "viem/accounts"
+import { DEMO_SENDER_ADDRESS, SEED_USER_INDEX } from "./accounts.ts"
 
-/** The demo's pool user: registered, holding two approved notes. */
-export const SEED_USER_INDEX = 13
-/** The demo's separate Ethereum sender: a bridge from the note owner's own address is refused. */
-export const DEMO_SENDER_INDEX = 12
 export const SEED_NOTE_VALUE = 100n
 const SEED_NOTES = 2
 
@@ -22,5 +18,5 @@ export async function seedPool(pool: PoolEnv): Promise<Seeded> {
 		await pool.asp.approveLabel(label)
 		labels.push(label)
 	}
-	return { user: user.address, sender: privateKeyToAccount(anvilKey(DEMO_SENDER_INDEX)).address, labels }
+	return { user: user.address, sender: DEMO_SENDER_ADDRESS, labels }
 }

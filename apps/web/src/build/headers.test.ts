@@ -10,6 +10,36 @@ const TARGET: PublicTarget = {
 	walletUrls: ["http://127.0.0.1:9001/?profile=plain", "http://127.0.0.1:9002/?profile=full"],
 	dataMode: "fixtures",
 	connector: "real",
+	stack: null,
+}
+
+const A20 = `0x${"11".repeat(20)}`
+const A32 = `0x${"22".repeat(32)}`
+const STACK: PublicTarget = {
+	...TARGET,
+	rollupVersion: null,
+	dataMode: "stack",
+	stack: {
+		manifest: {
+			version: 1,
+			chainId: 31337,
+			l1Rpc: TARGET.l1RpcUrl,
+			aztecNode: TARGET.nodeUrl,
+			pool: {
+				poolVault: A20,
+				entrypoint: A20,
+				aspRegistry: A20,
+				keystore: A20,
+				asset: A20,
+				deployBlock: "1",
+				aspApiUrl: "http://127.0.0.1:8600/api",
+			},
+			bridge: { factory: A20, portal: A20, hub: A32, token: A32, registry: A32, deployBlock: "2" },
+		},
+		botUrl: "http://127.0.0.1:8700/v1",
+		sponsoredFpc: A32,
+		demoSender: null,
+	},
 }
 
 const directives = (csp: string): Record<string, string[]> =>
@@ -50,6 +80,28 @@ describe("security headers", () => {
 		])
 		expect(directives(contentSecurityPolicy(remote))["connect-src"]).toEqual(["'self'", "https://node.example:8443"])
 		expect(directives(contentSecurityPolicy(remote))["frame-src"]).toEqual(["'none'"])
+		// The artifact gateway is the page's own origin, so a stack target adds only bb.js's `data:` wasm,
+		// the ASP API and the bot.
+		expect(directives(contentSecurityPolicy(STACK))["connect-src"]).toEqual([
+			"'self'",
+			"data:",
+			"http://127.0.0.1:8080",
+			"http://127.0.0.1:8545",
+			"http://127.0.0.1:8600",
+			"http://127.0.0.1:8700",
+		])
+		expect(parseHeaderFile(JSON.stringify(securityHeaders(STACK)))).toEqual(securityHeaders(STACK))
+	})
+
+	test("a stack target differs from a fixture target in connect-src alone, and only there adds data:", () => {
+		const fixture = directives(contentSecurityPolicy(TARGET))
+		const stack = directives(contentSecurityPolicy(STACK))
+		expect(Object.keys(stack)).toEqual(Object.keys(fixture))
+		for (const name of Object.keys(fixture)) if (name !== "connect-src") expect(stack[name], name).toEqual(fixture[name])
+		// img-src's `data:` is every build's; connect-src's is the stack's alone.
+		const withData = (d: Record<string, string[]>) => Object.keys(d).filter((name) => d[name]?.includes("data:"))
+		expect(withData(fixture)).toEqual(["img-src"])
+		expect(withData(stack)).toEqual(["img-src", "connect-src"])
 	})
 
 	test("read back from their file, and any other file is refused", () => {
@@ -81,6 +133,9 @@ describe("security headers", () => {
 			without("connect-src"),
 			csp.replace("frame-src http://127.0.0.1:9001 http://127.0.0.1:9002", "frame-src https://*"),
 			csp.replace("script-src 'self' 'wasm-unsafe-eval'", "script-src 'self' 'unsafe-eval'"),
+			csp.replace("connect-src 'self' ", "connect-src 'self' blob: "),
+			csp.replace("connect-src 'self' ", "connect-src 'self' data: data: "),
+			csp.replace("connect-src 'self' http://127.0.0.1:8080 http://127.0.0.1:8545", "connect-src 'self' data:"),
 			`${csp}; script-src *`,
 		]
 		for (const policy of policies)

@@ -11,7 +11,7 @@ import { offerFor } from "./bridge-machine"
 import { codeOf, isUserRejection, type UiCode } from "./errors"
 import { parseAztecAddress } from "./parse"
 import type { Attempt, Deployment, Proved, Sent, Session, SubmitHooks, Timer } from "./ports"
-import { type Prior, type PriorKind, priorAttempt } from "./reconcile"
+import { checkAttempt, type Found, type PriorKind, priorAttempt } from "./reconcile"
 
 /** The prover hangs without an error on some internal failures; 60 s covers the first use's 21 MB fetch. */
 export const PROVE_DEADLINE_MS = 60_000
@@ -22,8 +22,12 @@ export const PREFLIGHT_FRESH_MS = 9 * 60_000
 export interface LiveContext {
 	/** The owner whose session is open; `null` once it closes. */
 	readonly owner: Address | null
-	/** The Ethereum wallet's selected account. */
+	/** The account a bridge sends from: the wallet's selection, or the local demo's dev account. */
 	readonly account: Address | null
+	/** The Ethereum wallet's own selection, which the demo's dev account never stands in for. */
+	readonly selected: Address | null
+	/** The page's choice of the local demo's dev account as the sender, which signing out or a wallet switch clears. */
+	readonly demo: boolean
 	readonly chainId: number | null
 	readonly deployment: string
 	/** The Aztec connection's epoch; `null` when disconnected. */
@@ -47,6 +51,7 @@ export function isCurrent(a: Attempt, ctx: LiveContext): boolean {
 	return (
 		same(ctx.owner, a.owner) &&
 		same(ctx.account, a.sender) &&
+		ctx.demo === a.demo &&
 		ctx.chainId === a.chainId &&
 		ctx.deployment === a.deployment &&
 		ctx.epoch === a.epoch &&
@@ -73,7 +78,7 @@ function assertLive(st: State, a: Attempt, signal: AbortSignal): void {
  */
 interface ClaimContext {
 	owner: Address
-	account: Address | null
+	selected: Address | null
 	chainId: number
 	deployment: string
 	epoch: number
@@ -82,7 +87,7 @@ interface ClaimContext {
 
 const claimCurrent = (c: ClaimContext, ctx: LiveContext) =>
 	same(ctx.owner, c.owner) &&
-	(c.account === null ? ctx.account === null : same(ctx.account, c.account)) &&
+	(c.selected === null ? ctx.selected === null : same(ctx.selected, c.selected)) &&
 	ctx.chainId === c.chainId &&
 	ctx.deployment === c.deployment &&
 	ctx.epoch === c.epoch &&
@@ -118,6 +123,12 @@ export interface SubmitInput {
 	note: PoolNoteView
 	amount: bigint
 	/** As typed or as the connection lists it; parsed here. */
+	recipient: string
+}
+
+export interface CheckInput {
+	note: PoolNoteView
+	/** The attempt's recipient, for `recover` once the journal holds no record of the note. */
 	recipient: string
 }
 
@@ -178,7 +189,7 @@ const fresh = (st: State, a: Attempt) =>
 async function runPreflight(st: State, recipient: AztecAddress, epoch: number, dispatch: Dispatch, warm: boolean): Promise<void> {
 	st.binding = null
 	dispatch({ type: "preflight" })
-	await st.deps.session.preflight(recipient)
+	await st.deps.session.preflight(recipient, epoch)
 	// bridge-core's 10 minutes start at its answer, so a slow warm-up must not make the entry look younger.
 	const at = st.deps.timer.now()
 	if (warm) await st.deps.session.warmUp()
@@ -235,9 +246,9 @@ function extraOf(err: unknown): Partial<Failure> {
 const CLOSES: ReadonlySet<UiCode> = new Set(["CONSUMED_ELSEWHERE"])
 
 /** Remembers what a code means for the note's next Submit. */
-function remember(st: State, code: UiCode, a: Attempt): void {
-	if (code === "IN_FLIGHT") st.inFlight = new Set([...st.inFlight, a.note])
-	if (CLOSES.has(code)) st.closed.set(a.note, code)
+function remember(st: State, code: UiCode, note: bigint): void {
+	if (code === "IN_FLIGHT") st.inFlight = new Set([...st.inFlight, note])
+	if (CLOSES.has(code)) st.closed.set(note, code)
 	if (code === "PREFLIGHT_REQUIRED") st.binding = null
 }
 
@@ -249,7 +260,7 @@ function outcome(st: State, err: unknown, a: Attempt, during: Failure["during"],
 	if (handedOff && isUserRejection(err)) return { type: "declined" }
 	// Past the handoff, an error without a code may hide a sent transaction with no hash: UNCERTAIN.
 	const code = codeOf(err) ?? (handedOff ? "UNCERTAIN" : during === "preparing" ? "PROVE_FAILED" : "RPC_FAILED")
-	remember(st, code, a)
+	remember(st, code, a.note)
 	return failure(code, code === "REVERTED" ? "submitted" : during, extraOf(err))
 }
 
@@ -258,6 +269,7 @@ function freeze(st: State, input: SubmitInput, ctx: LiveContext): Attempt {
 		seq: ++st.seq,
 		owner: ctx.owner as Address,
 		sender: ctx.account as Address,
+		demo: ctx.demo,
 		recipient: parseAztecAddress(input.recipient) as AztecAddress,
 		deployment: st.deps.deployment.id,
 		chainId: st.deps.deployment.chainId,
@@ -283,22 +295,51 @@ const PRIOR_CODES: Record<Exclude<PriorKind, "bridge">, UiCode> = {
 	consumed: "CONSUMED_ELSEWHERE",
 }
 
-/**
- * Without the override, the note's earlier attempt answers first, from the session's journal and the
- * chain, so a check never waits on or fails in a proof. `null`: none is open, so prove and send.
- */
+/** What the journal and the chain show for a note, on screen: a record as it stands, or why nothing may send. */
+function foundEvent(st: State, found: Found, note: bigint): BridgeEvent {
+	if (found.kind === "bridge" || found.kind === "closed") return { type: "record", record: found.record }
+	const code = PRIOR_CODES[found.kind]
+	remember(st, code, note)
+	return failure(code, "preparing")
+}
+
+/** Without the override, the note's open attempt answers a Submit first. `null`: none is open, so prove and send. */
 async function priorOutcome(st: State, a: Attempt): Promise<BridgeEvent | null> {
-	let prior: Prior | null
 	try {
-		prior = await priorAttempt(st.deps.session, a.note)
+		const prior = await priorAttempt(st.deps.session, a.note)
+		return prior === null ? null : foundEvent(st, prior, a.note)
 	} catch (err) {
 		return failure(codeOf(err) ?? "RPC_FAILED", "preparing")
 	}
-	if (prior === null) return null
-	if (prior.kind === "bridge") return { type: "record", record: prior.record }
-	const code = PRIOR_CODES[prior.kind]
-	remember(st, code, a)
-	return failure(code, "preparing")
+}
+
+/**
+ * Check again: what the journal and the chain show for the note, and nothing more. It never proves or
+ * sends, whatever it finds; Send again is the one way to send while an attempt may be out. An answer
+ * that lands after any Submit has started is dropped before it is remembered or shown, since that
+ * Submit owns the note and the screen.
+ */
+async function check(st: State, input: CheckInput, dispatch: Dispatch, signal: AbortSignal): Promise<BridgeRecordView | null> {
+	const n = input.note.commitment
+	if (st.active.has(n)) return null
+	const recipient = parseAztecAddress(input.recipient)
+	if (recipient === null) {
+		dispatch({ type: "refused", code: "RECIPIENT_INVALID" })
+		return null
+	}
+	const seq = st.seq
+	const stale = () => signal.aborted || st.seq !== seq
+	let event: BridgeEvent
+	try {
+		const found = await checkAttempt(st.deps.session, n, recipient)
+		if (stale()) return null
+		event = foundEvent(st, found, n)
+	} catch (err) {
+		if (stale()) return null
+		event = failure(codeOf(err) ?? "RPC_FAILED", "preparing")
+	}
+	dispatch(event)
+	return event.type === "record" ? event.record : null
 }
 
 async function prepareAndProve(st: State, a: Attempt, dispatch: Dispatch, signal: AbortSignal): Promise<Proved> {
@@ -344,6 +385,8 @@ async function submit(
 		// Aborting stops a wallet request only before it starts; one already issued still needs its
 		// outcome remembered, so the catch below runs `outcome` for an aborted run too.
 		handoff: () => {
+			// viem can call this twice for one send (a -32601 retried as wallet_sendTransaction): a refused second call hands nothing off.
+			handedOff = false
 			assertLive(st, a, signal)
 			handedOff = true
 			if (st.binding) st.binding.consumed = true
@@ -396,6 +439,7 @@ function claimOutcome(st: State, err: unknown, c: ClaimContext, handedOff: boole
 	if (isUserRejection(err)) return { type: "claim-declined" }
 	// Past the handoff, anything but the wallet's no may hide a claim that went out.
 	if (handedOff) return { type: "claim-pending", txHash: null }
+	if (!st.deps.canClaim()) return failure("NOT_GRANTED", "claiming", { offer: "claim" })
 	if (!claimCurrent(c, st.deps.context())) return failure("CONTEXT_CHANGED", "claiming", { offer: "claim" })
 	return failure(codeOf(err) ?? "CLAIM_FAILED", "claiming", { offer: "claim" })
 }
@@ -413,7 +457,7 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
 	if (refusal !== null) return dispatch({ type: "refused", code: refusal })
 	const c: ClaimContext = {
 		owner: ctx.owner as Address,
-		account: ctx.account,
+		selected: ctx.selected,
 		chainId: st.deps.deployment.chainId,
 		deployment: st.deps.deployment.id,
 		epoch: ctx.epoch as number,
@@ -423,12 +467,12 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
 	dispatch({ type: "claiming" })
 	let handedOff = false
 	const handoff = () => {
-		if (signal.aborted || !claimCurrent(c, st.deps.context())) throw new ContextChanged()
+		if (signal.aborted || !st.deps.canClaim() || !claimCurrent(c, st.deps.context())) throw new ContextChanged()
 		handedOff = true
 	}
 	let event: BridgeEvent
 	try {
-		event = sentOutcome(await st.deps.session.claim(record.id, { handoff }))
+		event = sentOutcome(await st.deps.session.claim(record.id, { epoch: c.epoch, handoff }))
 	} catch (err) {
 		event = claimOutcome(st, err, c, handedOff)
 	}
@@ -451,6 +495,8 @@ export function createBridgeDriver(deps: DriverDeps) {
 		/** A second call for a note whose Submit is under way is ignored. */
 		submit: (input: SubmitInput, dispatch: Dispatch, signal: AbortSignal, flags: Flags = {}) =>
 			submit(st, input, dispatch, signal, flags),
+		/** Reads only; the record when it found one to follow. */
+		check: (input: CheckInput, dispatch: Dispatch, signal: AbortSignal) => check(st, input, dispatch, signal),
 		follow: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => follow(st, record, dispatch, signal),
 		claim: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => claim(st, record, dispatch, signal),
 		/** The notes with a Submit under way here, which reconciliation must not take for unconfirmed. */

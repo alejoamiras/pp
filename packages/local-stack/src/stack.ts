@@ -9,9 +9,10 @@ import {
 	type StackBridgeBlock,
 	type UnopenedBridge,
 } from "@pp/bridge-core/deploy"
-import { anvilKey, HARNESS_INDEX, type LocalNetwork, startLocalNetwork } from "@pp/bridge-core/sandbox"
+import { anvilKey, type LocalNetwork, startLocalNetwork } from "@pp/bridge-core/sandbox"
 import { type PoolEnv, startPoolEnv } from "@pp/pp-env"
 import { type Address, createPublicClient, http, maxUint256, type PublicClient } from "viem"
+import { BRIDGE_DEPLOYER_INDEX, POOL_DEPLOYER_INDEX } from "./accounts.ts"
 import { refuseAttach } from "./attach.ts"
 import { BeatPolicy, type ChainView, type L1Tx } from "./beat-policy.ts"
 import { type Heartbeat, startHeartbeat } from "./heartbeat.ts"
@@ -28,10 +29,6 @@ export const HEARTBEAT_MS = 2_000
 /** The node answers a mine within a second; a beat open this long is logged as stuck. */
 const LATE_BEAT_MS = 180_000
 const STOP_WAIT_MS = 60_000
-/** pp-env's default deployer; bridge-core's harness and actors sit at 15 and from 1 up. */
-const POOL_DEPLOYER_INDEX = 14
-/** The bridge's owner and guardian: bridge-core's harness index, below pp-env's deployer and above the actors. */
-const BRIDGE_DEPLOYER_INDEX = HARNESS_INDEX
 /** Covers the post's inclusion after its read; a local post lands about 150 s of chain time later. */
 const BOT_INCLUSION_MARGIN_SEC = 300
 export type StepName = "network" | "pool" | "bridge" | "seed" | "bot" | "manifest" | "heartbeat"

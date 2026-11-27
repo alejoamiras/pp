@@ -52,4 +52,5 @@ const page = createFixtureSource(sessionStore())
 
 if (typeof window !== "undefined") window.__ppFixtures = page.control
 
-export const source: DataSource = page.source
+/** The fixture world needs no chain read, so its source is ready at once. */
+export const loadSource = (): Promise<DataSource> => Promise.resolve(page.source)

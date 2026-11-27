@@ -6,7 +6,9 @@
 	"description": "One anvil carrying both the pool and the Aztec local network, booted and torn down as one stack.",
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./cli": "./src/cli.ts",
+		"./accounts": "./src/accounts.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",

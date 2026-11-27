@@ -30,13 +30,18 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 			.accounts()
 			.then((a) => current && !heard.account && live.set({ account: a[0] ?? null }))
 			.catch(() => {})
-		source.l1
-			.chainId()
-			.then((chainId) => current && !heard.chain && live.set({ chainId }))
-			.catch(() => {})
+		// The first read can fail on a locked wallet, which reports its network with no chainChanged once unlocked.
+		const readChain = () =>
+			source.l1
+				.chainId()
+				.then((chainId) => current && !heard.chain && live.set({ chainId }))
+				.catch(() => {})
+		void readChain()
+		// A wallet switch ends the dev-account choice: the user picks a sender again.
 		const offAccounts = source.l1.onAccountsChanged((a) => {
 			heard.account = true
-			live.set({ account: a[0] ?? null })
+			live.set({ account: a[0] ?? null, demo: false })
+			if (live.get().chainId === null) void readChain()
 		})
 		const offChain = source.l1.onChainChanged((chainId) => {
 			heard.chain = true
@@ -55,7 +60,7 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 		run.current++
 		session.current?.close()
 		session.current = null
-		live.set({ owner: null })
+		live.set({ owner: null, demo: false })
 		setStatus({ kind: "out" })
 	}, [live])
 
@@ -64,7 +69,13 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 		const mine = run.current
 		setStatus({ kind: "signing" })
 		try {
-			const opened = await openOwnerSession({ l1: source.l1, sessions: source.sessions, chainId: source.deployment.chainId })
+			const opened = await openOwnerSession({
+				l1: source.l1,
+				sessions: source.sessions,
+				chainId: source.deployment.chainId,
+				selected: () => live.get(),
+				current: () => mine === run.current,
+			})
 			if (mine !== run.current) return opened.ok ? opened.session.close() : undefined
 			if (!opened.ok) return setStatus({ kind: "error", code: opened.code })
 			session.current = opened.session

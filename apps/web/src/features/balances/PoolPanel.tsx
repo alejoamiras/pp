@@ -19,10 +19,11 @@ function useScreenHeld(): string | undefined {
 	return undefined
 }
 
-/** Why this note's bridge cannot start, or `undefined`. */
-function useBridgeBlock(): string | undefined {
+/** Why this note's bridge cannot start, or `undefined`; `unavailable`: the session has no bridge part. */
+function useBridgeBlock(unavailable = false): string | undefined {
 	const { connection, refusal, bridge } = useApp()
 	const held = useScreenHeld()
+	if (unavailable) return messageOf("BRIDGE_UNAVAILABLE")
 	if (!connection) return "Connect your Aztec wallet first: the bridge pays into its account."
 	if (refusal("claim") !== null) return "Your Aztec wallet did not allow claiming. Connect again and allow it."
 	if (bridge.subject && BUSY.has(bridge.machine.phase)) return "Finish the bridge in progress first."
@@ -50,12 +51,12 @@ function SendingNote() {
 	)
 }
 
-/** A record the chain shows nothing for: Check again asks the session without the override; Send again passes it. */
+/** A record the chain shows nothing for: Check again reads the journal and the chain; Send again sends with the override. */
 function UncertainNote({ note, record }: { note: PoolNoteView; record: BridgeRecordView }) {
 	const { bridge, go } = useApp()
 	const block = useBridgeBlock()
-	const retry = (acceptUncertain: boolean) => {
-		void bridge.retry(note, record, acceptUncertain)
+	const retry = (resend: boolean) => {
+		void (resend ? bridge.retry(note, record) : bridge.recheck(note, record))
 		go("bridge")
 	}
 	return (
@@ -76,7 +77,7 @@ function UncertainNote({ note, record }: { note: PoolNoteView; record: BridgeRec
 
 function NoteItem({ row, pool }: { row: NoteRow; pool: PoolState }) {
 	const { source, bridge, go } = useApp()
-	const block = useBridgeBlock()
+	const block = useBridgeBlock(pool.bridgeUnavailable)
 	const { note } = row
 	const inFlight = pool.inFlight.get(note.commitment)
 	const uncertain = pool.uncertain.get(note.commitment)

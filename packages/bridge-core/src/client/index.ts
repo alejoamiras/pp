@@ -9,6 +9,7 @@ export {
 	type StaleRootCode,
 } from "./errors"
 export type { KeyValueStore } from "./journal"
+export { sponsoredFpcAddress } from "./payload"
 export type { PreflightWallet } from "./preflight"
 export { prepareBridgeSpend } from "./prepare"
 export { type BridgeSession, openBridgeSession, poolConfigOf } from "./session"

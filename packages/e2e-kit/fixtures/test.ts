@@ -1,6 +1,7 @@
 /**
  * The suite's `test`: one context per spec file with the L1 shim, the egress fence and the parked
- * wallet panel installed; the sandbox and an actor pool per file; a fresh actor per test.
+ * wallet panel installed; the network (sandbox or local stack) and an actor pool per file; a fresh
+ * actor per test.
  *
  * Actors are created in Node BEFORE the wallet frame exists and reach it through a context-level
  * init script (the SDK creates the session iframe only inside `establishSecureChannel`, so a page
@@ -8,12 +9,12 @@
  * so the switcher lists the whole pool from the first connect. Two spares cover retries.
  */
 import { test as base, type BrowserContext, expect, type Page } from "@playwright/test"
-import { l2CtxFor, readHandle } from "@pp/bridge-core/sandbox"
 import { type RunEnv, runEnv } from "../env"
 import type { Seed } from "../test-wallet/profile"
 import { confineEgress, type Egress } from "./egress"
 import { installL1Wallet, type L1WalletControl } from "./l1-wallet"
-import { type ActorHandle, type SandboxAccess, sandboxAccess } from "./sandbox"
+import { type Network, openNetwork } from "./network"
+import type { ActorHandle, SandboxAccess } from "./sandbox"
 import { parkWalletPanel } from "./wallet-panel"
 
 /** The most accounts one wallet grant lists; a file whose cells need more is split. */
@@ -43,16 +44,17 @@ interface WorkerFixtures {
 	family: string
 	/** How many cells the file declares — `test.use({ cells: N })` at the top of a spec. */
 	cells: number
-	/** Which anvil key this file signs with — `test.use({ l1Index: i })`. Files may share one: with
-	 *  a single worker they run in sequence, and a shard runs on a sandbox of its own. */
+	/** Which Ethereum account this file signs with — `test.use({ l1Index: i })`, see `Network.l1`.
+	 *  Files may share one: with a single worker they run in sequence, and a shard runs on a
+	 *  network of its own. */
 	l1Index: number
 	/** Extra actors beyond `cells` (retries take them). A file that must connect a wallet holding
 	 *  EXACTLY `cells` accounts sets 0 — and then has no retry budget. */
 	spares: number
 	run: RunEnv
-	sandbox: SandboxAccess
+	network: Network
 	pool: ActorPool
-	/** Side effect only: the relayer's block heartbeat, running for the worker's whole life. */
+	/** Side effect only: the relayer's block heartbeat on the sandbox, running for the worker's whole life. */
 	heartbeat: undefined
 }
 
@@ -70,23 +72,22 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 		{ scope: "worker" },
 	],
 
-	sandbox: [
-		// biome-ignore lint/correctness/noEmptyPattern: Playwright requires the destructuring form even with no dependencies.
-		async ({}, use) => {
-			await use(await sandboxAccess())
+	network: [
+		async ({ run }, use) => {
+			await use(await openNetwork(run))
 		},
 		{ scope: "worker" },
 	],
 
 	heartbeat: [
-		async ({ sandbox }, use) => {
-			const l2 = l2CtxFor(sandbox.clients.l2, sandbox.clients.l2.relayer)
+		async ({ network }, use) => {
+			const { forceBlock } = network
+			if (!forceBlock) return use(undefined)
 			let beating = false
 			const timer = setInterval(() => {
 				if (beating) return
 				beating = true
-				void l2
-					.forceBlock?.()
+				void forceBlock()
 					.catch(() => {})
 					.finally(() => {
 						beating = false
@@ -99,13 +100,13 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 	],
 
 	pool: [
-		async ({ sandbox, cells, family, spares }, use) => {
+		async ({ network, cells, family, spares }, use) => {
 			if (!family) throw new Error("a spec file must name itself: test.use({ family: <its name>, cells, l1Index })")
 			const n = cells + spares
 			if (n > MAX_POOL)
 				throw new Error(`a file declaring ${cells} cells needs ${n} actors, above the grant cap of ${MAX_POOL} — split it`)
 			const all: ActorHandle[] = []
-			for (let i = 0; i < n; i++) all.push(await sandbox.newActor())
+			for (let i = 0; i < n; i++) all.push(await network.newActor())
 			let next = 0
 			await use({
 				all,
@@ -119,10 +120,8 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 		{ scope: "worker" },
 	],
 
-	context: async ({ context, run, l1Index, pool }, use) => {
-		const handle = readHandle(run.artifactsDir)
-		const key = handle.l1.actorKeys[l1Index]
-		if (!key) throw new Error(`no anvil actor key at index ${l1Index}`)
+	context: async ({ context, run, network, l1Index, pool }, use) => {
+		const { rpcUrl, chainId, privateKey } = network.l1(l1Index)
 		const walletOrigins = Object.values(run.testWalletOrigins)
 		await installSeeds(
 			context,
@@ -130,12 +129,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 			pool.all.map((a) => a.seed),
 		)
 		await parkWalletPanel(context, walletOrigins)
-		await installL1WalletControl(context, {
-			rpcUrl: handle.anvilUrl,
-			privateKey: key as `0x${string}`,
-			chainId: handle.l1ChainId,
-			appOrigin: run.appOrigin,
-		})
+		await installL1WalletControl(context, { rpcUrl, privateKey, chainId, appOrigin: run.appOrigin })
 		await use(context)
 	},
 
@@ -172,7 +166,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 })
 
 export { expect }
-export type { ActorHandle, SandboxAccess }
+export type { ActorHandle, Network, SandboxAccess }
 
 /** The seeds reach the wallet ORIGINS' documents only — the app page never sees them. */
 async function installSeeds(context: BrowserContext, walletOrigins: string[], seeds: Seed[]): Promise<void> {

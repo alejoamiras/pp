@@ -30,6 +30,8 @@ export type Attempt = Readonly<{
 	seq: number
 	owner: Address
 	sender: Address
+	/** Whether the page chose the local demo's dev account as the sender; only such an attempt sends through it. */
+	demo: boolean
 	recipient: AztecAddress
 	deployment: string
 	chainId: number
@@ -47,6 +49,8 @@ export interface L1Port {
 	signTypedData(owner: Address, td: TypedDataDefinition): Promise<Hex>
 	onAccountsChanged(f: (accounts: Address[]) => void): () => void
 	onChainChanged(f: (chainId: number) => void): () => void
+	/** A local-stack build's dev account, which a bridge may send from with no wallet once `ready` resolves. */
+	readonly demo?: { readonly address: Address; ready(): Promise<void> }
 }
 
 export interface WalletPort {
@@ -94,12 +98,14 @@ export interface SubmitHooks {
 	reproving(code: StaleRootCode): void
 	/** Runs right before the wallet is asked to send or sign; when it throws, nothing is sent. */
 	handoff(): void
-	/** The wallet returned the transaction's hash and the journal holds it; the receipt is still to come. */
+	/** The wallet returned the transaction's hash; the receipt is still to come. */
 	sent(txHash: Hash): void
 }
 
 export interface ClaimHooks {
-	/** Runs after the claim is built and right before the Aztec wallet is asked to send. */
+	/** The Aztec connection the claim is bound to: it goes out through that connection's wallet or not at all. */
+	readonly epoch: number
+	/** Runs after the claim is built and right before the Aztec wallet is asked to send; when it throws, nothing is sent. */
 	handoff(): void
 }
 
@@ -109,8 +115,8 @@ export interface Session {
 	notes(): Promise<PoolNoteView[]>
 	/** The nullifier spending `commitment` would publish (the pool client's `nullifierOf`); ties a record to its note. */
 	nullifierOf(commitment: bigint): Promise<bigint>
-	/** Binds the client to `recipient` for 10 minutes; one send consumes it. */
-	preflight(recipient: AztecAddress): Promise<void>
+	/** Binds the client to `recipient` in connection `epoch`'s wallet for 10 minutes; one send consumes it. */
+	preflight(recipient: AztecAddress, epoch: number): Promise<void>
 	/** Derives what the first proof needs once, so Submit does not wait on it. */
 	warmUp(): Promise<void>
 	prove(a: Attempt): Promise<Proved>
@@ -136,8 +142,11 @@ export interface Session {
 	close(): void
 }
 
-/** `pending`: in the RPC's pool, not mined; `unknown`: the RPC has no such transaction (never sent, or dropped). */
-export type L1TxState = "pending" | "mined" | "unknown"
+/**
+ * `mined` and `reverted`: the receipt's status; `pending`: in the RPC's pool, not mined; `unknown`: the
+ * RPC has no such transaction (never sent, or dropped).
+ */
+export type L1TxState = "pending" | "mined" | "reverted" | "unknown"
 
 export interface LabelBalance {
 	label: bigint

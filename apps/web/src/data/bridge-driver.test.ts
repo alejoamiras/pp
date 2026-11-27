@@ -13,8 +13,9 @@ import { type BridgeEvent, type BridgeMachine, bridgeReducer, initialBridge } fr
 import { openOwnerSession } from "./chain"
 import { BridgeFailure, ProviderError } from "./errors"
 import { bridgeView } from "./model"
-import type { ClaimHooks, L1Port, Proved, Sent, Session, SessionPort, Timer } from "./ports"
+import type { ClaimHooks, L1Port, Proved, Sent, Session, SessionPort } from "./ports"
 import { type Eip1193Provider, guardedProvider } from "./wallet/guarded-provider"
+import { virtualTimer } from "../test-utils/timer"
 
 const OWNER: Address = "0x00000000000000000000000000000000000000a1"
 const SENDER: Address = "0x00000000000000000000000000000000000000b2"
@@ -24,27 +25,10 @@ const NOTE: PoolNoteView = { commitment: 7n, label: 3n, value: 100n, asset: OTHE
 const MINED: BridgeRecordView = { id: "r1", nullifier: 9n, recipient: RECIPIENT, amount: 70n, step: "mined" }
 const CLAIMABLE: BridgeRecordView = { ...MINED, step: "claimable" }
 const INPUT: SubmitInput = { note: NOTE, amount: 70n, recipient: RECIPIENT }
+/** A wallet whose events report the owner on 31337, under the page's latest sign-in. */
+const STEADY = { selected: () => ({ account: OWNER, chainId: 31337 }), current: () => true }
 
 type Gate = "preflight" | "prove" | "reprove" | "claim" | "wallet"
-
-function virtualTimer(): Timer & { advance(ms: number): void } {
-	let t = 0
-	const sleeps = new Set<{ due: number; done: (elapsed: boolean) => void }>()
-	return {
-		now: () => t,
-		sleep(ms, signal) {
-			return new Promise<boolean>((resolve) => {
-				const entry = { due: t + ms, done: resolve }
-				sleeps.add(entry)
-				signal?.addEventListener("abort", () => sleeps.delete(entry) && resolve(false), { once: true })
-			})
-		},
-		advance(ms) {
-			t += ms
-			for (const s of [...sleeps]) if (s.due <= t) sleeps.delete(s) && s.done(true)
-		},
-	}
-}
 
 /**
  * A fake session whose calls can be held at named gates. Its submit sends through the guarded wallet
@@ -54,6 +38,8 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 	const ctx: { -readonly [K in keyof LiveContext]: LiveContext[K] } = {
 		owner: OWNER,
 		account: SENDER,
+		selected: SENDER,
+		demo: false,
 		chainId: 31337,
 		deployment: "31337:portal:hub",
 		epoch: 1,
@@ -157,6 +143,7 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 		},
 		preflight: () => driver.preflight(RECIPIENT, dispatch, run.signal),
 		submit: (input: SubmitInput = INPUT, flags: { acceptUncertain?: true } = {}) => driver.submit(input, dispatch, run.signal, flags),
+		check: () => driver.check({ note: NOTE, recipient: RECIPIENT }, dispatch, run.signal),
 		claim: (r: BridgeRecordView = CLAIMABLE) => driver.claim(r, dispatch, run.signal),
 		/** What opening another bridge does: aborts the running flow and resets the screen. */
 		supersede: () => {
@@ -182,7 +169,7 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 }
 
 const CHANGES = {
-	account: (c: LiveContext & { account: Address | null }) => Object.assign(c, { account: OTHER }),
+	account: (c: LiveContext) => Object.assign(c, { account: OTHER, selected: OTHER }),
 	chain: (c: LiveContext) => Object.assign(c, { chainId: 1 }),
 	aztec: (c: LiveContext) => Object.assign(c, { epoch: 2 }),
 } as const
@@ -220,7 +207,7 @@ describe("each refusal sends nothing", () => {
 		const signTypedData = vi.fn(async () => "0x00" as const)
 		const l1 = { accounts: async () => [OWNER], chainId: async () => 1, signTypedData } as unknown as L1Port
 		const open = vi.fn()
-		expect(await openOwnerSession({ l1, sessions: { open } as unknown as SessionPort, chainId: 31337 })).toEqual({
+		expect(await openOwnerSession({ l1, sessions: { open } as unknown as SessionPort, chainId: 31337, ...STEADY })).toEqual({
 			ok: false,
 			code: "CHAIN_MISMATCH",
 		})
@@ -238,8 +225,81 @@ describe("each refusal sends nothing", () => {
 				return {} as Session
 			},
 		} as unknown as SessionPort
-		expect(await openOwnerSession({ l1, sessions, chainId: 31337 })).toEqual({ ok: false, code: "CHAIN_MISMATCH" })
+		expect(await openOwnerSession({ l1, sessions, chainId: 31337, ...STEADY })).toEqual({ ok: false, code: "CHAIN_MISMATCH" })
 		expect(signTypedData).not.toHaveBeenCalled()
+	})
+
+	test("an account switched while the session reads before signing, or a newer sign-in, never reaches the wallet", async () => {
+		const selected = { account: OWNER as Address | null, chainId: 31337 as number | null }
+		let release = () => {}
+		const reads: Promise<void>[] = [Promise.resolve(), new Promise<void>((r) => (release = r))]
+		const signTypedData = vi.fn(async () => "0x00" as const)
+		const l1 = {
+			accounts: async () => [OWNER],
+			chainId: async () => {
+				await reads.shift()
+				return 31337
+			},
+			signTypedData,
+		} as unknown as L1Port
+		const sessions = {
+			open: async (a: { sign(td: TypedDataDefinition): Promise<Hex> }) => {
+				await a.sign({} as TypedDataDefinition)
+				return {} as Session
+			},
+		} as unknown as SessionPort
+		// eth_accounts answers first; the wallet reports the switch before eth_chainId answers.
+		const opening = openOwnerSession({ l1, sessions, chainId: 31337, selected: () => selected, current: () => true })
+		await new Promise((r) => setTimeout(r, 0))
+		selected.account = OTHER
+		release()
+		expect(await opening).toEqual({ ok: false, code: "CONTEXT_CHANGED" })
+		const superseded = openOwnerSession({
+			l1,
+			sessions,
+			chainId: 31337,
+			selected: () => ({ ...selected, account: OWNER }),
+			current: () => false,
+		})
+		expect(await superseded).toEqual({ ok: false, code: "CONTEXT_CHANGED" })
+		expect(signTypedData).not.toHaveBeenCalled()
+	})
+
+	test("a bridge made under the demo choice sends nothing once the choice is cleared, even with the wallet on the dev address", async () => {
+		const h = harness()
+		// The wallet itself selects the dev account, so clearing the choice leaves the sender unchanged.
+		Object.assign(h.ctx, { account: OTHER, selected: OTHER, demo: true })
+		h.hold("prove")
+		const run = h.submit()
+		await h.reached("prove")
+		Object.assign(h.ctx, { demo: false })
+		h.open("prove")
+		await run
+		expect(h.sent).toEqual([])
+		expect(h.machine().failure?.code).toBe("CONTEXT_CHANGED")
+	})
+
+	test("a wallet change before viem's second send method reports the change, not a decline", async () => {
+		const h = harness()
+		h.session.submit = vi.fn(async (_p, a, on) => {
+			const wallet: Eip1193Provider = {
+				async request({ method }) {
+					if (method !== "eth_sendTransaction") return `0x${"ab".repeat(32)}`
+					Object.assign(h.ctx, { account: OTHER, selected: OTHER })
+					throw Object.assign(new Error("the method does not exist"), { code: -32601 })
+				},
+			}
+			// viem 2.57.1 retries a -32601 as wallet_sendTransaction, which runs the handoff again.
+			const guarded = guardedProvider(wallet, on.handoff)
+			const params = [{ from: a.sender }]
+			await guarded
+				.request({ method: "eth_sendTransaction", params })
+				.catch(() => guarded.request({ method: "wallet_sendTransaction", params }))
+			return MINED
+		})
+		await h.submit()
+		expect(h.machine().failure?.code).toBe("CONTEXT_CHANGED")
+		expect(h.machine().notices).not.toContainEqual({ kind: "declined" })
 	})
 
 	test("a second Submit for the note is ignored", async () => {
@@ -282,6 +342,26 @@ describe("each refusal sends nothing", () => {
 		await run
 		expect(h.sent).toEqual([])
 		expect(h.machine().failure).toMatchObject({ code: "CONTEXT_CHANGED", offer: "claim" })
+	})
+
+	test("a claim grant withdrawn while the claim build is held sends nothing", async () => {
+		const h = harness()
+		h.atClaimable()
+		h.hold("claim")
+		const run = h.claim()
+		await h.reached("claim")
+		h.denyClaim()
+		h.open("claim")
+		await run
+		expect(h.sent).toEqual([])
+		expect(h.machine().failure).toMatchObject({ code: "NOT_GRANTED", offer: "claim" })
+	})
+
+	test("a claim is bound to the connection it started under", async () => {
+		const h = harness()
+		h.atClaimable()
+		await h.claim()
+		expect(h.session.claim).toHaveBeenCalledWith(CLAIMABLE.id, expect.objectContaining({ epoch: 1 }))
 	})
 
 	test.each(["reprove", "claim"] as const)("a superseded run held at %s never reaches the wallet or the new screen", async (gate) => {
@@ -407,7 +487,7 @@ describe("the bridge driver", () => {
 		expect(h.order).toEqual(["preflight", "prove"])
 	})
 
-	test("after UNCERTAIN a check without the override still reaches the session and the override is passed on; after IN_FLIGHT nothing is sent", async () => {
+	test("after UNCERTAIN a Submit without the override still reaches the session and the override is passed on; after IN_FLIGHT nothing is sent", async () => {
 		const h = harness({ submitThrows: new BridgeFailure("UNCERTAIN") })
 		await h.submit()
 		expect(h.machine().failure).toMatchObject({ code: "UNCERTAIN", offer: "send-again" })
@@ -428,6 +508,7 @@ describe("the bridge driver", () => {
 		["no hash the chain knows", {}, "UNCERTAIN"],
 		["a hash pending at the RPC", { tx: "pending" }, "IN_FLIGHT"],
 		["its note spent by another transaction", { spent: true }, "CONSUMED_ELSEWHERE"],
+		["its own hash mined and its note spent, the event not read yet", { tx: "mined", spent: true }, "IN_FLIGHT"],
 		["the bridge's event on chain", { seen: true }, null],
 	] as const)("an open record with %s answers a Submit without the override, before any proof", async (_name, o, code) => {
 		const h = harness()
@@ -447,6 +528,47 @@ describe("the bridge driver", () => {
 		expect(h.session.prove).not.toHaveBeenCalled()
 		if (code === null) expect([record?.step, h.machine().step]).toEqual(["mined", "mined"])
 		else expect(h.machine().failure?.code).toBe(code)
+	})
+
+	test.each([
+		["its last attempt reverted and none open", { reverted: true }, "REVERTED"],
+		["no record left and its note unspent", {}, "UNCERTAIN"],
+		["no record left and its note spent", { spent: true }, "CONSUMED_ELSEWHERE"],
+		["no record left and the bridge's event for the recipient", { seen: true }, null],
+	] as const)("Check again with %s shows that and never proves or submits", async (_name, o, code) => {
+		const h = harness()
+		const base = { id: "r0", nullifier: NOTE.commitment + 1n, recipient: RECIPIENT, amount: 70n }
+		const hash = `0x${"ef".repeat(32)}` as Hex
+		if ("reverted" in o) h.session.records = async () => [{ ...base, l1TxHash: hash, step: { error: "REVERTED" } }]
+		if ("seen" in o) h.session.recover = async () => [{ ...base, l1TxHash: hash, step: "mined" }]
+		if ("spent" in o) h.session.notes = async () => [{ ...NOTE, status: "spent" }]
+		const record = await h.check()
+		expect(h.session.prove).not.toHaveBeenCalled()
+		expect(h.session.submit).not.toHaveBeenCalled()
+		expect(h.sent).toEqual([])
+		if (code === null) expect([record?.step, h.machine().step]).toEqual(["mined", "mined"])
+		else expect(h.machine().failure?.code).toBe(code)
+	})
+
+	test("a Check again answer that lands after a Submit started is dropped whole: no screen change, nothing remembered", async () => {
+		const h = harness()
+		let release = () => {}
+		const held = new Promise<void>((r) => (release = r))
+		const pending = { id: "r0", nullifier: NOTE.commitment + 1n, recipient: RECIPIENT, amount: 70n, step: "submitted" as const }
+		h.session.records = async () => {
+			await held
+			return [{ ...pending, l1TxHash: `0x${"ef".repeat(32)}` as Hex }]
+		}
+		h.session.l1TxState = async () => "pending"
+		const checking = h.check()
+		await h.submit(INPUT, { acceptUncertain: true })
+		expect(h.machine().step).toBe("mined")
+		release()
+		await expect(checking).resolves.toBeNull()
+		expect([h.machine().step, h.machine().failure]).toEqual(["mined", null])
+		// Had the stale answer been remembered, the note would refuse this as IN_FLIGHT.
+		await h.submit(INPUT, { acceptUncertain: true })
+		expect(h.session.submit).toHaveBeenCalledTimes(2)
 	})
 
 	test("a wallet rejection on claim returns to claimable", async () => {

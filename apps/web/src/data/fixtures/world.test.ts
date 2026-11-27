@@ -5,7 +5,7 @@ import { type BridgeMachine, bridgeReducer, initialBridge } from "../bridge-mach
 import { openOwnerSession } from "../chain"
 import type { Session } from "../ports"
 import { createControl } from "./control"
-import { FAKE_SIGNATURE, fixtureL1 } from "./l1"
+import { FAKE_SIGNATURE, fixtureL1, selectedAccount } from "./l1"
 import { ACCOUNTS, LABELS } from "./seed"
 import { fixtureSessions } from "./session"
 import { createWorld, type KeyValue } from "./world"
@@ -26,12 +26,20 @@ async function page(store: KeyValue) {
 	const l1 = fixtureL1(world)
 	const control = createControl(world, { remoteDisconnect: () => {} })
 	control.selectL1Account("owner")
-	const opened = await openOwnerSession({ l1, sessions: fixtureSessions(world, l1.provider), chainId: 31337 })
+	const opened = await openOwnerSession({
+		l1,
+		sessions: fixtureSessions(world, l1.provider),
+		chainId: 31337,
+		selected: () => ({ account: selectedAccount(world), chainId: world.s.walletChain }),
+		current: () => true,
+	})
 	if (!opened.ok) throw new Error(opened.code)
 	control.selectL1Account("sender")
 	const ctx = (): LiveContext => ({
 		owner: ACCOUNTS.owner,
 		account: ACCOUNTS[world.s.selected],
+		selected: ACCOUNTS[world.s.selected],
+		demo: false,
 		chainId: world.s.walletChain,
 		deployment: world.deployment.id,
 		epoch: 1,
@@ -107,13 +115,35 @@ describe("the fixture world", () => {
 		expect(second.control.state().bridges).toMatchObject([{ state: "pending" }])
 	})
 
+	test("a proof spends once and only under the attempt it was made for", async () => {
+		const p = await page(memoryStore())
+		const a = Object.freeze({
+			seq: 1,
+			owner: ACCOUNTS.owner,
+			sender: ACCOUNTS.sender,
+			demo: false,
+			recipient: ACCOUNTS.aztec,
+			deployment: p.world.deployment.id,
+			chainId: 31337,
+			epoch: 1,
+			note: 0x1001n,
+			amount: 1n,
+		})
+		const on = { reproving: () => {}, handoff: () => {}, sent: () => {} }
+		await p.session.preflight(ACCOUNTS.aztec, 1)
+		const proved = await p.session.prove(a)
+		await expect(p.session.submit(proved, { ...a, seq: 2 }, on)).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
+		await expect(p.session.submit(proved, a, on)).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
+		expect(p.control.state().sent.l1).toBe(0)
+	})
+
 	test("the control checks its inputs and arms one-shot faults", async () => {
 		const p = await page(memoryStore())
 		expect(() => p.control.failNext("nope" as "prove", "X_Y")).toThrow()
 		expect(() => p.control.failNext("prove", "lower case")).toThrow()
 		expect(() => p.control.advance(-1)).toThrow()
 		p.control.failNext("preflight", "RECIPIENT_NOT_IN_WALLET")
-		await expect(p.session.preflight(ACCOUNTS.aztec)).rejects.toMatchObject({ code: "RECIPIENT_NOT_IN_WALLET" })
-		await expect(p.session.preflight(ACCOUNTS.aztec)).resolves.toBeUndefined()
+		await expect(p.session.preflight(ACCOUNTS.aztec, 1)).rejects.toMatchObject({ code: "RECIPIENT_NOT_IN_WALLET" })
+		await expect(p.session.preflight(ACCOUNTS.aztec, 1)).resolves.toBeUndefined()
 	})
 })

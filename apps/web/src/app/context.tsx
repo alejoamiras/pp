@@ -73,7 +73,7 @@ interface Props {
 
 export function AppProvider({ source, frame, children }: Props) {
 	const queryClient = useQueryClient()
-	const live = useMemo(() => createLiveStore(source.deployment.id), [source])
+	const live = useMemo(() => createLiveStore(source.deployment.id, source.l1.demo?.address ?? null), [source])
 	const eth = useEthereum(source, live)
 	const side = useAztecSide(source, live)
 	const [view, go] = useState<View>("home")

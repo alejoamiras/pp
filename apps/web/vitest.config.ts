@@ -14,6 +14,7 @@ const TEST_TARGET: PublicTarget = {
 	walletUrls: [],
 	dataMode: "fixtures",
 	connector: "fixture",
+	stack: null,
 }
 
 export default defineConfig({
@@ -21,7 +22,12 @@ export default defineConfig({
 		__PP_TARGET__: JSON.stringify(TEST_TARGET),
 		__PP_CONNECTOR__: JSON.stringify(TEST_TARGET.connector),
 	},
-	resolve: { alias: [{ find: /^#data$/, replacement: join(root, "src", "data", "fixtures", "index.ts") }] },
+	resolve: {
+		alias: [
+			{ find: /^#data$/, replacement: join(root, "src", "data", "fixtures", "index.ts") },
+			{ find: /^#demo-sender$/, replacement: join(root, "src", "data", "adapters", "demo-sender.ts") },
+		],
+	},
 	test: {
 		...sharedTest,
 		environment: "node",

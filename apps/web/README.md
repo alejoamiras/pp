@@ -6,10 +6,20 @@ claims it, lists private balances by label with their allow-list state, and send
 unshields, shields, leaves to Ethereum (ragequit), withdraws the public balance and collects exits on
 Ethereum.
 
-Today every screen runs on an in-memory fixture world behind the data ports in `src/data/ports.ts`;
-the stack adapters in `src/data/adapters/` refuse until their packages land. The fixture world keeps
-chain time (it moves only with blocks) and is driven from tests and the browser console through
-`window.__ppFixtures`, which fixture builds expose and stack builds cannot contain.
+Every screen runs on an in-memory fixture world behind the data ports in `src/data/ports.ts`. The
+fixture world keeps chain time (it moves only with blocks) and is driven from tests and the browser
+console through `window.__ppFixtures`, which fixture builds expose and stack builds cannot contain.
+
+A stack build (`build:local` with `PP_STACK_MANIFEST` from `bun run demo --keep`) reads the local
+stack instead through `src/data/adapters/`: Ethereum through the injected wallet, chain time from
+both chains, the asset's decimals and symbol from the factory's registration, the pool notes by
+label through pool-client with one worker prover per page, the bridge and its claim through
+bridge-core's client, and the Aztec balances by label through the connected wallet. Exits, the
+allow list and the token actions are not wired yet. On the local stack (chain 31337 over a loopback
+RPC) the build can also send a bridge from anvil's dev account, so the demo needs no second wallet
+account. It is served by `serve`, which also serves the three proving files of `transact_1x1`, the
+one circuit the app proves, from `PP_CIRCUITS_DIR`, the pool checkout's circuit builds that the
+stack's CLI prints; they are never part of a build. `serve` refuses to start unless that is an absolute directory.
 
 ## Scripts
 
@@ -19,13 +29,14 @@ Run from the repository root with `bun run --cwd apps/web <script>`.
 |---|---|
 | `dev` | Vite dev server on fixtures and the fixture wallet, on a port claimed from the host registry |
 | `build` | Production build on fixtures and the fixture wallet, plus `dist/security-headers.json` |
-| `build:local` | The build the e2e kit runs: fixtures with the real wallet connector, from a sandbox run's artifacts |
-| `check:stack-build` | Builds against the stack adapters and fails on any fixture module in the output |
-| `preview` | Serves a build with its security headers |
+| `build:local` | The build the e2e kit runs, with the real wallet connector: against a stack manifest (`PP_STACK_MANIFEST`), or fixtures from a sandbox run's artifacts (`PP_SANDBOX_ARTIFACTS`) |
+| `check:stack-build` | Builds against a synthetic local and remote stack manifest, and the fixture build; fails on any fixture or build-only module or bot account in a stack build, and unless the demo sender is in the local stack build alone, with no build holding its key |
+| `preview` | Serves a fixture build with its security headers |
+| `serve` | Serves a build with its security headers and the three `transact_1x1` proving files at `/<cid>`, read from `PP_CIRCUITS_DIR` |
 | `typecheck` | `tsc --noEmit` |
 | `test` | Unit and component tests (Vitest on Bun, jsdom for components) |
-| `test:headers` | Checks the preview server's headers the way the e2e kit starts it |
-| `e2e` | Runs the e2e kit: a local network, the test wallet and Playwright against `build:local` |
+| `test:headers` | Checks both servers' headers the way the e2e kit starts them |
+| `e2e` | Runs the e2e kit in stack mode: the local stack, the test wallet and Playwright against `build:local` |
 
 ## Recovery
 

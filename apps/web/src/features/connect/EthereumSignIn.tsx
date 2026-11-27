@@ -4,6 +4,9 @@ import { chainName } from "../../data/chain"
 import { messageOf } from "../../data/errors"
 import { ActionButton, Callout } from "../../ui"
 
+/** Why Sign in waits while the wallet has not told the page its network: the signature would be refused. */
+export const NETWORK_UNKNOWN = "Your wallet has not said which network it is on yet. Unlock it, or reload the page."
+
 /** Signed out, signing, or failed: the chain is checked before the derivation signature is asked for. */
 export function EthereumSignIn() {
 	const { eth, live, source } = useApp()
@@ -17,7 +20,14 @@ export function EthereumSignIn() {
 				It derives your pool keys in this page. It sends nothing and costs nothing.
 			</Callout>
 		)
-	const reason = account === null ? messageOf("NO_SENDER") : wrongChain ? `Switch your wallet to ${chainName(target)} first.` : undefined
+	const reason =
+		account === null
+			? messageOf("NO_SENDER")
+			: chainId === null
+				? NETWORK_UNKNOWN
+				: wrongChain
+					? `Switch your wallet to ${chainName(target)} first.`
+					: undefined
 	return (
 		<div className="grid justify-items-start gap-3" data-testid="eth-sign-in-panel">
 			<p className="text-ink-2">

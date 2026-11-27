@@ -1,6 +1,6 @@
-import { source } from "#data"
-import { AppRoot } from "./app/AppRoot"
+import { loadSource } from "#data"
+import { SourceGate } from "./app/SourceGate"
 
 export function App() {
-	return <AppRoot source={source} />
+	return <SourceGate load={loadSource} />
 }

@@ -24,13 +24,13 @@ const BUTTONS: Record<Exclude<Offer, "none">, string> = {
 
 /**
  * A stopped bridge: what happened, what was not sent, and the next step the failure allows. After
- * `UNCERTAIN` that is two: Check again submits without the override, so only the session's journal
- * and the chain answer it; Send again passes `acceptUncertain`.
+ * `UNCERTAIN` that is two: Check again reads the journal and the chain and sends nothing; Send again
+ * passes `acceptUncertain`.
  */
 export function FailureCallout({ failure }: { failure: Failure }) {
 	const { bridge, connection } = useApp()
 	const amount = bridge.subject?.amount ?? null
-	const recipient = bridge.machine.attempt?.recipient ?? connection?.accounts[0] ?? ""
+	const recipient = bridge.subject?.recipient ?? connection?.accounts[0] ?? ""
 	const resubmit = (acceptUncertain: boolean) => amount !== null && void bridge.submit(amount, recipient, acceptUncertain)
 	const act = (offer: Offer) => {
 		if (offer === "prepare-again") return bridge.restart()
@@ -47,7 +47,7 @@ export function FailureCallout({ failure }: { failure: Failure }) {
 			{offer === "send-again" ? <p className="mt-1 font-semibold">{UNCERTAIN_WORST_CASE}</p> : null}
 			{offer !== "none" ? (
 				<div className="mt-2 flex flex-wrap gap-2">
-					{offer === "send-again" ? <ActionButton onClick={() => resubmit(false)}>Check again</ActionButton> : null}
+					{offer === "send-again" ? <ActionButton onClick={() => void bridge.check()}>Check again</ActionButton> : null}
 					<ActionButton variant="primary" onClick={() => act(offer)}>
 						{BUTTONS[offer]}
 					</ActionButton>

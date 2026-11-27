@@ -77,7 +77,10 @@ with warm package and toolchain caches.
 | First-path smoke | `bun run demo:smoke` against a kept stack (`PP_STACK_MANIFEST`) | 30 s |
 | E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | 15 s |
 | Pool client, unit | `bun run --cwd packages/pool-client test` and `test:node` | 10 s |
-| Web e2e (sandbox boot, both builds, Playwright) | `bun run --cwd apps/web e2e` | 4 min |
+| Web server headers (preview and `serve`) | `bun run --cwd apps/web test:headers` (after `build`) | 12 s |
+| Web stack-build guard | `bun run --cwd apps/web check:stack-build` | 1 min |
+| Web e2e (local stack, both builds, Playwright) | `bun run --cwd apps/web e2e` (after `bun run demo:prepare`) | 8.5 min (5.6 min of tests) |
+| Web e2e on the sandbox (fixture build) | `bun run --cwd packages/e2e-kit test:browser` | 5 min |
 | Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |
 | Sepolia fork, unit | `bun run --cwd packages/sepolia-fork test` | 4 s |
 | Sepolia fork, against Sepolia | `SEPOLIA_RPC_URL=<public endpoint with archive state> bun run --cwd packages/sepolia-fork test:net`, then `run` after `forge build` in `contracts/bridge/evm` (`run --prepare-only` stops before Forge) | 14 s · 5 min 15 s (the pool user's sync 4 min 15 s) |

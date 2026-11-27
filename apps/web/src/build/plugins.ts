@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { join, relative, resolve, sep } from "node:path"
-import type { Logger, Plugin } from "vite"
+import type { Logger, Plugin, Rolldown } from "vite"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders, securityHeaders } from "./headers.ts"
 import type { PublicTarget } from "./target.ts"
 
@@ -46,6 +46,16 @@ export function previewSecurityHeaders(): Plugin {
 	}
 }
 
+/**
+ * nodePolyfills aliases each Node builtin by prefix, so pool-client's `buffer/index.js` (its explicit
+ * pick of the npm package) becomes a path inside the shim's file, and worker bundles get those aliases
+ * without the plugin's resolver that would repair them. A plugin's aliases outrank the config's, and
+ * a later plugin's outrank an earlier one's, so this goes after nodePolyfills.
+ */
+export function bufferSubpathAlias(shim: string): Plugin {
+	return { name: "pp:buffer-subpath-alias", config: () => ({ resolve: { alias: [{ find: /^buffer\/index\.js$/, replacement: shim }] } }) }
+}
+
 export interface BundleFile {
 	fileName: string
 	text: string
@@ -60,6 +70,65 @@ export function fixtureLeaks(moduleIds: Iterable<string>, files: Iterable<Bundle
 	return leaks
 }
 
+/** What the guard reads of an output chunk. */
+export interface ChunkView {
+	fileName: string
+	isEntry: boolean
+	facadeModuleId: string | null
+	imports: readonly string[]
+	moduleIds: readonly string[]
+}
+
+const CONTRACT_ARTIFACTS = /[\\/]@aztec-labs[\\/]noir-contracts\.js[\\/]/
+/** bridge-core derives the fee payer's address from this artifact when a session opens. */
+const SESSION_ONLY =
+	/[\\/]@aztec-labs[\\/]noir-contracts\.js[\\/](dest[\\/]SponsoredFPC\.js|artifacts[\\/]sponsored_fpc_contract-SponsoredFPC\.json)$/
+/** The target's own derivation of the same address, which the page receives as a constant. */
+const BUILD_DERIVATION = /[\\/]src[\\/]build[\\/]sponsored-fpc\.ts$/
+/** The stack's own packages: the build reads the demo sender's address from them, and the page carries only that. */
+const STACK_PACKAGES = /[\\/](packages[\\/]|@pp[\\/])(local-stack|pp-env)[\\/]/
+
+const bare = (id: string): string => id.replace(/^\0/, "")
+
+/** The chunks a page loads before any dynamic import: the entries and their static imports, transitively. */
+function initialChunks(chunks: readonly ChunkView[]): Set<string> {
+	const byName = new Map(chunks.map((c) => [c.fileName, c]))
+	const seen = new Set<string>()
+	const queue = chunks.filter((c) => c.isEntry).map((c) => c.fileName)
+	for (let name = queue.pop(); name !== undefined; name = queue.pop()) {
+		if (seen.has(name)) continue
+		seen.add(name)
+		queue.push(...(byName.get(name)?.imports ?? []))
+	}
+	return seen
+}
+
+/**
+ * Build-time-only code in a stack bundle. The derivation, the stack's own packages and every contract
+ * artifact are refused anywhere in the module graph (reachable code, even if tree-shaken, means an import path exists),
+ * except the SponsoredFPC artifact, which may sit only in the chunk `sessionEntry` heads and only
+ * while no entry reaches that chunk statically: the page then fetches it at sign-in, never at load.
+ */
+export function buildOnlyLeaks(moduleIds: Iterable<string>, chunks: readonly ChunkView[], sessionEntry: string): string[] {
+	const refused = (id: string) =>
+		BUILD_DERIVATION.test(id) || STACK_PACKAGES.test(id) || (CONTRACT_ARTIFACTS.test(id) && !SESSION_ONLY.test(id))
+	const leaks = [...moduleIds].filter((id) => refused(bare(id))).map((id) => `module ${id}`)
+	const initial = initialChunks(chunks)
+	for (const c of chunks) {
+		if (c.facadeModuleId === sessionEntry && !initial.has(c.fileName)) continue
+		for (const id of c.moduleIds) if (SESSION_ONLY.test(bare(id))) leaks.push(`${c.fileName} holds ${id}`)
+	}
+	return leaks
+}
+
+function chunkViews(bundle: Rolldown.OutputBundle): ChunkView[] {
+	return Object.values(bundle).flatMap((c) =>
+		c.type === "chunk"
+			? [{ fileName: c.fileName, isEntry: c.isEntry, facadeModuleId: c.facadeModuleId, imports: c.imports, moduleIds: c.moduleIds }]
+			: [],
+	)
+}
+
 /** Every file under `dir`, named relative to it with `/` separators. */
 function readOutput(dir: string): BundleFile[] {
 	return readdirSync(dir, { recursive: true, withFileTypes: true })
@@ -72,15 +141,18 @@ function readOutput(dir: string): BundleFile[] {
 
 /**
  * Fails a stack build whose module graph holds any file under `src/data/fixtures/` (reachable code,
- * even if tree-shaken, means an import path exists) or whose written output names the fixture marker.
- * The output directory is read back rather than the bundle, because Vite copies `public/` beside the
- * bundle and the scan must cover everything that ships.
+ * even if tree-shaken, means an import path exists), whose bundle holds build-only code outside what
+ * `buildOnlyLeaks` allows, or whose written output names the fixture marker. The output directory is
+ * read back rather than the bundle, because Vite copies `public/` beside the bundle and the scan must
+ * cover everything that ships.
  */
 export function stackBuildGuard(appRoot: string): Plugin {
 	const fixturesDir = join(appRoot, "src", "data", "fixtures")
+	const sessionEntry = join(appRoot, "src", "data", "adapters", "session.ts")
 	let logger: Logger | undefined
 	let outDir = ""
 	let ids: string[] = []
+	let chunks: ChunkView[] = []
 	return {
 		name: "pp:stack-build-guard",
 		apply: "build",
@@ -88,14 +160,19 @@ export function stackBuildGuard(appRoot: string): Plugin {
 			logger = config.logger
 			outDir = resolve(config.root, config.build.outDir)
 		},
-		generateBundle() {
+		generateBundle(_options, bundle) {
 			ids = [...this.getModuleIds()]
+			chunks = chunkViews(bundle)
 		},
 		writeBundle(options) {
 			const files = readOutput(options.dir ?? outDir)
 			const leaks = fixtureLeaks(ids, files, fixturesDir)
 			if (leaks.length > 0) this.error(`stack build ships fixture code:\n  ${leaks.join("\n  ")}`)
-			logger?.info(`${GUARD_PASSED}: ${ids.length} modules, ${files.length} files, no fixture module, no ${FIXTURE_MARKER}`)
+			const buildOnly = buildOnlyLeaks(ids, chunks, sessionEntry)
+			if (buildOnly.length > 0) this.error(`stack build ships build-time-only code:\n  ${buildOnly.join("\n  ")}`)
+			logger?.info(
+				`${GUARD_PASSED}: ${ids.length} modules, ${chunks.length} chunks, ${files.length} files, no fixture module, no ${FIXTURE_MARKER}, no build-only code outside the session chunk`,
+			)
 		},
 	}
 }

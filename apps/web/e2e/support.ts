@@ -1,17 +1,15 @@
 /**
  * What the web specs share: the watch every test ends on (zero CSP violations, zero page errors), the
- * wallet frame and its control hook, the connect flow, and the fixture world's control hook. A function
+ * wallet frame and its control hook, the connect flow and the pool sign-in. A function
  * passed to `evaluate` runs in the page, so each one reaches its hook on its own.
  */
 import type { Frame, Page } from "@playwright/test"
 import { expect } from "@pp/e2e-kit/fixtures/test.ts"
 import type { TestWalletControl } from "@pp/e2e-kit/test-wallet/globals"
-import type { FixtureSnapshot } from "../src/data/fixtures/control"
 
 declare global {
 	interface Window {
 		__ppCspViolations?: string[]
-		__ppSeen?: Record<string, string>
 	}
 }
 
@@ -97,46 +95,8 @@ export async function chooseWallet(page: Page, o: WalletChoice): Promise<Frame> 
 	return frame
 }
 
-/** Signs in to the fixture pool as its owner, as the fixture Ethereum wallet first selects it. */
+/** Signs in to the pool as the Ethereum wallet's selected account, its owner, and waits for a note. */
 export async function signInToPool(page: Page): Promise<void> {
 	await page.getByTestId("eth-sign-in").click()
 	await expect(page.getByTestId("note-row").first()).toBeVisible()
-}
-
-/** The fixture world as the page holds it: the chain, for a fixture build. */
-export function fixtureState(page: Page): Promise<FixtureSnapshot> {
-	return page.evaluate(() => {
-		const control = window.__ppFixtures
-		if (!control) throw new Error("this build exposes no __ppFixtures")
-		return control.state()
-	})
-}
-
-/** Mines `blocks` fixture Ethereum blocks (12 s of chain time each; an Aztec block every six). */
-export function advance(page: Page, blocks: number): Promise<void> {
-	return page.evaluate((n) => window.__ppFixtures?.advance(n), blocks)
-}
-
-/** Selects the pool owner or the separate sender in the fixture Ethereum wallet. */
-export function selectL1Account(page: Page, which: "owner" | "sender"): Promise<void> {
-	return page.evaluate((w) => window.__ppFixtures?.selectL1Account(w), which)
-}
-
-/**
- * Records the text of the first element with `testId` to enter the document from now on, for a view
- * too brief to poll for; `seen` reads it back (`undefined` while it has not appeared).
- */
-export async function recordFirst(page: Page, testId: string): Promise<{ seen(): Promise<string | undefined> }> {
-	await page.evaluate((id) => {
-		window.__ppSeen ??= {}
-		const seen = window.__ppSeen
-		const observer = new MutationObserver(() => {
-			const el = document.querySelector(`[data-testid="${id}"]`)
-			if (!el) return
-			seen[id] = el.textContent ?? ""
-			observer.disconnect()
-		})
-		observer.observe(document.body, { childList: true, subtree: true })
-	}, testId)
-	return { seen: () => page.evaluate((id) => window.__ppSeen?.[id], testId) }
 }

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
+import { getAddress } from "viem"
 import { afterEach, describe, expect, test } from "vitest"
-import { messageOf, UNCERTAIN_WORST_CASE } from "../../data/errors"
+import { BridgeFailure, messageOf, UNCERTAIN_WORST_CASE } from "../../data/errors"
+import type { Attempt } from "../../data/ports"
 import type { DataSource } from "../../data/source"
 import { connectAztec, memoryStore, noteRow, renderApp, signIn } from "../../test-utils/app"
 
@@ -30,12 +32,13 @@ async function submit(app: Awaited<ReturnType<typeof openBridge>>) {
 	await app.user.click(button())
 }
 
-/** Records the options of every `Session.submit`, so a test sees what reached the session. */
-function submitsOf(): { options: unknown[]; patch(s: DataSource): DataSource } {
-	const options: unknown[] = []
-	return {
-		options,
-		patch: (s) => ({
+/** What reached the session: the options of every `submit`, and how many proofs and journal reads. */
+function submitsOf() {
+	const seen = {
+		options: [] as unknown[],
+		proves: 0,
+		reads: 0,
+		patch: (s: DataSource): DataSource => ({
 			...s,
 			sessions: {
 				...s.sessions,
@@ -43,8 +46,16 @@ function submitsOf(): { options: unknown[]; patch(s: DataSource): DataSource } {
 					const session = await s.sessions.open(a)
 					return {
 						...session,
+						prove: (attempt) => {
+							seen.proves++
+							return session.prove(attempt)
+						},
+						records: () => {
+							seen.reads++
+							return session.records()
+						},
 						submit: (p, attempt, on, o) => {
-							options.push(o)
+							seen.options.push(o)
 							return session.submit(p, attempt, on, o)
 						},
 					}
@@ -52,11 +63,24 @@ function submitsOf(): { options: unknown[]; patch(s: DataSource): DataSource } {
 			},
 		}),
 	}
+	return seen
+}
+
+/** Clicks Check again in `scope` and lets what it started settle: it reads the journal at least once. */
+async function checkAgain(
+	app: Pick<Awaited<ReturnType<typeof openBridge>>, "user">,
+	seen: { reads: number },
+	scope: Pick<typeof screen, "getByRole"> = screen,
+) {
+	const before = seen.reads
+	await app.user.click(scope.getByRole("button", { name: "Check again" }))
+	await waitFor(() => expect(seen.reads).toBeGreaterThan(before))
+	await act(() => new Promise((r) => setTimeout(r, 20)))
 }
 
 /** A second page load over `store`, signed in as the owner with Aztec connected and the sender selected. */
-async function reload(store: ReturnType<typeof memoryStore>) {
-	const app = renderApp({ store })
+async function reload(store: ReturnType<typeof memoryStore>, patch?: (s: DataSource) => DataSource) {
+	const app = renderApp({ store, ...(patch ? { patch } : {}) })
 	act(() => app.control.selectL1Account("owner"))
 	await signIn(app.user)
 	await connectAztec(app.user)
@@ -64,7 +88,100 @@ async function reload(store: ReturnType<typeof memoryStore>) {
 	return app
 }
 
+const DEV = getAddress("0x00000000000000000000000000000000000000aa")
+const OFFER = { name: "Send from the local dev account" } as const
+
+/** A local-stack build whose dev account answers its check with `ready`, owner signed in and Aztec connected. */
+async function demoApp(ready: () => Promise<void>) {
+	const app = renderApp({ patch: (s) => ({ ...s, l1: { ...s.l1, demo: { address: DEV, ready } } }) })
+	await signIn(app.user)
+	await connectAztec(app.user)
+	return app
+}
+
+async function openForm(app: Awaited<ReturnType<typeof demoApp>>) {
+	await app.user.click(noteRow(NOTE).getByRole("button", { name: "Bridge to Aztec" }))
+	await app.user.type(screen.getByLabelText(/Amount to bridge/), "70")
+}
+
+describe("the dev-account choice", () => {
+	test("clears when the wallet switches account and on sign-out", async () => {
+		const app = await demoApp(async () => {})
+		await openForm(app)
+		await app.user.click(screen.getByRole("button", OFFER))
+		await screen.findByTestId("demo-sender")
+		act(() => app.control.selectL1Account("sender"))
+		await waitFor(() => expect(screen.queryByTestId("demo-sender")).toBeNull())
+		act(() => app.control.selectL1Account("owner"))
+		await app.user.click(await screen.findByRole("button", OFFER))
+		await screen.findByTestId("demo-sender")
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		await app.user.click(screen.getByRole("button", { name: "Sign out" }))
+		await signIn(app.user)
+		await openForm(app)
+		await screen.findByRole("button", OFFER)
+		expect(screen.queryByTestId("demo-sender")).toBeNull()
+	})
+
+	test("is not made by a check that answers after the form closed", async () => {
+		let answer = () => {}
+		const app = await demoApp(() => new Promise<void>((r) => (answer = r)))
+		await openForm(app)
+		await app.user.click(screen.getByRole("button", OFFER))
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		await act(async () => answer())
+		await openForm(app)
+		await screen.findByRole("button", OFFER)
+		expect(screen.queryByTestId("demo-sender")).toBeNull()
+	})
+
+	test("is not made by a check that answers after the account changed", async () => {
+		let answer = () => {}
+		const app = await demoApp(() => new Promise<void>((r) => (answer = r)))
+		await openForm(app)
+		await app.user.click(screen.getByRole("button", OFFER))
+		act(() => app.control.selectL1Account("sender"))
+		await act(async () => answer())
+		act(() => app.control.selectL1Account("owner"))
+		await screen.findByRole("button", OFFER)
+		expect(screen.queryByTestId("demo-sender")).toBeNull()
+	})
+})
+
 describe("the bridge screen", () => {
+	test("with the owner selected, a local-stack build offers its dev account, and a bridge sends from it once its check passes", async () => {
+		const checks = [() => Promise.reject(new BridgeFailure("DEPLOYMENT_MISMATCH")), () => Promise.resolve()]
+		const attempts: Attempt[] = []
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: { ...s.l1, demo: { address: DEV, ready: () => (checks.shift() as () => Promise<void>)() } },
+				sessions: {
+					...s.sessions,
+					open: async (a) => ({
+						...(await s.sessions.open(a)),
+						submit: (_p, attempt) => {
+							attempts.push(attempt)
+							return new Promise(() => {})
+						},
+					}),
+				},
+			}),
+		})
+		await signIn(app.user)
+		await connectAztec(app.user)
+		await app.user.click(noteRow(NOTE).getByRole("button", { name: "Bridge to Aztec" }))
+		await app.user.type(screen.getByLabelText(/Amount to bridge/), "70")
+		const offer = () => screen.getByRole("button", { name: "Send from the local dev account" })
+		await app.user.click(offer())
+		await screen.findByText(messageOf("DEPLOYMENT_MISMATCH"))
+		expect(screen.queryByTestId("demo-sender")).toBeNull()
+		await app.user.click(offer())
+		expect((await screen.findByTestId("demo-sender")).textContent).toContain(DEV)
+		await submit(app)
+		await waitFor(() => expect(attempts.map((a) => a.sender)).toEqual([DEV]))
+	})
+
 	test("bridges to claimed on the virtual clock, saying which root a re-proof followed", async () => {
 		const app = await openBridge()
 		app.control.reproveNext("ASP_ROOT_STALE")
@@ -162,6 +279,38 @@ describe("the bridge screen", () => {
 		// The prove fault is still armed: Send again is the first to prove.
 		await app.user.click(screen.getByRole("button", { name: "Send again" }))
 		await screen.findByText(messageOf("PROVE_FAILED"))
+	})
+
+	test("Check again only reads: with the journal cleared in another tab, it proves and sends nothing and still shows UNCERTAIN", async () => {
+		const seen = submitsOf()
+		const app = await openBridge(memoryStore(), seen.patch)
+		app.control.failNext("send", "LOST")
+		await submit(app)
+		await screen.findByText("We can't see your transaction yet")
+		await app.source.sessions.forget()
+		await checkAgain(app, seen)
+		expect([seen.proves, seen.options.length, app.control.state().sent.l1]).toEqual([1, 1, 0])
+		screen.getByText("We can't see your transaction yet")
+		await app.user.click(screen.getByRole("button", { name: "Send again" }))
+		await landed()
+		expect(seen.options.at(-1)).toEqual({ acceptUncertain: true })
+	})
+
+	test("Check again on a reloaded note only reads, even once the journal is cleared in another tab", async () => {
+		const store = memoryStore()
+		const first = await openBridge(store)
+		first.control.hangNext("send")
+		await submit(first)
+		await screen.findByText("Sent: waiting for the Ethereum transaction to be mined")
+		first.unmount()
+
+		const seen = submitsOf()
+		const second = await reload(store, seen.patch)
+		await waitFor(() => noteRow(NOTE).getByText("We can't see your transaction yet"))
+		await second.source.sessions.forget()
+		await checkAgain(second, seen, noteRow(NOTE))
+		expect([seen.proves, seen.options.length, second.control.state().sent.l1]).toEqual([0, 0, 0])
+		await screen.findByText("We can't see your transaction yet")
 	})
 
 	test("a resend that reverts leaves the earlier unconfirmed send on the note, with its controls", async () => {

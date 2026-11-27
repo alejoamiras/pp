@@ -26,13 +26,17 @@ export interface SandboxAccess {
 	manifest: ManifestV2
 	tokens: { usdc: ManifestToken; usdt: ManifestToken; pxo: ManifestToken }
 	/** A brand-new account of the shape the Nulo wallet deploys, deployed through the sponsor, with its own flow context. */
-	newActor(): Promise<ActorHandle>
+	newActor(): Promise<SandboxActor>
 }
 
+/** An Aztec account the test wallet holds, deployed through the sponsor. */
 export interface ActorHandle {
 	actor: Actor
 	seed: Seed
 	address: string
+}
+
+export interface SandboxActor extends ActorHandle {
 	s: SmokeContext
 	l2TokenOf(t: ManifestToken): Promise<ContractBase>
 }
