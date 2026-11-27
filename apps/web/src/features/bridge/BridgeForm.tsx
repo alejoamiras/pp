@@ -45,6 +45,17 @@ function useAutoPreflight(m: BridgeMachine, recipient: string | null, epoch: num
 	}, [m.binding, recipient, epoch, invalidate])
 }
 
+/** With no dev account to send from, the bridge's sender is a second wallet account, which needs ETH of its own. */
+function SenderPaysGas() {
+	const { source } = useApp()
+	return (
+		<>
+			That account sends the bridge's Ethereum transaction and pays its gas, so it needs its own ETH on{" "}
+			{chainName(source.deployment.chainId)}.
+		</>
+	)
+}
+
 /** Says who signs the spend; a local-stack build may offer its dev account in place of a second wallet account. */
 function SenderCheck({ now, sender }: { now: Live; sender: Address | null }) {
 	const { source, live } = useApp()
@@ -63,7 +74,12 @@ function SenderCheck({ now, sender }: { now: Live; sender: Address | null }) {
 				<span data-testid="demo-sender">Local demo: signed by the dev account {demo.address}, no wallet</span>
 			</Callout>
 		)
-	if (sender === null || now.owner === null || !isAddressEqual(sender, now.owner)) return null
+	if (sender === null || now.owner === null || !isAddressEqual(sender, now.owner))
+		return demo ? null : (
+			<p className="text-xs text-ink-3">
+				<SenderPaysGas />
+			</p>
+		)
 	// The check answers later: a choice the owner, the account or this form no longer stands behind is dropped.
 	const chooseDemo = () => {
 		const at = live.get()
@@ -83,8 +99,7 @@ function SenderCheck({ now, sender }: { now: Live; sender: Address | null }) {
 				</span>
 			) : (
 				<span className="mt-2 block">
-					That account sends the bridge's Ethereum transaction and pays its gas, so it needs its own ETH on{" "}
-					{chainName(source.deployment.chainId)}.
+					<SenderPaysGas />
 				</span>
 			)}
 		</Callout>
