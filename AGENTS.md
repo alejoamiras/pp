@@ -84,6 +84,9 @@ with warm package and toolchain caches.
 | Pool client, unit | `bun run --cwd packages/pool-client test` and `test:node` | 10 s |
 | Web server headers (preview and `serve`) | `bun run --cwd apps/web test:headers` (after `build`) | 12 s |
 | Web stack-build guard | `bun run --cwd apps/web check:stack-build` | 1 min |
+| Web testnet build (fixture file) | `PP_DEPLOYMENT=$PWD/apps/web/src/build/fixtures/testnet-own.json bun run --cwd apps/web build --mode testnet --outDir dist-testnet` | 21 s |
+| Web testnet server | `PP_CIRCUITS_DIR=<the pool checkout's circuit builds> bun run --cwd apps/web test:headers -- --target src/build/fixtures/testnet-own.json` (after the testnet build and pp-env's `fetch`) | 12 s |
+| Web testnet smoke | `bun run --cwd apps/web test:testnet-smoke -- --target src/build/fixtures/testnet-own.json --no-upstreams` (after the testnet build; the page reads the public testnet node and Sepolia RPC) | 5 s |
 | Web e2e (local stack, both builds, Playwright) | `bun run --cwd apps/web e2e` (after `bun run demo:prepare`) | 10 min (7.4 min of tests) |
 | Web e2e on the sandbox (fixture build) | `bun run --cwd packages/e2e-kit test:browser` | 5 min |
 | Real-wallet tier (the wallet's pinned release, local stack, Playwright) | `bun run --cwd packages/e2e-kit test:real-wallet` or `bun run nightly real-wallet`, either after `bun run demo:prepare` | 5.5 min |

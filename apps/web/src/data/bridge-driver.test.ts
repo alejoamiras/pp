@@ -104,6 +104,11 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 		records: async () => [],
 		recover: async () => [],
 		l1TxState: async () => "unknown",
+		registrationStep: async () => ({ status: "registered" }),
+		sendRegistration: async () => {
+			throw new Error("unused")
+		},
+		registrationReceipt: async () => null,
 		close: () => {},
 	}
 	const timer = virtualTimer()

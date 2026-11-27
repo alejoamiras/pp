@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
-import { afterEach, describe, expect, test } from "vitest"
+import { afterEach, describe, expect, onTestFinished, test, vi } from "vitest"
 import type { AztecAddress } from "../../data/stack-types"
 import { messageOf, PAYEE_MESSAGES, ProviderError, revertCopy } from "../../data/errors"
 import { ACCOUNTS, LABELS } from "../../data/fixtures/seed"
@@ -403,5 +403,110 @@ describe("the action dialogs", () => {
 		proven = REVERT_BLOCK
 		await readAgain()
 		await waitFor(() => expect(held()).toBe(false))
+	})
+})
+
+describe("the shield dialog", () => {
+	const openShield = async (app: ReturnType<typeof renderApp>) => {
+		const shield = () => within(screen.getByTestId("public-row")).getByRole("button", { name: "Shield" })
+		await waitFor(() => expect(disabled(shield())).toBe(false))
+		await app.user.click(shield())
+		return within(await screen.findByTestId("action-dialog"))
+	}
+
+	test("a dialog opened under one connection does not come back under the next, even for the same account", async () => {
+		const app = renderApp()
+		await connectAztec(app.user)
+		await openShield(app)
+		act(() => app.control.disconnectAztec())
+		await waitFor(() => expect(screen.queryByTestId("action-dialog")).toBeNull())
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		expect(screen.queryByTestId("action-dialog")).toBeNull()
+		expect(app.control.state().sent.aztec).toBe(0)
+	})
+
+	test("a shield whose connection ends while it waits to send sends nothing", async () => {
+		let release = () => {}
+		let entered = false
+		const held = new Promise<void>((r) => {
+			release = r
+		})
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				aztec: {
+					...s.aztec,
+					shield: async (from, amount, on) => {
+						entered = true
+						await held
+						return s.aztec.shield(from, amount, on)
+					},
+				},
+			}),
+		})
+		await connectAztec(app.user)
+		const dialog = await openShield(app)
+		await app.user.type(dialog.getByLabelText(/Amount/), "5")
+		await app.user.click(dialog.getByRole("button", { name: "Shield" }))
+		await waitFor(() => expect(entered).toBe(true))
+		act(() => app.control.disconnectAztec())
+		await act(async () => release())
+		expect(app.control.state().sent.aztec).toBe(0)
+	})
+
+	test("a shield the public balance no longer covers is refused before the wallet is asked", async () => {
+		const app = renderApp()
+		await connectAztec(app.user)
+		const dialog = await openShield(app)
+		await app.user.type(dialog.getByLabelText(/Amount/), "15")
+		// Elsewhere, 10 of the 15 the dialog opened with leaves the public balance.
+		await act(() => app.source.aztec.shield(ACCOUNTS.aztec, 10_000_000n, { epoch: 0, handoff: () => {} }))
+		const sent = app.control.state().sent.aztec
+		await app.user.click(dialog.getByRole("button", { name: "Shield" }))
+		await dialog.findByText(messageOf("OVER_PUBLIC_BALANCE"))
+		expect(app.control.state().sent.aztec).toBe(sent)
+	})
+
+	test("a new label reads Not enabled yet, then Funds enabled at the next refetch after approval, with no Refresh", async () => {
+		// Only intervals are faked, and they still advance with real time, so the wallet, the dialog and waitFor run as usual.
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"], shouldAdvanceTime: true })
+		onTestFinished(() => void vi.useRealTimers())
+		let reads = 0
+		const app = renderApp({
+			poll: 6_000,
+			patch: (s) => ({
+				...s,
+				allowList: {
+					...s.allowList,
+					current: () => {
+						reads++
+						return s.allowList.current()
+					},
+				},
+			}),
+		})
+		await connectAztec(app.user)
+		const before = new Set((await screen.findAllByTestId("label-row")).map((r) => r.dataset.label))
+		const dialog = await openShield(app)
+		await app.user.type(dialog.getByLabelText(/Amount/), "5")
+		await app.user.click(dialog.getByRole("button", { name: "Shield" }))
+		await dialog.findByText(/^Shielded\./)
+		await app.user.click(dialog.getByRole("button", { name: "Close" }))
+		const label = await waitFor(() => {
+			const born = screen.getAllByTestId("label-row").find((r) => !before.has(r.dataset.label))
+			expect(born).toBeDefined()
+			return BigInt(born?.dataset.label ?? "")
+		})
+		await waitFor(() => labelRow(label).getByText("Not enabled yet"))
+		expect(disabled(labelRow(label).getByRole("button", { name: "Send privately" }))).toBe(true)
+
+		const seen = reads
+		act(() => app.control.approveBirths())
+		await act(() => vi.advanceTimersByTimeAsync(6_000))
+		await waitFor(() => labelRow(label).getByText("Funds enabled"))
+		expect(reads).toBeGreaterThan(seen)
+		await app.user.click(labelRow(label).getByRole("button", { name: "Send privately" }))
+		within(await screen.findByTestId("action-dialog")).getByRole("heading", { name: "Send privately" })
 	})
 })

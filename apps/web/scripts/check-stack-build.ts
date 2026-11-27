@@ -1,19 +1,25 @@
 /**
- * Three builds into disposable directories under `~/.cache/pp/`: a stack build of a synthetic local
+ * Four builds into disposable directories under `~/.cache/pp/`: a stack build of a synthetic local
  * manifest (`PP_STACK_MANIFEST`: adapters behind `#data`, the real connector), a stack build of a
- * synthetic remote one, and the plain fixture build. It passes only when every build succeeds, the
- * fixture guard reports it ran in both stack builds (a guard that silently stopped running fails here
- * too), no output file carries a manifest field the target leaves out (the bot's accounts hold a
+ * synthetic remote one, a testnet build of the fixture deployment file, and the plain fixture build.
+ * It passes only when every build succeeds, the fixture guard reports it ran in each stack-mode build
+ * (a guard that silently stopped running fails here too), no output file carries a manifest field the target leaves out (the bot's accounts hold a
  * sentinel each), and the demo sender is in the local stack build alone: its sentinel and address
  * there, neither anywhere else, and the dev account's key and the anvil mnemonic in no build at all.
+ * The testnet build must carry no value of the file's `expected` section and connect to its node and
+ * L1 RPC alone.
  */
 import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { isDeepStrictEqual } from "node:util"
 import { ANVIL_MNEMONIC, anvilKey } from "@pp/bridge-core/sandbox"
 import { DEMO_SENDER_ADDRESS, DEMO_SENDER_INDEX } from "@pp/local-stack/accounts"
-import { GUARD_PASSED } from "../src/build/plugins.ts"
+import { securityHeaders } from "../src/build/headers.ts"
+import { GUARD_PASSED, TARGET_FILE } from "../src/build/plugins.ts"
+import { sponsoredFpcAddress } from "../src/build/sponsored-fpc.ts"
+import { testnetTarget } from "../src/build/testnet.ts"
 import { DEMO_SENDER_SENTINEL } from "../src/data/adapters/demo-sender.ts"
-import { bunRun, envWithout, scratchDir } from "./proc"
+import { APP_ROOT, bunRun, envWithout, scratchDir } from "./proc"
 
 const A20 = (n: string) => `0x${n.repeat(20)}`
 const A32 = (n: string) => `0x${n.repeat(32)}`
@@ -50,7 +56,10 @@ const REMOTE_MANIFEST = {
 	bot: { ...LOCAL_MANIFEST.bot, url: "https://bot.invalid" },
 }
 
-type Kind = "local" | "remote" | "fixture"
+/** Pinned endpoints and made-up contracts; an `expected` value in any output file is a leak. */
+const TESTNET_FILE = join(APP_ROOT, "src", "build", "fixtures", "testnet-own.json")
+
+type Kind = "local" | "remote" | "testnet" | "fixture"
 type Output = { file: string; text: string }
 
 /** Every emitted file, lazy chunks and workers included, as lower-cased text. */
@@ -91,19 +100,44 @@ function checkDemoSender(kind: Kind, files: Output[]): void {
 	}
 }
 
+/** Every string under `v`, hex without its prefix. */
+const leaves = (v: unknown): string[] =>
+	typeof v === "string" ? [v.replace(/^0x/, "")] : typeof v === "object" && v !== null ? Object.values(v).flatMap(leaves) : []
+
+async function checkTestnetOutput(dist: string, files: Output[]): Promise<void> {
+	const d = JSON.parse(readFileSync(TESTNET_FILE, "utf8")) as { description: string; expected: unknown }
+	const target = testnetTarget(TESTNET_FILE, {}, await sponsoredFpcAddress())
+	const built = (file: string): unknown => JSON.parse(readFileSync(join(dist, file), "utf8"))
+	if (!isDeepStrictEqual(built(TARGET_FILE), JSON.parse(JSON.stringify(target))))
+		throw new Error(`the testnet build's ${TARGET_FILE} is not its target`)
+	const headers = securityHeaders(target)
+	if (!isDeepStrictEqual(built("security-headers.json"), headers)) throw new Error("the testnet build's header set is not its target's")
+	const connect = headers["Content-Security-Policy"].split("; ").find((directive) => directive.startsWith("connect-src "))
+	const want = `connect-src 'self' data: ${new URL(target.nodeUrl).origin} ${new URL(target.l1RpcUrl).origin}`
+	if (connect !== want) throw new Error(`the testnet build's ${connect} is not ${want}`)
+	for (const leaf of leaves([d.description, d.expected])) {
+		const found = holding(files, leaf)
+		if (found.length > 0) throw new Error(`the deployment's ${leaf} leaked into ${found.join(", ")}`)
+	}
+}
+
+function command(kind: Kind, work: string, dist: string): { args: string[]; env: NodeJS.ProcessEnv } {
+	const env = envWithout()
+	if (kind === "fixture") return { args: ["build", "--", "--outDir", dist], env }
+	if (kind === "testnet")
+		return { args: ["build", "--", "--mode", "testnet", "--outDir", dist], env: { ...env, PP_DEPLOYMENT: TESTNET_FILE } }
+	const file = join(work, `${kind}.json`)
+	writeFileSync(file, JSON.stringify(kind === "local" ? LOCAL_MANIFEST : REMOTE_MANIFEST))
+	return {
+		args: ["build:local", "--", "--outDir", dist],
+		env: { ...env, PP_DATA: "stack", PP_STACK_MANIFEST: file, PP_WEB_WALLETS: "http://127.0.0.1:18081/?profile=plain" },
+	}
+}
+
 async function build(kind: Kind, work: string): Promise<string | null> {
 	const dist = join(work, kind, "dist")
-	const manifest = kind === "local" ? LOCAL_MANIFEST : REMOTE_MANIFEST
-	let env = envWithout()
-	if (kind !== "fixture") {
-		const file = join(work, `${kind}.json`)
-		writeFileSync(file, JSON.stringify(manifest))
-		env = { ...env, PP_DATA: "stack", PP_STACK_MANIFEST: file, PP_WEB_WALLETS: "http://127.0.0.1:18081/?profile=plain" }
-	}
-	const run = bunRun(kind === "fixture" ? ["build", "--", "--outDir", dist] : ["build:local", "--", "--outDir", dist], {
-		env,
-		capture: true,
-	})
+	const { args, env } = command(kind, work, dist)
+	const run = bunRun(args, { env, capture: true })
 	const code = await run.exited
 	await run.stop()
 	const out = run.output()
@@ -113,16 +147,23 @@ async function build(kind: Kind, work: string): Promise<string | null> {
 	if (kind === "fixture") return null
 	const line = out.split("\n").find((l) => l.includes(GUARD_PASSED))
 	if (!line) throw new Error(`the ${kind} stack build passed but the fixture guard never reported:\n${out}`)
-	checkStackOutput(dist, files, manifest)
+	if (kind === "testnet") await checkTestnetOutput(dist, files)
+	else checkStackOutput(dist, files, kind === "local" ? LOCAL_MANIFEST : REMOTE_MANIFEST)
 	return `${kind}: ${line.trim()}`
 }
 
 async function main(): Promise<void> {
 	const work = scratchDir("stack-build")
 	try {
-		const lines = await Promise.all((["local", "remote", "fixture"] as const).map((k) => build(k, work)))
-		for (const line of lines) if (line) console.log(line)
+		// Every build settles before the scratch directory goes, failed ones included.
+		const results = await Promise.allSettled((["local", "remote", "testnet", "fixture"] as const).map((k) => build(k, work)))
+		const failed = results.find((r) => r.status === "rejected")
+		if (failed) throw failed.reason
+		for (const r of results) if (r.status === "fulfilled" && r.value) console.log(r.value)
 		console.log("stack-build sentinels: no bot account in the output; connect-src names the ASP API and the bot")
+		console.log(
+			"testnet build: its receipt and header set are its target's; connect-src names the node and the L1 RPC alone; no expected value or description in the output",
+		)
 		console.log("demo sender: sentinel and address in the local stack build only; no build holds its key or the anvil mnemonic")
 	} finally {
 		rmSync(work, { recursive: true, force: true })

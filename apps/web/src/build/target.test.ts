@@ -200,8 +200,11 @@ describe("the build target", () => {
 			["a chain id that is not a number", withHandle({ l1ChainId: "31337" })],
 			["a negative rollup version", withHandle({ rollupVersion: -1 })],
 			["an unknown data mode", { ...ok, PP_DATA: "mock" }],
+			["a testnet deployment file", { ...ok, PP_DEPLOYMENT: "/deployments/testnet-own.json" }],
 		]
 		for (const [label, env] of cases) expect(() => local(env), label).toThrow(/build target/)
+		const fixtureBuild = { local: false, env: { PP_DEPLOYMENT: "" }, committedHandle: join(artifacts(HANDLE), "handle.json") }
+		expect(() => resolveTarget(fixtureBuild), "an empty one, in a fixture build").toThrow(/PP_DEPLOYMENT/)
 	})
 
 	// The kit's own path: `build:local` reads the handle, then every output file is scanned.

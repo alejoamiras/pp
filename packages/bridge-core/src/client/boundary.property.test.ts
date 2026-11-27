@@ -73,6 +73,8 @@ const POOL_CODES = keys({
 	ARTIFACT_MISMATCH: 0,
 	SPEND_CHECK_FAILED: 0,
 	NULLIFIER_NOT_FOUND: 0,
+	KEYSTORE_MISMATCH: 0,
+	REGISTERED_TO_OTHER_KEYS: 0,
 } satisfies Record<PoolClientErrorCode, 0>)
 
 // The test's own statement of the field rules, so a loosened pattern in errors.ts fails here.

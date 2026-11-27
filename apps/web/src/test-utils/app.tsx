@@ -1,7 +1,7 @@
 /**
  * Renders the whole app over a fresh fixture world. A "reload" is a second render over the same store,
- * as the browser's `sessionStorage` carries the world across one. Frames resolve at once and nothing
- * polls, so the only clock is the fixture's chain time.
+ * as the browser's `sessionStorage` carries the world across one. Frames resolve at once, and nothing
+ * polls unless `poll` sets a refetch interval.
  */
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -15,11 +15,11 @@ export function memoryStore(): KeyValue {
 	return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v), removeItem: (k) => void m.delete(k) }
 }
 
-export function renderApp(o: { store?: KeyValue; patch?: (s: DataSource) => DataSource } = {}) {
+export function renderApp(o: { store?: KeyValue; patch?: (s: DataSource) => DataSource; poll?: number } = {}) {
 	const { source, control } = createFixtureSource(o.store ?? memoryStore())
 	const user = userEvent.setup({ pointerEventsCheck: 0 })
 	const used = o.patch ? o.patch(source) : source
-	const view = render(<AppRoot source={used} frame={async () => {}} poll={false} />)
+	const view = render(<AppRoot source={used} frame={async () => {}} poll={o.poll ?? false} />)
 	return { source: used, control, user, ...view }
 }
 

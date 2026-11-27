@@ -40,7 +40,7 @@ function aztecAddress(value: string, field: string): AztecAddress {
 const deployment: Omit<Deployment, "decimals" | "symbol"> = {
 	id: `${manifest.chainId}:${manifest.bridge.portal.toLowerCase()}:${manifest.bridge.hub.toLowerCase()}`,
 	chainId: manifest.chainId,
-	stage: "2b",
+	stage: "2c",
 	portal: getAddress(manifest.bridge.portal),
 	hub: aztecAddress(manifest.bridge.hub, "bridge.hub"),
 	token: aztecAddress(manifest.bridge.token, "bridge.token"),
@@ -90,7 +90,7 @@ const loadExits = (): Promise<ExitSide> =>
 		m.stackExits({ manifest, deployment, aztec: side.deps, notes: (owner, label) => side.port.notesByLabel(owner, label), l1 }),
 	))
 
-type SendSide = Pick<AztecPort, "transferPrivate" | "unshield">
+type SendSide = Pick<AztecPort, "transferPrivate" | "unshield" | "shield">
 let sendsLoad: Promise<SendSide> | undefined
 const loadSends = (): Promise<SendSide> =>
 	(sendsLoad ??= Promise.all([import("./token-sends"), loadAztec()]).then(([m, side]) =>
@@ -99,6 +99,7 @@ const loadSends = (): Promise<SendSide> =>
 			allowList,
 			sponsoredFpc: deployment.sponsoredFpc,
 			notes: (owner, label) => side.port.notesByLabel(owner, label),
+			publicBalance: (owner) => side.port.publicBalance(owner),
 		}),
 	))
 
@@ -113,7 +114,7 @@ const aztec: AztecPort = {
 	publicBalance: async (owner) => (await loadAztec()).port.publicBalance(owner),
 	transferPrivate: async (from, a, on) => (await loadSends()).transferPrivate(from, a, on),
 	unshield: async (from, a, on) => (await loadSends()).unshield(from, a, on),
-	shield: unavailable("AztecPort.shield"),
+	shield: async (from, amount, on) => (await loadSends()).shield(from, amount, on),
 	ragequit: async (from, a, on) => (await loadExits()).ragequit(from, a, on),
 	exitPublic: unavailable("AztecPort.exitPublic"),
 }

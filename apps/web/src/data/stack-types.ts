@@ -24,7 +24,7 @@ export type {
 	StaleRootCode,
 } from "@pp/bridge-core"
 export type { AspSnapshot, LabelCheck, LabelPath, LabelState, Origin, RootRecord } from "@pp/label-paths"
-export type { NoteStatus as PoolNoteStatus, PoolNoteView } from "@pp/pool-client"
+export type { NoteStatus as PoolNoteStatus, PoolNoteView, RegistrationCall, RegistrationStep } from "@pp/pool-client"
 
 declare const brand: unique symbol
 type Brand<T, B extends string> = T & { readonly [brand]: B }

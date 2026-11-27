@@ -4,6 +4,7 @@ import { expect, it } from "vitest"
 import { checkout } from "../../../pp-env/src/env/checkout.ts"
 import {
 	ASP_REGISTRY_VIEWS_ABI,
+	KEYSTORE_REGISTRATION_ABI,
 	KEYSTORE_VIEWS_ABI,
 	POOL_VAULT_ERRORS_ABI,
 	POOL_VAULT_EVENTS_ABI,
@@ -29,7 +30,7 @@ const compiled = (contract: string): AbiItem[] =>
 
 it.each([
 	["PoolVault", [...POOL_VAULT_ERRORS_ABI, ...POOL_VAULT_EVENTS_ABI, ...POOL_VAULT_VIEWS_ABI]],
-	["Keystore", KEYSTORE_VIEWS_ABI],
+	["Keystore", [...KEYSTORE_VIEWS_ABI, ...KEYSTORE_REGISTRATION_ABI]],
 	["ASPRegistry", ASP_REGISTRY_VIEWS_ABI],
 ] as const)("our %s items equal the compiled contract's", (contract, ours) => {
 	const abi = compiled(contract)

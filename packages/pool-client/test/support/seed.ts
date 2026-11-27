@@ -10,6 +10,8 @@ import {
 	createWalletClient,
 	erc20Abi,
 	type Hex,
+	type PublicClient,
+	type TransactionReceipt,
 	http,
 	isAddressEqual,
 	parseAbi,
@@ -19,10 +21,12 @@ import {
 import { foundry } from "viem/chains"
 import { STUB_PROCESSOR_ABI } from "../../../pp-env/src/client/abi.ts"
 import { POOL_VAULT_ERRORS_ABI } from "../../src/abi.ts"
+import { freshHead } from "../../src/client.ts"
 import { deriveKeys } from "../../src/keys.ts"
+import { type OwnRegistration, ownRegistration, type RegistrationReader, registrationStep } from "../../src/registration.ts"
 import { createArtifacts } from "../../src/runtime/artifacts.ts"
 import { createSession } from "../../src/session.ts"
-import type { PreparedSpend } from "../../src/types.ts"
+import type { PoolConfig, PreparedSpend, RegistrationCall } from "../../src/types.ts"
 import { poolConfig, type UpEnv } from "./env.ts"
 import { circuitsDir, PACKAGE_DIR } from "./paths.ts"
 import { anvilAccount, derivationSignature } from "./users.ts"
@@ -34,6 +38,39 @@ const SPEND_ABI = [...STUB_PROCESSOR_ABI, ...POOL_VAULT_ERRORS_ABI]
 export const spendArgs = (s: PreparedSpend) => [s.proof, { processor: s.processor, data: s.data }, s.noteData] as const
 
 export type Simulation = { ok: true } | { ok: false; errorName: string | undefined; raw: Hex | undefined }
+
+type Sender = (index: number, call: RegistrationCall) => Promise<TransactionReceipt>
+
+/** Registration as an app does it: the next step, sent from its owner, asked for again after its receipt. */
+function registrar(client: PublicClient, pool: PoolConfig, send: Sender) {
+	const reader: RegistrationReader = {
+		head: () => freshHead(client),
+		readContract: (c) => client.readContract(c as Parameters<PublicClient["readContract"]>[0]),
+	}
+	/** The hashes it sent: none once the owner is registered. */
+	return async (index: number, owner: Address, own: OwnRegistration): Promise<Hex[]> => {
+		const sent: Hex[] = []
+		let after = 0n
+		for (;;) {
+			const step = await registrationStep(reader, pool, owner, own, after)
+			if (step.status === "registered") return sent
+			if (sent.length === 2) throw new Error("registration did not settle in two calls")
+			const receipt = await send(index, step.call)
+			sent.push(receipt.transactionHash)
+			after = receipt.blockNumber
+		}
+	}
+}
+
+/** Adds the label to the mock ASP's set and publishes the new root on chain. */
+async function approveLabel(aspUrl: string, label: bigint) {
+	const res = await fetch(`${aspUrl}/admin/approve-label`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ label: toHex(label, { size: 32 }) }),
+	})
+	if (!res.ok) throw new Error(`approve-label: HTTP ${res.status}`)
+}
 
 export function seeder(env: UpEnv) {
 	const chain = { ...foundry, rpcUrls: { default: { http: [env.rpcUrl] } } }
@@ -48,9 +85,17 @@ export function seeder(env: UpEnv) {
 	}
 	const artifacts = createArtifacts({ kind: "dir", path: circuitsDir() })
 	const pool = poolConfig(env)
+	/** Sends a registration call from anvil account `index`, which must be the call's `from`. */
+	const send: Sender = async (index, call) => {
+		const wallet = walletOf(index)
+		if (!isAddressEqual(wallet.account.address, call.from)) throw new Error(`account ${index} is not ${call.from}`)
+		return mined(await wallet.sendTransaction({ to: call.to, data: call.data, value: call.value }))
+	}
+	const register = registrar(client, pool, send)
 
 	return {
 		client,
+		send,
 		async mint(to: Address, amount: bigint) {
 			const abi = parseAbi(["function mint(address to, uint256 amount)"])
 			await mined(await deployer.writeContract({ address: env.asset, abi, functionName: "mint", args: [to, amount] }))
@@ -65,21 +110,20 @@ export function seeder(env: UpEnv) {
 		async user(index: number) {
 			const account = anvilAccount(index)
 			const signature = await derivationSignature(index)
-			const { session } = await createSession({
+			const keys = deriveKeys(account.address, signature)
+			const { session, notes, hash } = await createSession({
 				pool,
 				owner: account.address,
-				keys: deriveKeys(account.address, signature),
+				keys,
 				artifacts,
 				publicClient: client as never,
 				wallet: walletOf(index) as never,
 			})
+			const own = ownRegistration(keys, notes, hash)
 			return {
 				address: account.address,
 				signature,
-				async register() {
-					const receipts = await session.registerKeystore()
-					if (receipts.some((r) => !r.status)) throw new Error("keystore registration reverted")
-				},
+				register: () => register(index, account.address, own),
 				async deposit(value: bigint): Promise<{ label: bigint; commitment: bigint }> {
 					const prepared = await session.prepareDeposit({ tokenId: env.asset, value: toHex(value) })
 					if (!(await session.executeDeposit(prepared)).status) throw new Error("deposit reverted")
@@ -87,15 +131,7 @@ export function seeder(env: UpEnv) {
 				},
 			}
 		},
-		/** Adds the label to the mock ASP's set and publishes the new root on chain. */
-		async approveLabel(label: bigint) {
-			const res = await fetch(`${env.aspUrl}/admin/approve-label`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ label: toHex(label, { size: 32 }) }),
-			})
-			if (!res.ok) throw new Error(`approve-label: HTTP ${res.status}`)
-		},
+		approveLabel: (label: bigint) => approveLabel(env.aspUrl, label),
 		async simulate(stub: Address, spend: PreparedSpend, fromIndex: number): Promise<Simulation> {
 			try {
 				await client.simulateContract({

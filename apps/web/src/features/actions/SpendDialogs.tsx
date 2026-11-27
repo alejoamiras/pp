@@ -1,12 +1,11 @@
 import { useState } from "react"
-import { type App, useApp } from "../../app/context"
+import { useApp } from "../../app/context"
 import type { AztecAddress } from "../../data/stack-types"
-import { codeOf, messageOf, RECIPIENT_MESSAGE } from "../../data/errors"
+import { messageOf, RECIPIENT_MESSAGE } from "../../data/errors"
 import { isAztecPoint, parseAztecAddress } from "../../data/parse"
-import type { AztecSendHooks, LabelBalance } from "../../data/ports"
-import { bindAztecSend } from "../../data/sends"
+import type { LabelBalance } from "../../data/ports"
 import { ActionButton, Callout, Field, LabelChip } from "../../ui"
-import { ActionShell, AmountField, SpendCapNote, useAction, useAmount, useSpendCap } from "./shared"
+import { ActionShell, AmountField, bound, SpendCapNote, useAction, useAmount, useSpendCap } from "./shared"
 
 interface Props {
 	account: AztecAddress
@@ -15,16 +14,6 @@ interface Props {
 }
 
 const submitReason = (sending: boolean, missing: string | null) => (sending ? "Sending…" : (missing ?? undefined))
-
-/** The send bound to the connection that lists `account` at the click, or `null` with the dialog failed. */
-function bound(live: App["live"], account: AztecAddress, act: ReturnType<typeof useAction>): AztecSendHooks | null {
-	try {
-		return bindAztecSend(live.get, account)
-	} catch (err) {
-		act.fail(codeOf(err) ?? "CONTEXT_CHANGED")
-		return null
-	}
-}
 
 /** A private transfer under the same label. The page sends one transaction at a time, so a first send to a new recipient goes alone. */
 export function SendDialog({ account, balance, onClose }: Props) {
@@ -109,22 +98,23 @@ export function UnshieldDialog({ account, balance, onClose }: Props) {
 
 /** Moves public balance into a new private label, which waits for approval. */
 export function ShieldDialog({ account, amount: available, onClose }: { account: AztecAddress; amount: bigint; onClose(): void }) {
-	const { aztec } = useApp()
+	const { aztec, live } = useApp()
 	const amount = useAmount(available)
 	const act = useAction(account)
 	const send = () => {
 		const value = amount.amount
 		if (value === null) return
-		void act.send("shield", () => aztec.shield(account, value))
+		const on = bound(live, account, act)
+		if (on) void act.send("shield", (guard) => aztec.shield(account, value, guard(on)))
 	}
 	return (
 		<ActionShell
 			title="Shield"
-			description="Moves public balance into a new private label. The label waits for approval before it can be sent or unshielded; it can always leave to Ethereum."
+			description="Moves public balance into a new private label. The label cannot be sent or unshielded until the allow list approves it; leaving to Ethereum never waits for the list."
 			action="shield"
 			state={act.state}
 			onClose={onClose}
-			done="Shielded. The new label shows as awaiting approval until the allow list includes it."
+			done="Shielded. The new label reads Not enabled yet until the allow list includes it, then Funds enabled."
 		>
 			<AmountField field={amount} />
 			<ActionButton

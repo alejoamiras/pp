@@ -24,15 +24,21 @@ export interface Ports {
 }
 
 type Halt = "not_poster" | "no_l1_block" | "empty_set" | "asp_root_mismatch" | "size_mismatch"
-export type TickResult = Decision | { post: false; reason: Halt | "error" }
+/** `asp_deferred`: the leaves are needed but the request floor has not passed; not logged, since it repeats every tick. */
+export type TickResult = Decision | { post: false; reason: Halt | "asp_deferred" | "error" }
 
 type Pool = { root: bigint; leaves: bigint[] }
 
 const ascending = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0)
 
+const ROOT_MISMATCH = {
+	why: "the ASP's leaves do not hash to the selected Ethereum block's root; around an update either side can lead",
+	next: "nothing is posted and /latest keeps a snapshot this process holds; the bot asks the feed again on a later tick, no sooner than its request floor; if this persists, compare the API's leaves with the registry's root",
+}
+
 const SIZE_MISMATCH = {
 	why: "a posted root now comes with a list of another length; one root has one honest list, so one of the two is collapsed",
-	next: "the bot asks the feed again every tick and resumes once the lengths agree; otherwise compare both lists with the ASP's published list: if the feed is wrong, fix it or restart the bot; if the posted length is wrong, fix the feed first, then the admin calls set_poster, which clears the record, and the bot posts again",
+	next: "the bot asks the feed again on a later tick, no sooner than its request floor, and the halt clears once the lengths agree; otherwise compare both lists with the ASP's published list: if the feed is wrong, fix it; if the posted length is wrong, fix the feed first, then the admin calls set_poster, which clears the record, and the bot posts again",
 }
 
 function sizeMismatch(record: RootRecord, pool: Pool, birthLeaves: bigint[], birthRoot: bigint): Record<string, unknown> | null {
@@ -50,11 +56,18 @@ function sizeMismatch(record: RootRecord, pool: Pool, birthLeaves: bigint[], bir
 export class Poster {
 	private pool: Pool | null = null
 	private lastReadTime: bigint | null = null
+	private lastFetch = Number.NEGATIVE_INFINITY
+	/** The sequence of the cleared record last read, or `null` when it was not cleared. */
+	private resetAt: bigint | null = null
 
+	/**
+	 * `leavesFloorMs` (default 0) is the least time between two leaves requests, counted from the start of
+	 * each; `now` (default `performance.now`) must be monotonic.
+	 */
 	constructor(
 		private readonly ports: Ports,
 		private readonly book: SnapshotBook,
-		private readonly opts: { self: bigint; inclusionMarginSec: bigint },
+		private readonly opts: { self: bigint; inclusionMarginSec: bigint; leavesFloorMs?: number; now?: () => number },
 	) {}
 
 	/** One tick; the caller never runs two at once. A failed read or send is one log line and a skipped tick. */
@@ -71,6 +84,11 @@ export class Poster {
 		const p = this.ports
 		const tip = await p.tip()
 		const record = await p.record(tip.hash)
+		// `set_poster` keeps the sequence, so clears at one sequence share one cache boundary: a list cached
+		// before it is dropped once, and one fetched since is reused while the chain's root stays the same.
+		const resetAt = record.poolRoot === 0n ? record.sequence : null
+		if (resetAt !== null && resetAt !== this.resetAt) this.pool = null
+		this.resetAt = resetAt
 		// Before any other read can fail: after `set_poster` clears the roots, `/latest` must stop serving.
 		this.book.setCurrent(record)
 		const poster = await p.poster(tip.hash)
@@ -79,9 +97,8 @@ export class Poster {
 		if (!e) return this.halt("no_l1_block", { aztecTime: tip.time })
 		const root = await p.aspRootAt(e)
 		if (root === null) return this.halt("empty_set", { l1Block: e.number })
-		// A cleared record is the admin's reset: fetch the feed again rather than repost a list cached before it.
-		if (record.poolRoot === 0n) this.pool = null
 		const pool = await this.poolFor(root)
+		if (pool === "deferred") return { post: false, reason: "asp_deferred" }
 		if (!pool) return { post: false, reason: "asp_root_mismatch" }
 		const birthLeaves = (await p.birthLeaves(tip)).sort(ascending)
 		const birthRoot = buildLeanImt(birthLeaves).root
@@ -120,12 +137,16 @@ export class Poster {
 	}
 
 	/** A root already held reuses its leaves without asking the feed. */
-	private async poolFor(root: bigint): Promise<Pool | null> {
+	private async poolFor(root: bigint): Promise<Pool | "deferred" | null> {
 		if (this.pool?.root === root) return this.pool
+		const now = (this.opts.now ?? performance.now)()
+		if (now - this.lastFetch < (this.opts.leavesFloorMs ?? 0)) return "deferred"
+		// Before the request: an attempt that fails or times out uses the allowance too.
+		this.lastFetch = now
 		const leaves = await this.ports.aspLeaves()
 		const aspRoot = buildLeanImt(leaves).root
 		if (aspRoot !== root) {
-			this.halt("asp_root_mismatch", { chainRoot: root, aspRoot })
+			this.halt("asp_root_mismatch", { chainRoot: root, aspRoot, ...ROOT_MISMATCH })
 			return null
 		}
 		this.pool = { root, leaves }

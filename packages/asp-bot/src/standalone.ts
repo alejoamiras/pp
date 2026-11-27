@@ -5,7 +5,7 @@ import { type Hex, MAX_OBSERVATION_LAG } from "@pp/label-paths"
 import { claimRows, releaseNamed } from "@pp/run-isolation/ports"
 import { CleanupStack } from "@pp/run-isolation/process"
 import { createPublicClient, http } from "viem"
-import { type AspScope, fetchScopedLeaves } from "./asp"
+import { type AspScope, BOT_PRODUCT, fetchScopedLeaves, isBotUserAgent } from "./asp"
 import type { L1Tag } from "./l1"
 import { type LivePost, liveFrom } from "./live"
 import { ownPosts } from "./own-posts"
@@ -35,6 +35,8 @@ export type StandaloneBotConfig = {
 	postTimeoutSec: number
 	/** Default "finalized". */
 	tag?: L1Tag
+	/** Sent with every ASP API request; default `pp-aztec-bridge-bot/<version>`. Must start with that product token. */
+	userAgent?: string
 }
 
 /** `intake` exactly when `deployment.tokens` is non-empty. */
@@ -61,12 +63,24 @@ export function checkStandaloneConfig(c: StandaloneBotConfig, s: BotSecrets): vo
 	if (!Number.isInteger(c.port) || c.port < 1 || c.port > 65_535) throw new RangeError(`port must be in [1, 65535]: ${c.port}`)
 	if (c.deployment.tokens.length > 0 !== (s.intake !== undefined))
 		throw new RangeError("secrets.intake is required with tokens and refused without them")
+	checkAspConfig(c)
 }
 
-/** The bot's leaves for its pool: a multi-pool ASP API answers 404 without the scope. */
-export const scopedLeaves = (d: StandaloneBotConfig["deployment"]) => {
+/** The scope and name every ASP request carries, checked at runtime because the config arrives as JSON. */
+function checkAspConfig(c: StandaloneBotConfig): void {
+	const { chainId, entrypoint } = c.deployment
+	if (!Number.isSafeInteger(chainId) || chainId <= 0) throw new RangeError(`deployment.chainId must be a positive integer: ${chainId}`)
+	if (typeof entrypoint !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(entrypoint))
+		throw new RangeError("deployment.entrypoint must be a 20-byte hex address")
+	const ua = c.userAgent
+	if (ua !== undefined && !isBotUserAgent(ua))
+		throw new RangeError(`userAgent must be printable ASCII of at most 128 characters starting with ${BOT_PRODUCT}`)
+}
+
+/** The bot's leaves for its pool, which a multi-pool ASP API tells apart only by the scope. */
+export const scopedLeaves = (d: StandaloneBotConfig["deployment"], userAgent?: string) => {
 	const scope: AspScope = { chainId: d.chainId, entrypoint: d.entrypoint }
-	return () => fetchScopedLeaves(d.aspApiUrl, scope)
+	return () => fetchScopedLeaves(d.aspApiUrl, scope, { userAgent })
 }
 
 /** A post's margin plus the lag of `tag` behind the head beyond the registry's bound skips every post; warn, never refuse. */
@@ -77,6 +91,9 @@ async function warnMargin(c: StandaloneBotConfig, tag: L1Tag, log: Ports["log"])
 	if (BigInt(c.inclusionMarginSec) + lag >= MAX_OBSERVATION_LAG)
 		log("margin_warning", { inclusionMarginSec: c.inclusionMarginSec, tagLagSec: lag, bound: MAX_OBSERVATION_LAG })
 }
+
+/** The operator's term for its API: at most one leaves request per pool every 5 minutes. */
+export const ASP_LEAVES_FLOOR_MS = 300_000
 
 /** How long an abort waits for the in-flight step once the wallet under it has stopped. */
 const DRAIN_MS = 10_000
@@ -171,7 +188,7 @@ async function run(
 			gas: "node",
 			postTimeoutSec: c.postTimeoutSec,
 			secrets: { poster: s.poster.toString() as Hex, ...(s.intake ? { intake: s.intake.toString() as Hex } : {}) },
-			aspLeaves: scopedLeaves(d),
+			aspLeaves: scopedLeaves(d, c.userAgent),
 			onPosted: own.posted,
 			checkRoles: true,
 			signal: o.signal,
@@ -181,7 +198,11 @@ async function run(
 	cleanup.push(() => live.stop())
 	o.signal.throwIfAborted()
 	await warnMargin(c, tag, log)
-	const poster = new Poster(live.ports, book, { self: live.self, inclusionMarginSec: BigInt(c.inclusionMarginSec) })
+	const poster = new Poster(live.ports, book, {
+		self: live.self,
+		inclusionMarginSec: BigInt(c.inclusionMarginSec),
+		leavesFloorMs: ASP_LEAVES_FLOOR_MS,
+	})
 	const served = () => (o.signal.aborted ? undefined : own.served())
 	const runner = new Runner({
 		// Until its own first post lands, every tick asks for one.
