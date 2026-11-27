@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
-import { describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { pidNamespace } from "@pp/run-isolation/process-group"
 import { storeRoot } from "./wallet-store"
 
@@ -30,6 +30,25 @@ function child(
 async function storeOf(lines: string[]): Promise<string> {
 	while (lines.length === 0) await new Promise((r) => setTimeout(r, 10))
 	return lines[0] as string
+}
+
+type Child = ReturnType<typeof child>
+const gone = (c: Child) => c.proc.exitCode !== null || c.proc.signalCode !== null
+
+/** Waits up to `ms` for every child to print "ready"; throws if one exits first or time runs out. */
+async function allReady(children: Child[], ms: number): Promise<void> {
+	for (const end = Date.now() + ms; !children.every((c) => c.lines.includes("ready")); ) {
+		if (children.some(gone)) throw new Error("a child exited before its barrier")
+		if (Date.now() > end) throw new Error(`a child did not reach its barrier in ${ms} ms`)
+		await new Promise((r) => setTimeout(r, 10))
+	}
+}
+
+/** Waits up to `ms` for the children to exit, then ends any still alive through its own handle. */
+async function joinOrEnd(children: Child[], ms: number): Promise<void> {
+	const exited = Promise.all(children.map((c) => c.exited)).then(() => true)
+	if (!(await Promise.race([exited, new Promise((r) => setTimeout(() => r(false), ms))])))
+		for (const c of children) if (!gone(c)) c.proc.kill()
 }
 
 /** A store directory named as if `pid`, started at `start` under namespace `tag`, owned it. */
@@ -72,21 +91,35 @@ describe("ownedWalletStore", () => {
 // Nothing is reaped where /proc cannot vouch for an owner (hidepid, an ancestor's /proc); CI's runners can.
 const reaps = pidNamespace() !== undefined || process.env.CI !== undefined
 describe.skipIf(process.platform !== "linux" || !reaps)("a new store removes the stores of owners that are gone", () => {
+	// A home of its own: a store planted for a dead owner in the shared root is fair game to every
+	// creator on this host, including another run of this file, and would vanish mid-test.
+	let home: string
+	let root: string
+	let env: Record<string, string>
+	beforeAll(() => {
+		mkdirSync(join(homedir(), ".cache", "pp"), { recursive: true })
+		home = mkdtempSync(join(homedir(), ".cache", "pp", "wallet-home-"))
+		root = join(home, ".cache", "pp", "wallet-stores")
+		mkdirSync(root, { recursive: true, mode: 0o700 })
+		env = { HOME: home }
+	})
+	afterAll(() => rmSync(home, { recursive: true, force: true }))
+
 	/** This host's namespace tag, read from the name of a store a child takes and drops. */
 	async function ownTag(): Promise<string> {
-		const c = child("", "")
+		const c = child("", "", env)
 		const name = basename(await storeOf(c.lines))
 		await c.exited
 		return /^pp-test-([0-9a-f]{12})-\d+-\d+-/.exec(name)?.[1] as string
 	}
 
 	it("removes a SIGKILLed owner's store and keeps a live owner's", async () => {
-		const [killed, live] = [child("", keepAlive), child("", keepAlive)]
+		const [killed, live] = [child("", keepAlive, env), child("", keepAlive, env)]
 		const [killedDir, liveDir] = [await storeOf(killed.lines), await storeOf(live.lines)]
 		killed.proc.kill("SIGKILL")
 		await killed.exited
 		expect(existsSync(killedDir), "SIGKILL skips the exit handler").toBe(true)
-		const next = child("", "")
+		const next = child("", "", env)
 		await storeOf(next.lines)
 		expect(await next.exited).toBe(0)
 		expect(existsSync(killedDir)).toBe(false)
@@ -98,10 +131,10 @@ describe.skipIf(process.platform !== "linux" || !reaps)("a new store removes the
 	it("removes a store whose pid now names another process, and leaves one from another pid namespace", async () => {
 		const tag = await ownTag()
 		// This test process is alive, but did not start at tick 1: its pid was handed out again.
-		const reused = plant(tag, process.pid, "1")
-		const gone = plant(tag, NO_SUCH_PID, "1")
-		const foreign = plant(tag === "0".repeat(12) ? "f".repeat(12) : "0".repeat(12), NO_SUCH_PID, "1")
-		const next = child("", "")
+		const reused = plant(tag, process.pid, "1", 1, root)
+		const gone = plant(tag, NO_SUCH_PID, "1", 1, root)
+		const foreign = plant(tag === "0".repeat(12) ? "f".repeat(12) : "0".repeat(12), NO_SUCH_PID, "1", 1, root)
+		const next = child("", "", env)
 		await storeOf(next.lines)
 		expect(await next.exited).toBe(0)
 		expect(existsSync(reused)).toBe(false)
@@ -132,21 +165,27 @@ describe.skipIf(process.platform !== "linux" || !reaps)("a new store removes the
 	})
 
 	it("lets creators that race to remove the same dead store all take their own", async () => {
-		const dead = plant(await ownTag(), NO_SUCH_PID, "1", 3_000)
-		const go = join(disk, `pp-test-go-${process.pid}`)
+		const tag = await ownTag()
+		const go = join(root, "go")
+		// One creation under the real home sweeps the shared root once, as another run of this file
+		// would; it lands between the two halves of the plant.
+		const dead = plant(tag, NO_SUCH_PID, "1", 1_500, root)
+		expect(await child("", "").exited).toBe(0)
+		for (let i = 1_500; i < 3_000; i++) writeFileSync(join(dead, `f${i}`), "x")
 		// Each racer has its module loaded and waits on one go file, so all of them reap at once.
 		const barrier = `const { existsSync } = await import("node:fs"); await import(${JSON.stringify(module)}); console.log("ready"); while (!existsSync(${JSON.stringify(go)})) await Bun.sleep(1);`
-		const racers = Array.from({ length: 4 }, () => child(barrier, ""))
+		const racers = Array.from({ length: 4 }, () => child(barrier, "", env))
 		try {
-			while (!racers.every((r) => r.lines.includes("ready"))) await new Promise((r) => setTimeout(r, 10))
-			writeFileSync(go, "")
-			expect(await Promise.all(racers.map((r) => r.exited))).toEqual([0, 0, 0, 0])
+			await allReady(racers, 15_000)
 		} finally {
-			rmSync(go, { force: true })
+			// Released on failure too, so no racer outlives the case.
+			writeFileSync(go, "")
+			await joinOrEnd(racers, 10_000)
 		}
+		expect(await Promise.all(racers.map((r) => r.exited))).toEqual([0, 0, 0, 0])
 		expect(racers.every((r) => r.lines.length === 2)).toBe(true)
 		expect(existsSync(dead)).toBe(false)
-	})
+	}, 40_000)
 })
 
 describe("storeRoot", () => {
