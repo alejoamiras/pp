@@ -20,14 +20,14 @@
 		"@pp/asp-bot": "workspace:*",
 		"@pp/bridge-core": "workspace:*",
 		"@pp/pp-env": "workspace:*",
-		"viem": "2.57.1"
+		"viem": "catalog:"
 	},
 	"devDependencies": {
 		"@pp/label-paths": "workspace:*",
 		"@pp/run-isolation": "workspace:*",
-		"@types/bun": "1.4.4",
-		"@types/node": "^24.13.2",
-		"typescript": "^6.0.3",
-		"vitest": "^4.1.9"
+		"@types/bun": "catalog:",
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
+import { type Catalogs, resolveSpec } from "../catalog"
 
 /**
  * The two rules that carry an accepted-suppression baseline. The nested-test-suites
@@ -396,8 +397,8 @@ export function regenGate(args: { adopt: boolean; committedVersion: string | und
 	return "ok"
 }
 
-export function installedBiomeVersion(rootPackageJson: { devDependencies?: Record<string, string> }): string {
+export function installedBiomeVersion(rootPackageJson: { devDependencies?: Record<string, string> } & Catalogs): string {
 	const v = rootPackageJson.devDependencies?.["@biomejs/biome"]
 	if (!v) throw new Error("@biomejs/biome not found in root devDependencies")
-	return v
+	return resolveSpec("@biomejs/biome", v, rootPackageJson)
 }

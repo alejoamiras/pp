@@ -19,16 +19,16 @@
 		"@aztec-labs/noir-contracts.js": "6.0.0",
 		"@aztec-labs/stdlib": "6.0.0",
 		"@aztec-labs/wallets": "6.0.0",
-		"@nulo-sh/wallet-crypto": "0.3.0",
+		"@nulo-sh/wallet-crypto": "catalog:",
 		"@pp/bridge-core": "workspace:*",
 		"@pp/bridge-spec": "workspace:*",
 		"@pp/label-paths": "workspace:*",
 		"@pp/labelled-token": "workspace:*",
-		"viem": "2.57.1"
+		"viem": "catalog:"
 	},
 	"devDependencies": {
-		"@types/node": "^24.13.2",
-		"typescript": "^6.0.3",
-		"vitest": "^4.1.9"
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }
