@@ -48,7 +48,6 @@ const PORT_ACTIONS: Record<keyof AztecPort, readonly AztecAction[]> = {
 	shield: ["shield", "publicBalance"],
 	ragequit: ["ragequit", "notes"],
 	exitPublic: ["exitPublic", "publicBalance"],
-	unshieldAndExit: ["unshield", "exitPublic", "notes"],
 	exitPrivate: ["exitPrivate", "notes"],
 }
 
@@ -69,7 +68,6 @@ export function guardAztec(port: AztecPort, allowed: (action: AztecAction) => bo
 		shield: guard("shield"),
 		ragequit: guard("ragequit"),
 		exitPublic: guard("exitPublic"),
-		unshieldAndExit: guard("unshieldAndExit"),
 		exitPrivate: guard("exitPrivate"),
 	}
 }

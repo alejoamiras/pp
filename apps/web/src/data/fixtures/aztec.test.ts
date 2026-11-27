@@ -4,7 +4,7 @@ import { ACCOUNTS, LABELS } from "./seed"
 import { createWorld } from "./world"
 
 describe("the fixture Aztec port", () => {
-	test.each(["transferPrivate", "unshield", "unshieldAndExit", "exitPrivate"] as const)(
+	test.each(["transferPrivate", "unshield", "exitPrivate"] as const)(
 		"%s refuses before the handoff what one transaction cannot spend, as the stack port does",
 		async (op) => {
 			const w = createWorld({ chainId: 31337, storage: null })
@@ -29,7 +29,7 @@ describe("the fixture Aztec port", () => {
 		expect(handoff).not.toHaveBeenCalled()
 	})
 
-	test.each(["transferPrivate", "unshield", "unshieldAndExit", "exitPrivate"] as const)(
+	test.each(["transferPrivate", "unshield", "exitPrivate"] as const)(
 		"%s refuses before the handoff a label the latest list leaves out, and a stale list, as the stack port does",
 		async (op) => {
 			const w = createWorld({ chainId: 31337, storage: null })

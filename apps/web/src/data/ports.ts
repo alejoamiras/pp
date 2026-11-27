@@ -224,17 +224,6 @@ export interface AztecPort {
 	 */
 	exitPublic(from: AztecAddress, a: { payee: Address; amount: bigint }, on: AztecSendHooks): Promise<Sent>
 	/**
-	 * A checked spend that unshields `amount` of the label and exits it to `payee` in one transaction,
-	 * so the label never reaches Ethereum; the account is public on Aztec. Reverts whole if the label's
-	 * roots changed before its public step.
-	 * @throws `OVER_NOTE_CAP` before the handoff when the label's 8 largest notes, read again, cannot cover `amount`
-	 */
-	unshieldAndExit(
-		from: AztecAddress,
-		a: { payee: Address; amount: bigint; label: bigint; origin: Origin },
-		on: AztecSendHooks,
-	): Promise<Sent>
-	/**
 	 * The hub's `exit_private` of `amount` of the label to `payee`, a checked spend whose public calls
 	 * name no Aztec account. Reverts whole if the label's roots changed before its public step.
 	 * @throws `OVER_NOTE_CAP` before the handoff when the label's 8 largest notes, read again, cannot cover `amount`

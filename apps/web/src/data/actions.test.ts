@@ -85,7 +85,6 @@ describe("dispatch", () => {
 			["ragequit", ["ragequit", "notes"]],
 			["shield", ["shield", "publicBalance"]],
 			["exitPublic", ["exitPublic", "publicBalance"]],
-			["unshieldAndExit", ["unshield", "exitPublic", "notes"]],
 			["exitPrivate", ["exitPrivate", "notes"]],
 		]
 		for (const [member, actions] of needs)

@@ -1,10 +1,8 @@
 /**
- * Withdrawals to Ethereum for a stack build. The public row's withdraw is the hub's `exit_public`
- * alone. The label row's screened exit is `[sponsor, unshield, exit_public]` in one transaction: the
- * unshield's public credit, which checks the label's roots again, runs before the exit burns it, so a
- * revert of the check leaves neither. The private exit is the hub's `exit_private` alone, whose public
- * calls name no account. All go out like every other Aztec send, through `sendThroughWallet`, and only
- * after the payload is checked call by call against what was confirmed.
+ * Withdrawals to Ethereum for a stack build. The public row's withdraw is the hub's `exit_public`; the
+ * label row's is the hub's `exit_private`, a checked spend whose public calls name no account. Both go
+ * out like every other Aztec send, through `sendThroughWallet`, and only after the payload is checked
+ * call by call against what was confirmed.
  */
 import { AztecAddress as SdkAddress, EthAddress } from "@aztec-labs/aztec.js/addresses"
 import {
@@ -16,25 +14,21 @@ import {
 	getAllFunctionAbis,
 } from "@aztec-labs/aztec.js/abi"
 import { Fr } from "@aztec-labs/aztec.js/fields"
-import { ExecutionPayload, mergeExecutionPayloads } from "@aztec-labs/aztec.js/tx"
+import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { BridgeClient } from "@pp/bridge-core"
-import { labelledTokenArtifact, tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
-import type { Address } from "viem"
+import { tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
 import { assertSpendable } from "../chunks"
 import { BridgeFailure } from "../errors"
 import { parseAztecAddress } from "../parse"
 import type { AztecPort, AztecSendHooks, Sent } from "../ports"
-import type { AztecAddress, Origin } from "../stack-types"
-import { type AztecDeps, boundTo, sendThroughWallet } from "./aztec"
-import { checkedPath, pathArg, spendPayloads, type TokenSendDeps } from "./token-sends"
+import type { AztecAddress } from "../stack-types"
+import { type AztecDeps, sendThroughWallet } from "./aztec"
+import { checkedPath, pathArg, type TokenSendDeps } from "./token-sends"
 
 export interface WithdrawDeps extends TokenSendDeps {
 	/** Builds `exit_public` and `exit_private` with bridge-core's refusals; nothing on it writes. */
 	client: Pick<BridgeClient, "exitPublicPayload" | "exitPrivatePayload">
 }
-
-/** What the user confirmed; every call in the payload must carry exactly these values. */
-export type ScreenedExit = Readonly<{ payee: Address; amount: bigint; label: bigint; origin: Origin }>
 
 const SPONSOR = "sponsor_unconditionally"
 
@@ -64,25 +58,24 @@ async function expectCall(c: FunctionCall | undefined, e: Expected): Promise<voi
 }
 
 /**
- * Checks `p` is exactly `calls`, in order, paid by `fpc`, with no witnesses, capsules or hashed
- * arguments of its own: none of these calls takes any.
+ * Checks `p` is the sponsor, then exactly `call`, paid by `fpc`, with no witnesses, capsules or hashed
+ * arguments of its own: neither call takes any.
  * @throws BridgeFailure `SPEND_MISMATCH` on any other call, order, argument, flag, fee payer or extra input
  */
-async function expectPayload(p: ExecutionPayload, fpc: AztecAddress, calls: Expected[]): Promise<void> {
+async function expectPayload(p: ExecutionPayload, fpc: AztecAddress, call: Expected): Promise<void> {
 	const bare = p.authWitnesses.length === 0 && p.capsules.length === 0 && p.extraHashedArgs.length === 0
-	if (!bare || p.calls.length !== calls.length + 1 || parseAztecAddress(p.feePayer?.toString() ?? "") !== fpc)
-		throw new BridgeFailure("SPEND_MISMATCH")
+	if (!bare || p.calls.length !== 2 || parseAztecAddress(p.feePayer?.toString() ?? "") !== fpc) throw new BridgeFailure("SPEND_MISMATCH")
 	await expectCall(p.calls[0], { to: fpc, artifact: null, name: SPONSOR, args: [] })
-	for (const [i, e] of calls.entries()) await expectCall(p.calls[i + 1], e)
+	await expectCall(p.calls[1], call)
 }
 
-export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "unshieldAndExit" | "exitPrivate"> {
+export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "exitPrivate"> {
 	const { hub, token } = d.aztec.deployment
-	const exitCall = (payee: Address, amount: bigint): Expected => ({
+	const hubCall = (name: "exit_public" | "exit_private", args: unknown[]): Expected => ({
 		to: hub,
 		artifact: tokenBridgeHubArtifact,
-		name: "exit_public",
-		args: [SdkAddress.fromStringUnsafe(token), EthAddress.fromString(payee), amount],
+		name,
+		args: [SdkAddress.fromStringUnsafe(token), ...args],
 	})
 	const send = (aztec: AztecDeps, from: AztecAddress, payload: ExecutionPayload, on: AztecSendHooks): Promise<Sent> =>
 		sendThroughWallet(aztec, { epoch: on.epoch, from, payload, contracts: ["hub", "token"], handoff: () => on.handoff() })
@@ -90,52 +83,22 @@ export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "
 		async exitPublic(from, a, on) {
 			const { payee, amount } = a
 			const payload = await d.client.exitPublicPayload({ payee, amount })
-			await expectPayload(payload, d.sponsoredFpc, [exitCall(payee, amount)])
+			await expectPayload(payload, d.sponsoredFpc, hubCall("exit_public", [EthAddress.fromString(payee), amount]))
 			// A balance spent since the form fails the wallet's simulation past the handoff, which holds the account.
 			if ((await d.publicBalance(from)) < amount) throw new BridgeFailure("OVER_PUBLIC_BALANCE")
 			return send(d.aztec, from, payload, on)
 		},
-		async unshieldAndExit(from, a, on) {
-			const x: ScreenedExit = { payee: a.payee, amount: a.amount, label: a.label, origin: a.origin }
-			// The exit first, checked as built: a refused payee or a wrong payload costs no allow-list check.
-			const exit = await d.client.exitPublicPayload({ payee: x.payee, amount: x.amount })
-			await expectPayload(exit, d.sponsoredFpc, [exitCall(x.payee, x.amount)])
-			const path = await checkedPath(d.allowList, x.label, x.origin)
-			const unshield = await spendPayloads({ token, sponsoredFpc: d.sponsoredFpc }).unshield(
-				boundTo(d.aztec, on.epoch).wallet,
-				{ amount: x.amount, label: x.label },
-				path,
-			)
-			const exitOnly = new ExecutionPayload(
-				// The exit's sponsor, checked above, gives way to the unshield's.
-				exit.calls.slice(1),
-				exit.authWitnesses,
-				exit.capsules,
-				exit.extraHashedArgs,
-				exit.feePayer,
-			)
-			const payload = mergeExecutionPayloads([unshield, exitOnly])
-			await expectPayload(payload, d.sponsoredFpc, [
-				{ to: token, artifact: labelledTokenArtifact, name: "unshield", args: [x.amount, new Fr(x.label), pathArg(path)] },
-				exitCall(x.payee, x.amount),
-			])
-			// The notes as they are now: one spend takes at most the label's 8 largest.
-			assertSpendable(await d.notes(from, x.label), x.amount)
-			return send(d.aztec, from, payload, on)
-		},
 		async exitPrivate(from, a, on) {
-			const x: ScreenedExit = { payee: a.payee, amount: a.amount, label: a.label, origin: a.origin }
-			const path = await checkedPath(d.allowList, x.label, x.origin)
-			const payload = await d.client.exitPrivatePayload({ payee: x.payee, amount: x.amount, label: x.label, path })
-			await expectPayload(payload, d.sponsoredFpc, [
-				{
-					to: hub,
-					artifact: tokenBridgeHubArtifact,
-					name: "exit_private",
-					args: [SdkAddress.fromStringUnsafe(token), EthAddress.fromString(x.payee), x.amount, new Fr(x.label), pathArg(path)],
-				},
-			])
-			assertSpendable(await d.notes(from, x.label), x.amount)
+			const { payee, amount, label } = a
+			const path = await checkedPath(d.allowList, label, a.origin)
+			const payload = await d.client.exitPrivatePayload({ payee, amount, label, path })
+			await expectPayload(
+				payload,
+				d.sponsoredFpc,
+				hubCall("exit_private", [EthAddress.fromString(payee), amount, new Fr(label), pathArg(path)]),
+			)
+			// The notes as they are now: one spend takes at most the label's 8 largest.
+			assertSpendable(await d.notes(from, label), amount)
 			return send(d.aztec, from, payload, on)
 		},
 	}

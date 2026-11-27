@@ -16,23 +16,6 @@ import { parseGrant } from "../wallet/grant"
 import type { AztecDeps } from "./aztec"
 import { stackWithdraw } from "./withdraw"
 
-/** Set by a test to make the token's unshield carry another amount than the one confirmed. */
-const unshieldOff = vi.hoisted(() => ({ by: 0n }))
-vi.mock("./token-sends", async (actual) => {
-	const m = await actual<typeof import("./token-sends")>()
-	return {
-		...m,
-		spendPayloads(d: Parameters<typeof m.spendPayloads>[0]) {
-			const p = m.spendPayloads(d)
-			return {
-				...p,
-				unshield: (...[w, a, path]: Parameters<typeof p.unshield>) =>
-					p.unshield(w, { ...a, amount: a.amount + unshieldOff.by }, path),
-			}
-		},
-	}
-})
-
 const at = (n: string) => `0x${n.repeat(32)}` as AztecAddress
 const [HUB, TOKEN, FPC, ME, OTHER] = [at("08"), at("09"), at("0c"), at("1c"), at("2a")]
 const PAYEE = `0x${"ab".repeat(20)}` as Address
@@ -129,27 +112,11 @@ function rig(check: LabelCheck = ACTIVE, wrong?: Exit) {
 }
 
 const on = (handoff = vi.fn()): AztecSendHooks & { handoff: ReturnType<typeof vi.fn> } => ({ epoch: 3, handoff })
-const screened = { payee: PAYEE, amount: 5n, label: 77n, origin: 0 } as const
+const confirmed = { payee: PAYEE, amount: 5n, label: 77n, origin: 0 } as const
 const sentPayload = (r: ReturnType<typeof rig>) => r.wallet.sendTx.mock.calls[0]?.[0] as ExecutionPayload
 
 describe("withdrawals to Ethereum", () => {
-	test("the screened exit is one transaction: the sponsor, the label's checked unshield, then exit_public of the same amount", async () => {
-		const r = rig()
-		const hooks = on()
-		await expect(r.port.unshieldAndExit(ME, screened, hooks)).resolves.toMatchObject({ status: "success" })
-		const p = sentPayload(r)
-		expect(p.feePayer?.toString()).toBe(FPC)
-		expect(p.calls.map((c) => [c.to.toString(), c.name])).toEqual([
-			[FPC, "sponsor_unconditionally"],
-			[TOKEN, "unshield"],
-			[HUB, "exit_public"],
-		])
-		expect(p.calls[1]?.args.slice(0, 5).map((a) => a.toBigInt())).toEqual([5n, 77n, 1n, 1n, 7n])
-		expect(p.calls[2]?.args.map((a) => a.toBigInt())).toEqual([BigInt(TOKEN), BigInt(PAYEE), 5n])
-		expect(hooks.handoff).toHaveBeenCalledOnce()
-	})
-
-	test("a payload that is not exactly what was confirmed never reaches the handoff or the allow list", async () => {
+	test("a payload that is not exactly what was confirmed never reaches the handoff", async () => {
 		const wrongs: [string, Exit][] = [
 			["another token", { token: OTHER }],
 			["another hub", { hub: OTHER }],
@@ -167,58 +134,21 @@ describe("withdrawals to Ethereum", () => {
 		]
 		const all: [string, Exit][] = [...wrongs, ["another label", { label: 78n }]]
 		for (const [what, wrong] of all)
-			for (const send of ["exitPublic", "unshieldAndExit", "exitPrivate"] as const) {
-				// Only the private exit carries a label, and only it needs the checked path before it builds.
+			for (const send of ["exitPublic", "exitPrivate"] as const) {
+				// Only the private exit carries a label.
 				if (wrong.label !== undefined && send !== "exitPrivate") continue
 				const r = rig(ACTIVE, wrong)
 				const hooks = on()
-				await expect(r.port[send](ME, screened, hooks), `${send}: ${what}`).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
+				await expect(r.port[send](ME, confirmed, hooks), `${send}: ${what}`).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
 				expect(hooks.handoff, `${send}: ${what}`).not.toHaveBeenCalled()
 				expect(r.wallet.sendTx, `${send}: ${what}`).not.toHaveBeenCalled()
-				if (send !== "exitPrivate") expect(r.allowList.check, `${send}: ${what}`).not.toHaveBeenCalled()
 			}
-		// An exit the client built right, merged with an unshield of another amount: only the merged check sees it.
-		unshieldOff.by = 1n
-		try {
-			const r = rig()
-			const hooks = on()
-			await expect(r.port.unshieldAndExit(ME, screened, hooks)).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
-			expect(hooks.handoff).not.toHaveBeenCalled()
-			expect(r.wallet.sendTx).not.toHaveBeenCalled()
-		} finally {
-			unshieldOff.by = 0n
-		}
-	})
-
-	test("a refused payee reads no allow list; a label the list does not hold, notes that no longer cover it, or a refused handoff send nothing", async () => {
-		const refused = rig()
-		refused.client.exitPublicPayload.mockRejectedValue(Object.assign(new Error("payee"), { code: "SPEND_MISMATCH" }))
-		await expect(refused.port.unshieldAndExit(ME, screened, on())).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
-		expect(refused.allowList.check).not.toHaveBeenCalled()
-		const absent = rig({ state: "ABSENT" })
-		await expect(absent.port.unshieldAndExit(ME, screened, on())).rejects.toMatchObject({ code: "LABEL_ABSENT" })
-		const spent = rig()
-		spent.notes.mockResolvedValue([4n])
-		const late = on()
-		await expect(spent.port.unshieldAndExit(ME, screened, late)).rejects.toMatchObject({ code: "OVER_NOTE_CAP" })
-		expect(spent.notes).toHaveBeenCalledWith(ME, screened.label)
-		// The notes are read after the allow-list check.
-		expect(spent.notes.mock.invocationCallOrder[0]).toBeGreaterThan(spent.allowList.check.mock.invocationCallOrder[0] ?? 0)
-		expect(late.handoff).not.toHaveBeenCalled()
-		const moved = rig()
-		const hooks = on(
-			vi.fn(() => {
-				throw new Error("the page's account changed")
-			}),
-		)
-		await expect(moved.port.unshieldAndExit(ME, screened, hooks)).rejects.toThrow("the page's account changed")
-		for (const r of [refused, absent, spent, moved]) expect(r.wallet.sendTx).not.toHaveBeenCalled()
 	})
 
 	test("the private exit is the sponsor then exit_private, with the confirmed payee, amount, label and checked path", async () => {
 		const r = rig()
 		const hooks = on()
-		await expect(r.port.exitPrivate(ME, screened, hooks)).resolves.toMatchObject({ status: "success" })
+		await expect(r.port.exitPrivate(ME, confirmed, hooks)).resolves.toMatchObject({ status: "success" })
 		expect(r.client.exitPrivatePayload).toHaveBeenCalledWith({ payee: PAYEE, amount: 5n, label: 77n, path: ACTIVE.path })
 		const p = sentPayload(r)
 		expect(p.feePayer?.toString()).toBe(FPC)
@@ -230,17 +160,29 @@ describe("withdrawals to Ethereum", () => {
 		expect(hooks.handoff).toHaveBeenCalledOnce()
 	})
 
-	test("the private exit builds nothing for a label the list does not hold, and sends nothing once its notes no longer cover it", async () => {
+	test("the private exit builds nothing for a label the list does not hold; a refused payee, notes that no longer cover it, or a refused handoff send nothing", async () => {
 		const absent = rig({ state: "ABSENT" })
-		await expect(absent.port.exitPrivate(ME, screened, on())).rejects.toMatchObject({ code: "LABEL_ABSENT" })
+		await expect(absent.port.exitPrivate(ME, confirmed, on())).rejects.toMatchObject({ code: "LABEL_ABSENT" })
 		expect(absent.client.exitPrivatePayload).not.toHaveBeenCalled()
+		const refused = rig()
+		refused.client.exitPrivatePayload.mockRejectedValue(Object.assign(new Error("payee"), { code: "SPEND_MISMATCH" }))
+		await expect(refused.port.exitPrivate(ME, confirmed, on())).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
 		const spent = rig()
 		spent.notes.mockResolvedValue([4n])
 		const late = on()
-		await expect(spent.port.exitPrivate(ME, screened, late)).rejects.toMatchObject({ code: "OVER_NOTE_CAP" })
-		expect(spent.notes).toHaveBeenCalledWith(ME, screened.label)
+		await expect(spent.port.exitPrivate(ME, confirmed, late)).rejects.toMatchObject({ code: "OVER_NOTE_CAP" })
+		expect(spent.notes).toHaveBeenCalledWith(ME, confirmed.label)
+		// The notes are read after the allow-list check.
+		expect(spent.notes.mock.invocationCallOrder[0]).toBeGreaterThan(spent.allowList.check.mock.invocationCallOrder[0] ?? 0)
 		expect(late.handoff).not.toHaveBeenCalled()
-		for (const r of [absent, spent]) expect(r.wallet.sendTx).not.toHaveBeenCalled()
+		const moved = rig()
+		const hooks = on(
+			vi.fn(() => {
+				throw new Error("the page's account changed")
+			}),
+		)
+		await expect(moved.port.exitPrivate(ME, confirmed, hooks)).rejects.toThrow("the page's account changed")
+		for (const r of [absent, refused, spent, moved]) expect(r.wallet.sendTx).not.toHaveBeenCalled()
 	})
 
 	test("the public row's withdraw is exit_public alone, paid by the SponsoredFPC, and refuses a public balance spent since the form", async () => {
