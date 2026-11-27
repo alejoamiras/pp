@@ -9,18 +9,22 @@ the claiming account is the recipient, and the note keeps the pool's label). `ra
 label's notes and sends the portal the message that pays an Ethereum address, with a public
 `RagequitTicket` that names no Aztec account; every refusal comes before the burn. A transaction's
 fee payer is public, so a ragequit paid from the holder's own Fee Juice names the holder: pay it
-through a fee-paying contract. `bind_token` is the
-publish-free twin the TXE drives; on a real network no factory leaf can be spent through it
-(pinned). `claim_secret` and `register_hash` are the shared derivation libraries; `keystone` pins
+through a fee-paying contract. `exit_public` burns the caller's public balance, which the token's
+checked `unshield` fills, and sends the portal the label-0 exit message with a public
+`PublicExitTicket`; its refusals also come before the burn, and the burn names the caller.
+`bind_token` is the publish-free twin the TXE drives; on a real network no factory leaf can be
+spent through it (pinned). `claim_secret` and `register_hash` are the shared derivation libraries; `keystone` pins
 them against their TypeScript and Solidity mirrors. `bridge_message` (the v1 bridge contents)
 and `pp_hash` (circom Poseidon, label paths, birth hashes) implement the wire format that
 [`packages/bridge-spec`](../../../packages/bridge-spec/README.md) specifies; keystone runs its
 generated `src/vectors_v1.nr` against them.
 
-`labelled_token` is the token every note of which carries a deposit label and an origin; its stage-A
+`labelled_token` is the token every note of which carries a deposit label and an origin; its
 surface, budgets and network suite are described in [`@pp/labelled-token`](../../../packages/labelled-token/README.md).
 `bridge_stub` is its test-only minter: the TXE suite and the network suite deploy it in the hub's
-place. The TXE runner deploys the committed `target/` artifact, so compile a crate before running its suite.
+place. The TXE runner rebuilds a crate, and the artifacts it stages, before running its suite. An
+artifact a suite reads in place by path is not rebuilt (the hub's tests read `labelled_token` and
+`asp_registry` this way), so compile that crate after editing it.
 
 ## Toolchain — the pinned 6.0.0 nargo
 
@@ -45,7 +49,7 @@ never a re-pin of a deployed hub.
 ## Tests
 
 - **TXE**: `scripts/run-txe-tests.sh` rebuilds the crate (the suite deploys the contract from its
-  `target/` artifact), then runs the 44 named tests in `token_bridge_hub/txe-manifest.txt` against a
+  `target/` artifact), then runs the 52 named tests in `token_bridge_hub/txe-manifest.txt` against a
   TXE server whose dependencies are the committed mini-project `txe-server/` (frozen
   lockfile — never an ad-hoc `bun add`). `token_bridge_hub/txe-ts-map.md` maps every cross-boundary
   property to its L1 / TS counterpart. The TXE cannot run the protocol registry publish

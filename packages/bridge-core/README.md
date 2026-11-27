@@ -36,7 +36,7 @@ package re-derives it rather than trusting a file.
 | `bun run test` | vitest on Bun: pure functions, mocked-L1 orchestrations, the deploy journal, the harness's units. |
 | `bun run typecheck` | `tsc --noEmit -p tsconfig.scripts.json` (src + scripts + test). |
 | `bun run test:integration` | Boots one anvil + `aztec start --local-network`, deploys a generation, and checks its bindings: vault, cap, paused entries, one portal per manifest token. `SANDBOX_L1_RPC` + `SANDBOX_NODE_URL` attach to a network kept up by `sandbox:up`; `PP_SANDBOX_ARTIFACTS` keeps the run's artifacts. |
-| `bun run test:hub` | Boots a local network of its own and runs the hub on it, block by block: `register_token` and its publish, a claim from a pool withdrawal, a ragequit and that exit's consumption on the real Outbox, and each refused ragequit. Two anvil accounts stand in for the factory and the portal, so it needs no vault and no factory deploy. |
+| `bun run test:hub` | Boots a local network of its own and runs the hub on it, block by block: `register_token` and its publish, a claim from a pool withdrawal, a ragequit and a public exit after an unshield, each consumed on the real Outbox, and each refused ragequit and public exit. Two anvil accounts stand in for the factory and the portal, so it needs no vault and no factory deploy. |
 | `bun run sandbox:up --artifacts <dir>` | Boot and deploy, write `<dir>/{manifest,handle}.json`, then hold until SIGTERM. |
 | `bun run sandbox:smoke` | Boot, deploy, run every flow once with timings, tear down. `deploy:sandbox [--smoke] [--keep]` is the same entry; `--keep` leaves the network up and prints how to re-attach. |
 

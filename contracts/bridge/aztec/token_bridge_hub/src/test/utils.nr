@@ -5,6 +5,7 @@
 // enqueued constructor then initializes the token exactly as in production.
 
 use crate::TokenBridgeHub;
+use asp_registry::AspRootRegistry;
 use aztec::{
     hash::compute_secret_hash,
     protocol::{
@@ -26,9 +27,17 @@ pub global LABELLED_TOKEN: str<46> = "../labelled_token@labelled_token/LabelledT
 /// messages it consumes.
 pub global FACTORY: EthAddress = EthAddress::from_field(0xFAC7);
 
+/// The registry crate's committed artifact, read in place like `LABELLED_TOKEN`.
+pub global ASP_REGISTRY: str<44> = "../asp_registry@asp_registry/AspRootRegistry";
+
+/// Any non-zero root: the public exit's tests spend only pool-origin notes.
+global BIRTH_ROOT: Field = 0xb127;
+
 pub struct Hub {
     pub env: TestEnvironment,
     pub admin: AztecAddress,
+    /// Zero unless the hub sits over a real registry (`setup_with_asp`).
+    pub poster: AztecAddress,
     pub hub: AztecAddress,
     pub token_class_id: ContractClassId,
     pub registry: AztecAddress,
@@ -45,12 +54,34 @@ pub unconstrained fn setup() -> Hub {
     setup_with_registry(AztecAddress::zero())
 }
 
-/// Deploys the hub. The token class id is read off a throwaway instance registration because the
-/// TXE derives it from the artifact it serves — there is no other source in a Noir test.
+/// Deploys a hub over `registry`, which may be no contract at all.
 pub unconstrained fn setup_with_registry(registry: AztecAddress) -> Hub {
     let mut env = TestEnvironment::new();
     let admin = env.create_light_account();
+    deploy_hub(env, admin, AztecAddress::zero(), registry)
+}
 
+/// As `setup`, over a real registry with nothing posted: `admin` is its admin and birth intake,
+/// `poster` its poster.
+pub unconstrained fn setup_with_asp() -> Hub {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let poster = env.create_light_account();
+    let registry = env.deploy(ASP_REGISTRY).with_public_initializer(
+        admin,
+        AspRootRegistry::interface().constructor(admin, poster, admin),
+    );
+    deploy_hub(env, admin, poster, registry)
+}
+
+/// The token class id is read off a throwaway instance registration because the TXE derives it
+/// from the artifact it serves — there is no other source in a Noir test.
+unconstrained fn deploy_hub(
+    mut env: TestEnvironment,
+    admin: AztecAddress,
+    poster: AztecAddress,
+    registry: AztecAddress,
+) -> Hub {
     let probe = txe_oracles::deploy(
         LABELLED_TOKEN,
         "constructor",
@@ -73,7 +104,19 @@ pub unconstrained fn setup_with_registry(registry: AztecAddress) -> Hub {
     let hub_init = TokenBridgeHub::interface().constructor(token_class_id, FACTORY, registry);
     let hub = env.deploy("TokenBridgeHub").with_public_initializer(admin, hub_init);
 
-    Hub { env, admin, hub, token_class_id, registry }
+    Hub { env, admin, poster, hub, token_class_id, registry }
+}
+
+/// Posts `pool_root` (and a fixed birth root) as the registry's poster, then anchors the next
+/// private call one second later, inside every freshness window.
+pub unconstrained fn post_pool_root(h: Hub, pool_root: Field) {
+    let now = h.env.last_block_timestamp() + 100_000;
+    h.env.set_next_block_timestamp(now);
+    h.env.call_public(
+        h.poster,
+        AspRootRegistry::at(h.registry).post_root(1, pool_root, BIRTH_ROOT, 101, now),
+    );
+    h.env.mine_block_at(now + 1);
 }
 
 /// Registers the token instance the hub will derive for `erc20` (deployer = hub, salt = erc20,
