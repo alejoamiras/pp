@@ -11,9 +11,8 @@ import { anvilKey } from "@pp/bridge-core/sandbox"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
 import { createPublicClient, erc20Abi, http } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
-import { formatAmount, plainAmount } from "../src/ui/format"
 import { approvedNote, seededStack } from "./stack"
-import { connectWallet, openForm, signInToPool, submitted, watchPage } from "./support"
+import { bridgeAndClaim, stepLog, submitted, watchPage } from "./support"
 
 test.use({ family: "ragequit", cells: 1, spares: 0 })
 test.skip(({ run }) => run.mode !== "stack", "the sandbox build exits in the fixture world, which the unit suite covers")
@@ -25,13 +24,7 @@ test.skip(({ run }) => run.mode !== "stack", "the sandbox build exits in the fix
  */
 const WAIT = { claimable: 60_000, claimed: 90_000, sent: 60_000, ready: 180_000, settled: 30_000 }
 
-let last = 0
-/** Logs how long each step took since the previous one (`start` resets), so the waits stay sized from measurements. */
-function step(name: string): void {
-	const now = Date.now()
-	if (name !== "start") console.log(`[ragequit-spec] ${name}: ${((now - last) / 1000).toFixed(2)} s`)
-	last = now
-}
+const step = stepLog("ragequit-spec")
 
 function memoryJournal(): KeyValueStore {
 	const m = new Map<string, string>()
@@ -55,25 +48,8 @@ test("leaves a claimed label to Ethereum, lists its ticket from the chain and co
 	const amount = (note.value * 7n) / 10n
 	const payee = privateKeyToAccount(generatePrivateKey()).address
 	const wallet = { profile: "plain", origin: run.testWalletOrigins.plain, account: actor.address } as const
-	const screen = page.getByTestId("bridge-screen")
+	const { frame, row: labelRow } = await bridgeAndClaim(page, { s, note, amount, wallet, l1, step, wait: WAIT })
 
-	await page.goto("/")
-	await l1.setAccount(anvilKey(s.stack.accounts.user.index))
-	await signInToPool(page)
-	const frame = await connectWallet(page, wallet)
-	const form = await openForm(page, note.commitment, plainAmount(amount, s.decimals))
-	await form.getByRole("button", { name: "Send from the local dev account" }).click()
-	step("start")
-	await form.getByRole("button", { name: "Bridge to Aztec" }).click()
-	await expect(screen).toHaveAttribute("data-step", "claimable", { timeout: WAIT.claimable })
-	step("claimable")
-	await screen.getByRole("button", { name: "Claim on Aztec" }).click()
-	await expect(screen).toHaveAttribute("data-step", "claimed", { timeout: WAIT.claimed })
-	step("claimed")
-	await screen.getByRole("button", { name: "Back to balances" }).last().click()
-
-	const labelRow = page.locator(`[data-testid="label-row"][data-label="${note.label}"]`)
-	await expect(labelRow).toContainText(formatAmount(amount, s.decimals, 2), { timeout: 30_000 })
 	await labelRow.getByRole("button", { name: "Leave to Ethereum (ragequit)" }).click()
 	const dialog = page.getByTestId("action-dialog")
 	await dialog.getByRole("radio", { name: /Your largest note/ }).check()
