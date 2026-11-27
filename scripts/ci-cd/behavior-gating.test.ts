@@ -236,15 +236,16 @@ const actionSteps = (action: string): Step[] =>
 
 /**
  * The actions a composite action calls: through a nested `uses: ./.github/actions/<name>`, or by
- * running `$GITHUB_ACTION_PATH/../<name>/<file>`, the one spelling of a sibling's path it may use.
+ * running `$GITHUB_ACTION_PATH/../<name>/<file>`. Every mention of the action's path must be
+ * `$GITHUB_ACTION_PATH/<file>` or that sibling form: any other spelling (`${{ github.action_path }}`,
+ * braces, `env.`) is refused, since a sibling it names would go unseen.
  */
 function actionsRunBy(action: string): string[] {
 	const text = readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")
-	const runs = (text.match(/(?:GITHUB_ACTION_PATH|action_path)\S*/g) ?? []).flatMap((ref) => {
-		if (!ref.includes("..")) return []
-		const name = /^GITHUB_ACTION_PATH\/\.\.\/([\w-]+)\/[\w.-]+"?$/.exec(ref)?.[1]
-		if (name === undefined) throw new Error(`${action}: ${ref} is not $GITHUB_ACTION_PATH/../<action>/<file>`)
-		return [name]
+	const runs = (text.match(/\S*(?:GITHUB_ACTION_PATH|action_path)\S*/gi) ?? []).flatMap((ref) => {
+		const path = /^"?\$GITHUB_ACTION_PATH\/(?:\.\.\/([\w-]+)\/)?[\w.-]+"?$/.exec(ref)
+		if (path === null) throw new Error(`${action}: ${ref} is not $GITHUB_ACTION_PATH/<file> or $GITHUB_ACTION_PATH/../<action>/<file>`)
+		return path[1] === undefined ? [] : [path[1]]
 	})
 	const uses = actionSteps(action).flatMap((step) => step.uses?.match(/^\.\/\.github\/actions\/([\w-]+)$/)?.[1] ?? [])
 	return [...new Set([...runs, ...uses])]
@@ -275,26 +276,63 @@ function actionsOfJob(job: Job, found = new Set<string>()): Set<string> {
 	return found
 }
 
+const GATE = /^needs\.changes\.outputs\.([\w-]+) == 'true'$/
+const STEP_OUTPUT = /^steps\.([\w-]+)\.outputs\.([\w-]+)$/
+const EXPRESSION = /^\$\{\{ (.+) \}\}$/
+type ChangesJob = { outputs?: Record<string, string>; steps?: Step[] }
+
 /**
- * The paths-filter keys whose verdict a job's `if` reads through the changes job's outputs, directly
- * or through one step that combines filter outputs in its `env`.
+ * The paths-filter keys any one of which runs a job. Only shapes whose keys provably run the job are
+ * read: an `if` of `needs.changes.outputs.<out> == 'true'`, an output that ORs step outputs, and a
+ * step whose script ORs `[ "$VAR" = "true" ]` tests into that output. An OR term of another shape
+ * only adds runs, so it adds no key; any other `if` is refused.
  */
-function filterKeysOf(wf: { jobs: Record<string, { outputs?: Record<string, string>; steps?: Step[] }> }, job: Job): string[] {
-	const changes = wf.jobs.changes
-	const steps = changes?.steps ?? []
-	const filterIds = new Set(steps.filter((s) => s.uses?.includes("dorny/paths-filter")).map((s) => s.id))
-	const refs = (text: string) => [...text.matchAll(/steps\.([\w-]+)\.outputs\.([\w-]+)/g)]
-	const direct = (text: string) => refs(text).flatMap(([, id, key]) => (filterIds.has(id) ? [key ?? ""] : []))
-	const viaStep = (id: string) => direct(JSON.stringify(steps.find((s) => s.id === id)?.env ?? {}))
-	const keysOf = (text: string) => refs(text).flatMap(([, id = "", key = ""]) => (filterIds.has(id) ? [key] : viaStep(id)))
-	const outs = [...(job.if ?? "").matchAll(/needs\.changes\.outputs\.([\w-]+)/g)].map((m) => m[1] ?? "")
-	return [...new Set(outs.flatMap((out) => keysOf(changes?.outputs?.[out] ?? "")))]
+function filterKeysOf(wf: { jobs: Record<string, ChangesJob> }, job: Job): string[] {
+	const out = GATE.exec(job.if ?? "")?.[1]
+	if (out === undefined) throw new Error(`unsupported gate \`${job.if}\`: use needs.changes.outputs.<out> == 'true'`)
+	const steps = wf.jobs.changes?.steps ?? []
+	const isFilter = (id: string) => steps.some((s) => s.id === id && s.uses?.includes("dorny/paths-filter") === true)
+	const body = EXPRESSION.exec((wf.jobs.changes?.outputs?.[out] ?? "").trim())?.[1] ?? ""
+	const terms = body.split(" || ").map((term) => STEP_OUTPUT.exec(term))
+	if (terms.some((term) => term === null)) return []
+	return terms.flatMap((term) => {
+		const [, id = "", name = ""] = term ?? []
+		return isFilter(id)
+			? [name]
+			: orredFilters(
+					steps.find((s) => s.id === id),
+					name,
+					isFilter,
+				)
+	})
+}
+
+/** The filter keys a step's script ORs into its output `name`; none for a script of any other shape. */
+function orredFilters(step: Step | undefined, name: string, isFilter: (id: string) => boolean): string[] {
+	const echo = (value: string) => `\\s+echo "${name}=${value}" >> "\\$GITHUB_OUTPUT"\\n`
+	const script = new RegExp(`^if (.+); then\\n${echo("true")}else\\n${echo("false")}fi\\n?$`)
+	const vars = (script.exec(step?.run ?? "")?.[1]?.split(" || ") ?? []).map((test) => /^\[ "\$(\w+)" = "true" \]$/.exec(test)?.[1])
+	if (vars.length === 0 || vars.includes(undefined)) return []
+	return vars.flatMap((v) => {
+		const [, id = "", key = ""] = STEP_OUTPUT.exec(EXPRESSION.exec(step?.env?.[v ?? ""] ?? "")?.[1] ?? "") ?? []
+		return isFilter(id) ? [key] : []
+	})
+}
+
+/** Every job a job waits on, directly or through others. */
+function upstreamOf(jobs: Record<string, Job>, name: string, seen = new Set<string>()): Set<string> {
+	for (const need of [jobs[name]?.needs ?? []].flat())
+		if (!seen.has(need)) {
+			seen.add(need)
+			upstreamOf(jobs, need, seen)
+		}
+	return seen
 }
 
 /**
  * Each job of a PR workflow that runs a local action is gated by filters that cover every file of
- * that action. A job with no gate of its own may not wait on a gated one, whose gate it would
- * inherit unchecked. Returns how many jobs it checked.
+ * that action. A job with no gate of its own may not wait on a gated one, even through others,
+ * whose gate it would inherit unchecked. Returns how many jobs it checked.
  */
 function expectJobsCoverTheirActions(file: string): number {
 	const wf = workflow(file)
@@ -307,7 +345,7 @@ function expectJobsCoverTheirActions(file: string): number {
 		if (name === "changes" || files.length === 0) continue
 		if (!gatedJobs.has(name)) {
 			expect(
-				[job.needs ?? []].flat().filter((n) => gatedJobs.has(n)),
+				[...upstreamOf(wf.jobs, name)].filter((n) => gatedJobs.has(n)),
 				`${file} ${name}: give it its own gate`,
 			).toEqual([])
 			continue
@@ -811,7 +849,7 @@ test("the nightly takes suite names as data and uploads only reports and logs, o
 })
 
 // foundryup fetches an attestation at run time, and that endpoint's outage failed every job that
-// installed Foundry; setup-foundry checks the release archive against a committed hash instead.
+// used foundry-toolchain; setup-foundry checks the release archive against a committed hash instead.
 test("no workflow or action installs Foundry through foundryup or foundry-toolchain", () => {
 	const steps: [string, Step][] = [
 		...readdirSync(join(ROOT, ".github/workflows")).flatMap((file) =>
