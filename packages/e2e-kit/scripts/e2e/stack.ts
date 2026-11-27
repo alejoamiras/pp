@@ -11,7 +11,6 @@
 import { spawn } from "node:child_process"
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { setTimeout as sleep } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
 import { parseStackManifest, type StackManifest } from "@pp/bridge-core/stack-manifest"
 import { ANVIL_ACCOUNTS, anvilKey } from "@pp/bridge-core/sandbox"
@@ -19,9 +18,9 @@ import { endGroup, groupAlive, groupMembers } from "@pp/run-isolation/process-gr
 import { getAddress } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { type StackRun, stackRun, stackRunFile } from "../../env"
+import { parseStackLog, untilReady } from "./stack-log"
 
 const CLI = fileURLToPath(import.meta.resolve("@pp/local-stack/cli"))
-const READY_MS = 20 * 60_000
 /** Longer than the CLI's slowest teardown; its boot steps also finish before a signal takes effect. */
 const STOP_GRACE_MS = 180_000
 const LOCAL_CHAIN_ID = 31337
@@ -33,25 +32,9 @@ const files = (stateDir: string) => ({
 	walletHandle: join(stateDir, "wallet", "handle.json"),
 })
 
-const READY = /PP_STACK_MANIFEST=(\S+)/
-const SEEDED = /pool user (0x[0-9a-fA-F]{40})\b.*bridge sender (0x[0-9a-fA-F]{40})\b/
-
 function anvilIndexOf(address: string): number {
 	for (let i = 0; i < ANVIL_ACCOUNTS; i++) if (privateKeyToAccount(anvilKey(i)).address === getAddress(address)) return i
 	throw new Error(`stack: ${address} is none of anvil's first ${ANVIL_ACCOUNTS} accounts`)
-}
-
-/** Resolves with the manifest path and seeded line once both are logged; rejects if the CLI exits first. */
-async function untilReady(log: string, exited: () => number | null): Promise<{ manifestPath: string; seeded: RegExpMatchArray }> {
-	for (const end = Date.now() + READY_MS; Date.now() < end; await sleep(1_000)) {
-		const text = existsSync(log) ? readFileSync(log, "utf8") : ""
-		const ready = text.match(READY)
-		const seeded = text.match(SEEDED)
-		if (ready?.[1] && seeded) return { manifestPath: ready[1], seeded }
-		const code = exited()
-		if (code !== null) throw new Error(`stack: the CLI exited (${code}) before it was ready; see ${log}`)
-	}
-	throw new Error(`stack: not ready within ${READY_MS / 60_000} min; see ${log}`)
 }
 
 async function nodeInfo(nodeUrl: string): Promise<{ l1ChainId: number; rollupVersion: number }> {
@@ -92,10 +75,10 @@ async function up(stateDir: string): Promise<void> {
 		code = c ?? (signal ? 128 : 1)
 	})
 	try {
-		const { manifestPath, seeded } = await untilReady(f.log, () => code)
+		const { manifestPath, user, sender } = await untilReady(f.log, () => code)
 		const { manifest, rollupVersion } = await checkedManifest(manifestPath)
 		const account = (address: string) => ({ address: getAddress(address), index: anvilIndexOf(address) })
-		const run: StackRun = { pgid, manifestPath, accounts: { user: account(seeded[1] ?? ""), sender: account(seeded[2] ?? "") } }
+		const run: StackRun = { pgid, manifestPath, accounts: { user: account(user), sender: account(sender) } }
 		writeFileSync(f.walletHandle, JSON.stringify({ nodeUrl: manifest.aztecNode, l1ChainId: manifest.chainId, rollupVersion }))
 		writeFileSync(f.run, JSON.stringify(run, null, 2))
 	} catch (err) {
@@ -111,7 +94,7 @@ async function up(stateDir: string): Promise<void> {
 function ownedBy(stateDir: string, pgid: number): boolean {
 	const leader = groupMembers(pgid).find((m) => m.pid === pgid)
 	const f = files(stateDir)
-	const logged = existsSync(f.log) ? readFileSync(f.log, "utf8").match(/^\[stack\] run \S+ pid (\d+)$/m)?.[1] : undefined
+	const logged = existsSync(f.log) ? parseStackLog(readFileSync(f.log, "utf8")).pid : undefined
 	return groupAlive(pgid) && leader?.args.includes(CLI) === true && logged === String(pgid)
 }
 
