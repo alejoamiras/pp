@@ -1,7 +1,6 @@
 // Test-only chain actions against `pp-env up`: the package itself never submits.
-import { readFileSync, statSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { DEFAULT_CIRCUIT_MANIFEST } from "@0xbow/privacy-pools-v2-sdk"
 import {
 	type Address,
 	BaseError,
@@ -21,7 +20,7 @@ import { foundry } from "viem/chains"
 import { STUB_PROCESSOR_ABI } from "../../../pp-env/src/client/abi.ts"
 import { POOL_VAULT_ERRORS_ABI } from "../../src/abi.ts"
 import { deriveKeys } from "../../src/keys.ts"
-import { createArtifacts, PINNED_CIRCUITS, type PinnedCircuit } from "../../src/runtime/artifacts.ts"
+import { createArtifacts } from "../../src/runtime/artifacts.ts"
 import { createSession } from "../../src/session.ts"
 import type { PreparedSpend } from "../../src/types.ts"
 import { poolConfig, type UpEnv } from "./env.ts"
@@ -31,16 +30,6 @@ import { anvilAccount, derivationSignature } from "./users.ts"
 /** pp-env's deployer, which is also the ASP postman. */
 const DEPLOYER_INDEX = 14
 const SPEND_ABI = [...STUB_PROCESSOR_ABI, ...POOL_VAULT_ERRORS_ABI]
-
-/** Deposits prove the `deposit` circuit, which the client itself never needs. */
-function depositCircuit(): PinnedCircuit {
-	const dir = join(circuitsDir(), "deposit")
-	const size = (f: string) => statSync(join(dir, f)).size
-	return {
-		...DEFAULT_CIRCUIT_MANIFEST.deposit!,
-		sizes: { wasm: size("deposit_js/deposit.wasm"), provingKey: size("groth16_pkey.zkey"), verificationKey: size("groth16_vkey.json") },
-	}
-}
 
 export const spendArgs = (s: PreparedSpend) => [s.proof, { processor: s.processor, data: s.data }, s.noteData] as const
 
@@ -57,7 +46,7 @@ export function seeder(env: UpEnv) {
 		if (r.status !== "success") throw new Error(`${hash} reverted`)
 		return r
 	}
-	const artifacts = createArtifacts({ kind: "dir", path: circuitsDir() }, { circuits: { ...PINNED_CIRCUITS, deposit: depositCircuit() } })
+	const artifacts = createArtifacts({ kind: "dir", path: circuitsDir() })
 	const pool = poolConfig(env)
 
 	return {

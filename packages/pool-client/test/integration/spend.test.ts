@@ -90,7 +90,7 @@ describe("pool-client against pp-env up", () => {
 		}
 	})
 
-	it("2. prepares a spend that a fresh client can recover before it is sent, then pays the stub", async () => {
+	it("2. prepares a spend that a fresh client can recover before it is sent, pays the stub, and finds its change at once", async () => {
 		client13 = await open(u13.address, u13.signature)
 		first = await client13.prepareSpend({ note: note13.commitment, amount: 70n, processor: stubA, data: DATA })
 		expect(Object.isFrozen(first.proof.pubSignals)).toBe(true)
@@ -101,12 +101,21 @@ describe("pool-client against pp-env up", () => {
 		expect(await fresh.nullifierOf(note13.commitment)).toBe(first.proof.pubSignals[0]![0])
 		await expect(fresh.nullifierOf(note12.commitment)).rejects.toMatchObject({ code: "NOTE_NOT_FOUND" })
 
-		expect(await seed.submit(stubA, first, SUBMITTER)).toMatchObject({
-			nullifier: first.nullifier,
-			changeCommitment: first.change.commitment,
-			amount: 70n,
-			data: DATA,
-		})
+		// The sync reads the head of the block before the spend's, and viem caches it for 4 s. With `Date`
+		// stopped that head stays cached however slow the run, so only a fresh read finds the spend.
+		vi.useFakeTimers({ toFake: ["Date"] })
+		try {
+			await client13.notes()
+			expect(await seed.submit(stubA, first, SUBMITTER)).toMatchObject({
+				nullifier: first.nullifier,
+				changeCommitment: first.change.commitment,
+				amount: 70n,
+				data: DATA,
+			})
+			expect(await client13.changeOpening(first.nullifier)).toEqual(first.change)
+		} finally {
+			vi.useRealTimers()
+		}
 		expect(await seed.stubState(stubA)).toEqual({ balance: 70n, spends: 1n })
 		const notes = await client13.notes()
 		expect(notes).toContainEqual(expect.objectContaining({ commitment: note13.commitment, status: "spent" }))

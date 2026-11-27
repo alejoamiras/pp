@@ -2,9 +2,10 @@ import { createHash } from "node:crypto"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { DEFAULT_CIRCUIT_MANIFEST } from "@0xbow/privacy-pools-v2-sdk"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import type { ArtifactFile } from "../../src/errors.ts"
-import { type ArtifactSource, createArtifacts, type PinnedCircuit } from "../../src/runtime/artifacts.ts"
+import { type ArtifactSource, artifactsFor, CIRCUIT_BUNDLES, createArtifacts, type PinnedCircuit } from "../../src/runtime/artifacts.ts"
+import { openPoolClient } from "../../src/index.ts"
 import { scratchDir } from "../support/paths.ts"
 
 const FILES = ["wasm", "provingKey", "verificationKey"] as const
@@ -86,7 +87,7 @@ describe.each(LOADERS)("the %s loader", (_, make) => {
 		const fx = fixture()
 		const loader = make(fx)
 		loader.sync()
-		const artifacts = createArtifacts(loader.src, { circuits: fx.circuits, fetch: fetchFrom(fx) })
+		const artifacts = artifactsFor(loader.src, fx.circuits, { fetch: fetchFrom(fx) })
 		await artifacts.ensure("fake_b")
 		expect(await artifacts.getWasm("fake_b")).toEqual(fx.served.fake_b!.wasm)
 
@@ -104,7 +105,7 @@ describe.each(LOADERS)("the %s loader", (_, make) => {
 		fx.served.fake_b = { ...fx.served.fake_b!, verificationKey: fx.served.fake_b!.verificationKey.map((b, i) => (i === 0 ? b ^ 1 : b)) }
 		const loader = make(fx)
 		loader.sync()
-		const artifacts = createArtifacts(loader.src, { circuits: fx.circuits, fetch: fetchFrom(fx) })
+		const artifacts = artifactsFor(loader.src, fx.circuits, { fetch: fetchFrom(fx) })
 		const [a, b] = await Promise.allSettled([artifacts.ensure("fake_a"), artifacts.ensure("fake_b")])
 		expect(a).toMatchObject({ status: "rejected", reason: { code: "ARTIFACT_MISMATCH", circuit: "fake_a", file: "wasm" } })
 		expect(b).toMatchObject({ status: "rejected", reason: { code: "ARTIFACT_MISMATCH", circuit: "fake_b", file: "verificationKey" } })
@@ -127,10 +128,9 @@ describe("the gateway reader", () => {
 		let cancelled = false
 		const endless = (_: AbortSignal, onCancel: () => void) =>
 			new ReadableStream<Uint8Array>({ pull: (c) => c.enqueue(new Uint8Array(8)), cancel: onCancel })
-		const artifacts = createArtifacts(
-			{ kind: "gateway", urls: [GATEWAY] },
-			{ circuits: fx.circuits, fetch: streamingFetch(fx, endless, () => (cancelled = true)) },
-		)
+		const artifacts = artifactsFor({ kind: "gateway", urls: [GATEWAY] }, fx.circuits, {
+			fetch: streamingFetch(fx, endless, () => (cancelled = true)),
+		})
 		await expect(artifacts.ensure("fake_a")).rejects.toMatchObject({ code: "ARTIFACT_MISMATCH", file: "provingKey" })
 		await expect(artifacts.ensure("fake_a")).rejects.toThrow(/exceeds the pinned 16 bytes/)
 		expect(cancelled).toBe(true)
@@ -145,12 +145,93 @@ describe("the gateway reader", () => {
 					signal.addEventListener("abort", () => c.error(signal.reason))
 				},
 			})
-		const artifacts = createArtifacts(
-			{ kind: "gateway", urls: [GATEWAY] },
-			{ circuits: fx.circuits, deadlineMs: 100, fetch: streamingFetch(fx, stalls, () => {}) },
-		)
+		const artifacts = artifactsFor({ kind: "gateway", urls: [GATEWAY] }, fx.circuits, {
+			deadlineMs: 100,
+			fetch: streamingFetch(fx, stalls, () => {}),
+		})
 		const t0 = performance.now()
 		await expect(artifacts.ensure("fake_a")).rejects.toThrow(/provingKey.*no complete body within 100 ms/)
 		expect(performance.now() - t0).toBeLessThan(2_000)
+	})
+})
+
+describe("circuit bundles", () => {
+	const pre = CIRCUIT_BUNDLES["pre-ceremony"].circuits.transact_1x1
+	const dir = (path: string, bundle?: "pre-ceremony"): ArtifactSource => ({ kind: "dir", path, ...(bundle && { bundle }) })
+
+	/** The CIDs a source fetches for `transact_1x1`, whose files the named bundle alone decides. */
+	async function requested(src: ArtifactSource, chainId?: number): Promise<string[]> {
+		const cids = new Set<string>()
+		const fetch = (async (input: string | URL | Request) => {
+			cids.add(String(input).split("/").pop()!)
+			return new Response(null, { status: 404 })
+		}) as typeof globalThis.fetch
+		await expect(createArtifacts(src, { fetch, ...(chainId && { chainId }) }).ensure("transact_1x1")).rejects.toThrow(/HTTP 404/)
+		await vi.waitFor(() => expect(cids.size).toBe(3))
+		return [...cids].sort()
+	}
+	const cidsOf = (c: PinnedCircuit) => [c.wasm, c.provingKey, c.verificationKey].sort()
+
+	it("decide which files a source fetches: the ceremony's by default, the named bundle's otherwise", async () => {
+		const gateway = (bundle?: "pre-ceremony"): ArtifactSource => ({ kind: "gateway", urls: [GATEWAY], ...(bundle && { bundle }) })
+		expect(await requested(gateway())).toEqual(cidsOf(CIRCUIT_BUNDLES.ceremony.circuits.transact_1x1))
+		expect(await requested(gateway("pre-ceremony"), 11_155_111)).toEqual(cidsOf(pre))
+	})
+
+	it("read a source once, so a getter cannot pick the unchecked branch after the check", async () => {
+		let reads = 0
+		const flipping = {
+			get kind() {
+				return reads++ === 0 ? "gateway" : "dir"
+			},
+			urls: [GATEWAY],
+			path: "/nowhere",
+		} as unknown as ArtifactSource
+		expect(await requested(flipping)).toEqual(cidsOf(CIRCUIT_BUNDLES.ceremony.circuits.transact_1x1))
+		expect(reads).toBe(1)
+	})
+
+	it("cannot be edited at runtime", () => {
+		const chains = CIRCUIT_BUNDLES["pre-ceremony"].chainIds as unknown as number[]
+		expect(() => chains.push(1)).toThrow()
+		expect(() => {
+			;(pre.sizes as Record<string, number>).wasm = 1
+		}).toThrow()
+		expect(Object.isFrozen(CIRCUIT_BUNDLES.ceremony.circuits.deposit)).toBe(true)
+	})
+
+	it("refuse an unknown name, and the pre-ceremony keys on any chain but Sepolia", () => {
+		expect(() => createArtifacts(dir("/x", "ceremony2" as never))).toThrow(/ARTIFACT_MISMATCH: unknown circuit bundle "ceremony2"/)
+		expect(() => createArtifacts(dir("/x", "toString" as never))).toThrow(/unknown circuit bundle/)
+		for (const chainId of [1, 31_337, undefined])
+			expect(() => createArtifacts(dir("/x", "pre-ceremony"), chainId === undefined ? {} : { chainId })).toThrow(
+				/CHAIN_MISMATCH: circuit bundle pre-ceremony may not prove for chain/,
+			)
+		expect(() => createArtifacts(dir("/x"), { chainId: 1 })).not.toThrow()
+	})
+
+	it("make openPoolClient refuse the pre-ceremony keys for a mainnet pool before it reaches the network", async () => {
+		const zero = "0x0000000000000000000000000000000000000001" as const
+		// A class-backed config: its chain comes from a prototype getter, which a spread would drop.
+		class Pool {
+			get chainId() {
+				return 1
+			}
+			l1Rpc = "http://rpc.invalid"
+			poolVault = zero
+			entrypoint = zero
+			aspRegistry = zero
+			keystore = zero
+			asset = zero
+			deployBlock = 0n
+			aspApiUrl = "http://asp.invalid"
+		}
+		const opened = openPoolClient({
+			pool: new Pool(),
+			l1Address: zero,
+			signature: `0x${"11".repeat(65)}`,
+			artifacts: dir("/x", "pre-ceremony"),
+		})
+		await expect(opened).rejects.toMatchObject({ code: "CHAIN_MISMATCH", message: expect.stringMatching(/pre-ceremony.*chain 1$/) })
 	})
 })

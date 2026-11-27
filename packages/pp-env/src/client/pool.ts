@@ -23,7 +23,8 @@ import {
 	WitnessPreparationService,
 } from "#ppv2/evm-sdk"
 import { createProver, openPoolClient, type PoolClient } from "@pp/pool-client"
-import { type Address, createPublicClient, getAddress, type Hex, http, keccak256, toHex, verifyTypedData } from "viem"
+import { type Address, getAddress, type Hex, keccak256, toHex, verifyTypedData } from "viem"
+import { publicClientAt } from "./chain.ts"
 import { secretDerivationTypedData } from "./derivation.ts"
 import { createProofService } from "./prover.ts"
 import { explainSpendError, poolClientOptions, toPreparedSpend } from "./spend.ts"
@@ -65,7 +66,7 @@ function toPoolNote(n: Note): PoolNote {
 function contracts(config: ClientConfig, wallet: LocalWallet, merkleService: MerkleService) {
 	const d = config.deployment
 	const deploymentBlock = d.deployBlock
-	const publicClient = createPublicClient({ transport: http(config.rpcUrl), pollingInterval: 100 })
+	const publicClient = publicClientAt(config)
 	const rpcInteractor = new ViemRPCInteractor({ publicClient: sdkViem<SdkPublicClient>(publicClient) })
 	const walletInteractor = new ViemWalletInteractor({ walletClient: sdkViem<SdkWalletClient>(wallet), expectedChainId: config.chainId })
 	const aspRegistryInteractor = new ASPRegistryInteractor({ rpcInteractor, contractAddress: d.aspRegistry })
@@ -115,7 +116,7 @@ async function wireSession(
 		cryptoService,
 		noteComputationService,
 		witnessPreparationService: new WitnessPreparationService({ noteComputationService, hashService, merkleService }),
-		proofService: createProofService(config.circuitsDir, prover),
+		proofService: createProofService(config, prover),
 		hashService,
 		merkleService,
 		relayerInteractor: noRelayer(),
@@ -134,7 +135,7 @@ function pickInput(noteManager: NoteManager, asset: Address, input: bigint | und
 }
 
 /** Declared fields only, read once: a later edit to the caller's object must not split one user across two configs. */
-function snapshot(c: ClientConfig): ClientConfig {
+export function snapshot(c: ClientConfig): ClientConfig {
 	const d = c.deployment
 	const deployment = {
 		pool: d.pool,
@@ -143,7 +144,15 @@ function snapshot(c: ClientConfig): ClientConfig {
 		aspRegistry: d.aspRegistry,
 		deployBlock: d.deployBlock,
 	}
-	return { rpcUrl: c.rpcUrl, chainId: c.chainId, deployment, aspUrl: c.aspUrl, circuitsDir: c.circuitsDir }
+	const bundle = c.circuitBundle
+	return {
+		rpcUrl: c.rpcUrl,
+		chainId: c.chainId,
+		deployment,
+		aspUrl: c.aspUrl,
+		circuitsDir: c.circuitsDir,
+		...(bundle !== undefined && { circuitBundle: bundle }),
+	}
 }
 
 /** One pool-client per asset, opened on first spend; a failed open is retried on the next. */

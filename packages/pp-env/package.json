@@ -13,6 +13,10 @@
 		"./client": {
 			"types": "./types/client.d.ts",
 			"default": "./src/client/index.ts"
+		},
+		"./fork": {
+			"types": "./types/fork.d.ts",
+			"default": "./src/env/fork.ts"
 		}
 	},
 	"imports": {

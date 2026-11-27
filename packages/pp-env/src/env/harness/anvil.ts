@@ -6,7 +6,7 @@ import { anvilBin, cleanEnv } from "../tools.ts"
 import type { LocalChainId } from "../types.ts"
 import { claimPort } from "@pp/run-isolation/ports"
 import { type CleanupStack, killGroup, spawnOwned } from "@pp/run-isolation/process"
-import { rpc, waitFor } from "./rpc.ts"
+import { isLoopback, rpc, waitFor } from "./rpc.ts"
 
 export const CHAIN_ID: LocalChainId = 31337
 export const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"
@@ -52,15 +52,12 @@ export async function startAnvil(runId: string, cleanup: CleanupStack): Promise<
 	return rpcUrl
 }
 
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"])
-
 /**
  * Accepts only a loopback anvil on chain 31337: the deploy writes canonical code with anvil_setCode
  * and broadcasts from well-known keys, which is only safe on a throwaway local chain.
  */
 export async function attachAnvil(rpcUrl: string): Promise<string> {
-	const url = new URL(rpcUrl)
-	if (!LOOPBACK.has(url.hostname)) throw new Error(`refusing to attach to non-loopback RPC ${url.host}`)
+	if (!isLoopback(rpcUrl)) throw new Error(`refusing to attach to non-loopback RPC ${new URL(rpcUrl).host}`)
 	const client = await rpc<string>(rpcUrl, "web3_clientVersion")
 	if (!client.toLowerCase().startsWith("anvil")) throw new Error(`refusing to attach to ${client}: not anvil`)
 	const chainId = Number.parseInt(await rpc<string>(rpcUrl, "eth_chainId"), 16)

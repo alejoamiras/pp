@@ -11,6 +11,7 @@ import { PACKAGE_DIR } from "../src/env/checkout.ts"
 const ENTRIES = [
 	["src/index.ts", "types/index.d.ts"],
 	["src/client/index.ts", "types/client.d.ts"],
+	["src/env/fork.ts", "types/fork.d.ts"],
 ] as const
 
 const program = ts.createProgram(
