@@ -25,7 +25,10 @@ test("suite names are unique", () => {
 
 test("a bounded suite keeps the caller's seed, prints it again on failure, and passes only at its count", () => {
 	const suite = boundedSuite({ name: "probe", cwd: ".", argv: ["bash", "-c", "exit 3"], minutes: 1, expected: 2 })
-	const run = spawnSync(suite.command[0] as string, suite.command.slice(1), { env: { ...process.env, FC_SEED: "42" }, encoding: "utf8" })
+	const run = spawnSync(suite.command[0] as string, suite.command.slice(1), {
+		env: { ...process.env, FC_SEED: "42", SHELLOPTS: "errexit" },
+		encoding: "utf8",
+	})
 	expect(run.status).toBe(3)
 	expect(run.stdout).toContain("probe: FC_SEED=42, bound 60s")
 	expect(run.stderr).toContain("probe: exited 3 (137: the bound or another SIGKILL); replay with FC_SEED=42")

@@ -36,14 +36,14 @@ export const vitestPassed = (output: string): number => {
 }
 
 // $0 is the suite's name, $1 the bound in seconds, the rest the command. No `exec`: the shell outlives
-// a killed command to print the seed again.
+// a killed command to print the seed again, and `|| code=$?` keeps it going under an inherited errexit.
 const BOUNDED = `case "\${FC_SEED:-random}" in random) FC_SEED=$(( (RANDOM << 15) | RANDOM ));; esac
 export FC_SEED
 bound=$1
 shift
 echo "$0: FC_SEED=$FC_SEED, bound \${bound}s"
-timeout -s KILL "$bound" "$@"
-code=$?
+code=0
+timeout -s KILL "$bound" "$@" || code=$?
 [ "$code" -eq 0 ] || echo "$0: exited $code (137: the bound or another SIGKILL); replay with FC_SEED=$FC_SEED" >&2
 exit "$code"`
 
