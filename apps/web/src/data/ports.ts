@@ -23,7 +23,9 @@ import type { AztecConnection, ConfirmEmoji, WalletOption } from "./wallet/types
  */
 /** `unconfirmed`: the wallet returned the hash, but its outcome could not be read. */
 export type Sent =
-	| { txHash: Hex; status: "success" | "dropped" | "unconfirmed"; reason?: string }
+	| { txHash: Hex; status: "success" | "dropped"; reason?: string }
+	/** The wallet may have sent it and the page could not read whether it landed; no `txHash` when the wallet's send threw. */
+	| { txHash?: Hex; status: "unconfirmed" }
 	| { txHash: Hex; status: "reverted"; block: number; reason?: string }
 
 /**
@@ -244,6 +246,14 @@ export interface ChainClock {
 	l1Now(): Promise<bigint>
 	/** The Aztec node's proven block number: every block up to it is covered by an epoch proof on Ethereum. */
 	aztecProven(): Promise<number>
+}
+
+/** An Aztec transaction as the page's node reads it now: `pending` covers pending, dropped and unknown, none of them final. */
+export type AztecReceipt = { status: "success" } | { status: "reverted"; block: number } | { status: "pending" }
+
+export interface ReceiptPort {
+	/** @throws on a failed read, which tells the page nothing */
+	aztec(txHash: Hex): Promise<AztecReceipt>
 }
 
 /** Waits that are not chain time (the prove deadline, the preflight's age), injected so tests run them virtually. */

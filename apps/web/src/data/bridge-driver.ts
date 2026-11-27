@@ -446,7 +446,8 @@ function claimOutcome(st: State, err: unknown, c: ClaimContext, handedOff: boole
 
 function sentOutcome(sent: Sent): BridgeEvent {
 	if (sent.status === "success") return { type: "claimed" }
-	if (sent.status === "dropped") return { type: "claim-pending", txHash: sent.txHash }
+	// A claim that may still land keeps its hold, as one the chain dropped.
+	if (sent.status === "dropped" || sent.status === "unconfirmed") return { type: "claim-pending", txHash: sent.txHash ?? null }
 	return failure("CLAIM_REVERTED", "claiming", sent.reason ? { reason: sent.reason } : {})
 }
 

@@ -5,10 +5,12 @@ import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { labelledTokenArtifact, tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
 import { describe, expect, test, vi } from "vitest"
 import { stageManifest } from "../capabilities"
+import type { Hex } from "viem"
+import { ProviderError } from "../errors"
 import type { AztecAddress } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
 import { parseGrant } from "../wallet/grant"
-import { type AztecDeps, entries, grantedPayload, noteValues, registerScoped, sendThroughWallet } from "./aztec"
+import { type AztecDeps, entries, grantedPayload, noteValues, readReceipt, registerScoped, sendThroughWallet } from "./aztec"
 
 const at = (n: string) => `0x${n.repeat(32)}` as AztecAddress
 const [HUB, TOKEN, FPC, ME, STRANGER] = [at("08"), at("09"), at("0c"), at("1c"), at("2d")]
@@ -61,6 +63,27 @@ describe("the Aztec adapter", () => {
 		await expect(sent).resolves.toEqual({ txHash: at("dd"), status: "unconfirmed" })
 		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
 	}, 10_000)
+
+	test("reads a wallet send that throws past the handoff as unconfirmed with no hash, and the wallet's no as a refusal", async () => {
+		const r = rig()
+		const send = () => sendThroughWallet(r.d, { epoch: 3, from: ME, payload: CLAIM, contracts: ["hub", "token"], handoff: () => {} })
+		r.wallet.sendTx.mockRejectedValueOnce(new Error("the wallet's socket closed"))
+		await expect(send()).resolves.toEqual({ status: "unconfirmed" })
+		r.wallet.sendTx.mockRejectedValueOnce(new ProviderError(4001, "User rejected the request."))
+		await expect(send()).rejects.toMatchObject({ code: 4001 })
+	})
+
+	test("reads a receipt as included, reverted at its block, or pending while it is not mined", async () => {
+		const r = rig()
+		const hash = at("1d") as Hex
+		await expect(readReceipt(r.d.node, hash)).resolves.toEqual({ status: "success" })
+		r.node.getTxReceipt.mockResolvedValueOnce(receipt(false))
+		await expect(readReceipt(r.d.node, hash)).resolves.toEqual({ status: "reverted", block: 17 })
+		r.node.getTxReceipt.mockResolvedValueOnce({ ...receipt(true), isMined: () => false, isPending: () => true })
+		await expect(readReceipt(r.d.node, hash)).resolves.toEqual({ status: "pending" })
+		r.node.getTxReceipt.mockResolvedValueOnce({ ...receipt(false), blockNumber: undefined } as never)
+		await expect(readReceipt(r.d.node, hash)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
+	})
 
 	test("keeps only the wallet's note values a ragequit can burn: positive u128s", () => {
 		expect(noteValues([5n, 0n, 0, -1n, 1n << 128n, "7", 3])).toEqual([5n, 3n])

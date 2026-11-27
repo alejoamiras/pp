@@ -150,6 +150,7 @@ const allowList: AllowListPort = {
 const ports: Omit<DataSource, "deployment"> = {
 	mode: "stack",
 	clock: stackClock(l1.reads, target.nodeUrl),
+	receipts: { aztec: async (txHash) => (await import("./aztec")).readReceipt((await loadAztec()).deps.node, txHash) },
 	timer: browserTimer,
 	l1,
 	sessions,

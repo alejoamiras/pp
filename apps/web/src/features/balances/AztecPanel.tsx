@@ -92,13 +92,18 @@ function PrivateTotal({ account }: { account: AztecAddress }) {
 }
 
 function Balances({ account, onAction }: { account: AztecAddress; onAction(a: HomeAction): void }) {
-	const { aztec, refusal, refresh } = useApp()
+	const { aztec, refusal, refresh, tx } = useApp()
 	const pub = usePublicBalance(aztec, account, refusal("publicBalance") === null)
+	// The one place a held send is read again: a hold ends only on a Refresh the user makes.
+	const reread = () => {
+		void tx.check()
+		refresh()
+	}
 	return (
 		<div className="mt-4 grid gap-2">
 			<div className="flex flex-wrap items-center justify-between gap-2">
 				<AllowListLine />
-				<ActionButton onClick={refresh}>Refresh</ActionButton>
+				<ActionButton onClick={reread}>Refresh</ActionButton>
 			</div>
 			<AllowListProgressLine />
 			<p className={CAP}>Private, by label</p>

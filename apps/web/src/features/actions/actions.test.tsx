@@ -2,8 +2,9 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, test } from "vitest"
 import type { AztecAddress } from "../../data/stack-types"
-import { messageOf, PAYEE_MESSAGES, revertCopy } from "../../data/errors"
+import { messageOf, PAYEE_MESSAGES, ProviderError, revertCopy } from "../../data/errors"
 import { ACCOUNTS, LABELS } from "../../data/fixtures/seed"
+import type { AztecReceipt } from "../../data/ports"
 import { connectAztec, labelRow, renderApp, signIn } from "../../test-utils/app"
 
 afterEach(cleanup)
@@ -130,6 +131,141 @@ describe("the action dialogs", () => {
 		alert.getByText("Not confirmed")
 		alert.getByText(messageOf("TX_UNCONFIRMED"))
 		alert.getByText(/Transaction 0x5e5e/)
+	})
+
+	test("a send that may still land holds its account until a Refresh reads it included, through a pending answer and a failed read", async () => {
+		const hash = `0x${"5e".repeat(32)}` as const
+		let receipt: AztecReceipt | null = { status: "pending" }
+		let reads = 0
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				receipts: {
+					aztec: async () => {
+						reads++
+						if (receipt === null) throw new Error("the node is unreachable")
+						return receipt
+					},
+				},
+				aztec: {
+					...s.aztec,
+					transferPrivate: async (_from, _a, on) => {
+						on.handoff()
+						return { txHash: hash, status: "unconfirmed" as const }
+					},
+				},
+			}),
+		})
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		const dialog = await openDialog(app, LABELS.active, "Send privately")
+		await app.user.type(dialog.getByLabelText(/Amount/), "5")
+		await app.user.type(dialog.getByLabelText("Recipient on Aztec"), OTHER)
+		await app.user.click(dialog.getByRole("button", { name: "Send" }))
+		await dialog.findByText(messageOf("TX_UNCONFIRMED"))
+		await app.user.click(dialog.getByRole("button", { name: "Cancel" }))
+		const row = () => labelRow(LABELS.active)
+		const held = () =>
+			["Send privately", "Unshield", /Leave to Ethereum/].every((name) => disabled(row().getByRole("button", { name })))
+		await waitFor(() => row().getAllByText(messageOf("TX_UNSETTLED")))
+		expect(held()).toBe(true)
+		expect(reads, "only a Refresh reads the receipt").toBe(0)
+		const readAgain = async () => {
+			const before = reads
+			await app.user.click(screen.getByRole("button", { name: "Refresh" }))
+			await waitFor(() => expect(reads).toBeGreaterThan(before))
+			await act(async () => {})
+		}
+		await readAgain()
+		expect(held()).toBe(true)
+		receipt = null
+		await readAgain()
+		expect(held()).toBe(true)
+		receipt = { status: "success" }
+		await readAgain()
+		await waitFor(() => expect(disabled(row().getByRole("button", { name: "Send privately" }))).toBe(false))
+	})
+
+	test("a wallet send that throws past the handoff holds its account until reload, and the wallet's own no holds nothing", async () => {
+		let refuse = true
+		let reads = 0
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				receipts: {
+					aztec: async () => {
+						reads++
+						return { status: "success" }
+					},
+				},
+				aztec: {
+					...s.aztec,
+					unshield: async (_from, _a, on) => {
+						on.handoff()
+						throw refuse ? new ProviderError(4001, "User rejected the request.") : new Error("the wallet's socket closed")
+					},
+				},
+			}),
+		})
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		const unshield = async () => {
+			const dialog = await openDialog(app, LABELS.active, "Unshield")
+			await app.user.type(dialog.getByLabelText(/Amount/), "5")
+			await app.user.click(dialog.getByRole("button", { name: "Unshield" }))
+			return dialog
+		}
+		const declined = await unshield()
+		await declined.findByText(messageOf("WALLET_REJECTED"))
+		await app.user.click(declined.getByRole("button", { name: "Cancel" }))
+		await waitFor(() => expect(disabled(labelRow(LABELS.active).getByRole("button", { name: "Unshield" }))).toBe(false))
+		refuse = false
+		const lost = await unshield()
+		within(await lost.findByRole("alert")).getByText("Not confirmed")
+		lost.getByText(messageOf("UNKNOWN"))
+		await app.user.click(lost.getByRole("button", { name: "Cancel" }))
+		await waitFor(() => labelRow(LABELS.active).getAllByText(messageOf("TX_UNSETTLED_NO_HASH")))
+		await app.user.click(screen.getByRole("button", { name: "Refresh" }))
+		await act(async () => {})
+		expect(disabled(labelRow(LABELS.active).getByRole("button", { name: "Send privately" }))).toBe(true)
+		expect(reads).toBe(0)
+	})
+
+	test("a ragequit whose outcome was not read still lists its payee's exits", async () => {
+		const asked: string[] = []
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				aztec: {
+					...s.aztec,
+					ragequit: async (_from, _a, on) => {
+						on.handoff()
+						return { status: "unconfirmed" as const }
+					},
+				},
+				exits: {
+					...s.exits,
+					tickets: async (payee) => {
+						asked.push(payee)
+						return []
+					},
+				},
+			}),
+		})
+		await signIn(app.user)
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		const dialog = await openDialog(app, LABELS.active, /Leave to Ethereum/)
+		await app.user.click(await dialog.findByLabelText(/40\.00 USDC/))
+		const payee = dialog.getByLabelText("Payee on Ethereum")
+		await app.user.clear(payee)
+		await app.user.type(payee, ACCOUNTS.sender)
+		await app.user.click(await dialog.findByRole("button", { name: "Review" }))
+		await app.user.click(within(dialog.getByTestId("exit-review")).getByRole("button", { name: /Leave to Ethereum/ }))
+		await dialog.findByText(messageOf("UNKNOWN"))
+		await app.user.click(dialog.getByRole("button", { name: "Cancel" }))
+		await app.user.click(screen.getByRole("button", { name: "Exits" }))
+		await waitFor(() => expect(asked).toContain(ACCOUNTS.sender))
 	})
 
 	test("a revert reason the page does not list never renders, and a listed one shows only its own sentence", async () => {

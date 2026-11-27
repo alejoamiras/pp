@@ -9,7 +9,7 @@ import { MAX_NOTES_PER_BURN, ragequitChunks } from "../chunks"
 import { BridgeFailure, ProviderError } from "../errors"
 import { BALANCES_PAGE, NOTES_PAGE, readAllPages } from "../paging"
 import { BN254_P, isAztecPoint, parseBalanceRow, parsePayee, parseU128 } from "../parse"
-import type { AztecPort, LabelBalance, Sent } from "../ports"
+import type { AztecPort, AztecReceipt, LabelBalance, ReceiptPort, Sent } from "../ports"
 import { fixtureLabelState } from "./allow-list"
 import type { FixtureOp } from "./faults"
 import type { AztecNote } from "./seed"
@@ -39,6 +39,17 @@ function notesView(w: World, owner: AztecAddress, label: bigint, start: number):
 		.slice(start, start + NOTES_PAGE)
 }
 
+/** Each world's included sends by hash, as its node would answer for them; a dropped one is never included. */
+const included = new WeakMap<World, Map<string, AztecReceipt>>()
+
+function record(w: World, sent: Sent): Sent {
+	const m = included.get(w) ?? new Map<string, AztecReceipt>()
+	included.set(w, m)
+	if (sent.txHash && sent.status === "success") m.set(sent.txHash, { status: "success" })
+	if (sent.txHash && sent.status === "reverted") m.set(sent.txHash, { status: "reverted", block: sent.block })
+	return sent
+}
+
 /** One wallet send: an armed fault answers like the wallet or the chain would; `effect` returns a revert reason or applies. */
 function send(w: World, op: FixtureOp, effect: () => string | null): Sent {
 	const fault = w.takeFault(op)
@@ -46,9 +57,15 @@ function send(w: World, op: FixtureOp, effect: () => string | null): Sent {
 	const txHash = w.nextHex(32)
 	w.update((s) => void s.sent.aztec++)
 	if (fault === "DROPPED") return { txHash, status: "dropped" }
-	if (fault === "REVERTED") return { txHash, status: "reverted", block: w.aztecBlock(), reason: `${op}: reverted` }
+	if (fault === "UNCONFIRMED") return { txHash, status: "unconfirmed" }
+	if (fault === "REVERTED") return record(w, { txHash, status: "reverted", block: w.aztecBlock(), reason: `${op}: reverted` })
 	const reason = effect()
-	return reason === null ? { txHash, status: "success" } : { txHash, status: "reverted", block: w.aztecBlock(), reason }
+	return record(w, reason === null ? { txHash, status: "success" } : { txHash, status: "reverted", block: w.aztecBlock(), reason })
+}
+
+/** The node's read of a send this world made; any other hash is not included. */
+export function fixtureReceipts(w: World): ReceiptPort {
+	return { aztec: async (txHash) => included.get(w)?.get(txHash) ?? { status: "pending" } }
 }
 
 /** Takes the largest notes of one label and origin until `amount`, at most 8; returns the change or a revert reason. */

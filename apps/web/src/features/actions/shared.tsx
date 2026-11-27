@@ -5,6 +5,7 @@ import { useLive } from "../../app/live"
 import { BridgeFailure, messageOf, PAYEE_MESSAGES, revertCopy, type UiCode } from "../../data/errors"
 import { parseAmount, parsePayee } from "../../data/parse"
 import type { AztecSendHooks, Sent } from "../../data/ports"
+import type { AztecAddress } from "../../data/stack-types"
 import type { TxAction, TxOutcome } from "../../data/tx"
 import { ActionButton, Callout, Field, Modal, plainAmount, shortHex } from "../../ui"
 
@@ -23,7 +24,7 @@ export type Guard = <H extends AztecSendHooks>(on: H) => H
  * at the click, before any read the send makes; Back, `stop` or closing the dialog stops the attempt,
  * and a stopped attempt's handoff refuses, so nothing reaches the wallet after it.
  */
-export function useAction() {
+export function useAction(from: AztecAddress) {
 	const { tx } = useApp()
 	const [state, setState] = useState<ActionState>({ kind: "idle" })
 	const attempt = useRef(0)
@@ -40,18 +41,26 @@ export function useAction() {
 	}
 	return {
 		state,
-		async send(action: TxAction, call: (guard: Guard) => Promise<Sent>, recipient?: Parameters<typeof tx.run>[2]): Promise<boolean> {
+		async send(action: TxAction, call: (guard: Guard) => Promise<Sent>, recipient?: AztecAddress): Promise<boolean> {
 			const n = ++attempt.current
 			setState({ kind: "sending", handedOff: false })
-			const guard: Guard = (on) => ({
-				...on,
-				handoff() {
-					if (attempt.current !== n) throw new BridgeFailure("CONTEXT_CHANGED")
-					on.handoff()
-					setFor(n, { kind: "sending", handedOff: true })
+			const outcome = await tx.run(
+				action,
+				from,
+				(handedOff) => {
+					const guard: Guard = (on) => ({
+						...on,
+						handoff() {
+							if (attempt.current !== n) throw new BridgeFailure("CONTEXT_CHANGED")
+							on.handoff()
+							handedOff()
+							setFor(n, { kind: "sending", handedOff: true })
+						},
+					})
+					return call(guard)
 				},
-			})
-			const outcome = await tx.run(action, () => call(guard), recipient)
+				recipient,
+			)
 			setFor(n, outcome.ok ? { kind: "done" } : { kind: "failed", code: outcome.code, ...detailOf(outcome) })
 			return outcome.ok && attempt.current === n
 		},

@@ -34,7 +34,7 @@ export function SendDialog({ account, balance, onClose }: Props) {
 	const recipient = typed !== null && isAztecPoint(typed) ? typed : null
 	const toError = to === "" || recipient ? undefined : typed === null ? RECIPIENT_MESSAGE : messageOf("RECIPIENT_INVALID")
 	const amount = useAmount(balance.balance)
-	const act = useAction()
+	const act = useAction(account)
 	const send = () => {
 		if (!recipient || amount.amount === null) return
 		const a = { to: recipient, amount: amount.amount, label: balance.label, origin: balance.origin }
@@ -70,7 +70,7 @@ export function SendDialog({ account, balance, onClose }: Props) {
 export function UnshieldDialog({ account, balance, onClose }: Props) {
 	const { aztec, live } = useApp()
 	const amount = useAmount(balance.balance)
-	const act = useAction()
+	const act = useAction(account)
 	const send = () => {
 		if (amount.amount === null) return
 		const a = { amount: amount.amount, label: balance.label, origin: balance.origin }
@@ -103,7 +103,7 @@ export function UnshieldDialog({ account, balance, onClose }: Props) {
 export function ShieldDialog({ account, amount: available, onClose }: { account: AztecAddress; amount: bigint; onClose(): void }) {
 	const { aztec } = useApp()
 	const amount = useAmount(available)
-	const act = useAction()
+	const act = useAction(account)
 	const send = () => {
 		const value = amount.amount
 		if (value === null) return

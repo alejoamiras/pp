@@ -6,14 +6,14 @@
 import { AztecAddress as SdkAddress } from "@aztec-labs/aztec.js/addresses"
 import { Contract, NO_WAIT } from "@aztec-labs/aztec.js/contracts"
 import { type AztecNode, createAztecNodeClient, waitForTx } from "@aztec-labs/aztec.js/node"
-import { type ExecutionPayload, type TxHash, TxStatus } from "@aztec-labs/aztec.js/tx"
+import { type ExecutionPayload, TxHash, TxStatus } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { labelledTokenArtifact, tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
 import type { Hex } from "viem"
-import { BridgeFailure } from "../errors"
+import { BridgeFailure, isUserRejection } from "../errors"
 import { BALANCES_PAGE, NOTES_PAGE, readAllPages } from "../paging"
 import { parseAztecAddress, parseBalanceRow, parseU128 } from "../parse"
-import type { AztecPort, Deployment, LabelBalance, Sent } from "../ports"
+import type { AztecPort, AztecReceipt, Deployment, LabelBalance, Sent } from "../ports"
 import type { AztecAddress } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
 import { type ScopeBucket, scopeKey } from "../wallet/grant"
@@ -160,8 +160,25 @@ export async function sendThroughWallet(d: AztecDeps, s: AztecSend): Promise<Sen
 	assertWalletStill(accounts, chain, node, d, s.from)
 	const held = boundTo(d, s.epoch)
 	s.handoff()
-	const { txHash } = await held.wallet.sendTx(s.payload, { from: sdk(s.from), wait: NO_WAIT })
+	let txHash: TxHash
+	try {
+		;({ txHash } = await held.wallet.sendTx(s.payload, { from: sdk(s.from), wait: NO_WAIT }))
+	} catch (err) {
+		// The wallet's no sent nothing; any other failure past the handoff may follow a broadcast.
+		if (isUserRejection(err)) throw err
+		return { status: "unconfirmed" }
+	}
 	return settle(d.node, txHash)
+}
+
+/** How the node reads `txHash` now. A mined receipt without a block is no answer. */
+export async function readReceipt(node: Pick<AztecNode, "getTxReceipt">, txHash: Hex): Promise<AztecReceipt> {
+	const r = await node.getTxReceipt(TxHash.fromString(txHash))
+	if (!r.isMined()) return { status: "pending" }
+	if (r.hasExecutionSucceeded()) return { status: "success" }
+	const block = Number(r.blockNumber)
+	if (!Number.isSafeInteger(block)) throw new BridgeFailure("RPC_INCONSISTENT")
+	return { status: "reverted", block }
 }
 
 /** A simulation's return value, whether aztec.js hands it back bare or under `result`. */

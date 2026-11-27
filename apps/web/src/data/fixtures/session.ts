@@ -190,6 +190,7 @@ async function claim(c: Ctx, id: string, on: ClaimHooks): Promise<Sent> {
 	const txHash = w.nextHex(32)
 	w.update((s) => void s.sent.aztec++)
 	if (fault === "DROPPED") return { txHash, status: "dropped" }
+	if (fault === "UNCONFIRMED") return { txHash, status: "unconfirmed" }
 	if (fault === "REVERTED")
 		return { txHash, status: "reverted", block: w.aztecBlock(), reason: "claim_from_pool: message already consumed" }
 	w.update((s) => {

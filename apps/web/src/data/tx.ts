@@ -14,7 +14,9 @@ export type TxOutcome = { ok: true } | { ok: false; code: UiCode; reason?: strin
 export function sentOutcome(action: TxAction, sent: Sent): TxOutcome {
 	if (sent.status === "success") return { ok: true }
 	if (sent.status === "dropped") return { ok: false, code: "TX_DROPPED" }
-	if (sent.status === "unconfirmed") return { ok: false, code: "TX_UNCONFIRMED", txHash: sent.txHash }
+	// Without a hash the wallet's send threw: whether it went out, only a reload and the wallet can tell.
+	if (sent.status === "unconfirmed")
+		return sent.txHash ? { ok: false, code: "TX_UNCONFIRMED", txHash: sent.txHash } : { ok: false, code: "UNKNOWN" }
 	return { ok: false, code: action === "unshield" ? "UNSHIELD_REVERTED" : "TX_REVERTED", ...(sent.reason ? { reason: sent.reason } : {}) }
 }
 

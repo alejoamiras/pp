@@ -86,7 +86,7 @@ export function RagequitDialog({ account, balance, onClose }: RagequitProps) {
 	const payee = usePayee()
 	const [pick, setPick] = useState<string | null>(null)
 	const [review, setReview] = useState(false)
-	const act = useAction()
+	const act = useAction(account)
 	const amount = pick === null ? null : BigInt(pick)
 	const confirm = async () => {
 		const to = payee.payee
@@ -98,12 +98,20 @@ export function RagequitDialog({ account, balance, onClose }: RagequitProps) {
 			return act.fail(codeOf(err) ?? "CONTEXT_CHANGED")
 		}
 		// The note read runs under the send lock, so a second click or a Back meanwhile sends nothing more.
-		const sent = await act.send("ragequit", async (guard) => {
+		// The payee joins Exits at the handoff: an exit whose outcome is never read must still be listed.
+		await act.send("ragequit", async (guard) => {
 			if (ragequitChunks(await aztec.notesByLabel(account, balance.label), amount).length !== 1)
 				throw new BridgeFailure("NO_EXACT_CHUNKS")
-			return aztec.ragequit(account, { payee: to, label: balance.label, amount }, guard(on))
+			const g = guard(on)
+			const listed = {
+				...g,
+				handoff() {
+					g.handoff()
+					addPayee(to)
+				},
+			}
+			return aztec.ragequit(account, { payee: to, label: balance.label, amount }, listed)
 		})
-		if (sent) addPayee(to)
 	}
 	const missing = amount === null ? "Pick an amount first." : !payee.payee ? "Enter a valid payee first." : undefined
 	return (
@@ -160,7 +168,7 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 	const amount = useAmount(available)
 	const payee = usePayee()
 	const [review, setReview] = useState(false)
-	const act = useAction()
+	const act = useAction(account)
 	const confirm = async () => {
 		if (amount.amount === null || !payee.payee) return
 		const a = { payee: payee.payee, amount: amount.amount }
