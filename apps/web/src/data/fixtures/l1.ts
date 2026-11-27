@@ -27,7 +27,7 @@ export function fixtureL1(w: World): L1Port & { provider: Eip1193Provider } {
 	const provider: Eip1193Provider = {
 		async request({ method, params }) {
 			if (method === "eth_chainId") return `0x${w.s.walletChain.toString(16)}`
-			if (method === "eth_accounts") return [selectedAccount(w)]
+			if (method === "eth_accounts" || method === "eth_requestAccounts") return [selectedAccount(w)]
 			if (method === "eth_sendTransaction" || method === "wallet_sendTransaction") return send(params)
 			throw new ProviderError(4200, `${method} is not supported by the fixture wallet`)
 		},
@@ -45,6 +45,8 @@ export function fixtureL1(w: World): L1Port & { provider: Eip1193Provider } {
 	return {
 		provider,
 		accounts: async () => [selectedAccount(w)],
+		requestAccounts: async () => [selectedAccount(w)],
+		hasWallet: true,
 		chainId: async () => w.s.walletChain,
 		async signTypedData(owner) {
 			if (!isAddressEqual(owner, selectedAccount(w))) throw new ProviderError(4100, "not the selected account")

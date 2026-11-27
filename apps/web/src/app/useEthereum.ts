@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { openOwnerSession } from "../data/chain"
 import { codeOf, isUserRejection, type UiCode } from "../data/errors"
-import type { Session } from "../data/ports"
+import type { L1Port, Session } from "../data/ports"
 import type { DataSource } from "../data/source"
 import type { LiveStore } from "./live"
 
@@ -11,6 +11,19 @@ const signInFailure = (err: unknown): EthStatus => ({
 	kind: "error",
 	code: isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED"),
 })
+
+/**
+ * A wallet that has not shared an account with this origin answers eth_accounts with none, so the click
+ * asks it for one; its answer is the selection until the wallet's own event says otherwise. False when
+ * a newer sign-in or a sign-out replaced this one meanwhile.
+ */
+async function shareAccount(l1: L1Port, live: LiveStore, current: () => boolean): Promise<boolean> {
+	if (live.get().account !== null) return true
+	const [account] = await l1.requestAccounts()
+	if (!current()) return false
+	live.set({ account: account ?? null })
+	return true
+}
 
 /**
  * The selected Ethereum account and chain, kept current from wallet events, and the owner's session.
@@ -69,6 +82,7 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 		const mine = run.current
 		setStatus({ kind: "signing" })
 		try {
+			if (!(await shareAccount(source.l1, live, () => mine === run.current))) return
 			const opened = await openOwnerSession({
 				l1: source.l1,
 				sessions: source.sessions,

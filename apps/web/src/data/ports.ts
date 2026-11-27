@@ -50,8 +50,15 @@ export type Attempt = Readonly<{
 }>
 
 export interface L1Port {
-	/** The wallet's selected account first. */
+	/** The wallet's selected account first; none until the wallet shares one with this origin. */
 	accounts(): Promise<Address[]>
+	/**
+	 * Asks the wallet to share its accounts with this origin (`eth_requestAccounts`), which may prompt
+	 * the user; only on a user's click. @throws `NO_SENDER` with no wallet, the wallet's 4001 on a no.
+	 */
+	requestAccounts(): Promise<Address[]>
+	/** Whether the page found an Ethereum wallet at all; one with no shared account can still be asked. */
+	readonly hasWallet: boolean
 	chainId(): Promise<number>
 	signTypedData(owner: Address, td: TypedDataDefinition): Promise<Hex>
 	onAccountsChanged(f: (accounts: Address[]) => void): () => void

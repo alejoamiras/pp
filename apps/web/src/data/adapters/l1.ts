@@ -105,6 +105,8 @@ export function stackL1(
 	return {
 		reads,
 		accounts: async () => (wallet ? addressesOf(await wallet.request({ method: "eth_accounts" })) : []),
+		requestAccounts: async () => addressesOf(await need().request({ method: "eth_requestAccounts" })),
+		hasWallet: wallet !== undefined,
 		chainId: async () => Number(await need().request({ method: "eth_chainId" })),
 		signTypedData(owner, td) {
 			const client = createWalletClient({ transport: custom(need()) })

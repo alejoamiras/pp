@@ -44,6 +44,26 @@ describe("connect", () => {
 		await screen.findByText("Notes by label")
 	})
 
+	test("a wallet that has shared no account with this page is asked for one at Sign in, then signs", async () => {
+		let shared = false
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: {
+					...s.l1,
+					accounts: async () => (shared ? s.l1.accounts() : []),
+					requestAccounts: vi.fn(async () => {
+						shared = true
+						return s.l1.accounts()
+					}),
+				},
+			}),
+		})
+		await clickSignIn(app.user)
+		await screen.findByText("Notes by label")
+		expect(app.source.l1.requestAccounts).toHaveBeenCalledOnce()
+	})
+
 	test("an account with no pool notes gets an empty state naming both causes and the pool app", async () => {
 		const app = renderApp()
 		act(() => app.control.selectL1Account("sender"))

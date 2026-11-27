@@ -21,7 +21,7 @@ export function EthereumSignIn() {
 			</Callout>
 		)
 	const reason =
-		account === null
+		account === null && !source.l1.hasWallet
 			? messageOf("NO_SENDER")
 			: chainId === null
 				? NETWORK_UNKNOWN
