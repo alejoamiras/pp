@@ -2,10 +2,8 @@ import type { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import { aspLeaf } from "@pp/bridge-spec"
 import { birthId, birthLabel, siloedBirthNullifier } from "@pp/bridge-spec/birth"
 
-/** The token's private `BirthAnnouncement`, as the intake decrypts it. */
 export type BirthAnnouncement = { label: bigint; secret: bigint; owner: AztecAddress; amount: bigint }
 
-/** The token's public `ShieldDebited`. */
 export type ShieldDebited = { birthId: bigint; owner: AztecAddress; amount: bigint }
 
 /**
@@ -18,12 +16,7 @@ export type Refusal = "above_pin" | "reverted" | "invalid_fields" | "label_misma
 
 export type Verdict = { ok: true; leaf: bigint } | { ok: false; reason: Refusal }
 
-/**
- * Approves a birth only when its own transaction proves it: the shield succeeded at or below the
- * pinned block, the label recomputes from the announced fields, and the token's public debit and
- * birth nullifier for that label are in the same transaction. The announcement alone is the
- * shielder's word.
- */
+/** `tx` must be the announcement's own transaction: the announcement alone is the shielder's word. */
 export async function checkBirth(token: AztecAddress, pin: number, a: BirthAnnouncement, tx: BirthTx): Promise<Verdict> {
 	if (tx.block > pin) return { ok: false, reason: "above_pin" }
 	if (!tx.success) return { ok: false, reason: "reverted" }

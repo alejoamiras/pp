@@ -20,7 +20,6 @@ const PIN = 10
 
 type Birth = { token: AztecAddress; txHash: string; event: BirthAnnouncement; tx: BirthTx }
 
-/** A shield's announcement and the transaction facts that prove it, built from the real hashes. */
 async function birth(t: AztecAddress, txHash: string, secret: bigint, amount = 1_000n): Promise<Birth> {
 	const label = birthLabel({ token: t, owner, amount, birthSecret: secret })
 	const tx: BirthTx = {
@@ -67,7 +66,6 @@ describe("a birth", () => {
 		for (const [reason, event, tx] of cases) {
 			expect(await checkBirth(token, PIN, { ...b.event, ...event }, { ...b.tx, ...tx }), reason).toEqual({ ok: false, reason })
 		}
-		// The same announcement, claimed for a token that did not emit it, does not recompute.
 		expect(await checkBirth(otherToken, PIN, b.event, b.tx)).toEqual({ ok: false, reason: "label_mismatch" })
 	})
 

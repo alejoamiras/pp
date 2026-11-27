@@ -37,10 +37,11 @@ a refused birth by its transaction hash and a reason, never by an announced fiel
 The registry's admin calls `set_birth_intake(<their address>)`. Their script reads
 `BirthAnnouncement` with their intake key, runs the checks above, and posts the sorted
 `hash_1(label)` set as `birth_root`. Only the poster posts, so the full handoff is
-`set_birth_intake` plus `set_poster` to their accounts. `set_poster` clears the record, so their
-first post must carry every birth they have read. A shield proven against an older anchor still
-delivers to the previous intake for up to 1800 s after the switch, and only that intake's key reads
-it, so the previous holder reads that window and passes those births on.
+`set_birth_intake` plus `set_poster` to their accounts. Only the previous intake's key reads the
+births announced before the switch, and `set_poster` clears the record. So the previous holder
+hands over its approved set first, and their first post carries that set plus every birth they have
+read. A shield proven against an older anchor still delivers to the previous intake for up to
+1800 s after the switch, so the previous holder also reads that window and passes those births on.
 
 ## Snapshots
 
