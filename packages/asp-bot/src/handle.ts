@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
 import { type Hex, MAX_OBSERVATION_LAG, type RootRecord } from "@pp/label-paths"
+import { registryPath, releaseRows } from "@pp/run-isolation/ports"
 import type { L1Tag } from "./l1"
 import { decodeRecord, line, type PostNowReply, parseLine, type ReadyEvent } from "./protocol"
 
@@ -53,9 +54,8 @@ export type StartOptions = {
 const CACHE = join(homedir(), ".cache", "pp", "asp-bot")
 const CLI = fileURLToPath(new URL("./cli.ts", import.meta.url))
 
-const releaseByRunId = async (runId: string) => {
-	const { releaseHostPorts } = await import("@pp/bridge-core/sandbox")
-	await releaseHostPorts(runId, {})
+const releaseByRunId = (registry: string) => async (runId: string) => {
+	if (!(await releaseRows(runId, registry))) throw new Error(`${registry} stayed locked; the rows owned by ${runId} are still there`)
 }
 
 const signalGroup = (pgid: number, signal: NodeJS.Signals | 0): boolean => {
@@ -170,6 +170,8 @@ export async function startBot(c: BotConfig, o: StartOptions = {}): Promise<BotH
 	const log = createWriteStream(logPath, { flags: "a" })
 	// A full disk must cost the log, not crash the caller with an unhandled stream error.
 	log.on("error", (e) => process.stderr.write(`[asp-bot] log ${logPath}: ${e.message}\n`))
+	// Resolved once: the child claims here and `stop` releases here, even if the caller's env changes between.
+	const registry = registryPath()
 	const bun = process.versions.bun ? process.execPath : "bun"
 	const [cmd, ...args] = o.command ?? [bun, CLI, "run"]
 	const child = spawn(cmd as string, args, {
@@ -179,6 +181,7 @@ export async function startBot(c: BotConfig, o: StartOptions = {}): Promise<BotH
 			PATH: process.env.PATH ?? "",
 			HOME: process.env.HOME ?? homedir(),
 			TMPDIR: join(dataDir, "tmp"),
+			PP_PORTS_REGISTRY: registry,
 			PP_BOT_CONFIG: JSON.stringify({ ...c, dataDir }),
 		},
 	})
@@ -200,7 +203,7 @@ export async function startBot(c: BotConfig, o: StartOptions = {}): Promise<BotH
 		channel.close("asp-bot stopped")
 		stopping ??= (async () => {
 			await killGroup(child, pgid, o.killAfterMs ?? 30_000)
-			await (o.releasePorts ?? releaseByRunId)(c.runId)
+			await (o.releasePorts ?? releaseByRunId(registry))(c.runId)
 			if (o.removeDataOnStop) rmSync(dataDir, { recursive: true, force: true })
 			await new Promise((r) => (log.destroyed ? r(undefined) : log.end(r)))
 		})()

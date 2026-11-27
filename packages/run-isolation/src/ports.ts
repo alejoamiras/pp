@@ -196,9 +196,12 @@ export async function claimPort(runId: string, service: string, opts: ClaimOptio
 	throw new Error(`no free loopback port in [${STATIC_LO}, ${hi}) after ${MAX_STATIC_TRIES} probes`)
 }
 
-/** Drops every row whose owner column is `runId`, and no other; false when the lock never came free. */
-export function releaseRows(runId: string): Promise<boolean> {
-	return withRegistry((lines) => lines.filter((l) => !ownedBy(l, runId)))
+/**
+ * Drops every row whose owner column is `runId`, and no other, from the registry at `registry`; false when
+ * the lock never came free.
+ */
+export function releaseRows(runId: string, registry = registryPath()): Promise<boolean> {
+	return withRegistry((lines) => lines.filter((l) => !ownedBy(l, runId)), registry)
 }
 
 /** One registry row, named by all three of its port, service and owner cells. */
