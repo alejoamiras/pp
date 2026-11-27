@@ -18,7 +18,8 @@ Browser-safe helpers for checking a label against the ASP registry on Aztec. The
    unapproved or was revoked.
 4. `labelState(record, snapshot, label, origin, anchorTime)` gives `ACTIVE`, `ABSENT` or `STALE_ROOT`,
    by the same rules as the registry's `check_label`. Pass the anchor time plus your proving budget:
-   `ACTIVE` at the exact age limit fails a proof anchored one block later.
+   `ACTIVE` at the exact age limit fails a proof anchored one block later. Its time rule alone is
+   `rootFresh(record, anchorTime)`, which needs no snapshot.
 5. `pathFor(snapshot, label, origin)` gives the membership path to pass to the contract.
 
 `origin` is the note's origin: `0` for a note minted from the bridge (the pool tree), `1` for a shield
