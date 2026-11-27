@@ -16,19 +16,19 @@
 		"@aztec-labs/aztec.js": "6.0.0",
 		"@aztec-labs/foundation": "6.0.0",
 		"@aztec-labs/stdlib": "6.0.0",
-		"@nulo-sh/wallet-crypto": "0.3.0",
+		"@nulo-sh/wallet-crypto": "catalog:",
 		"@pp/asp-bot": "workspace:*",
 		"@pp/bridge-core": "workspace:*",
 		"@pp/label-paths": "workspace:*",
 		"@pp/labelled-token": "workspace:*",
 		"@pp/pp-env": "workspace:*",
 		"@pp/run-isolation": "workspace:*",
-		"viem": "2.57.1",
-		"zod": "^4.6.7"
+		"viem": "catalog:",
+		"zod": "catalog:"
 	},
 	"devDependencies": {
-		"@types/node": "^24.13.2",
-		"typescript": "^6.0.3",
-		"vitest": "^4.1.9"
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }
