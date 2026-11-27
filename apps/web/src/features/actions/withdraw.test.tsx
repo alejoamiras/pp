@@ -104,7 +104,7 @@ describe("the label's withdrawal to Ethereum", () => {
 		await waitFor(() => expect(asked).toEqual([usdc(39)]))
 	})
 
-	test("a disconnect while the send is being prepared closes the dialog, and nothing goes out once reconnected", async () => {
+	test("nothing goes out when the connection is replaced while the send is being prepared", async () => {
 		let hold = false
 		const held: (() => void)[] = []
 		// Holds the port call between the click and its handoff, where the stack port checks the list and the notes.

@@ -35,17 +35,20 @@ export function dispatchRefusal(
 	return canDispatch(grant, action, stage, t) ? null : "NOT_GRANTED"
 }
 
-/** The actions each port member runs; a member that sends several functions in one transaction needs all of them. */
+/**
+ * The actions each port member runs, the reads it makes before its handoff included; a member needs
+ * every one, so a partial grant refuses here rather than in the wallet's simulation.
+ */
 const PORT_ACTIONS: Record<keyof AztecPort, readonly AztecAction[]> = {
 	balancesByLabel: ["balances"],
 	notesByLabel: ["notes"],
 	publicBalance: ["publicBalance"],
-	transferPrivate: ["transferPrivate"],
-	unshield: ["unshield"],
+	transferPrivate: ["transferPrivate", "notes"],
+	unshield: ["unshield", "notes"],
 	shield: ["shield"],
 	ragequit: ["ragequit"],
-	exitPublic: ["exitPublic"],
-	unshieldAndExit: ["unshield", "exitPublic"],
+	exitPublic: ["exitPublic", "publicBalance"],
+	unshieldAndExit: ["unshield", "exitPublic", "notes"],
 }
 
 /** `port` behind the dispatch check; `allowed` is read at each call, so a new grant applies at once. */

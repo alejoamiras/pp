@@ -277,7 +277,7 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 		const a = { payee: to, amount: amount.amount, label: balance.label, origin: balance.origin }
 		const on = bound(live, account, act)
 		if (!on) return
-		// The port reads the notes again right before the handoff.
+		// The port reads the notes again after the allow-list check.
 		await act.send("unshieldAndExit", (guard) =>
 			aztec.unshieldAndExit(
 				account,

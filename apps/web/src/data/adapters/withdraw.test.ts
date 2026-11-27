@@ -155,7 +155,7 @@ describe("withdrawals to Ethereum", () => {
 		const late = on()
 		await expect(spent.port.unshieldAndExit(ME, screened, late)).rejects.toMatchObject({ code: "OVER_NOTE_CAP" })
 		expect(spent.notes).toHaveBeenCalledWith(ME, screened.label)
-		// The notes are read after the allow-list check, the last await before the handoff.
+		// The notes are read after the allow-list check.
 		expect(spent.notes.mock.invocationCallOrder[0]).toBeGreaterThan(spent.allowList.check.mock.invocationCallOrder[0] ?? 0)
 		expect(late.handoff).not.toHaveBeenCalled()
 		const moved = rig()
