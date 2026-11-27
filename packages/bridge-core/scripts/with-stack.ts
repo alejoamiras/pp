@@ -19,7 +19,7 @@ import { dirname, join } from "node:path"
 import { createInterface } from "node:readline"
 import { setTimeout as sleep } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
-import { endGroup, groupAlive, groupGone } from "./process-group"
+import { endGroup, groupAlive, groupGone, groupMembers } from "./process-group"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
 const CACHE = join(homedir(), ".cache", "pp")
@@ -120,10 +120,29 @@ async function runCommand(run: Run, command: string, manifest: string): Promise<
 		child.once("exit", (c, signal) => resolve(c ?? (signal ? signalExit(signal as NodeJS.Signals) : 1))),
 	)
 	run.command = undefined
-	// A process the command started may still be finishing (a tool's service child exits on stdin EOF).
-	if (!run.signal && !(await groupGone(pgid, SETTLE_MS))) run.leaks.push(`command group ${pgid} outlived its shell`)
-	if (!(await endGroup(pgid, GRACE_MS))) run.leaks.push(`command group ${pgid} survived SIGKILL`)
+	if (!run.signal) await settle(run, pgid)
+	if (!(await endGroup(pgid, GRACE_MS))) run.leaks.push(`command group ${pgid} survived SIGKILL: ${membersOf(pgid)}`)
 	return code
+}
+
+const membersOf = (pgid: number) =>
+	groupMembers(pgid)
+		.map((m) => `${m.pid} [${m.state}] ${m.args}`)
+		.join("; ") || "members unavailable"
+
+/**
+ * Third-party tools leave children that exit asynchronously (a service child that quits on stdin
+ * EOF), so a group still populated at shell exit gets a short window. Its members are logged either
+ * way, and whatever is left after the window is killed and fails the run.
+ */
+async function settle(run: Run, pgid: number): Promise<void> {
+	if (!groupAlive(pgid)) return
+	console.error(`[with-stack] command group ${pgid} at shell exit: ${membersOf(pgid)}`)
+	if (await groupGone(pgid, SETTLE_MS)) {
+		console.error(`[with-stack] command group ${pgid} emptied within ${SETTLE_MS / 1000} s`)
+		return
+	}
+	run.leaks.push(`command group ${pgid} outlived its shell by ${SETTLE_MS / 1000} s: ${membersOf(pgid)}`)
 }
 
 async function runCommands(run: Run, commands: readonly string[], manifest: string): Promise<number> {

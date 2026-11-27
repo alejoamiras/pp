@@ -5,8 +5,9 @@ import { setTimeout as sleep } from "node:timers/promises"
 import { describe, expect, it } from "vitest"
 import { endGroup, groupAlive } from "./process-group"
 
-const linux = existsSync("/proc/self/stat") && spawnSync("setsid", ["--version"]).status === 0
-const python = spawnSync("python3", ["--version"]).status === 0
+// Without /proc these semantics do not apply (macOS); CI is Linux, so there the suite always runs.
+const proc = existsSync("/proc/self/stat") || process.env.CI !== undefined
+const requireTool = (cmd: string) => expect(spawnSync(cmd, ["--version"]).status, `${cmd} is required`).toBe(0)
 
 // The main thread leaves through the raw exit syscall (not exit_group), so its worker keeps running.
 const LONE_WORKER = `
@@ -27,8 +28,9 @@ const state = (pid: number) => {
 	}
 }
 
-describe.skipIf(!linux)("groupAlive", () => {
+describe.skipIf(!proc)("groupAlive", () => {
 	it("counts a group whose only member is a zombie nobody has reaped as gone", async () => {
+		requireTool("setsid")
 		// The inner shell leads its own group and exits after the outer one became `sleep`, which never reaps.
 		const parent = spawn("sh", ["-c", `( exec setsid sh -c 'echo $$; sleep 0.3' ) & exec sleep 30`], {
 			stdio: ["ignore", "pipe", "inherit"],
@@ -46,7 +48,8 @@ describe.skipIf(!linux)("groupAlive", () => {
 		}
 	})
 
-	it.skipIf(!python)("counts a process whose leader thread exited as running while a worker thread runs", async () => {
+	it("counts a process whose leader thread exited as running while a worker thread runs", async () => {
+		requireTool("python3")
 		const child = spawn("python3", ["-c", LONE_WORKER], { detached: true, stdio: ["ignore", "pipe", "inherit"] })
 		const pgid = child.pid!
 		try {

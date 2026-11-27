@@ -86,16 +86,19 @@ describe("with-stack", () => {
 		30_000,
 	)
 
-	it("lets a process the command started finish exiting before calling it residue", async () => {
+	it("lets a process the command started finish exiting before calling it residue, and logs it", async () => {
 		const r = await withStack("ready", ["sleep 0.5 &"])
 		expect(r.code).toBe(0)
 		expect(r.output).not.toContain("residue")
+		expect(r.output).toMatch(/command group \d+ at shell exit: \d+ \[S\] sleep 0\.5/)
+		expect(r.output).toMatch(/command group \d+ emptied within/)
 	}, 30_000)
 
 	it("kills and reports a process a command leaves behind when it exits", async () => {
 		const r = await withChild("sleep 300 & echo child $!", false)
 		expect(r.code).toBe(1)
 		expect(r.output).toContain(`residue: command group`)
+		expect(r.output).toContain(`outlived its shell by 3 s: ${r.child} [S] sleep 300`)
 		expect(alive(r.child)).toBe(false)
 	}, 30_000)
 

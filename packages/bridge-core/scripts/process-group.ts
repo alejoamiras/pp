@@ -38,6 +38,24 @@ function anyThreadRunning(pid: string): boolean {
 	return tids.some((tid) => !exited(readStat(`/proc/${pid}/task/${tid}/stat`)?.state))
 }
 
+/** Every process in `pgid` with its state and command line (`[]` without `/proc`), for a log line. */
+export function groupMembers(pgid: number): { pid: number; state: string; args: string }[] {
+	if (!PROC) return []
+	const members: { pid: number; state: string; args: string }[] = []
+	for (const pid of readdirSync("/proc")) {
+		if (!/^\d+$/.test(pid)) continue
+		const st = readStat(`/proc/${pid}/stat`)
+		if (st?.pgrp !== pgid) continue
+		let args = ""
+		try {
+			args = readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ").trim().slice(0, 200)
+		} catch {}
+		const state = st.state ?? "?"
+		members.push({ pid: Number(pid), state: exited(st.state) && anyThreadRunning(pid) ? `${state}, threads running` : state, args })
+	}
+	return members
+}
+
 /** Whether some process in `pgid` has a thread that has not exited, read from `/proc`. */
 function hasRunningMember(pgid: number): boolean {
 	for (const pid of readdirSync("/proc")) {
