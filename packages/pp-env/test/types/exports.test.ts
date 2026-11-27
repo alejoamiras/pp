@@ -11,6 +11,8 @@ const ENTRIES = [
 
 // conformance.ts compares the values' types; `keyof typeof` cannot see type-only exports, so the
 // names, types included, are compared here.
+// A whole-program tsc run (~1,400 files, mostly viem's types): 2–4 s alone, CPU-bound, beside
+// every workspace's tests in test:all.
 test("each public entry exports exactly the names its implementation does", () => {
 	const program = ts.createProgram(
 		ENTRIES.flat().map((f) => join(ROOT, f)),
@@ -34,4 +36,4 @@ test("each public entry exports exactly the names its implementation does", () =
 			.sort()
 	}
 	for (const [impl, pub] of ENTRIES) expect(names(pub)).toEqual(names(impl))
-})
+}, 20_000)
