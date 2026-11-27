@@ -2,7 +2,7 @@ import { type ReactNode, useState } from "react"
 import { type Address, isAddressEqual } from "viem"
 import { useApp } from "../../app/context"
 import { useLive } from "../../app/live"
-import { messageOf, PAYEE_MESSAGES, type UiCode } from "../../data/errors"
+import { messageOf, PAYEE_MESSAGES, revertCopy, type UiCode } from "../../data/errors"
 import { parseAmount, parsePayee } from "../../data/parse"
 import type { Sent } from "../../data/ports"
 import type { TxAction } from "../../data/tx"
@@ -95,6 +95,12 @@ export function OwnerWarning({ payee }: { payee: Address }) {
 	)
 }
 
+/** The page's sentence for a listed revert reason; an unlisted one shows nothing. */
+export function RevertLine({ reason }: { reason: string | undefined }) {
+	const copy = revertCopy(reason)
+	return copy === null ? null : <p className="mt-1">{copy}</p>
+}
+
 interface ShellProps {
 	title: string
 	description: string
@@ -128,7 +134,7 @@ export function ActionShell({ title, description, action, state, onClose, done, 
 			{state.kind === "failed" ? (
 				<Callout tone="bad" title="It did not go through" role="alert">
 					<p>{messageOf(state.code)}</p>
-					{state.reason ? <p className="mt-1">Reported by the chain: {state.reason}</p> : null}
+					<RevertLine reason={state.reason} />
 				</Callout>
 			) : null}
 			{state.kind === "sending" ? (

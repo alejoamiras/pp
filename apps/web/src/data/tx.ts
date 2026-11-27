@@ -7,7 +7,7 @@ import type { Sent } from "./ports"
 
 export type TxAction = "transferPrivate" | "unshield" | "shield" | "ragequit" | "exitPublic"
 
-/** `reason` is untrusted chain text: interpolate only. */
+/** `reason` is untrusted chain text: it reaches the screen only through `revertCopy`. */
 export type TxOutcome = { ok: true } | { ok: false; code: UiCode; reason?: string }
 
 export function sentOutcome(action: TxAction, sent: Sent): TxOutcome {

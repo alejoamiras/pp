@@ -103,6 +103,27 @@ export const ROOT_NAMES: Record<StaleRootCode, string> = {
 
 export const reprovingMessage = (code: StaleRootCode): string => `A root changed (${ROOT_NAMES[code]}); proving again.`
 
+/**
+ * The contract assertions a transaction can revert on after it was sent, each with the page's own
+ * sentence. The token's unshield finishes in a public step that re-reads the allow list; nothing
+ * else the page sends has a public step that can fail.
+ */
+const REVERTS = [
+	["roots changed", "The allow list changed before the transaction landed. Check the label again, then retry."],
+	["current root too old", "The allow list grew too old before the transaction landed. Wait for its next post, then retry."],
+] as const
+
+export type KnownRevert = (typeof REVERTS)[number][0]
+
+/**
+ * The page's sentence for a revert reason that names one of the listed assertions, else `null`. A
+ * chain's reason is untrusted text: it is matched, never shown.
+ */
+export function revertCopy(reason: string | undefined): string | null {
+	if (reason === undefined) return null
+	return REVERTS.find(([assertion]) => reason.includes(assertion))?.[1] ?? null
+}
+
 /** Follows `cause` a few levels: wallets and viem wrap the code that matters. */
 function* chain(err: unknown): Generator<Record<string, unknown>> {
 	let current = err

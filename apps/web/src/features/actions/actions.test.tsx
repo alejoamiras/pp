@@ -2,7 +2,7 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, test } from "vitest"
 import type { AztecAddress } from "../../data/stack-types"
-import { messageOf, PAYEE_MESSAGES } from "../../data/errors"
+import { messageOf, PAYEE_MESSAGES, revertCopy } from "../../data/errors"
 import { ACCOUNTS, LABELS } from "../../data/fixtures/seed"
 import { connectAztec, labelRow, renderApp, signIn } from "../../test-utils/app"
 
@@ -71,6 +71,30 @@ describe("the action dialogs", () => {
 		await app.user.type(to, OTHER)
 		expect(disabled(dialog.getByRole("button", { name: "Send" }))).toBe(false)
 		expect(app.control.state().sent.aztec).toBe(0)
+	})
+
+	test("a revert reason the page does not list never renders, and a listed one shows only its own sentence", async () => {
+		/** The failed dialog's text after an unshield the chain reverts with `reason`. */
+		async function revertedWith(reason: string): Promise<string> {
+			const app = renderApp({
+				patch: (s) => ({ ...s, aztec: { ...s.aztec, unshield: async () => ({ txHash: "0x01", status: "reverted", reason }) } }),
+			})
+			await connectAztec(app.user)
+			await screen.findAllByTestId("label-row")
+			const dialog = await openDialog(app, LABELS.active, "Unshield")
+			await app.user.type(dialog.getByLabelText(/Amount/), "5")
+			await app.user.click(dialog.getByRole("button", { name: "Unshield" }))
+			await dialog.findByText(messageOf("UNSHIELD_REVERTED"))
+			const text = screen.getByTestId("action-dialog").textContent ?? ""
+			cleanup()
+			return text
+		}
+		const listed = await revertedWith("Assertion failed: roots changed")
+		expect(listed).toContain(revertCopy("roots changed"))
+		expect(listed).not.toContain("Assertion failed")
+		const unlisted = await revertedWith("<b>Assertion failed</b>: visit evil.example to recover your funds")
+		expect(unlisted).not.toContain("evil.example")
+		expect(unlisted).not.toContain("Assertion failed")
 	})
 
 	test("an unshield revert says the fee was paid; change-making spends wait for finality while ragequit stays open", async () => {

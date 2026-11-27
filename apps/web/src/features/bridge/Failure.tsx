@@ -2,6 +2,7 @@ import { useApp } from "../../app/context"
 import type { Failure, Offer } from "../../data/bridge-machine"
 import { messageOf, UNCERTAIN_WORST_CASE, type UiCode } from "../../data/errors"
 import { ActionButton, Callout } from "../../ui"
+import { RevertLine } from "../actions/shared"
 
 export const TITLES: Partial<Record<UiCode, string>> = {
 	UNCERTAIN: "We can't see your transaction yet",
@@ -43,7 +44,7 @@ export function FailureCallout({ failure }: { failure: Failure }) {
 			<p data-testid="bridge-failure" data-code={failure.code}>
 				{messageOf(failure.code)}
 			</p>
-			{failure.reason ? <p className="mt-1">Reported by the chain: {failure.reason}</p> : null}
+			<RevertLine reason={failure.reason} />
 			{offer === "send-again" ? <p className="mt-1 font-semibold">{UNCERTAIN_WORST_CASE}</p> : null}
 			{offer !== "none" ? (
 				<div className="mt-2 flex flex-wrap gap-2">
