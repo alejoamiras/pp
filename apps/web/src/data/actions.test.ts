@@ -82,6 +82,7 @@ describe("dispatch", () => {
 		const needs: [keyof AztecPort, AztecAction[]][] = [
 			["transferPrivate", ["transferPrivate", "notes"]],
 			["unshield", ["unshield", "notes"]],
+			["ragequit", ["ragequit", "notes"]],
 			["exitPublic", ["exitPublic", "publicBalance"]],
 			["unshieldAndExit", ["unshield", "exitPublic", "notes"]],
 		]

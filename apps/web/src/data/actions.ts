@@ -46,7 +46,7 @@ const PORT_ACTIONS: Record<keyof AztecPort, readonly AztecAction[]> = {
 	transferPrivate: ["transferPrivate", "notes"],
 	unshield: ["unshield", "notes"],
 	shield: ["shield"],
-	ragequit: ["ragequit"],
+	ragequit: ["ragequit", "notes"],
 	exitPublic: ["exitPublic", "publicBalance"],
 	unshieldAndExit: ["unshield", "exitPublic", "notes"],
 }
