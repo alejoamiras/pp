@@ -74,6 +74,8 @@ export interface TargetEnv {
 	PP_STACK_MANIFEST?: string
 	PP_WEB_WALLETS?: string
 	PP_DATA?: string
+	/** A testnet deployment file; read only by `--mode testnet`. */
+	PP_DEPLOYMENT?: string
 }
 
 /** A CSP host-source host with no wildcard: dot-separated letters, digits and hyphens. */
@@ -111,11 +113,11 @@ const handleFields = z.object({
 	rollupVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 })
 
-function fail(source: string, problem: string): never {
+export function fail(source: string, problem: string): never {
 	throw new Error(`build target: ${source} ${problem}`)
 }
 
-function readJson(file: string): unknown {
+export function readJson(file: string): unknown {
 	let text: string
 	try {
 		text = readFileSync(file, "utf8")
@@ -151,7 +153,7 @@ export function parseDataMode(env: Pick<TargetEnv, "PP_DATA" | "PP_STACK_MANIFES
 }
 
 /** Runs `f`, reporting what it throws as a problem with `source`. */
-function attempt<T>(source: string, f: () => T): T {
+export function attempt<T>(source: string, f: () => T): T {
 	try {
 		return f()
 	} catch (err) {

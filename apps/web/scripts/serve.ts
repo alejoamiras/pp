@@ -8,7 +8,14 @@
  * leaves; they are GPL and never part of a build. It refuses to start unless that names an absolute
  * directory; a directory without the files answers 503 on their routes and serves everything else.
  *
+ * With `--deployment <file>` (a testnet build) it also proxies the ASP bot and the pool's mock ASP under
+ * `/bot/` and `/asp/` (see `proxy.ts`). It then binds 127.0.0.1 only, refuses a build that is not the
+ * one for that file, and answers only a Host of `localhost:<port>` or `127.0.0.1:<port>`, so a page
+ * that points its own name at the forwarded port reads nothing. `--claim` registers the port in the
+ * host registry for as long as the server runs.
+ *
  * Usage: PP_CIRCUITS_DIR=<dir> bun scripts/serve.ts [--outDir dist] [--host 127.0.0.1] --port <n> [--strictPort]
+ *   [--deployment <file> [--claim]]
  * (the port is always strict: a taken port is an error, never another port).
  */
 import { readFileSync, statSync } from "node:fs"
@@ -16,9 +23,12 @@ import { createServer, type IncomingMessage } from "node:http"
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path"
 import { parseArgs } from "node:util"
 import { createArtifacts } from "@pp/pool-client/circuits"
+import { claimRows, releaseRows } from "@pp/run-isolation/ports"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build/headers.ts"
 import { PROVED_CIRCUIT, PROVED_PINS } from "../src/data/adapters/circuit.ts"
 import { APP_ROOT } from "./proc"
+import { forward, isProxyPath, type ProxyConfig, proxyRoute, type Upstream } from "./proxy"
+import { loadTestnetServing } from "./testnet-serve"
 
 type Getter = "getWasm" | "getProvingKey" | "getVerificationKey"
 const FILES = [
@@ -52,6 +62,7 @@ interface Reply {
 	status: number
 	type: string
 	body: Uint8Array | string
+	headers?: Readonly<Record<string, string>>
 }
 
 const text = (status: number, body: string): Reply => ({ status, type: TYPES[".txt"] as string, body })
@@ -127,7 +138,41 @@ const fileReply = (path: string): Reply => ({
 	body: readFileSync(path),
 })
 
-async function reply(req: IncomingMessage, outDir: string, circuits: string): Promise<Reply> {
+const UPSTREAM_DOWN: Readonly<Record<Upstream, string>> = {
+	asp: "the pool's ASP does not answer",
+	bot: "the ASP bot does not answer",
+}
+
+async function proxied(method: string | undefined, rawTarget: string, config: ProxyConfig): Promise<Reply> {
+	if (method !== "GET") return text(405, "method not allowed")
+	const route = proxyRoute(rawTarget, config)
+	if (route === null) return text(404, "not found")
+	const r = await forward(route.url)
+	if (r.ok) return { status: r.status, type: TYPES[".json"] as string, body: r.body, headers: { "Cache-Control": "no-store" } }
+	console.error(`serve: ${route.upstream}: ${r.reason}`)
+	return text(502, UPSTREAM_DOWN[route.upstream])
+}
+
+interface Testnet {
+	readonly proxy: ProxyConfig
+	/** The exact Host values this server answers. */
+	readonly hosts: ReadonlySet<string>
+}
+
+/** The request's one Host value, or `null` when it sends none or several. */
+function hostOf(req: IncomingMessage): string | null {
+	const values: string[] = []
+	for (let i = 0; i < req.rawHeaders.length; i += 2)
+		if (req.rawHeaders[i]?.toLowerCase() === "host") values.push(req.rawHeaders[i + 1] ?? "")
+	return values.length === 1 ? (values[0] as string) : null
+}
+
+async function reply(req: IncomingMessage, outDir: string, circuits: string, testnet: Testnet | null): Promise<Reply> {
+	if (testnet) {
+		const host = hostOf(req)
+		if (host === null || !testnet.hosts.has(host)) return text(421, "misdirected request")
+		if (isProxyPath(req.url ?? "/")) return proxied(req.method, req.url ?? "/", testnet.proxy)
+	}
 	if (req.method !== "GET" && req.method !== "HEAD") return text(405, "method not allowed")
 	const pathname = new URL(req.url ?? "/", "http://serve.invalid").pathname
 	const pinned = PINNED.get(pathname.slice(1))
@@ -138,29 +183,63 @@ async function reply(req: IncomingMessage, outDir: string, circuits: string): Pr
 	return text(404, "not found")
 }
 
-function main(): void {
+/** The testnet state for `--deployment`, or `null` without one. */
+async function testnetFor(file: string | undefined, outDir: string, host: string, port: number): Promise<Testnet | null> {
+	if (file === undefined) return null
+	if (host !== "127.0.0.1") throw new Error(`serve: --deployment binds 127.0.0.1 only, got --host ${host}`)
+	const { proxy } = await loadTestnetServing(resolve(file), outDir)
+	return { proxy, hosts: new Set([`localhost:${port}`, `127.0.0.1:${port}`]) }
+}
+
+/**
+ * Registers `port` under a fresh run id and returns its release. The registry never reaps a dead
+ * owner's rows, so a hard kill leaves this one until it is released by the printed run id.
+ */
+async function claim(port: number): Promise<() => Promise<void>> {
+	const runId = `web-testnet-${process.pid}-${Date.now().toString(36)}`
+	await claimRows(runId, { "web-testnet": port }, process.pid)
+	console.log(`serve: claimed port ${port} as ${runId}`)
+	return async () => void (await releaseRows(runId))
+}
+
+async function main(): Promise<void> {
 	const { values } = parseArgs({
-		options: { outDir: { type: "string" }, host: { type: "string" }, port: { type: "string" }, strictPort: { type: "boolean" } },
+		options: {
+			outDir: { type: "string" },
+			host: { type: "string" },
+			port: { type: "string" },
+			strictPort: { type: "boolean" },
+			deployment: { type: "string" },
+			claim: { type: "boolean" },
+		},
 	})
 	const outDir = resolve(APP_ROOT, values.outDir ?? "dist")
 	const host = values.host ?? "127.0.0.1"
 	const port = Number(values.port)
 	if (!Number.isInteger(port) || port <= 0 || port > 65_535) throw new Error("serve: --port takes a port number")
+	if (values.claim && values.deployment === undefined) throw new Error("serve: --claim goes with --deployment")
 	const circuits = circuitsDir(process.env.PP_CIRCUITS_DIR)
 	const headers = loadHeaders(outDir)
+	const testnet = await testnetFor(values.deployment, outDir, host, port)
+	const release = values.claim ? await claim(port) : async () => {}
+	const stop = (code: number) => void release().finally(() => process.exit(code))
+	if (values.claim) for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => stop(0))
 	const server = createServer((req, res) => {
-		void reply(req, outDir, circuits)
+		void reply(req, outDir, circuits, testnet)
 			.catch((): Reply => text(500, "internal error"))
 			.then((r) => {
-				res.writeHead(r.status, { ...headers, "Content-Type": r.type, "Content-Length": Buffer.byteLength(r.body) })
+				res.writeHead(r.status, { ...headers, ...r.headers, "Content-Type": r.type, "Content-Length": Buffer.byteLength(r.body) })
 				res.end(req.method === "HEAD" ? undefined : r.body)
 			})
 	})
 	server.once("error", (err) => {
 		console.error(`serve: ${host}:${port}: ${err.message}`)
-		process.exit(1)
+		stop(1)
 	})
 	server.listen(port, host, () => console.log(`serving ${outDir} at http://${host}:${port}`))
 }
 
-main()
+main().catch((err: unknown) => {
+	console.error(err instanceof Error ? err.message : String(err))
+	process.exit(1)
+})
