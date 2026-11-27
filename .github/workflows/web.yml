@@ -41,7 +41,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations (dorny's some-quantifier footgun). The app and the kit
           # whole; the sources of what they load (bridge-core with its sandbox harness in scripts/,
-          # bridge-spec, pool-client, label-paths, run-isolation, and the local stack the suite boots
+          # bridge-spec, pool-client, label-paths, run-isolation, testnet's schema, and the local stack the suite boots
           # with pp-env and asp-bot); contracts/bridge/**, which the sandbox and the stack build and
           # deploy; the actions these jobs run; the root files the install and the vitest config
           # read (lint lives in pr-quick.yml). Pinned by scripts/ci-cd/behavior-gating.test.ts.
@@ -62,6 +62,8 @@ jobs:
               - 'packages/label-paths/package.json'
               - 'packages/run-isolation/src/**'
               - 'packages/run-isolation/package.json'
+              - 'packages/testnet/src/**'
+              - 'packages/testnet/package.json'
               - 'packages/local-stack/src/**'
               - 'packages/local-stack/package.json'
               - 'packages/pp-env/**'
@@ -133,6 +135,16 @@ jobs:
       # forge libraries themselves.
       - uses: ./.github/actions/ppv2-fetch
       - uses: ./.github/actions/bridge-evm-build
+
+      # serve --deployment's own refusals (Host, origin-form targets, its build, the loopback bind) and its
+      # proxy's isolation, against counting fake upstreams, on a testnet build of the fixture file. The
+      # circuit files it serves come from the pool checkout above.
+      - name: Testnet server
+        run: |
+          PP_CIRCUITS_DIR="$(bun -e 'import { checkout } from "./packages/pp-env/src/env/checkout.ts"; console.log(checkout().circuits)')"
+          export PP_CIRCUITS_DIR
+          PP_DEPLOYMENT="$PWD/apps/web/src/build/fixtures/testnet-own.json" bun run --cwd apps/web build --mode testnet --outDir dist-testnet
+          bun run --cwd apps/web test:headers -- --target src/build/fixtures/testnet-own.json
 
       - uses: ./.github/actions/setup-playwright
 
