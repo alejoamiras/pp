@@ -1,16 +1,22 @@
 // bot <deployment file>
 // Runs the ASP-root poster, its snapshot server and the birth intake in this process on the file's bot
-// port, until SIGINT or SIGTERM. Prints the first post it checkpointed.
+// port, until SIGINT or SIGTERM. Prints the first post it checkpointed, and each wait for approval
+// finality: leaves the ASP serves for a root the registry holds at `latest` but not yet at `finalized`.
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import { runStandaloneBot } from "@pp/asp-bot/standalone"
+import { parseAbi } from "viem"
 import { l1AddressOf, l2AddressOf } from "../accounts"
+import { approvalFinalityLog } from "../approval-finality"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
-import { cliArgs, guarded, main, report } from "./common"
+import { cliArgs, guarded, logLine, main, report } from "./common"
+
+const ASP_ABI = parseAbi(["function latestASPRoot() view returns (uint256)"])
+const bigints = (_k: string, v: unknown) => (typeof v === "bigint" ? v.toString() : v)
 
 await main(async () => {
 	const { file, mode } = cliArgs(process.argv.slice(2), {})
-	const { d } = await guarded(file, mode, ["expected", "pool", "bridge"], true)
+	const { d, l1 } = await guarded(file, mode, ["expected", "pool", "bridge"], true)
 	const keys = readKeys(RUN_KEYS.bot, mode, { env: process.env }, l1AddressOf)
 	const poster = keys.BOT_POSTER_SECRET as `0x${string}`
 	const intake = keys.BOT_INTAKE_SECRET as `0x${string}`
@@ -40,6 +46,14 @@ await main(async () => {
 		{ poster: Fr.fromHexString(poster), intake: Fr.fromHexString(intake) },
 		{
 			signal: stop.signal,
+			log: approvalFinalityLog(
+				{
+					latestRoot: () => l1.readContract({ address: d.pool.aspRegistry, abi: ASP_ABI, functionName: "latestASPRoot" }),
+					report,
+					now: Date.now,
+				},
+				(event, fields) => logLine(JSON.stringify({ event, ...fields }, bigints)),
+			),
 			onReady: ({ url, post }) => report("bot-ready", { url, sequence: post.sequence, txHash: post.txHash, l2Block: post.l2Block }),
 		},
 	)
