@@ -21,6 +21,7 @@ export type AppCode =
 	| "NO_SENDER"
 	| "TX_REVERTED"
 	| "UNSHIELD_REVERTED"
+	| "WITHDRAW_REVERTED"
 	| "TX_DROPPED"
 	| "TX_UNCONFIRMED"
 	| "TX_UNSETTLED"
@@ -41,10 +42,20 @@ export type AppCode =
 
 /**
  * Why a label could not be checked. A list that timed out, did not match the chain, was larger than
- * any list can be or whose check was stopped stays failed until a manual Check again; an unavailable
- * one is read again on the next refresh.
+ * any list can be or whose check was stopped stays failed until a manual Check again (`HELD_LIST_CODES`);
+ * an unavailable one is read again on the next refresh. A record that carries no list, before the first
+ * post or while the list is being reset, checks nothing until a post.
  */
-export type AllowListCode = "LIST_TIMEOUT" | "LIST_MISMATCH" | "LIST_OVERSIZED" | "LIST_CANCELLED" | "LIST_UNAVAILABLE"
+export type AllowListCode =
+	| "LIST_TIMEOUT"
+	| "LIST_MISMATCH"
+	| "LIST_OVERSIZED"
+	| "LIST_CANCELLED"
+	| "LIST_UNAVAILABLE"
+	| "LIST_RESETTING"
+	| "LIST_NOT_POSTED"
+
+export const HELD_LIST_CODES: ReadonlySet<AllowListCode> = new Set(["LIST_TIMEOUT", "LIST_MISMATCH", "LIST_OVERSIZED", "LIST_CANCELLED"])
 
 export type UiCode = BridgeClientErrorCode | AppCode
 
@@ -88,7 +99,9 @@ const MESSAGES: Record<UiCode, string> = {
 	NO_SENDER: "Connect your Ethereum wallet first.",
 	TX_REVERTED: "The transaction reverted on Aztec. Refresh your balances, then try again.",
 	UNSHIELD_REVERTED:
-		"The unshield reverted: the fee was paid; your notes are safe. Sending and unshielding wait until that transaction is final.",
+		"The unshield reverted: the fee was paid; your notes are safe. Sending, unshielding and withdrawing from a label wait until that transaction is final.",
+	WITHDRAW_REVERTED:
+		"The withdrawal reverted: the fee was paid; your notes are safe. Sending, unshielding and withdrawing from a label wait until that transaction is final.",
 	TX_DROPPED:
 		"Aztec has not included the transaction yet, and it may still be. The page will not send it again, and sending from this account waits until Refresh reads it included.",
 	TX_UNCONFIRMED:
@@ -97,7 +110,8 @@ const MESSAGES: Record<UiCode, string> = {
 		"Your last send from this account may still land on Aztec. Sending waits until Refresh reads that transaction included or reverted, so the same funds cannot go out twice.",
 	TX_UNSETTLED_NO_HASH:
 		"Your last send from this account may have gone out, and the page has no transaction to check. Sending stays closed until you reload; check your wallet's activity first, or the same funds can go out twice.",
-	WAIT_FINALITY: "Send and Unshield wait for finality: the reverted unshield's block must be proven first. Refresh to check.",
+	WAIT_FINALITY:
+		"Send, Unshield and Withdraw wait for finality: the reverted transaction's block must be proven first. Refresh to check.",
 	TX_BUSY: "Wait for your last Aztec transaction to finish.",
 	BRIDGE_UNAVAILABLE: "Bridging is not available in this version of the app yet. Your notes stay in the pool.",
 	LIST_TIMEOUT: "The allow list took too long to download, so no label was checked. Check again.",
@@ -105,6 +119,8 @@ const MESSAGES: Record<UiCode, string> = {
 	LIST_OVERSIZED: "The allow list the server sent is larger than any allow list can be, so it was not read.",
 	LIST_CANCELLED: "You stopped the allow-list check. Check again when you are ready.",
 	LIST_UNAVAILABLE: "The allow list could not be read. The page reads it again on the next refresh.",
+	LIST_RESETTING: "The allow list is being reset, so no label can be checked against it. Wait for its next post.",
+	LIST_NOT_POSTED: "No allow list has been posted yet, so no label can be checked. Wait for its first post.",
 	LABEL_ABSENT: "This label is not in the latest allow list, so nothing was sent.",
 	OVER_NOTE_CAP:
 		"This label's notes changed, and one transaction can no longer spend that amount, so nothing was sent. Check the amount and try again.",

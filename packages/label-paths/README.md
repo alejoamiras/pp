@@ -10,7 +10,8 @@ Browser-safe helpers for checking a label against the ASP registry on Aztec. The
    `AztecAddress.toString()` (`0x` and 64 lower-case hex digits). The record carries both roots and
    the length of each list, all read at one block.
 2. Fetch `GET <bot>/v1/snapshots/<record.sequence>`. A 404 means the server does not hold that
-   sequence: read the latest record and retry.
+   sequence: read the latest record and retry. A cleared record (`poolRoot` 0, after the admin's
+   `set_poster`) names no posted list: wait for the next post instead of fetching.
 3. `parseAspSnapshotUnverified(await res.json())` checks every field and builds no tree.
 4. `cache.check(record, snapshot, label, origin, anchorTime)` on one long-lived
    `new LabelPathCache({ onProgress })`, by the same rules as the registry's `check_label`:

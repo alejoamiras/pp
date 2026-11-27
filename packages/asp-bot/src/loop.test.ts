@@ -3,7 +3,7 @@ import { parseAspSnapshot, type RootRecord } from "@pp/label-paths"
 import { describe, expect, it } from "vitest"
 import type { L1Block, PostArgs } from "./decide"
 import { type Ports, Poster } from "./loop"
-import { SnapshotBook } from "./server"
+import { respond, SnapshotBook } from "./server"
 
 const SELF = 0xb07n
 const set1 = [1n, 2n].map(aspLeaf)
@@ -32,18 +32,25 @@ function chain() {
 			return s.aspLeaves
 		},
 		birthLeaves: async () => [],
+		// The registry's rule: a post must take the sequence after the record it lands on.
 		post: async (a: PostArgs) => {
+			if (a.sequence !== s.record.sequence + 1n) throw new Error("sequence not next")
 			s.record = { ...a }
 			return { inclusionTime: s.aztecTime + 72n }
 		},
 		log: (event) => s.logs.push(event),
 	}
-	return { s, ports }
+	/** `set_poster(next)`: the poster and the cleared record, at the next sequence, in one step. */
+	const reset = (next = s.poster) => {
+		s.record = { sequence: s.record.sequence + 1n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		s.poster = next
+	}
+	return { s, ports, reset }
 }
 
 describe("a tick", () => {
 	it("posts only leaves that hash to the chain's root, keeps them in memory, and serves what it posted", async () => {
-		const { s, ports } = chain()
+		const { s, ports, reset } = chain()
 		const book = new SnapshotBook()
 		const bot = new Poster(ports, book, { self: SELF, inclusionMarginSec: 144n })
 
@@ -64,28 +71,24 @@ describe("a tick", () => {
 		expect((await bot.tick()).post).toBe(true)
 		expect(book.body(3n)).toBeDefined()
 
-		// `set_poster` keeps only the sequence; the old poster must stop serving `/latest` at once.
-		const posted = s.record
-		s.poster = 0xdeadn
-		s.record = { ...posted, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
-		expect(await bot.tick()).toEqual({ post: false, reason: "not_poster" })
-		expect(book.body("latest")).toBeUndefined()
-		s.record = posted
-		ports.selectL1 = async () => {
-			throw new Error("anvil down")
-		}
-		s.poster = SELF
-		expect(await bot.tick()).toEqual({ post: false, reason: "error" })
-		expect(s.logs).toEqual(["posted", "posted", "asp_root_mismatch", "posted", "not_poster", "tick_failed"])
-
 		// A fresh process serves the record it finds current once the ASP's leaves rebuild its root.
-		ports.selectL1 = async () => s.l1
 		const fresh = new SnapshotBook()
 		expect(await new Poster(ports, fresh, { self: SELF, inclusionMarginSec: 144n }).tick()).toEqual({
 			post: false,
 			reason: "unchanged",
 		})
 		expect(parseAspSnapshot(JSON.parse(fresh.body("latest")!)).sequence).toBe(3n)
+
+		// `set_poster` clears the record; the old poster must stop serving `/latest` at once.
+		reset(0xdeadn)
+		expect(await bot.tick()).toEqual({ post: false, reason: "not_poster" })
+		expect(book.body("latest")).toBeUndefined()
+		ports.selectL1 = async () => {
+			throw new Error("anvil down")
+		}
+		reset(SELF)
+		expect(await bot.tick()).toEqual({ post: false, reason: "error" })
+		expect(s.logs).toEqual(["posted", "posted", "asp_root_mismatch", "posted", "not_poster", "tick_failed"])
 	})
 
 	it("halts, serving nothing, when a posted root comes with a list of another length, until the feed is fixed", async () => {
@@ -127,7 +130,7 @@ describe("a tick", () => {
 	})
 
 	it("fetches the feed again after a reset instead of reposting a list it cached before", async () => {
-		const { s, ports } = chain()
+		const { s, ports, reset } = chain()
 		// The feed lied when the bot posted: the root itself as the whole list.
 		s.aspLeaves = [root(set1)]
 		const bot = new Poster(ports, new SnapshotBook(), { self: SELF, inclusionMarginSec: 144n })
@@ -135,18 +138,19 @@ describe("a tick", () => {
 		expect(s.record.poolSize).toBe(1n)
 		// The feed is fixed, then the admin's set_poster clears the record.
 		s.aspLeaves = set1
-		s.record = { ...s.record, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		reset()
 		s.aztecTime += 300n
 		s.l1 = { number: 30n, hash: "0x0b", timestamp: 1_150n }
 		expect((await bot.tick()).post).toBe(true)
-		expect(s.record).toMatchObject({ sequence: 2n, poolRoot: root(set1), poolSize: 2n })
+		expect(s.record).toMatchObject({ sequence: 3n, poolRoot: root(set1), poolSize: 2n })
 		expect(s.fetches).toBe(2)
 	})
 
-	it("fetches again after a second reset, even when the post between the two resets failed after it landed", async () => {
-		const { s, ports } = chain()
+	it("fetches again after a reset that follows a post which landed but whose send failed, and keeps that post's body", async () => {
+		const { s, ports, reset } = chain()
 		s.aspLeaves = [root(set1)]
-		const bot = new Poster(ports, new SnapshotBook(), { self: SELF, inclusionMarginSec: 144n })
+		const book = new SnapshotBook()
+		const bot = new Poster(ports, book, { self: SELF, inclusionMarginSec: 144n })
 		const post = ports.post
 		ports.post = async (a) => {
 			await post(a)
@@ -157,15 +161,54 @@ describe("a tick", () => {
 		ports.post = post
 		// The feed is fixed, and the admin resets the record that post left before the bot reads it again.
 		s.aspLeaves = set1
-		s.record = { ...s.record, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		reset()
 		s.aztecTime += 300n
 		s.l1 = { number: 30n, hash: "0x0b", timestamp: 1_150n }
 		expect((await bot.tick()).post).toBe(true)
-		expect([s.record.sequence, s.record.poolSize, s.fetches]).toEqual([2n, 2n, 2])
+		expect([s.record.sequence, s.record.poolSize, s.fetches]).toEqual([3n, 2n, 2])
+		expect(parseAspSnapshot(JSON.parse(book.body(1n)!)).poolLeaves).toEqual([root(set1)])
+	})
+
+	it("stops serving a post that lost to a reset, and posts the sequence after the clear", async () => {
+		const { s, ports, reset } = chain()
+		const errors: unknown[] = []
+		ports.log = (event, f) => {
+			s.logs.push(event)
+			if (event === "tick_failed") errors.push(f?.error)
+		}
+		let t = 0
+		const book = new SnapshotBook()
+		const bot = new Poster(ports, book, { self: SELF, inclusionMarginSec: 144n, leavesFloorMs: 300_000, now: () => t })
+		expect((await bot.tick()).post).toBe(true)
+		// A new root, and the admin re-sets the same poster while the bot's post of 2 is in flight.
+		s.chainRoot = root(set2)
+		s.aspLeaves = set2
+		s.aztecTime += 300n
+		s.l1 = { number: 30n, hash: "0x0b", timestamp: 1_150n }
+		const send = ports.post
+		ports.post = async (a) => {
+			reset()
+			return send(a)
+		}
+		t = 300_000
+		expect(await bot.tick()).toEqual({ post: false, reason: "error" })
+		expect([errors, s.record.sequence, s.record.poolRoot]).toEqual([["sequence not next"], 2n, 0n])
+		const status = (n: string) => respond("GET", `/v1/snapshots/${n}`, book).status
+		// Until the bot reads the clear, it still holds the body its fenced post would have named.
+		expect(status("2")).toBe(200)
+		ports.post = send
+		// Inside the floor, so no recovery post hides what reading the clear leaves served.
+		t = 300_030
+		expect(await bot.tick()).toEqual({ post: false, reason: "asp_deferred" })
+		expect(["latest", "2", "1"].map(status)).toEqual([404, 404, 200])
+		t = 600_000
+		expect((await bot.tick()).post).toBe(true)
+		expect([s.record.sequence, s.record.poolRoot, s.fetches]).toEqual([3n, root(set2), 3])
+		expect(parseAspSnapshot(JSON.parse(book.body("latest")!)).sequence).toBe(3n)
 	})
 
 	it("asks the feed at most once per floor, failures included, and never starves the post a reset waits for", async () => {
-		const { s, ports } = chain()
+		const { s, ports, reset } = chain()
 		const fields: Record<string, unknown>[] = []
 		ports.log = (event, f) => {
 			s.logs.push(event)
@@ -213,24 +256,31 @@ describe("a tick", () => {
 		expect((await at(1_200_000)).post).toBe(true)
 		expect(s.fetches).toBe(5)
 
-		// A reset is fetched again once; when its post fails, the retry reuses that list with no request.
-		s.record = { ...s.record, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		// A reset is fetched again once; when its post fails, a retry at the same clear reuses that list.
+		reset()
 		step(1n)
 		const post = ports.post
-		ports.post = async () => {
+		const attempts: bigint[] = []
+		ports.post = async (a) => {
+			attempts.push(a.sequence)
 			throw new Error("send failed")
 		}
 		expect(await at(1_500_000)).toEqual({ post: false, reason: "error" })
+		expect(await at(1_500_030)).toEqual({ post: false, reason: "error" })
+		expect([attempts, s.fetches]).toEqual([[5n, 5n], 6])
+		// A second reset with no post between drops the list fetched since the first, within the floor.
+		reset()
 		ports.post = post
-		expect((await at(1_500_030)).post).toBe(true)
-		expect(s.fetches).toBe(6)
+		expect(await at(1_500_060)).toEqual({ post: false, reason: "asp_deferred" })
+		expect((await at(1_800_000)).post).toBe(true)
+		expect([s.fetches, s.record.sequence]).toEqual([7, 6n])
 
 		// A size mismatch drops the list, and the feed is asked again only past the floor.
 		s.record = { ...s.record, poolSize: 9n }
-		expect(await at(1_500_060)).toEqual({ post: false, reason: "size_mismatch" })
-		expect(await at(1_500_090)).toEqual({ post: false, reason: "asp_deferred" })
-		expect(await at(1_800_000)).toEqual({ post: false, reason: "size_mismatch" })
-		expect(s.fetches).toBe(7)
+		expect(await at(1_800_030)).toEqual({ post: false, reason: "size_mismatch" })
+		expect(await at(1_800_060)).toEqual({ post: false, reason: "asp_deferred" })
+		expect(await at(2_100_000)).toEqual({ post: false, reason: "size_mismatch" })
+		expect(s.fetches).toBe(8)
 	})
 
 	it("serves a post's sequence while the post awaits its checkpoint, and moves /latest only after it", async () => {
@@ -242,14 +292,20 @@ describe("a tick", () => {
 		s.l1 = { number: 30n, hash: "0x0b", timestamp: 1_150n }
 		const send = ports.post
 		const sequenceOf = (body: string | undefined) => body && parseAspSnapshot(JSON.parse(body)).sequence
-		let pending = {}
+		const { promise: landed, resolve: land } = Promise.withResolvers<void>()
+		const { promise: checkpointed, resolve: checkpoint } = Promise.withResolvers<void>()
+		// The post lands at once; its checkpoint waits until the test releases it.
 		ports.post = async (a) => {
-			s.record = { ...a }
-			pending = { named: sequenceOf(book.body(a.sequence)), latest: sequenceOf(book.body("latest")) }
-			return send(a)
+			const done = await send(a)
+			land()
+			await checkpointed
+			return done
 		}
-		expect((await bot.tick()).post).toBe(true)
-		expect(pending).toEqual({ named: 2n, latest: 1n })
+		const tick = bot.tick()
+		await landed
+		expect([sequenceOf(book.body(2n)), sequenceOf(book.body("latest"))]).toEqual([2n, 1n])
+		checkpoint()
+		expect((await tick).post).toBe(true)
 		expect(sequenceOf(book.body("latest"))).toBe(2n)
 	})
 })

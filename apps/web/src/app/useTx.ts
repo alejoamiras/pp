@@ -4,7 +4,7 @@ import type { AztecAddress } from "../data/stack-types"
 import { isWalletRefusal, type UiCode } from "../data/errors"
 import type { Sent } from "../data/ports"
 import type { DataSource } from "../data/source"
-import { isFinal, MAKES_CHANGE, sentOutcome, type TxAction, type TxOutcome, thrownOutcome } from "../data/tx"
+import { isFinal, MAKES_CHANGE, REVERT_WAITS_FINALITY, sentOutcome, type TxAction, type TxOutcome, thrownOutcome } from "../data/tx"
 import { useAztecProven } from "./queries"
 
 /** A send from one account that may still land: `txHash` is what a Refresh reads, absent when the wallet's send threw. */
@@ -41,7 +41,7 @@ export function useTx(source: DataSource, refresh: () => void) {
 	}, [])
 
 	const reverted = useCallback((action: TxAction, block: number) => {
-		if (action === "unshield") setRevertBlock((b) => Math.max(b ?? 0, block))
+		if (REVERT_WAITS_FINALITY.has(action)) setRevertBlock((b) => Math.max(b ?? 0, block))
 	}, [])
 
 	const closed = useCallback(

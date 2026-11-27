@@ -16,8 +16,11 @@ build a label path. Demo grade: snapshots live in memory, and a restart serves o
    sooner than its request floor (see The ASP API), and the halt clears once the lengths agree. The
    log line names the list, both lengths and what to do: compare both lists with the ASP's published
    list; if the feed is wrong, fix it; if the posted length is wrong, fix the feed first, then the
-   admin calls `set_poster`, which clears the record. A cleared record makes the bot fetch the feed
-   again before it posts.
+   admin calls `set_poster`, which clears the record at the next sequence. A post the bot prepared
+   before the reset then fails instead of putting the old list back, and the bot fetches the feed
+   again before it posts. Fix the feed first: a collapsed list still hashes to the Ethereum root, so
+   the bot would post it again. Two resets in flight land in either order; each advances the
+   sequence, and the one that executes last sets the poster.
 5. Posts when the pool root or the birth root changed, or when 300 s of Aztec chain time passed since
    the last post, with the length of each list. Before sending, it checks the registry's `post_root`
    assertions itself (sequence, non-zero root, monotonic block and time, observation lag ≤ 1800 s,
@@ -102,7 +105,9 @@ allowance too.
   root changes, after an admin's reset, or after a list fails a check. When the leaves do not hash to the
   root, the bot posts nothing new, keeps serving a snapshot it holds, and asks again after the 5
   minutes.
-- **Resets.** A list fetched since a reset is kept until it is posted.
+- **Resets.** A list fetched since a reset is reused while the root stays the same. When the bot reads
+  a new cleared sequence, it drops the list. It can fetch again on an eligible tick once 5 minutes
+  have passed since the previous request.
 - **One process per pool.** The floor lives in the process's memory, so a restart or a second process
   for the same pool asks again at once. Run one process per pool, and do not restart it in a loop.
 - **The local stack.** Its child bot has no floor.

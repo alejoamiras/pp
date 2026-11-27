@@ -5,6 +5,7 @@ import { useLive } from "../../app/live"
 import { useAllowList } from "../../app/queries"
 import type { AztecAction } from "../../data/capabilities"
 import { chainName } from "../../data/chain"
+import { listPost } from "../../data/list-post"
 import { chainAge, bridgeView } from "../../data/model"
 import { ActionButton, Callout, DetailsDrawer, type Fact, Facts } from "../../ui"
 import { NoticeLog } from "../bridge/NoticeLog"
@@ -74,6 +75,23 @@ function AllowList() {
 	const allow = useAllowList(source, true).data
 	if (!allow) return <p className="text-meta text-ink-3">Not read yet.</p>
 	const { record, nowSec } = allow
+	const post = listPost(record)
+	if (post !== "posted")
+		return (
+			<Facts
+				facts={[
+					{ key: "seq", term: "Sequence", value: `#${record.sequence}` },
+					{
+						key: "age",
+						term: "Posted",
+						value:
+							post === "resetting"
+								? "Not now: the list is being reset; wait for its next post"
+								: "Not yet: wait for its first post",
+					},
+				]}
+			/>
+		)
 	return (
 		<Facts
 			facts={[

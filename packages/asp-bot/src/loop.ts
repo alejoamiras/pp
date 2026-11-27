@@ -62,7 +62,7 @@ export class Poster {
 
 	/**
 	 * `leavesFloorMs` (default 0) is the least time between two leaves requests, counted from the start of
-	 * each; `now` (default `performance.now`) must be monotonic.
+	 * each; `now` (default `performance.now()`) must be monotonic.
 	 */
 	constructor(
 		private readonly ports: Ports,
@@ -84,8 +84,9 @@ export class Poster {
 		const p = this.ports
 		const tip = await p.tip()
 		const record = await p.record(tip.hash)
-		// `set_poster` keeps the sequence, so clears at one sequence share one cache boundary: a list cached
+		// `set_poster` clears at a sequence of its own, so a cleared sequence names one reset: a list cached
 		// before it is dropped once, and one fetched since is reused while the chain's root stays the same.
+		// A second reset drops that list too.
 		const resetAt = record.poolRoot === 0n ? record.sequence : null
 		if (resetAt !== null && resetAt !== this.resetAt) this.pool = null
 		this.resetAt = resetAt
@@ -139,7 +140,7 @@ export class Poster {
 	/** A root already held reuses its leaves without asking the feed. */
 	private async poolFor(root: bigint): Promise<Pool | "deferred" | null> {
 		if (this.pool?.root === root) return this.pool
-		const now = (this.opts.now ?? performance.now)()
+		const now = this.opts.now ? this.opts.now() : performance.now()
 		if (now - this.lastFetch < (this.opts.leavesFloorMs ?? 0)) return "deferred"
 		// Before the request: an attempt that fails or times out uses the allowance too.
 		this.lastFetch = now

@@ -104,7 +104,16 @@ export interface WorldState {
 	publicBalances: { owner: AztecAddress; amount: bigint }[]
 	bridges: FixtureBridge[]
 	exits: FixtureExit[]
-	allowList: { sequence: bigint; rootTime: bigint; l1Block: bigint; pool: bigint[]; birth: bigint[]; pendingBirths: bigint[] }
+	allowList: {
+		sequence: bigint
+		rootTime: bigint
+		l1Block: bigint
+		pool: bigint[]
+		birth: bigint[]
+		pendingBirths: bigint[]
+		/** The registry's poster was replaced: the record reads cleared, the lists kept for the next post. */
+		cleared?: boolean
+	}
 	faults: { fail: { op: FixtureOp; code: string }[]; reprove: string[]; hang: FixtureOp[] }
 	counter: number
 	sent: { l1: number; aztec: number }

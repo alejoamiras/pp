@@ -35,23 +35,28 @@ export function dispatchRefusal(
 	return canDispatch(grant, action, stage, t) ? null : "NOT_GRANTED"
 }
 
-const PORT_ACTION: Record<keyof AztecPort, AztecAction> = {
-	balancesByLabel: "balances",
-	notesByLabel: "notes",
-	publicBalance: "publicBalance",
-	transferPrivate: "transferPrivate",
-	unshield: "unshield",
-	shield: "shield",
-	ragequit: "ragequit",
-	exitPublic: "exitPublic",
+/**
+ * The actions each port member runs, the reads it makes before its handoff included; a member needs
+ * every one, so a partial grant refuses here rather than in the wallet's simulation.
+ */
+const PORT_ACTIONS: Record<keyof AztecPort, readonly AztecAction[]> = {
+	balancesByLabel: ["balances"],
+	notesByLabel: ["notes"],
+	publicBalance: ["publicBalance"],
+	transferPrivate: ["transferPrivate", "notes"],
+	unshield: ["unshield", "notes"],
+	shield: ["shield", "publicBalance"],
+	ragequit: ["ragequit", "notes"],
+	exitPublic: ["exitPublic", "publicBalance"],
+	unshieldAndExit: ["unshield", "exitPublic", "notes"],
 }
 
 /** `port` behind the dispatch check; `allowed` is read at each call, so a new grant applies at once. */
 export function guardAztec(port: AztecPort, allowed: (action: AztecAction) => boolean): AztecPort {
 	const guard = <K extends keyof AztecPort>(name: K): AztecPort[K] =>
 		((...args: unknown[]) => {
-			const action = PORT_ACTION[name]
-			if (!allowed(action)) return Promise.reject(new NotGrantedError(action))
+			const refused = PORT_ACTIONS[name].find((a) => !allowed(a))
+			if (refused !== undefined) return Promise.reject(new NotGrantedError(refused))
 			return (port[name] as (...a: unknown[]) => Promise<unknown>).apply(port, args)
 		}) as AztecPort[K]
 	return {
@@ -63,5 +68,6 @@ export function guardAztec(port: AztecPort, allowed: (action: AztecAction) => bo
 		shield: guard("shield"),
 		ragequit: guard("ragequit"),
 		exitPublic: guard("exitPublic"),
+		unshieldAndExit: guard("unshieldAndExit"),
 	}
 }

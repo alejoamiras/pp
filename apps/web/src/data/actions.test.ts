@@ -77,4 +77,25 @@ describe("dispatch", () => {
 		).rejects.toBeInstanceOf(NotGrantedError)
 		expect(ragequit).not.toHaveBeenCalled()
 	})
+
+	test("a send that reads before its handoff, or sends several functions, needs every one of them granted", async () => {
+		const needs: [keyof AztecPort, AztecAction[]][] = [
+			["transferPrivate", ["transferPrivate", "notes"]],
+			["unshield", ["unshield", "notes"]],
+			["ragequit", ["ragequit", "notes"]],
+			["shield", ["shield", "publicBalance"]],
+			["exitPublic", ["exitPublic", "publicBalance"]],
+			["unshieldAndExit", ["unshield", "exitPublic", "notes"]],
+		]
+		for (const [member, actions] of needs)
+			for (const withheld of actions) {
+				const inner = vi.fn(async () => ({ txHash: "0x01" as const, status: "success" as const }))
+				const port = guardAztec({ [member]: inner } as unknown as AztecPort, (a) => a !== withheld)
+				const call = port[member] as (...a: unknown[]) => Promise<unknown>
+				await expect(call(ACCOUNT, {}, { epoch: 1, handoff: () => {} }), `${member} without ${withheld}`).rejects.toMatchObject({
+					action: withheld,
+				})
+				expect(inner, `${member} without ${withheld}`).not.toHaveBeenCalled()
+			}
+	})
 })

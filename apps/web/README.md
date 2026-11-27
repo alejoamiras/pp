@@ -3,24 +3,27 @@
 The web app for the label bridge. It shows a pool balance by label, bridges part of a pool note to
 Aztec under the same label, connects an Aztec wallet through the wallet SDK, waits for the bridge and
 claims it, lists private balances by label with their allow-list state, and sends privately,
-unshields, shields, leaves to Ethereum (ragequit), withdraws the public balance and collects exits on
-Ethereum.
+unshields, shields, leaves to Ethereum (ragequit), withdraws to Ethereum from a label or from the
+public balance, and collects exits on Ethereum.
 
 Every screen runs on an in-memory fixture world behind the data ports in `src/data/ports.ts`. The
 fixture world keeps chain time (it moves only with blocks) and is driven from tests and the browser
 console through `window.__ppFixtures`, which fixture builds expose and stack builds cannot contain.
 
 A stack build (`build:local` with `PP_STACK_MANIFEST` from `bun run demo --keep`) reads the local
-stack instead through `src/data/adapters/`: Ethereum through the injected wallet, chain time from
-both chains, the asset's decimals and symbol from the factory's registration, the pool notes by
-label through pool-client with one worker prover per page, the bridge and its claim through
-bridge-core's client, the Aztec balances by label, the public balance, the private send, the
-unshield and the ragequit through the connected wallet, and the exit tickets, their status and their
-collection through bridge-core's client. The allow list is the registry's record and its time read
-at one Aztec block, with each label checked against the bot's snapshot of that record's roots in one
-Web Worker (see below). A private send or an unshield checks its label again right before it is
-built and sends nothing for a label the latest list does not hold; both are paid by the
-SponsoredFPC. Shield and the public balance's withdrawal are not wired yet. On the local stack
+stack instead through `src/data/adapters/`: Ethereum reads through the stack's RPC and its signatures
+and sends through the injected wallet, chain time from both chains, the asset's decimals and symbol
+from the factory's registration, the pool notes by label through pool-client with one worker prover
+per page, the bridge and its claim through bridge-core's client, the Aztec balances by label, the
+public balance, the private send, the unshield, the shield, the ragequit and both withdrawals to
+Ethereum through the connected wallet, and the exit tickets, their status and their collection
+through bridge-core's client. The allow list is the registry's record and its time read at one Aztec
+block, with each label checked against the bot's snapshot of that record's lists in one Web Worker
+(see below). A private send, an unshield or a withdrawal from a label checks its label again right
+before it is built and sends nothing for a label the latest list does not hold. A withdrawal from a
+label is one transaction that unshields the amount and withdraws it, so Ethereum sees the payee and
+the amount but not the label. These spends, the shield and the public withdrawal are paid by the
+SponsoredFPC. On the local stack
 (chain 31337 over a loopback RPC) the build can also send a bridge and collect an exit from anvil's
 dev account, so the demo needs no second wallet account. It is served by `serve`, which also serves
 the three proving files of `transact_1x1`, the one circuit the app proves, from `PP_CIRCUITS_DIR`,
@@ -58,16 +61,23 @@ as far as a check needs:
 - The download is bounded by its bytes, counted as they arrive (the canonical largest list plus 1
   KiB; a Content-Length is never trusted), by 30 s of silence and by 300 s in all. Hashing has no
   deadline: one would refuse a legal list on a slow device.
-- The snapshot's declared roots must be the record's before anything is hashed. A label not in its
-  origin's list is "not found" with no tree built; a found label builds that origin's tree once,
-  and every other label of the same list reuses it.
-- Work is keyed by the roots, never the sequence, so the bot's heartbeat (the same roots under a new
-  sequence) costs no download and no hash. A 404 reads the latest record and, when it keeps the
-  roots, fetches its sequence once.
+- The snapshot's declared roots and its lists' lengths must be the record's before anything is
+  hashed. A check of a non-empty list builds its label's origin tree once and answers, found or not,
+  only once that tree has the record's root; every other label of the same list reuses it. An empty
+  list (root 0) holds no label.
+- Work is keyed by the record's lists, both roots and both lengths, never the sequence: a root does
+  not fix its list's length, and the bot's heartbeat (the same lists under a new sequence) costs no
+  download and no tree build. A 404 reads the latest record and, when it keeps the lists, fetches its
+  sequence once.
 - A list that timed out, does not match the chain, is too large, or whose check was cancelled fails
-  at once, with no work, until Check again, which waits 5 s, then twice as long each time, up to
-  5 minutes. One check runs at a time; the page shows its progress and can cancel it, which ends
-  the worker.
+  at once, with no work, until Check again. After a cancel, Check again opens at once. After the
+  others it waits 5 s, then twice as long each time, up to 5 minutes. One check runs at a time; the
+  page shows its progress and can cancel it, which ends the worker. Such a failure closes a label the
+  same list showed active before, once that label's own check answers.
+- A record with no list, before the first post or once the registry's poster is replaced (which
+  clears it until the next post), downloads nothing. Its labels read as not checkable; a private
+  send, an unshield and a withdrawal from a label are refused as on a stale list (a ragequit never
+  reads the list); and the next post is read on the next refresh.
 
 A testnet build (`build --mode testnet` with `PP_DEPLOYMENT`, a testnet deployment file, into
 `dist-testnet/`) targets the own pool on Sepolia and the public Aztec testnet. Its ASP and bot are

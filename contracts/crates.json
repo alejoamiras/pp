@@ -13,7 +13,7 @@
 			"path": "contracts/bridge/aztec/asp_registry",
 			"kind": "contract",
 			"parity": true,
-			"txe": { "floor": 57 }
+			"txe": { "floor": 59 }
 		},
 		{
 			"name": "asp_registry_probe",

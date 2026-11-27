@@ -14,12 +14,13 @@ import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { labelledTokenArtifact } from "@pp/bridge-core/artifacts"
 import { rootFresh } from "@pp/label-paths"
 import { assertSpendable } from "../chunks"
-import { BridgeFailure } from "../errors"
+import { AllowListError, BridgeFailure, codeOf } from "../errors"
+import { NO_LIST_CODES, noListCode } from "../list-post"
 import type { AllowListPort, AllowListView, AztecPort, AztecSendHooks, Sent } from "../ports"
 import type { AztecAddress, LabelPath, Origin } from "../stack-types"
 import { PROVING_BUDGET_SEC } from "./allow-list"
 import { type AztecDeps, boundTo, sendThroughWallet } from "./aztec"
-import { rootsKey } from "./snapshot-protocol"
+import { listsKey } from "./snapshot-protocol"
 
 export interface TokenSendDeps {
 	aztec: AztecDeps
@@ -37,20 +38,22 @@ const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
 /**
  * `label`'s path under `origin` in the latest list.
  * @throws `LABEL_ABSENT` when the list does not hold it, `LIST_STALE` when the list is too old to spend
- *   against, and the allow list's own `LIST_*` failures when it could not be checked
+ *   against or the record carries none, and the allow list's own `LIST_*` failures when it could not be
+ *   checked or its record could not be read
  */
 export async function checkedPath(allowList: TokenSendDeps["allowList"], label: bigint, origin: Origin): Promise<LabelPath> {
-	let view = await allowList.current()
+	let view = await recordNow(allowList)
 	// A check can wait behind others, a download and a tree build, while new roots land and chain time
-	// passes. Its path is taken only once the record read after it still has the roots it was checked
-	// against and is still young enough at that read; a list that keeps moving past that many checks is
-	// too new to spend against yet.
+	// passes. What it says stands only once the record read after it still commits to the lists it was
+	// checked against, roots and lengths: a path then also needs that record young enough, and a refusal
+	// is final. A list that keeps moving past that many checks is too new to spend against yet.
 	for (let checks = 0; checks < MAX_CHECKS; checks++) {
-		const path = await pathIn(allowList, view, label, origin)
-		const after = await allowList.current()
-		if (rootsKey(after.record) === rootsKey(view.record)) {
+		const verdict = await verdictIn(allowList, view, label, origin)
+		const after = await recordNow(allowList)
+		if (listsKey(after.record) === listsKey(view.record)) {
+			if ("refuse" in verdict) throw new BridgeFailure(verdict.refuse)
 			if (!rootFresh(after.record, after.nowSec + PROVING_BUDGET_SEC)) throw new BridgeFailure("LIST_STALE")
-			return path
+			return verdict.path
 		}
 		view = after
 	}
@@ -59,11 +62,24 @@ export async function checkedPath(allowList: TokenSendDeps["allowList"], label: 
 
 const MAX_CHECKS = 3
 
-async function pathIn(allowList: TokenSendDeps["allowList"], view: AllowListView, label: bigint, origin: Origin): Promise<LabelPath> {
-	const check = await allowList.check(view, label, origin)
-	if (check.state === "ABSENT") throw new BridgeFailure("LABEL_ABSENT")
-	if (check.state === "STALE_ROOT") throw new BridgeFailure("LIST_STALE")
-	return check.path
+/** The record now. A read that fails leaves nothing decided before any handoff: the list is unreadable. */
+const recordNow = (allowList: TokenSendDeps["allowList"]): Promise<AllowListView> =>
+	allowList.current().catch((err: unknown) => {
+		throw codeOf(err) ? err : new AllowListError("LIST_UNAVAILABLE")
+	})
+
+type Verdict = { path: LabelPath } | { refuse: "LABEL_ABSENT" | "LIST_STALE" }
+
+async function verdictIn(allowList: TokenSendDeps["allowList"], view: AllowListView, label: bigint, origin: Origin): Promise<Verdict> {
+	// A record with no list, before the first post or while it is being reset, is a list too old to spend against.
+	if (noListCode(view.record)) return { refuse: "LIST_STALE" }
+	const check = await allowList.check(view, label, origin).catch((err: unknown) => {
+		// The check met a record with no list on its own (its 404 fallback read one): the same refusal.
+		if (err instanceof AllowListError && NO_LIST_CODES.has(err.code)) return null
+		throw err
+	})
+	if (check === null || check.state === "STALE_ROOT") return { refuse: "LIST_STALE" }
+	return check.state === "ABSENT" ? { refuse: "LABEL_ABSENT" } : { path: check.path }
 }
 
 /** A label path as the token's methods take it. */

@@ -52,7 +52,7 @@ with warm package and toolchain caches.
 | Install | `bun install --frozen-lockfile` | 4 s |
 | Lint (Biome + complexity) | `bun run lint` | < 1 s |
 | Typecheck | `bun run typecheck:all` | 23 s |
-| Unit (every workspace) | `bun run test:all` | 16 s |
+| Unit (every workspace, one at a time) | `bun run test:all` | 2.5 min |
 | CI-gating tests | `bun run test:ci-gating` | < 1 s |
 | Workflow lint | `bun run lint:actions` | < 1 s |
 | Quality and Web build without the pool checkout | `bun run test:unfetched` | 3 min |
@@ -89,7 +89,7 @@ with warm package and toolchain caches.
 | Web testnet smoke | `bun run --cwd apps/web test:testnet-smoke -- --target src/build/fixtures/testnet-own.json --no-upstreams` (after the testnet build; the page reads the public testnet node and Sepolia RPC) | 5 s |
 | Web e2e (local stack, both builds, Playwright) | `bun run --cwd apps/web e2e` (after `bun run demo:prepare`) | 10 min (7.4 min of tests) |
 | Web e2e on the sandbox (fixture build) | `bun run --cwd packages/e2e-kit test:browser` | 5 min |
-| Real-wallet tier (the wallet's pinned release, local stack, Playwright) | `bun run --cwd packages/e2e-kit test:real-wallet` or `bun run nightly real-wallet`, either after `bun run demo:prepare` | 5.5 min |
+| Real-wallet tier (the wallet's pinned release, local stack, Playwright) | `bun run --cwd packages/e2e-kit test:real-wallet` or `bun run nightly real-wallet`, either after `bun run demo:prepare` | 4.5 min |
 | Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |
 | Sepolia fork, unit | `bun run --cwd packages/sepolia-fork test` | 4 s |
 | Testnet, unit (spawns each key-reading command against a fake loopback L1) | `bun run --cwd packages/testnet test` | 24 s |
@@ -129,7 +129,10 @@ against the keyless public endpoint committed in that file; the real-wallet tier
   mistaking Bun's ES-module namespaces for CommonJS. `bun:test` is for files that load no
   `@aztec-labs/*` package, directly or through a workspace: on a cold transpiler cache, which every CI
   runner has, it breaks `@aztec-labs/foundation` at import. `test:all`, `test:ci-gating` and the kit's
-  runner set `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` so a local run starts cold too.
+  runner set `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` so a local run starts cold too. `test:all` runs one
+  workspace at a time: each vitest pool sizes itself to the machine's cores, and two at once on a
+  4-core runner push jsdom tests past their timeouts. It takes no arguments (Bun reads them as more
+  script names); to filter, run one workspace's `test`.
 - **Biome** lints and formats. `noExplicitAny` is an error: use `unknown` and narrow.
 - **Commits** are Conventional Commits with a lower-case subject, checked by the commit-msg hook and
   in CI. The pre-commit hook runs Biome on staged files, the absolute-path guard and the complexity

@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useCallback, useRef, useSyncExternalStore } from "react"
 import type { Address } from "viem"
 import type { AztecAddress, Origin } from "../data/stack-types"
+import { listPost } from "../data/list-post"
 import type { AllowListProgress, AllowListView, AztecPort, ExitView, Session } from "../data/ports"
 import { readPool } from "../data/reconcile"
 import type { DataSource } from "../data/source"
@@ -54,8 +55,9 @@ export function useAllowList(source: DataSource, enabled: boolean) {
 }
 
 /**
- * One label's state under `view`, keyed by what the state depends on: the roots and both times, never
- * the sequence. Never retried: the adapter decides what a failed list costs.
+ * One label's state under `view`, keyed by what the state depends on: whether the record carries lists,
+ * both lists' roots and lengths and both times, never the sequence. Never retried: the adapter decides
+ * what a failed list costs.
  */
 export function useLabelCheck(source: DataSource, view: AllowListView | undefined, label: bigint, origin: Origin) {
 	const r = view?.record
@@ -63,8 +65,11 @@ export function useLabelCheck(source: DataSource, view: AllowListView | undefine
 		queryKey: [
 			ALLOW_LIST_KEY,
 			"check",
+			r && listPost(r),
 			r?.poolRoot.toString(),
 			r?.birthRoot.toString(),
+			r?.poolSize.toString(),
+			r?.birthSize.toString(),
 			r?.rootTime.toString(),
 			view?.nowSec.toString(),
 			label.toString(),

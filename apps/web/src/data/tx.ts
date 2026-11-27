@@ -6,7 +6,10 @@ import { codeOf, isUserRejection, type UiCode } from "./errors"
 import type { Hex } from "viem"
 import type { Sent } from "./ports"
 
-export type TxAction = "transferPrivate" | "unshield" | "shield" | "ragequit" | "exitPublic"
+export type TxAction = "transferPrivate" | "unshield" | "shield" | "ragequit" | "exitPublic" | "unshieldAndExit"
+
+/** What a reverted send of each action says; any other action reads `TX_REVERTED`. */
+const REVERTED: Partial<Record<TxAction, UiCode>> = { unshield: "UNSHIELD_REVERTED", unshieldAndExit: "WITHDRAW_REVERTED" }
 
 /** `reason` is untrusted chain text: it reaches the screen only through `revertCopy`. */
 export type TxOutcome = { ok: true } | { ok: false; code: UiCode; reason?: string; txHash?: Hex }
@@ -17,7 +20,7 @@ export function sentOutcome(action: TxAction, sent: Sent): TxOutcome {
 	// Without a hash the wallet's send threw: whether it went out, only a reload and the wallet can tell.
 	if (sent.status === "unconfirmed")
 		return sent.txHash ? { ok: false, code: "TX_UNCONFIRMED", txHash: sent.txHash } : { ok: false, code: "UNKNOWN" }
-	return { ok: false, code: action === "unshield" ? "UNSHIELD_REVERTED" : "TX_REVERTED", ...(sent.reason ? { reason: sent.reason } : {}) }
+	return { ok: false, code: REVERTED[action] ?? "TX_REVERTED", ...(sent.reason ? { reason: sent.reason } : {}) }
 }
 
 /** A thrown send: the wallet's no, a coded refusal, or an outcome the page cannot know. */
@@ -34,4 +37,10 @@ export function thrownOutcome(err: unknown): TxOutcome {
 export const isFinal = (revertBlock: number, proven: number | undefined): boolean => proven !== undefined && proven >= revertBlock
 
 /** Actions that spend notes and make change; an exact-chunk ragequit leaves none. */
-export const MAKES_CHANGE: ReadonlySet<TxAction> = new Set(["transferPrivate", "unshield"])
+export const MAKES_CHANGE: ReadonlySet<TxAction> = new Set(["transferPrivate", "unshield", "unshieldAndExit"])
+
+/**
+ * Change-making spends whose public step re-checks the label's roots, so they can land reverted after
+ * the wallet proved them; such a revert holds `MAKES_CHANGE` until its block is final.
+ */
+export const REVERT_WAITS_FINALITY: ReadonlySet<TxAction> = new Set(["unshield", "unshieldAndExit"])
