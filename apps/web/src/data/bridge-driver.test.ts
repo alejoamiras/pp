@@ -266,6 +266,26 @@ describe("each refusal sends nothing", () => {
 		expect(h.machine().failure).toMatchObject({ code: "CONTEXT_CHANGED", offer: "claim" })
 	})
 
+	test("a claim grant withdrawn while the claim build is held sends nothing", async () => {
+		const h = harness()
+		h.atClaimable()
+		h.hold("claim")
+		const run = h.claim()
+		await h.reached("claim")
+		h.denyClaim()
+		h.open("claim")
+		await run
+		expect(h.sent).toEqual([])
+		expect(h.machine().failure).toMatchObject({ code: "NOT_GRANTED", offer: "claim" })
+	})
+
+	test("a claim is bound to the connection it started under", async () => {
+		const h = harness()
+		h.atClaimable()
+		await h.claim()
+		expect(h.session.claim).toHaveBeenCalledWith(CLAIMABLE.id, expect.objectContaining({ epoch: 1 }))
+	})
+
 	test.each(["reprove", "claim"] as const)("a superseded run held at %s never reaches the wallet or the new screen", async (gate) => {
 		const h = harness(gate === "reprove" ? { reproves: ["ASP_ROOT_STALE"] } : {})
 		if (gate === "claim") h.atClaimable()

@@ -107,13 +107,34 @@ describe("the fixture world", () => {
 		expect(second.control.state().bridges).toMatchObject([{ state: "pending" }])
 	})
 
+	test("a proof spends once and only under the attempt it was made for", async () => {
+		const p = await page(memoryStore())
+		const a = Object.freeze({
+			seq: 1,
+			owner: ACCOUNTS.owner,
+			sender: ACCOUNTS.sender,
+			recipient: ACCOUNTS.aztec,
+			deployment: p.world.deployment.id,
+			chainId: 31337,
+			epoch: 1,
+			note: 0x1001n,
+			amount: 1n,
+		})
+		const on = { reproving: () => {}, handoff: () => {}, sent: () => {} }
+		await p.session.preflight(ACCOUNTS.aztec, 1)
+		const proved = await p.session.prove(a)
+		await expect(p.session.submit(proved, { ...a, seq: 2 }, on)).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
+		await expect(p.session.submit(proved, a, on)).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
+		expect(p.control.state().sent.l1).toBe(0)
+	})
+
 	test("the control checks its inputs and arms one-shot faults", async () => {
 		const p = await page(memoryStore())
 		expect(() => p.control.failNext("nope" as "prove", "X_Y")).toThrow()
 		expect(() => p.control.failNext("prove", "lower case")).toThrow()
 		expect(() => p.control.advance(-1)).toThrow()
 		p.control.failNext("preflight", "RECIPIENT_NOT_IN_WALLET")
-		await expect(p.session.preflight(ACCOUNTS.aztec)).rejects.toMatchObject({ code: "RECIPIENT_NOT_IN_WALLET" })
-		await expect(p.session.preflight(ACCOUNTS.aztec)).resolves.toBeUndefined()
+		await expect(p.session.preflight(ACCOUNTS.aztec, 1)).rejects.toMatchObject({ code: "RECIPIENT_NOT_IN_WALLET" })
+		await expect(p.session.preflight(ACCOUNTS.aztec, 1)).resolves.toBeUndefined()
 	})
 })

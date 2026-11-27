@@ -178,7 +178,7 @@ const fresh = (st: State, a: Attempt) =>
 async function runPreflight(st: State, recipient: AztecAddress, epoch: number, dispatch: Dispatch, warm: boolean): Promise<void> {
 	st.binding = null
 	dispatch({ type: "preflight" })
-	await st.deps.session.preflight(recipient)
+	await st.deps.session.preflight(recipient, epoch)
 	// bridge-core's 10 minutes start at its answer, so a slow warm-up must not make the entry look younger.
 	const at = st.deps.timer.now()
 	if (warm) await st.deps.session.warmUp()
@@ -396,6 +396,7 @@ function claimOutcome(st: State, err: unknown, c: ClaimContext, handedOff: boole
 	if (isUserRejection(err)) return { type: "claim-declined" }
 	// Past the handoff, anything but the wallet's no may hide a claim that went out.
 	if (handedOff) return { type: "claim-pending", txHash: null }
+	if (!st.deps.canClaim()) return failure("NOT_GRANTED", "claiming", { offer: "claim" })
 	if (!claimCurrent(c, st.deps.context())) return failure("CONTEXT_CHANGED", "claiming", { offer: "claim" })
 	return failure(codeOf(err) ?? "CLAIM_FAILED", "claiming", { offer: "claim" })
 }
@@ -423,12 +424,12 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
 	dispatch({ type: "claiming" })
 	let handedOff = false
 	const handoff = () => {
-		if (signal.aborted || !claimCurrent(c, st.deps.context())) throw new ContextChanged()
+		if (signal.aborted || !st.deps.canClaim() || !claimCurrent(c, st.deps.context())) throw new ContextChanged()
 		handedOff = true
 	}
 	let event: BridgeEvent
 	try {
-		event = sentOutcome(await st.deps.session.claim(record.id, { handoff }))
+		event = sentOutcome(await st.deps.session.claim(record.id, { epoch: c.epoch, handoff }))
 	} catch (err) {
 		event = claimOutcome(st, err, c, handedOff)
 	}

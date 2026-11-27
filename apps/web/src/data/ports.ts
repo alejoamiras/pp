@@ -94,12 +94,14 @@ export interface SubmitHooks {
 	reproving(code: StaleRootCode): void
 	/** Runs right before the wallet is asked to send or sign; when it throws, nothing is sent. */
 	handoff(): void
-	/** The wallet returned the transaction's hash and the journal holds it; the receipt is still to come. */
+	/** The wallet returned the transaction's hash; the receipt is still to come. */
 	sent(txHash: Hash): void
 }
 
 export interface ClaimHooks {
-	/** Runs after the claim is built and right before the Aztec wallet is asked to send. */
+	/** The Aztec connection the claim is bound to: it goes out through that connection's wallet or not at all. */
+	readonly epoch: number
+	/** Runs after the claim is built and right before the Aztec wallet is asked to send; when it throws, nothing is sent. */
 	handoff(): void
 }
 
@@ -109,8 +111,8 @@ export interface Session {
 	notes(): Promise<PoolNoteView[]>
 	/** The nullifier spending `commitment` would publish (the pool client's `nullifierOf`); ties a record to its note. */
 	nullifierOf(commitment: bigint): Promise<bigint>
-	/** Binds the client to `recipient` for 10 minutes; one send consumes it. */
-	preflight(recipient: AztecAddress): Promise<void>
+	/** Binds the client to `recipient` in connection `epoch`'s wallet for 10 minutes; one send consumes it. */
+	preflight(recipient: AztecAddress, epoch: number): Promise<void>
 	/** Derives what the first proof needs once, so Submit does not wait on it. */
 	warmUp(): Promise<void>
 	prove(a: Attempt): Promise<Proved>
