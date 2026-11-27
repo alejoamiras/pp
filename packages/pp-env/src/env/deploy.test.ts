@@ -25,6 +25,7 @@ echo "$1 key=\${PRIVATE_KEY:+set}" >> '${dir}/forge.log'
 case "$1" in
 	config) echo '{"ffi":false}' ;;
 	build) if [ -e '${dir}/stale' ]; then echo "Compiling 3 files with Solc 0.8.32"; fi ;;
+	script) case " $* " in *" --skip-simulation "*) echo skip-simulation >> '${dir}/forge.log' ;; esac ;;
 esac
 `,
 		{ mode: 0o755 },
@@ -43,7 +44,7 @@ afterAll(async () => {
 	await rm(dir, { recursive: true, force: true })
 })
 
-const deploy = (checkBuild: () => void) =>
+const deploy = (checkBuild: () => void, skipSimulation?: boolean) =>
 	deployPool({
 		rpcUrl: "http://127.0.0.1:1",
 		co,
@@ -52,6 +53,7 @@ const deploy = (checkBuild: () => void) =>
 		workDir: join(dir, "run"),
 		client: {} as PublicClient,
 		checkBuild,
+		skipSimulation,
 	})
 const calls = async () => (await readFile(join(dir, "forge.log"), "utf8")).trim().split("\n")
 
@@ -77,4 +79,13 @@ test("a keyless build that recompiles stops the deploy before the check and the 
 		await rm(join(dir, "stale"))
 	}
 	expect([checked, await calls()]).toEqual([false, ["config key=", "build key="]])
+})
+
+test.each([
+	[true, ["config key=", "build key=", "script key=set", "skip-simulation"]],
+	[false, ["config key=", "build key=", "script key=set"]],
+])("the keyed script leaves forge's own gas replay out only when asked (%p)", async (skip, want) => {
+	// The fake script prints no deployment, so the deploy fails after it ran.
+	await expect(deploy(() => {}, skip)).rejects.toThrow()
+	expect(await calls()).toEqual(want)
 })

@@ -69,6 +69,11 @@ export async function deployPool(o: {
 	client: PublicClient
 	/** Runs between the keyless build and the keyed script; a throw stops the deploy there. */
 	checkBuild?: () => void | Promise<void>
+	/**
+	 * Take each transaction's gas limit from the node's `eth_estimateGas` instead of forge's own replay,
+	 * which prices gas at the pinned `evm_version` and so underprices a chain on a later fork.
+	 */
+	skipSimulation?: boolean
 }): Promise<PoolDeployment> {
 	await assertFfiDisabled(o.co.contracts)
 	// forge script also writes its sensitive broadcast log under the cache path. A per-run cache dir seeded
@@ -93,6 +98,7 @@ export async function deployPool(o: {
 		o.rpcUrl,
 		"--broadcast",
 		"--slow",
+		...(o.skipSimulation ? ["--skip-simulation"] : []),
 		...shared,
 	]
 	const env = forgeEnv({ PRIVATE_KEY: o.deployerKey, FOUNDRY_BROADCAST: join(o.workDir, "broadcast") })

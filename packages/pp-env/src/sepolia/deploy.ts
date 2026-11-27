@@ -36,6 +36,8 @@ export async function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool>
 		workDir: o.runDir,
 		client,
 		checkBuild: o.checkBuild,
+		// Sepolia runs a later fork than the pool's `prague`, which charges far more for state creation.
+		skipSimulation: true,
 	})
 	log(`pool deployed: entrypoint ${deployment.entrypoint}, vault ${deployment.pool}, from block ${deployment.deployBlock}`)
 	const wallet = createWalletClient({ account, chain: sepolia, transport: sendRetrying(http(o.rpcUrl)) })
