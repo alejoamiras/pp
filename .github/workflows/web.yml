@@ -41,7 +41,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations (dorny's some-quantifier footgun). The app and the kit
           # whole; the sources of what they load (bridge-core with its sandbox harness in scripts/,
-          # bridge-spec, pool-client, label-paths, run-isolation, testnet's schema, and the local stack the suite boots
+          # bridge-spec, pool-client, label-paths, run-isolation, testnet and the sepolia-fork helpers it loads, and the local stack the suite boots
           # with pp-env and asp-bot); contracts/bridge/**, which the sandbox and the stack build and
           # deploy; the actions these jobs run; the root files the install and the vitest config
           # read (lint lives in pr-quick.yml). Pinned by scripts/ci-cd/behavior-gating.test.ts.
@@ -64,6 +64,8 @@ jobs:
               - 'packages/run-isolation/package.json'
               - 'packages/testnet/src/**'
               - 'packages/testnet/package.json'
+              - 'packages/sepolia-fork/src/**'
+              - 'packages/sepolia-fork/package.json'
               - 'packages/local-stack/src/**'
               - 'packages/local-stack/package.json'
               - 'packages/pp-env/**'
