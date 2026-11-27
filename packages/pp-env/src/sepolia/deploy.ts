@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises"
 import { createPublicClient, createWalletClient, http } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
+import { sendRetrying } from "../send-retry.ts"
 import { checkout } from "../env/checkout.ts"
 import { deployFixture, deployPool, enableAsset, ensureFixtures, mintTestToken } from "../env/deploy.ts"
 import { ACCESS_ABI, assertCanonicalPoseidon, assertSepolia, hasPostman, POSTMAN_ROLE, sepolia } from "./chain.ts"
@@ -37,7 +38,7 @@ export async function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool>
 		checkBuild: o.checkBuild,
 	})
 	log(`pool deployed: entrypoint ${deployment.entrypoint}, vault ${deployment.pool}, from block ${deployment.deployBlock}`)
-	const wallet = createWalletClient({ account, chain: sepolia, transport: http(o.rpcUrl) })
+	const wallet = createWalletClient({ account, chain: sepolia, transport: sendRetrying(http(o.rpcUrl)) })
 	if (o.postman !== undefined) {
 		const hash = await wallet.writeContract({
 			address: deployment.accessRouter,

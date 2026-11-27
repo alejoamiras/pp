@@ -1,11 +1,13 @@
 import { laggingTolerant, PUBLIC_CHAIN_TIMING } from "@pp/bridge-core"
+import { sendRetrying } from "@pp/pp-env/send-retry"
 import { type Address, createWalletClient, type Hex, http, isAddressEqual } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { GuardError } from "../guards"
 import type { TestnetDeployment } from "../schema"
 
 /**
- * An L1 wallet over the file's endpoint and chain for `key`, refused unless its address is `want`.
+ * An L1 wallet over the file's endpoint and chain for `key`, refused unless its address is `want`. A send the
+ * endpoint refuses as rate-limited is offered again as the same bytes ({@link sendRetrying}).
  * @throws GuardError `account` naming the role, never the key
  */
 export function l1Wallet(d: TestnetDeployment, key: Hex, role: string, want?: Address) {
@@ -20,6 +22,6 @@ export function l1Wallet(d: TestnetDeployment, key: Hex, role: string, want?: Ad
 			nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
 			rpcUrls: { default: { http: [d.network.l1Rpc] } },
 		},
-		transport: laggingTolerant(http(d.network.l1Rpc), PUBLIC_CHAIN_TIMING.pollingIntervalMs),
+		transport: sendRetrying(laggingTolerant(http(d.network.l1Rpc), PUBLIC_CHAIN_TIMING.pollingIntervalMs)),
 	})
 }

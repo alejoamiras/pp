@@ -1,6 +1,7 @@
 import type { Hex as SdkHex } from "#ppv2/evm-sdk"
 import { createPublicClient, createWalletClient, http, toHex } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
+import { sendRetrying } from "../send-retry.ts"
 import { openPoolUser } from "../client/pool.ts"
 import { checkout } from "../env/checkout.ts"
 import { assertSepolia, SEPOLIA, sepolia } from "./chain.ts"
@@ -14,7 +15,7 @@ import type { SepoliaPoolUser, SepoliaUserOptions } from "./types.ts"
 export async function sepoliaPoolUser(o: SepoliaUserOptions): Promise<SepoliaPoolUser> {
 	await assertSepolia(createPublicClient({ transport: http(o.rpcUrl) }), o.chainId)
 	const chain = { ...sepolia, rpcUrls: { default: { http: [o.rpcUrl] } } }
-	const wallet = createWalletClient({ account: privateKeyToAccount(o.key), chain, transport: http(o.rpcUrl) })
+	const wallet = createWalletClient({ account: privateKeyToAccount(o.key), chain, transport: sendRetrying(http(o.rpcUrl)) })
 	const { rpcUrl, deployment, aspUrl, circuitBundle } = o
 	const config = { rpcUrl, chainId: SEPOLIA, deployment, aspUrl, circuitsDir: checkout().circuits }
 	const { user, session } = await openPoolUser(circuitBundle === undefined ? config : { ...config, circuitBundle }, { wallet })

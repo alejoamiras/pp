@@ -1,6 +1,7 @@
 import { EvmDeploymentSnapshotSource } from "#ppv2/mock-asp/evm"
 import { createPublicClient, createWalletClient, http } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
+import { sendRetrying } from "../send-retry.ts"
 import { createApprover } from "./approver.ts"
 import { assertSepolia, hasPostman, SEPOLIA, sepolia } from "./chain.ts"
 import { startFront } from "./front.ts"
@@ -24,7 +25,7 @@ export async function startMockAsp(o: StartMockAspOptions): Promise<MockAsp> {
 	const account = privateKeyToAccount(o.postmanKey)
 	if (!(await hasPostman(client, o.deployment.accessRouter, account.address)))
 		throw new Error(`${account.address} does not hold the postman role on ${o.deployment.accessRouter}`)
-	const wallet = createWalletClient({ account, chain: sepolia, transport: http(o.rpcUrl) })
+	const wallet = createWalletClient({ account, chain: sepolia, transport: sendRetrying(http(o.rpcUrl)) })
 	const labels = await createLabels(o.postmanKey)
 	const approver = createApprover({ client, wallet, labels, owners: o.owners, deployment: o.deployment, log })
 	await approver.tick()
