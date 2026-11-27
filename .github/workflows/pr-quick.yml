@@ -45,7 +45,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations (dorny's `some`-quantifier footgun). The kit whole; the
           # bridge-core sources, the workspace libraries they import and the sandbox harness; the
-          # hub, registry and token artifacts bridge-core bundles from contracts/. Pinned by
+          # local stack its stack mode boots, with that stack's graph and run-isolation; the hub,
+          # registry and token artifacts bridge-core bundles from contracts/. Pinned by
           # scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             kit:
@@ -61,6 +62,13 @@ jobs:
               - 'packages/pool-client/src/**'
               - 'packages/pool-client/package.json'
               - 'packages/pool-client/test/support/**'
+              - 'packages/local-stack/src/**'
+              - 'packages/local-stack/package.json'
+              - 'packages/pp-env/src/**'
+              - 'packages/pp-env/types/**'
+              - 'packages/pp-env/package.json'
+              - 'packages/asp-bot/src/**'
+              - 'packages/asp-bot/package.json'
               - 'packages/label-paths/src/**'
               - 'packages/label-paths/package.json'
               - 'packages/run-isolation/src/**'
