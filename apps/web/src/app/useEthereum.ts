@@ -15,17 +15,31 @@ const signInFailure = (err: unknown): EthStatus => ({
 /**
  * With no account known yet, the click reads the wallet again, and asks it to share one only when it
  * still lists none (a locked wallet unlocks then). The selection is what the wallet lists after that,
- * never the request's own answer, and an account or network event that landed meanwhile is newer than
- * these reads. False when a newer sign-in or a sign-out replaced this one.
+ * never the request's own answer; an account or network event heard meanwhile, an emptied account list
+ * included, is newer than these reads and keeps its value. False when a newer sign-in or a sign-out
+ * replaced this one, which then asks the wallet nothing more.
  */
 async function shareAccount(l1: L1Port, live: LiveStore, current: () => boolean): Promise<boolean> {
 	if (live.get().account !== null) return true
-	if ((await l1.accounts()).length === 0) await l1.requestAccounts()
-	const [[account], chainId] = await Promise.all([l1.accounts(), l1.chainId()])
-	if (!current()) return false
-	const now = live.get()
-	live.set({ ...(now.account === null ? { account: account ?? null } : {}), ...(now.chainId === null ? { chainId } : {}) })
-	return true
+	const heard = { account: false, chain: false }
+	const offAccounts = l1.onAccountsChanged(() => {
+		heard.account = true
+	})
+	const offChain = l1.onChainChanged(() => {
+		heard.chain = true
+	})
+	try {
+		const listed = await l1.accounts()
+		if (!current()) return false
+		if (listed.length === 0) await l1.requestAccounts()
+		const [[account], chainId] = await Promise.all([l1.accounts(), l1.chainId()])
+		if (!current()) return false
+		live.set({ ...(heard.account ? {} : { account: account ?? null }), ...(heard.chain ? {} : { chainId }) })
+		return true
+	} finally {
+		offAccounts()
+		offChain()
+	}
 }
 
 /**

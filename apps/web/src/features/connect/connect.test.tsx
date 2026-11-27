@@ -1,18 +1,71 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
-import type { Hex } from "viem"
+import type { Address, Hex } from "viem"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { RECOVERY_PLAIN, RECOVERY_PRECISE } from "../../app/copy"
 import { messageOf } from "../../data/errors"
 import { NETWORK_UNKNOWN } from "./EthereumSignIn"
 import { FAKE_SIGNATURE } from "../../data/fixtures/l1"
 import { ACCOUNTS } from "../../data/fixtures/seed"
+import type { L1Port } from "../../data/ports"
+import type { DataSource } from "../../data/source"
 import { shortHex } from "../../ui"
 import { clickSignIn, connectAztec, renderApp } from "../../test-utils/app"
 
 afterEach(cleanup)
 
 const button = (name: string | RegExp) => screen.getByRole<HTMLButtonElement>("button", { name })
+
+type WalletEvents = { accounts(a: Address[]): void; chain(chainId: number): void }
+
+/**
+ * An Ethereum wallet that lists no account until asked, whose events a test fires itself: `request`
+ * runs once after the first request's answer is read, `reads` once at the first network read after it.
+ */
+function sharingWallet(s: DataSource, during: { request?: (e: WalletEvents) => void; reads?: (e: WalletEvents) => void }) {
+	let shared = false
+	const fire = { request: during.request, reads: during.reads }
+	const onAccounts = new Set<(a: Address[]) => void>()
+	const onChain = new Set<(chainId: number) => void>()
+	const e: WalletEvents = {
+		accounts(a) {
+			shared = a.length > 0
+			for (const f of [...onAccounts]) f(a)
+		},
+		chain: (chainId) => {
+			for (const f of [...onChain]) f(chainId)
+		},
+	}
+	const once = (k: keyof typeof fire) => {
+		const f = fire[k]
+		fire[k] = undefined
+		f?.(e)
+	}
+	const requestAccounts = vi.fn(async () => {
+		shared = true
+		const answer = await s.l1.accounts()
+		once("request")
+		return answer
+	})
+	const l1: L1Port = {
+		...s.l1,
+		accounts: async () => (shared ? s.l1.accounts() : []),
+		chainId: async () => {
+			if (shared) once("reads")
+			return s.l1.chainId()
+		},
+		requestAccounts,
+		onAccountsChanged: (f) => {
+			onAccounts.add(f)
+			return () => void onAccounts.delete(f)
+		},
+		onChainChanged: (f) => {
+			onChain.add(f)
+			return () => void onChain.delete(f)
+		},
+	}
+	return { l1, requestAccounts }
+}
 
 describe("connect", () => {
 	test("a wallet on another chain is asked to switch and never to sign; a failed sign-in says what to do; signing in again works", async () => {
@@ -87,6 +140,55 @@ describe("connect", () => {
 		const pool = within(await screen.findByTestId("pool-panel"))
 		await pool.findByText(shortHex(ACCOUNTS.sender))
 		expect(pool.queryByText(shortHex(ACCOUNTS.owner))).toBeNull()
+	})
+
+	test.each([
+		["before the request's answer", "request"],
+		["during the reads after it", "reads"],
+	] as const)("a wallet that empties its accounts %s leaves no account, and the next Sign in asks again", async (_, when) => {
+		const held: { wallet?: ReturnType<typeof sharingWallet> } = {}
+		const app = renderApp({
+			patch: (s) => {
+				held.wallet = sharingWallet(s, { [when]: (e: WalletEvents) => e.accounts([]) })
+				return { ...s, l1: held.wallet.l1 }
+			},
+		})
+		await clickSignIn(app.user)
+		await screen.findByText(messageOf("NO_SENDER"))
+		await clickSignIn(app.user, "Sign in again")
+		await screen.findByText("Notes by label")
+		expect(held.wallet?.requestAccounts).toHaveBeenCalledTimes(2)
+	})
+
+	test("a network event during the reads after the request is newer than the read, so the sign-in is refused", async () => {
+		const app = renderApp({ patch: (s) => ({ ...s, l1: sharingWallet(s, { reads: (e) => e.chain(1) }).l1 }) })
+		await clickSignIn(app.user)
+		await screen.findByText("Your Ethereum wallet is on another network")
+		expect(screen.queryByText("Notes by label")).toBeNull()
+	})
+
+	test("a sign-in replaced by Forget this device while the wallet's accounts are read asks it for none", async () => {
+		let reads = 0
+		let release: (a: Address[]) => void = () => {}
+		const requestAccounts = vi.fn(async () => [ACCOUNTS.owner])
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: {
+					...s.l1,
+					accounts: () => (reads++ === 0 ? Promise.resolve([]) : new Promise<Address[]>((r) => (release = r))),
+					requestAccounts,
+				},
+			}),
+		})
+		await clickSignIn(app.user)
+		await screen.findByText("Approve the signature in your Ethereum wallet")
+		await app.user.click(button("Details"))
+		await app.user.click(button("Forget this device"))
+		await app.user.click(button("Forget"))
+		await act(async () => release([]))
+		await act(() => new Promise((r) => setTimeout(r, 20)))
+		expect(requestAccounts).not.toHaveBeenCalled()
 	})
 
 	test("Sign in clicked before the first account read lands does not ask a wallet that already shared one", async () => {
