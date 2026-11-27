@@ -21,12 +21,23 @@ const freshRunId = (label: string) => `${label}-${randomBytes(4).toString("hex")
 
 const module = join(import.meta.dirname, "local-network.ts")
 
+// Cases that start a child bun (or a whole vitest run) take a bound of their own: vitest's 5 s default is
+// sized for pure units, and a busy host has stretched a nested run past it.
+const CHILD_BUN_MS = 30_000
+const NESTED_VITEST_MS = 60_000
+// vitest's bound cannot interrupt a synchronous child, so each child carries its own, inside the case's.
+const sync = (bound: number) => ({ timeout: bound - 5_000, killSignal: "SIGKILL" as const })
+
 describe("reapOnSignals", () => {
-	it("stays registered after a signal, so a second one never finds signal-exit alone", () => {
-		// In a child: emitting a signal here would also run the test runner's own handlers.
-		const body = `const { reapOnSignals } = await import(${JSON.stringify(module)}); const n = process.listenerCount("SIGTERM"); reapOnSignals(() => new Promise(() => {})); process.emit("SIGTERM"); console.log(process.listenerCount("SIGTERM") - n)`
-		expect(execFileSync("bun", ["-e", body]).toString().trim()).toBe("1")
-	})
+	it(
+		"stays registered after a signal, so a second one never finds signal-exit alone",
+		() => {
+			// In a child: emitting a signal here would also run the test runner's own handlers.
+			const body = `const { reapOnSignals } = await import(${JSON.stringify(module)}); const n = process.listenerCount("SIGTERM"); reapOnSignals(() => new Promise(() => {})); process.emit("SIGTERM"); console.log(process.listenerCount("SIGTERM") - n)`
+			expect(execFileSync("bun", ["-e", body], sync(CHILD_BUN_MS)).toString().trim()).toBe("1")
+		},
+		CHILD_BUN_MS,
+	)
 })
 
 describe("assertSocketRoom", () => {
@@ -45,23 +56,29 @@ describe("teardownNetwork", () => {
 			cwd: join(import.meta.dirname, "../.."),
 			encoding: "utf8",
 			env: { ...process.env, ...env },
+			...sync(NESTED_VITEST_MS),
 		})
+		if (run.error) throw run.error
 		// Not the error's message: under Bun about one run in 25 prints the error without it.
 		expect(run.stdout + run.stderr).toContain("error during close")
 		expect(run.status).toBe(1)
 	}
 
-	it("fails a vitest run whose global teardown finds leftovers", () => teardownRun())
+	it("fails a vitest run whose global teardown finds leftovers", () => teardownRun(), NESTED_VITEST_MS)
 
-	it("fails the run and still cleans up when the stop itself throws", () => {
-		const dir = mkdtempSync(join(tmpdir(), "pp-teardown-"))
-		try {
-			teardownRun({ TEARDOWN_CASE: "stop-throws", TEARDOWN_MARKER: join(dir, "cleaned") })
-			expect(existsSync(join(dir, "cleaned"))).toBe(true)
-		} finally {
-			rmSync(dir, { recursive: true, force: true })
-		}
-	})
+	it(
+		"fails the run and still cleans up when the stop itself throws",
+		() => {
+			const dir = mkdtempSync(join(tmpdir(), "pp-teardown-"))
+			try {
+				teardownRun({ TEARDOWN_CASE: "stop-throws", TEARDOWN_MARKER: join(dir, "cleaned") })
+				expect(existsSync(join(dir, "cleaned"))).toBe(true)
+			} finally {
+				rmSync(dir, { recursive: true, force: true })
+			}
+		},
+		NESTED_VITEST_MS,
+	)
 })
 
 describe("the host port registry", () => {
