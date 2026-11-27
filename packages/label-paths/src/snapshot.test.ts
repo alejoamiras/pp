@@ -1,7 +1,7 @@
 import { aspLeaf, assertLeanImtMember, BN254_P, buildLeanImt } from "@pp/bridge-spec"
 import { describe, expect, it } from "vitest"
 import fixture from "../test/fixtures/mock-asp.json"
-import { parseAspSnapshot, serializeAspSnapshot } from "./codec"
+import { parseAspSnapshot, parseAspSnapshotUnverified, serializeAspSnapshot } from "./codec"
 import { type AspSnapshot, labelState, MAX_LEAVES, pathFor, type RootRecord, SnapshotError, verifySnapshot } from "./snapshot"
 
 const poolLeaves = fixture.leaves.map(BigInt)
@@ -79,16 +79,21 @@ describe("snapshots", () => {
 			["JSON number", (w) => ({ ...w, sequence: 7 }), "Malformed"],
 			["not an object", () => [], "Malformed"],
 		]
+		const errorOf = (f: () => unknown) => {
+			try {
+				f()
+			} catch (e) {
+				return e
+			}
+		}
+		expect(parseAspSnapshotUnverified(wire)).toEqual(snap)
 		for (const [name, mutate, code] of cases) {
-			const err = (() => {
-				try {
-					parseAspSnapshot(mutate(wire))
-				} catch (e) {
-					return e
-				}
-			})()
+			const err = errorOf(() => parseAspSnapshot(mutate(wire)))
 			expect(err, name).toBeInstanceOf(SnapshotError)
 			expect((err as SnapshotError).code, name).toBe(code)
+			// The unverified parse builds no tree, so it takes a root as declared and refuses everything else the same way.
+			const shallow = errorOf(() => parseAspSnapshotUnverified(mutate(wire)))
+			expect((shallow as SnapshotError | undefined)?.code, name).toBe(code === "RootMismatch" ? undefined : code)
 		}
 	})
 })

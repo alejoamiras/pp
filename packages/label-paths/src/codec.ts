@@ -1,4 +1,4 @@
-import { type AspSnapshot, MAX_LEAVES, SnapshotError, verifySnapshot } from "./snapshot"
+import { type AspSnapshot, checkSnapshotFields, MAX_LEAVES, SnapshotError, verifySnapshot } from "./snapshot"
 
 const KEYS = ["birthLeaves", "birthRoot", "poolLeaves", "poolRoot", "sequence"]
 // p has 77 decimal digits; the cap keeps a hostile body from feeding BigInt a megabyte string.
@@ -15,19 +15,33 @@ function decimals(v: unknown, field: string): bigint[] {
 	return v.map((x, i) => decimal(x, `${field}[${i}]`))
 }
 
-/** Strict: exactly the five keys, every number a decimal string. Verifies both roots before returning. */
-export function parseAspSnapshot(json: unknown): AspSnapshot {
+function decode(json: unknown): AspSnapshot {
 	if (typeof json !== "object" || json === null || Array.isArray(json)) throw new SnapshotError("Malformed", "snapshot")
 	const o = json as Record<string, unknown>
 	if (Object.keys(o).sort().join() !== KEYS.join()) throw new SnapshotError("Malformed", "keys")
-	const s: AspSnapshot = {
+	return {
 		sequence: decimal(o.sequence, "sequence"),
 		poolRoot: decimal(o.poolRoot, "poolRoot"),
 		birthRoot: decimal(o.birthRoot, "birthRoot"),
 		poolLeaves: decimals(o.poolLeaves, "poolLeaves"),
 		birthLeaves: decimals(o.birthLeaves, "birthLeaves"),
 	}
+}
+
+/** Strict: exactly the five keys, every number a decimal string. Verifies both roots before returning. */
+export function parseAspSnapshot(json: unknown): AspSnapshot {
+	const s = decode(json)
 	verifySnapshot(s)
+	return s
+}
+
+/**
+ * `parseAspSnapshot` without the root checks: it builds no tree, so its roots are only declared.
+ * Pass the result to `LabelPathCache.check`, which builds a tree only for a label found in it.
+ */
+export function parseAspSnapshotUnverified(json: unknown): AspSnapshot {
+	const s = decode(json)
+	checkSnapshotFields(s)
 	return s
 }
 

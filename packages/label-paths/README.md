@@ -23,6 +23,28 @@ Browser-safe helpers for checking a label against the ASP registry on Aztec. The
 `origin` is the note's origin: `0` for a note minted from the bridge (the pool tree), `1` for a shield
 (the birth tree).
 
+## One tree at most
+
+Steps 3 to 5 build both trees, then the origin's tree twice more. A client that pays for hashing,
+such as a browser, should use these instead:
+
+1. `parseAspSnapshotUnverified(json)` runs every check of `parseAspSnapshot` except the two roots, so
+   it builds no tree.
+2. `cache.check(record, snapshot, label, origin, anchorTime)` on one long-lived
+   `new LabelPathCache({ onProgress })`:
+   - The snapshot's roots are compared with the record's before anything is hashed. A mismatch is
+     `{ state: "STALE_ROOT", reason: "snapshot" }`: fetch the record's own sequence. A record too old
+     for a spend is `reason: "age"`: wait for the next post.
+   - A label not in its origin's list is `ABSENT` after one leaf hash, with no tree built.
+   - A found label builds only its origin's tree, once. The answer is `ACTIVE` with the path from that
+     tree, or `SnapshotError("RootMismatch")` if the list does not build to the declared root.
+   - Verified trees are kept by root, so a later record with the same root (a heartbeat) costs no
+     rebuild. A tree is dropped once the record's roots move on.
+3. `onProgress(hashed, total)` reports each build's hashes against its exact total; a Web Worker can
+   forward it.
+
+The answers and their trust limits are those of `labelState` and `pathFor`.
+
 ## Wire format
 
 A snapshot is a JSON object with exactly `sequence`, `poolRoot`, `birthRoot`, `poolLeaves` and
