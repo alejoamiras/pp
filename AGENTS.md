@@ -61,7 +61,8 @@ with warm package and toolchain caches.
 | Sole consumer | `bash contracts/bridge/aztec/scripts/check-sole-consumer.sh` | < 1 s |
 | Integration (local network) | `bun run --cwd packages/bridge-core test:integration` | 10 min |
 | Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | 7.5 min |
-| Labelled token, two devices | `bun run --cwd packages/labelled-token test:net` | 3 min |
+| Labelled token, two devices | `bun run --cwd packages/labelled-token test:net` | 6.5 min |
+| Labelled token proving bench | `bun run --cwd packages/labelled-token bench:prove` (real prover; run it alone on the host) | 5 min |
 | Local stack | `bun run demo` (`--keep` holds it up) | 44 s (ready in 40 s) |
 | Local stack integration | `bun run --cwd packages/local-stack test:integration` | — |
 | E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | 15 s |

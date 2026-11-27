@@ -37,14 +37,20 @@ already shares an interactive handshake (see below).
 - `scripts/fixtures.ts`: `bun run fixtures` renders the TXE suite's LeanIMT trees (path depths 0, 1,
   3 and 18, a promoted leaf, a pool label inside the birth tree) from `@pp/bridge-spec` into the
   crate's `src/test/paths.nr`; `fixtures:check` fails when that file is stale.
+- `scripts/prove.ts`: `bun run bench:prove` boots its own local network and measures, on one proving
+  wallet, the whole-tx gates and the client proving time of a 1-note `transfer_private` against the
+  stock token's `transfer_private_to_private`, to a recipient the sender has paid before and to a
+  fresh one, plus an 8-note spend. It writes `bench/proving.json` and fails unless the reused-recipient
+  row stays within stock + 60,000 gates and 1.5 × stock's median proving time.
 
 ## Tests
 
 | Layer | Command | What it proves |
 |---|---|---|
 | Unit | `bun run test` | The ABI surface (no parameter named `offset`, which aztec-nr's call stubs shadow), the gate budgets, the handoff vector. |
-| TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | The contract's rules, against an artifact the runner rebuilds from source (and the test minter's). |
-| Network | `bun run test:net` | Stage A across separate devices on a local network; see below. |
+| TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | The contract's rules, against an artifact the runner rebuilds from source (and those of the test minter and the registry). |
+| Network | `bun run test:net` | Stage A and B across separate devices on a local network: discovery, recovery, spends proven against one registry record and landing under another, expiry, and the setup-phase refusal. |
+| Proving | `bun run bench:prove` | The cost budget against the stock token, with a real prover. |
 
 `test:net` boots one anvil and one local network for the run under the run id `tok-<pid>-<time>` and
 removes every port row and directory it made.

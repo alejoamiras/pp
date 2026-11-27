@@ -14,7 +14,8 @@
 		"handoff": "bun scripts/handoff.ts",
 		"fixtures": "bun scripts/fixtures.ts",
 		"fixtures:check": "bun scripts/fixtures.ts --check",
-		"test:net": "TOKEN_NET=1 bun --bun vitest run --config vitest.net.config.ts"
+		"test:net": "TOKEN_NET=1 bun --bun vitest run --config vitest.net.config.ts",
+		"bench:prove": "bun scripts/prove.ts"
 	},
 	"dependencies": {
 		"@aztec-labs/aztec.js": "6.0.0"

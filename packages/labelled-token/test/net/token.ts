@@ -31,16 +31,18 @@ export interface Device {
 
 export const sendOpts = (d: Device) => ({ from: d.from, fee: d.fee, wait: { waitForStatus: TxStatus.PROPOSED } })
 
-export async function deployStage(d: Device): Promise<Deployed> {
-	const opts = { from: d.from, fee: d.fee, wait: { waitForStatus: TxStatus.CHECKPOINTED } }
-	const stub = await Contract.deploy(d.wallet, stubArtifact, [], undefined).send(opts as never)
+export const deployOpts = (d: Device) => ({ from: d.from, fee: d.fee, wait: { waitForStatus: TxStatus.CHECKPOINTED } })
+
+/** A zero `registry` deploys a stage-A token, on which every checked spend fails. */
+export async function deployStage(d: Device, registry: AztecAddress = AztecAddress.ZERO): Promise<Deployed> {
+	const stub = await Contract.deploy(d.wallet, stubArtifact, [], undefined).send(deployOpts(d) as never)
 	const word = (s: string) => wordToNoirString(toWord(utf8(s)))
 	const token = await Contract.deploy(
 		d.wallet,
 		labelledTokenArtifact,
-		[word("Labelled USD"), word("lUSD"), 6, stub.instance.address, AztecAddress.ZERO],
+		[word("Labelled USD"), word("lUSD"), 6, stub.instance.address, registry],
 		"constructor",
-	).send(opts as never)
+	).send(deployOpts(d) as never)
 	return { stub: stub.instance, token: token.instance }
 }
 
@@ -53,7 +55,8 @@ export async function attach(d: Device, deployed: Deployed): Promise<{ stub: Con
 	}
 }
 
-const resultOf = <T>(r: unknown): T => (r && typeof r === "object" && "result" in r ? (r as { result: T }).result : (r as T))
+/** A simulation's value, whether or not the wallet wraps it in `{ result }`. */
+export const resultOf = <T>(r: unknown): T => (r && typeof r === "object" && "result" in r ? (r as { result: T }).result : (r as T))
 
 const entries = (v: unknown): unknown[] => {
 	const { storage, len } = v as { storage: unknown[]; len: bigint | number }
@@ -62,6 +65,10 @@ const entries = (v: unknown): unknown[] => {
 
 export async function balance(token: Contract, owner: AztecAddress): Promise<bigint> {
 	return BigInt(resultOf<bigint>(await token.methods.balance_of_private(owner).simulate({ from: owner } as never)))
+}
+
+export async function publicBalance(token: Contract, owner: AztecAddress): Promise<bigint> {
+	return BigInt(resultOf<bigint>(await token.methods.balance_of_public(owner).simulate({ from: owner } as never)))
 }
 
 /** `(label, origin, balance)` per label, as the first page of the view returns them. */
