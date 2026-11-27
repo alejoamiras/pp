@@ -318,15 +318,15 @@ test("the app's dependency closure declares and resolves one exact viem", () => 
 	const workspaces = workspacesByName()
 	const members = appClosure(workspaces)
 	expect([...members]).toEqual(expect.arrayContaining(["@pp/bridge-core", "@pp/bridge-spec"]))
+	const root = manifest("package.json")
 	const declared = [...members].flatMap((name) => {
 		const m = workspaces.get(name)?.manifest
-		const root = manifest("package.json")
 		return SECTIONS.map((section) => m?.[section])
 			.map((specs) => Object.fromEntries(Object.entries(specs ?? {}).map(([n, s]) => [n, resolveSpec(n, s, root)])))
 			.flatMap(viemSpecs)
 	})
-	const overridden = overrideRules("package.json", manifest("package.json").overrides ?? {}).flatMap(({ target, spec }) =>
-		target === undefined ? [] : viemSpecs({ [target]: spec }),
+	const overridden = overrideRules("package.json", root.overrides ?? {}).flatMap(({ target, spec }) =>
+		target === undefined ? [] : viemSpecs({ [target]: resolveSpec(target, spec, root) }),
 	)
 	const specs = new Set([...declared, ...overridden])
 	expect(specs.size, [...specs].join(", ")).toBe(1)
@@ -397,13 +397,53 @@ function viemInstances(store: string, roots: string[]): string[] {
 	return [...found].sort()
 }
 
-test("the app's dependency closure loads one viem instance", () => {
+/**
+ * The dependencies and devDependencies of the workspaces in `members` with no link in that workspace's
+ * `node_modules`: a partial install, on which the instance walk would undercount. Optional and peer
+ * entries may legitimately be absent.
+ */
+function missingLinks(root: string, workspaces: Map<string, Workspace>, members: Iterable<string>): string[] {
+	return [...members].flatMap((name) => {
+		const w = workspaces.get(name)
+		if (!w) return [`${name}: not a workspace`]
+		const deps = Object.keys({ ...w.manifest.dependencies, ...w.manifest.devDependencies })
+		return deps.filter((dep) => !existsSync(join(root, w.dir, "node_modules", dep))).map((dep) => `${w.dir}: ${dep}`)
+	})
+}
+
+test("the app's dependency closure loads one viem instance, the version the lock resolves", () => {
 	const store = join(ROOT, "node_modules", ".bun")
 	expect(existsSync(store), "the isolated store under node_modules/.bun: run bun install").toBe(true)
 	const workspaces = workspacesByName()
-	const roots = [...appClosure(workspaces)].map((name) => join(ROOT, workspaces.get(name)?.dir ?? name))
-	const instances = viemInstances(store, roots).map((real) => relative(store, real))
-	expect(instances, instances.join(", ")).toHaveLength(1)
+	const members = appClosure(workspaces)
+	expect(missingLinks(ROOT, workspaces, members), "run bun install").toEqual([])
+	const roots = [...members].map((name) => join(ROOT, workspaces.get(name)?.dir ?? name))
+	const instances = viemInstances(store, roots)
+	expect(
+		instances.map((real) => relative(store, real)),
+		"viem instances",
+	).toHaveLength(1)
+	const installed = JSON.parse(readFileSync(join(instances[0] ?? "", "package.json"), "utf8")) as { name?: string; version?: string }
+	const locked = (Bun.JSONC.parse(readFileSync(join(ROOT, "bun.lock"), "utf8")) as ResolvedLock).packages.viem?.[0]
+	expect(`${installed.name}@${installed.version}`).toBe(locked ?? "a hoisted viem in bun.lock")
+})
+
+test("a closure workspace whose declared dependency has no link reads as a partial install", () => {
+	const root = mkdtempSync(join(tmpdir(), "missing-links-"))
+	try {
+		mkdirSync(join(root, "apps/web/node_modules/viem"), { recursive: true })
+		const workspaces = new Map<string, Workspace>([
+			["@pp/web", { dir: "apps/web", manifest: { dependencies: { viem: "catalog:" }, devDependencies: { vitest: "catalog:" } } }],
+			["@pp/lib", { dir: "packages/lib", manifest: { dependencies: { zod: "catalog:" }, peerDependencies: { x: "1" } } }],
+		])
+		expect(missingLinks(root, workspaces, ["@pp/web", "@pp/lib", "@pp/gone"])).toEqual([
+			"apps/web: vitest",
+			"packages/lib: zod",
+			"@pp/gone: not a workspace",
+		])
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
 })
 
 test("the instance walk counts peer variants a workspace reaches, and no store entry nothing links to", () => {
@@ -436,19 +476,55 @@ test("the instance walk counts peer variants a workspace reaches, and no store e
 	}
 })
 
-test("a non-Aztec dependency two manifests declare comes from a catalog in each", () => {
-	const declarers = new Map<string, { path: string; spec: string }[]>()
-	for (const path of ["package.json", ...workspaceManifests()]) {
-		const m = manifest(path)
+/** Named catalogs a package may come from beside the default one: pp-env's viem matches the pool SDK checkout. */
+const SECOND_CATALOG: Record<string, string> = { viem: "pool" }
+
+/** The catalog a spec names (`catalog:` and `catalog:default` are one), or undefined for any other spec. */
+const catalogOf = (spec: string): string | undefined => {
+	const trimmed = spec.trim()
+	if (!trimmed.startsWith("catalog:")) return undefined
+	return trimmed.slice("catalog:".length).trim() || "default"
+}
+
+/**
+ * Each non-Aztec package two manifests install, by its installed name (an `npm:` alias counts as its
+ * target), that some manifest takes from outside a catalog, or that the manifests take from two
+ * catalogs other than the default and its `SECOND_CATALOG`.
+ */
+function sharedStrays(manifests: [string, Manifest][]): string[] {
+	const byTarget = new Map<string, { path: string; name: string; spec: string }[]>()
+	for (const [path, m] of manifests) {
 		for (const [name, spec] of SECTIONS.flatMap((section) => Object.entries(m[section] ?? {}))) {
-			if (spec.startsWith("workspace:") || expectedVersion(name) !== undefined) continue
-			declarers.set(name, [...(declarers.get(name) ?? []), { path, spec }])
+			const { target } = installs(name, spec)
+			if (spec.trim().startsWith("workspace:") || expectedVersion(target) !== undefined) continue
+			byTarget.set(target, [...(byTarget.get(target) ?? []), { path, name, spec }])
 		}
 	}
-	const off = [...declarers]
-		.filter(([, by]) => new Set(by.map((d) => d.path)).size > 1)
-		.flatMap(([name, by]) => by.filter((d) => !d.spec.startsWith("catalog:")).map((d) => `${d.path}: ${name}@${d.spec}`))
-	expect(off).toEqual([])
+	return [...byTarget].flatMap(([target, by]) => {
+		if (new Set(by.map((d) => d.path)).size < 2) return []
+		const outside = by.filter((d) => catalogOf(d.spec) === undefined).map((d) => `${d.path}: ${d.name}@${d.spec}`)
+		const allowed = new Set(["default", SECOND_CATALOG[target]])
+		const catalogs = new Set(by.flatMap((d) => catalogOf(d.spec) ?? []))
+		const mixed = catalogs.size > 1 && [...catalogs].some((c) => !allowed.has(c))
+		return mixed ? [...outside, `${target}: from catalogs ${[...catalogs].sort().join(", ")}`] : outside
+	})
+}
+
+test("a non-Aztec dependency two manifests declare comes from one catalog in each", () => {
+	expect(sharedStrays(["package.json", ...workspaceManifests()].map((path) => [path, manifest(path)]))).toEqual([])
+})
+
+test("the shared-dependency rule groups aliases by target and refuses a second catalog", () => {
+	const m = (deps: Specs, dev: Specs = {}): Manifest => ({ dependencies: deps, devDependencies: dev })
+	expect(
+		sharedStrays([
+			["a/package.json", m({ zod: "catalog:", viem: "catalog:" })],
+			["b/package.json", m({ "schema-lib": "npm:zod@4.6.7", viem: "catalog:pool" })],
+			["c/package.json", m({ vitest: "catalog:" }, { vitest: "^4.1.12" })],
+			["d/package.json", m({ vite: "catalog:default", "@aztec-labs/stdlib": "6.0.0", "@pp/x": "workspace:*" })],
+			["e/package.json", m({ vite: "catalog:tools", "@aztec-labs/stdlib": "6.0.0", "@pp/x": "workspace:*" })],
+		]),
+	).toEqual(["b/package.json: schema-lib@npm:zod@4.6.7", "vite: from catalogs default, tools"])
 })
 
 test("the foundation version is the exact one the locked aztec.js requires", () => {
