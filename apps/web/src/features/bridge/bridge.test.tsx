@@ -224,6 +224,27 @@ describe("the bridge screen", () => {
 		expect(app.control.state().sent.l1).toBe(0)
 	})
 
+	test("while the bridge's wallet request is unanswered, opening an earlier bridge is refused with a reason", async () => {
+		const app = await openBridge()
+		await submit(app)
+		await landed()
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		const [change] = await screen.findAllByRole("button", { name: "Bridge to Aztec" })
+		await app.user.click(change as HTMLElement)
+		await app.user.type(screen.getByLabelText(/Amount to bridge/), "10")
+		app.control.hangNext("send")
+		await submit(app)
+		await screen.findByText("Sent: waiting for the Ethereum transaction to be mined")
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		const open = within(await screen.findByTestId("bridge-record")).getByRole<HTMLButtonElement>("button", { name: "Open" })
+		expect(open.disabled).toBe(true)
+		expect(document.getElementById(open.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
+			"Your Ethereum wallet has not answered the bridge in progress yet.",
+		)
+		await app.user.click(screen.getByRole("button", { name: "Back to the bridge in progress" }))
+		screen.getByText("Sent: waiting for the Ethereum transaction to be mined")
+	})
+
 	test("a send pending at the RPC shows its hash on the bridge screen while it waits, with no send offered", async () => {
 		const app = await openBridge()
 		app.control.failNext("send", "PENDING")

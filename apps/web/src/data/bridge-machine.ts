@@ -133,6 +133,9 @@ function fromRecord(s: BridgeMachine, record: BridgeRecordView): BridgeMachine {
 	return { ...s, record, step: { error: code }, phase: "failed", failure }
 }
 
+/** The wallet has been asked to send and has not answered (no hash yet): replacing this screen would strand it. */
+export const awaitsWallet = (s: BridgeMachine): boolean => at(s, "submitted", "waiting") && s.l1TxHash === null
+
 /** Failures a new attempt may follow; "none" and "claim" never lead back to a spend. */
 const RETRY: Offer[] = ["prove-again", "send-again", "prepare-again", "switch-chain", "switch-account"]
 const canPreflight = (s: BridgeMachine) => at(s, "preparing", "idle", "ready", "starting") || failedWith(s, ...RETRY)

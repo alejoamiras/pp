@@ -1,5 +1,6 @@
 import { useApp } from "../../app/context"
 import { usePool } from "../../app/queries"
+import { awaitsWallet } from "../../data/bridge-machine"
 import type { BridgeRecordView, PoolNoteView } from "../../data/stack-types"
 import { messageOf, UNCERTAIN_WORST_CASE } from "../../data/errors"
 import { type NoteRow, poolNotesView } from "../../data/model"
@@ -11,13 +12,21 @@ import { EthereumSignIn } from "../connect/EthereumSignIn"
 
 const BUSY = new Set(["starting", "proving", "sending", "preflight"])
 
+/** Why the bridge on screen must not be replaced by another, or `undefined`. */
+function useScreenHeld(): string | undefined {
+	const { bridge } = useApp()
+	if (bridge.subject && awaitsWallet(bridge.machine)) return "Your Ethereum wallet has not answered the bridge in progress yet."
+	return undefined
+}
+
 /** Why this note's bridge cannot start, or `undefined`. */
 function useBridgeBlock(): string | undefined {
 	const { connection, refusal, bridge } = useApp()
+	const held = useScreenHeld()
 	if (!connection) return "Connect your Aztec wallet first: the bridge pays into its account."
 	if (refusal("claim") !== null) return "Your Aztec wallet did not allow claiming. Connect again and allow it."
 	if (bridge.subject && BUSY.has(bridge.machine.phase)) return "Finish the bridge in progress first."
-	return undefined
+	return held
 }
 
 /** A record whose transaction the RPC holds unmined: its hash, and no send until it lands or drops. */
@@ -115,6 +124,7 @@ const STEP_TEXT: Record<string, string> = {
 
 function BridgesInProgress({ pool }: { pool: PoolState }) {
 	const { source, bridge, go } = useApp()
+	const held = useScreenHeld()
 	const open = (r: BridgeRecordView) => {
 		if (bridge.machine.record?.id !== r.id) bridge.resume(r, pool.noteOf.get(r.id) ?? null)
 		go("bridge")
@@ -138,7 +148,9 @@ function BridgesInProgress({ pool }: { pool: PoolState }) {
 						/>
 						<span className="text-xs text-ink-3">{STEP_TEXT[r.step as string] ?? "In progress"}</span>
 					</span>
-					<ActionButton onClick={() => open(r)}>Open</ActionButton>
+					<ActionButton disabledReason={held} onClick={() => open(r)}>
+						Open
+					</ActionButton>
 				</div>
 			))}
 			{pool.consumed.map((r) => (
