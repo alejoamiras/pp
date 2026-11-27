@@ -188,6 +188,13 @@ describe("submit: preflight at handoff", () => {
 		expect(t.values.size).toBe(0)
 	})
 
+	it("keeps the attempt as UNCERTAIN when a 4001 sits under an error that may follow a broadcast", async () => {
+		const t = await setup()
+		t.chain.writeContract.mockRejectedValueOnce(foreignError(["TimeoutError"], ["UserRejectedRequestError", { code: 4001 }]))
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
+		expect((await t.journal.read(t.spend.nullifier)).record?.attempts).toHaveLength(1)
+	})
+
 	it("refuses a re-proof that is a valid spend of something else, with zero sends", async () => {
 		const t = await setup()
 		t.pool.assertFresh.mockRejectedValueOnce(new PoolClientError("ASP_ROOT_STALE", "x"))

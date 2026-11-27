@@ -79,8 +79,20 @@ export function contractRevert(e: unknown): { revert?: string } | null {
 	return typeof name === "string" && REVERT_NAMES.has(name) ? { revert: name } : {}
 }
 
-/** Whether the user refused the request: an EIP-1193 4001 anywhere in the error chain. */
-export const isUserRejection = (e: unknown): boolean => causeChain(e).some((x) => field(x, "code") === 4001)
+/** viem's wrappers around a send's error: they add context and say nothing about whether it was broadcast. */
+const SEND_WRAPPERS: ReadonlySet<unknown> = new Set(["ContractFunctionExecutionError", "TransactionExecutionError"])
+
+/**
+ * Whether the user refused the request: an EIP-1193 4001 with only viem's send wrappers above it.
+ * Anything else above a 4001, such as a timeout, may follow a broadcast, so it is not a refusal.
+ */
+export function isUserRejection(e: unknown): boolean {
+	for (const x of causeChain(e)) {
+		if (field(x, "code") === 4001) return true
+		if (!SEND_WRAPPERS.has(field(x, "name"))) return false
+	}
+	return false
+}
 
 /**
  * Maps any thrown value to a `BridgeClientError` built from allow-listed identifiers only. It never
