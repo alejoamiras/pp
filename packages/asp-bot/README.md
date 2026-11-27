@@ -76,6 +76,19 @@ handle's `postNow()` asks for a post at once, and `stop()` stops the group, rele
 row and, with `removeDataOnStop`, deletes its wallet store. On the local network, the poster and
 intake accounts derive from the stack's run id (`localBotAccounts`), so no key is configured.
 
+## The ASP API
+
+The bot reads the pool's leaves from `GET /association-set/leaves`. The standalone always scopes the query by
+`chainId` and `entrypoint`, since one chain can host several pools. It treats the answer as untrusted:
+- every request carries the User-Agent `pp-aztec-bridge-bot/<version>`; the standalone's `userAgent` may
+  extend it but must keep that product token;
+- a redirect fails;
+- the deadline is 10 s for the whole body;
+- an answer over 24 MiB, or with more than 2^18 leaves (the registry's list limit), is refused before it
+  is parsed.
+
+The leaves are used only when they hash to the root the ASP registry holds on Ethereum.
+
 ## Tests
 
 - Unit: `bun run --cwd packages/asp-bot test`.

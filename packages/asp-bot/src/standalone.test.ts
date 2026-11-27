@@ -11,12 +11,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { fetchLeaves } from "./asp"
 import { type Ports, Poster } from "./loop"
 import { SnapshotBook } from "./server"
-import { runStandaloneBot, type StandaloneBotConfig, scopedLeaves } from "./standalone"
+import { checkStandaloneConfig, runStandaloneBot, type StandaloneBotConfig, scopedLeaves } from "./standalone"
 
 const ENTRYPOINT = "0xeb3e3961008952348445513e418ad6f43c23ca9a"
 const LEAVES = [aspLeaf(11n), aspLeaf(22n), aspLeaf(33n)]
 
-/** Answers as the public ASP API does: 404 unless the query names the pool. */
+/** Answers 404 unless the query names the pool. */
 async function stubAsp() {
 	const queries: Record<string, string>[] = []
 	const server = createServer((req, res) => {
@@ -132,6 +132,25 @@ describe("the standalone bot", () => {
 			await expect(runStandaloneBot(config(deployment), { poster: Fr.random(), ...secrets }, { signal })).rejects.toBeInstanceOf(
 				RangeError,
 			)
+		})
+
+		it("names the bot and the pool in every ASP request, or refuses the config before any", () => {
+			const check =
+				(o: Record<string, unknown>, d: Record<string, unknown> = {}) =>
+				() =>
+					checkStandaloneConfig({ ...config(d as never), ...o } as StandaloneBotConfig, { poster: Fr.random() })
+			for (const userAgent of [undefined, "pp-aztec-bridge-bot", "pp-aztec-bridge-bot/0.1.0 (instance a)"])
+				expect(check({ userAgent })).not.toThrow()
+			for (const userAgent of [
+				true,
+				"curl/8",
+				" pp-aztec-bridge-bot",
+				"pp-aztec-bridge-bot\r\nx: y",
+				`pp-aztec-bridge-bot/${"a".repeat(110)}`,
+			])
+				expect(check({ userAgent })).toThrow("userAgent must be")
+			for (const chainId of [0, 1.5, "11155111"]) expect(check({}, { chainId })).toThrow("chainId")
+			for (const entrypoint of ["0x01", `${ENTRYPOINT}00`, 5]) expect(check({}, { entrypoint })).toThrow("entrypoint")
 		})
 	})
 })
