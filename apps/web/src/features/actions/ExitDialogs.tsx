@@ -11,7 +11,6 @@ import { ActionButton, Callout, Choices, Facts, formatAmount, LabelChip, plainAm
 import {
 	ActionShell,
 	AmountField,
-	assertWithinSpendCap,
 	type Guard,
 	OwnerWarning,
 	PayeeField,
@@ -263,12 +262,12 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 /**
  * Leaves part of a label's balance to Ethereum in one transaction that unshields it and withdraws it,
  * so Ethereum is never shown the label. The amount is capped at what the label's 8 largest notes hold,
- * read again under the send lock, and the send stays bound to the Aztec connection the confirm was made in.
+ * and the send stays bound to the Aztec connection the confirm was made in.
  */
 export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 	const { aztec, live, addPayee } = useApp()
 	const spend = useSpendCap(account, balance)
-	const amount = useAmount(spend.cap ?? balance.balance)
+	const amount = useAmount(spend.max)
 	const payee = usePayee()
 	const [review, setReview] = useState(false)
 	const act = useAction(account)
@@ -278,14 +277,14 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 		const a = { payee: to, amount: amount.amount, label: balance.label, origin: balance.origin }
 		const on = bound(live, account, act)
 		if (!on) return
-		await act.send("unshieldAndExit", async (guard) => {
-			await assertWithinSpendCap(aztec, account, a.label, a.amount)
-			return aztec.unshieldAndExit(
+		// The port reads the notes again right before the handoff.
+		await act.send("unshieldAndExit", (guard) =>
+			aztec.unshieldAndExit(
 				account,
 				a,
 				listedAt(guard, on, () => addPayee(to)),
-			)
-		})
+			),
+		)
 	}
 	const missing =
 		spend.blocked ?? (amount.amount === null ? "Enter an amount first." : !payee.payee ? "Enter a valid payee first." : undefined)

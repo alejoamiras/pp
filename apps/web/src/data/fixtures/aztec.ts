@@ -199,10 +199,7 @@ export function fixtureAztec(w: World): AztecPort {
 		},
 		async unshieldAndExit(from, { payee, amount, label, origin }, on) {
 			checkPayee(w, payee)
-			assertSpendable(
-				ofLabel(w, from, label).map((n) => n.value),
-				amount,
-			)
+			assertSpendable(noteValues(w, from, label), amount)
 			on.handoff()
 			return send(
 				w,

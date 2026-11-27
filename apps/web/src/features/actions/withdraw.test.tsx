@@ -75,15 +75,19 @@ describe("the label's withdrawal to Ethereum", () => {
 		await waitFor(() => expect(asked).toContain(ACCOUNTS.sender))
 	})
 
-	test("takes at most the label's 8 largest notes, read again under the send lock", async () => {
+	test("the form takes at most the label's 8 largest notes, and an amount at that cap reaches the port", async () => {
 		const nine = [5, 5, 5, 5, 5, 5, 5, 4, 1].map(usdc)
-		let notes = nine
+		const asked: bigint[] = []
 		const app = renderApp({
 			patch: (s) => ({
 				...s,
 				aztec: {
 					...s.aztec,
-					notesByLabel: async (owner, label) => (label === LABELS.active ? notes : s.aztec.notesByLabel(owner, label)),
+					notesByLabel: async (owner, label) => (label === LABELS.active ? nine : s.aztec.notesByLabel(owner, label)),
+					unshieldAndExit: async (_from, a) => {
+						asked.push(a.amount)
+						return { status: "unconfirmed" as const }
+					},
 				},
 			}),
 		})
@@ -96,24 +100,21 @@ describe("the label's withdrawal to Ethereum", () => {
 		await app.user.clear(dialog.getByLabelText(/Amount/))
 		await app.user.type(dialog.getByLabelText(/Amount/), "39")
 		await app.user.click(dialog.getByRole("button", { name: "Review" }))
-		const confirm = within(dialog.getByTestId("exit-review"))
-		notes = nine.slice(0, 3)
-		const sent = app.control.state().sent.aztec
-		await app.user.click(confirm.getByRole("button", { name: WITHDRAW }))
-		await dialog.findByText(messageOf("OVER_NOTE_CAP"))
-		expect(app.control.state().sent.aztec).toBe(sent)
+		await app.user.click(within(dialog.getByTestId("exit-review")).getByRole("button", { name: WITHDRAW }))
+		await waitFor(() => expect(asked).toEqual([usdc(39)]))
 	})
 
-	test("a reconnect while the send is being prepared sends nothing", async () => {
+	test("a disconnect while the send is being prepared closes the dialog, and nothing goes out once reconnected", async () => {
 		let hold = false
 		const held: (() => void)[] = []
+		// Holds the port call between the click and its handoff, where the stack port checks the list and the notes.
 		const app = renderApp({
 			patch: (s) => ({
 				...s,
 				aztec: {
 					...s.aztec,
-					notesByLabel: (...a: Parameters<typeof s.aztec.notesByLabel>) =>
-						hold ? new Promise((r) => held.push(() => r(s.aztec.notesByLabel(...a)))) : s.aztec.notesByLabel(...a),
+					unshieldAndExit: (...a: Parameters<typeof s.aztec.unshieldAndExit>) =>
+						hold ? new Promise((r) => held.push(() => r(s.aztec.unshieldAndExit(...a)))) : s.aztec.unshieldAndExit(...a),
 				},
 			}),
 		})
