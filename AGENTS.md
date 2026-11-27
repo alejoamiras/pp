@@ -20,6 +20,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 | [`packages/pool-client`](packages/pool-client/README.md) | `@pp/pool-client`: Privacy Pools v2 notes and a checked one-input spend to a processor, in Node, Bun and the browser; never submits. `@pp/pool-client/testing` seeds a running `pp-env up`. |
 | [`packages/run-isolation`](packages/run-isolation/README.md) | `@pp/run-isolation`: the primitives a local run uses to own its ports and processes: the host port registry and its lock, group-leader children that end with the process that spawned them and their teardown, and `./process-group`, which tells a running group from one of unreaped zombies. Node-only, no dependencies. |
 | [`packages/sepolia-fork`](packages/sepolia-fork/README.md) | `@pp/sepolia-fork`: the bridge's Ethereum side against the real Sepolia pool and Aztec testnet Inbox, on an anvil fork it owns at a pinned block, with the pins checked on the fork and live. |
+| [`packages/testnet`](packages/testnet/README.md) | `@pp/testnet`: the testnet deployment file's schema, as `@pp/testnet/schema`, which imports only zod so a browser build can read the file and refuse unpinned endpoints. |
 | [`scripts/`](scripts) | CI-gating tests (`scripts/ci-cd/`), the complexity baseline, the absolute-path guard. |
 | [`.github/`](.github) | PR workflows, each with a `changes` filter and an exact-state aggregator. |
 

@@ -1,0 +1,23 @@
+{
+	"name": "@pp/testnet",
+	"version": "0.0.0",
+	"private": true,
+	"license": "Apache-2.0",
+	"description": "The schema of the bridge's testnet deployment file, safe for a browser build; the guarded testnet CLIs are to follow.",
+	"type": "module",
+	"exports": {
+		"./schema": "./src/schema.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "bun --bun vitest run"
+	},
+	"dependencies": {
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

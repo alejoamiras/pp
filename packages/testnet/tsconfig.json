@@ -1,0 +1,17 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ESNext", "DOM"],
+		"strict": true,
+		"noEmit": true,
+		"esModuleInterop": true,
+		"isolatedModules": true,
+		"skipLibCheck": true,
+		"types": ["node"],
+		"allowImportingTsExtensions": true,
+		"erasableSyntaxOnly": true
+	},
+	"include": ["src/**/*.ts", "vitest.config.ts"]
+}
