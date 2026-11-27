@@ -20,6 +20,19 @@ export function emitSecurityHeaders(target: PublicTarget): Plugin {
 	}
 }
 
+export const TARGET_FILE = "target.json"
+
+/** Writes the target `define` inlines, so a server can check that a build is the one it was asked to serve. */
+export function emitTarget(target: PublicTarget): Plugin {
+	return {
+		name: "pp:target",
+		apply: "build",
+		generateBundle() {
+			this.emitFile({ type: "asset", fileName: TARGET_FILE, source: `${JSON.stringify(target, null, "\t")}\n` })
+		},
+	}
+}
+
 /**
  * Serves `<outDir>/security-headers.json` on every preview response. The file is read once at startup
  * and a missing or invalid one stops preview from starting: a server without the policy must not

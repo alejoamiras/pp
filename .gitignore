@@ -9,6 +9,7 @@ bun-debug.log*
 node_modules/
 dist
 dist-ssr
+dist-testnet
 *.local
 
 # Secrets / env (committed templates are .env.example only)
