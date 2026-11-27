@@ -19,6 +19,7 @@ import {
 } from "../test/client-fakes"
 import { type BridgeClient, bridgeClientOver, type ClientIo, createBridgeClient } from "./bridge-client"
 import type { WaitClaimableOptions } from "./claim"
+import { BridgeClientError } from "./errors"
 import type { prepareBridgeSpend } from "./prepare"
 import type { BridgeSession } from "./session"
 import type { SubmitOptions } from "./submit"
@@ -213,13 +214,30 @@ describe("createBridgeClient", () => {
 		async (_, name, build) => {
 			const form = new FormModel({ payee: "0x000000000000000000000000000000000000bEEF", amount: 1n, label: 3n })
 			const built = build(setup().client, form)
-			form.input.payee = "0x000000000000000000000000000000000000dEaD"
-			form.input.amount = 2n
+			form.input = { payee: "0x000000000000000000000000000000000000dEaD", amount: 2n, label: 4n }
 			const call = (await built).calls.find((c) => c.name === name)
 			expect(call?.to.toString()).toBe(HUB)
-			expect(call?.args.slice(1, 3).map((x) => x.toBigInt())).toEqual([0xbeefn, 1n])
+			const asCalled = name === "ragequit" ? [0xbeefn, 1n, 3n] : [0xbeefn, 1n]
+			expect(call?.args.slice(1).map((x) => x.toBigInt())).toEqual(asCalled)
 		},
 	)
+
+	it.each([
+		["ragequitPayload", (c: BridgeClient, a: FormModel) => c.ragequitPayload(a)],
+		["exitPublicPayload", (c: BridgeClient, a: FormModel) => c.exitPublicPayload(a)],
+	] as const)("%s rejects, never throws, when reading the request throws", async (_, build) => {
+		const form = new FormModel({ payee: "0x000000000000000000000000000000000000bEEF", amount: 1n, label: 3n })
+		Object.defineProperty(form, "payee", {
+			get: () => {
+				throw new Error("form torn down")
+			},
+		})
+		let built: Promise<unknown> | undefined
+		expect(() => {
+			built = build(setup().client, form)
+		}).not.toThrow()
+		await expect(built).rejects.toBeInstanceOf(BridgeClientError)
+	})
 
 	it("refuses a public exit when the deployment check fails", async () => {
 		const payee: Address = "0x000000000000000000000000000000000000bEEF"
