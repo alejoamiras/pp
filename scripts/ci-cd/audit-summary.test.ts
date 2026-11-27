@@ -34,5 +34,9 @@ test("the summary lists our own exposed copies first, then the rest by severity"
 })
 
 test("the root manifest's own dependencies count as declared", () => {
-	expect(directDependencies().get("@commitlint/cli")?.map((d) => d.workspace)).toContain("root")
+	expect(
+		directDependencies()
+			.get("@commitlint/cli")
+			?.map((d) => d.workspace),
+	).toContain("root")
 })

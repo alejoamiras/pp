@@ -114,6 +114,7 @@ test("reachableTags follows fetched dependencies and names a tag nargo has not f
 test("passedCount sums every package's line through colour codes", () => {
 	expect(passedCount("[a] 10 tests passed\n\x1b[32m[b] 1 test passed\x1b[0m\n")).toBe(11)
 	expect(passedCount("[a] 0 tests passed\n")).toBe(0)
+	expect(passedCount("[a] 1\x1b[1G0 tests passed\n"), "a cursor move does not join digits").toBe(0)
 })
 
 test("pinProblems accepts the recorded commit and names a moved or missing tag", () => {

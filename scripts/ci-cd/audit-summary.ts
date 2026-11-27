@@ -58,8 +58,15 @@ const cell = (s: string) => s.replaceAll("|", "\\|").replaceAll("\n", " ")
 
 export function renderSummary(report: AuditReport, declared: Map<string, Declared[]>, exitCode: number): string {
 	const rows = Object.entries(report)
-		.flatMap(([pkg, advisories]) => advisories.map((a) => ({ pkg, a, direct: exposedWorkspaces(declared.get(pkg), a.vulnerable_versions) })))
-		.sort((x, y) => Number(y.direct.length > 0) - Number(x.direct.length > 0) || rank(x.a.severity) - rank(y.a.severity) || x.pkg.localeCompare(y.pkg))
+		.flatMap(([pkg, advisories]) =>
+			advisories.map((a) => ({ pkg, a, direct: exposedWorkspaces(declared.get(pkg), a.vulnerable_versions) })),
+		)
+		.sort(
+			(x, y) =>
+				Number(y.direct.length > 0) - Number(x.direct.length > 0) ||
+				rank(x.a.severity) - rank(y.a.severity) ||
+				x.pkg.localeCompare(y.pkg),
+		)
 	const counts = SEVERITY.map((s) => [s, rows.filter((r) => r.a.severity === s).length] as const).filter(([, n]) => n > 0)
 	const lines = [
 		`## bun audit (advisory, exit=${exitCode})`,

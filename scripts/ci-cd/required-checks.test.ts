@@ -23,7 +23,10 @@ describe("required-checks", () => {
 	})
 
 	test("rename preserves a check it does not know, and only own rename keys apply", () => {
-		const current = normalize({ strict: false, checks: [...live.checks, { context: "some-other-check", app_id: 42 }, { context: "toString", app_id: 7 }] })
+		const current = normalize({
+			strict: false,
+			checks: [...live.checks, { context: "some-other-check", app_id: 42 }, { context: "toString", app_id: 7 }],
+		})
 		const plan = planRename(current, RENAME)
 		expect(plan.checks).toContainEqual({ context: "some-other-check", app_id: 42 })
 		expect(plan.checks).toContainEqual({ context: "toString", app_id: 7 })
@@ -33,7 +36,10 @@ describe("required-checks", () => {
 	test("rename refuses to merge two producers of one context", () => {
 		const current = normalize({
 			strict: false,
-			checks: [{ context: "contracts-status", app_id: 15368 }, { context: "bridge-contracts-status", app_id: 42 }],
+			checks: [
+				{ context: "contracts-status", app_id: 15368 },
+				{ context: "bridge-contracts-status", app_id: 42 },
+			],
 		})
 		expect(() => planRename(current, RENAME)).toThrow(/two producers/)
 	})

@@ -57,7 +57,11 @@ function lintPaths(paths: string[], cwd: string): { diagnostics: Diagnostic[]; p
 	const report = JSON.parse(res.stdout)
 	const notPrinted = report.summary?.diagnosticsNotPrinted ?? 0
 	if (notPrinted > 0) throw new Error(`biome truncated ${notPrinted} diagnostic(s) — the audit would be incomplete`)
-	const all = (report.diagnostics ?? []) as Array<{ category?: string; message: string; location: { path: string; start?: { line: number } } }>
+	const all = (report.diagnostics ?? []) as Array<{
+		category?: string
+		message: string
+		location: { path: string; start?: { line: number } }
+	}>
 	const parseErrors = all.filter((d) => (d.category ?? "").startsWith("parse")).map((d) => `${d.location.path}: ${d.message}`)
 	const diagnostics = all
 		.filter((d) => (d.category ?? "").startsWith(CATEGORY_PREFIX))
@@ -80,41 +84,56 @@ export function rescore(directives: AcceptedDirective[], opts: { cwd?: string } 
 	const byFile = new Map<string, AcceptedDirective[]>()
 	for (const d of directives) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d])
 	const created: string[] = []
-	const copyOf = new Map<string, string>()
 	const violations: string[] = []
 	try {
-		for (const [file, list] of byFile) {
-			const remove = new Set(list.map((d) => d.line))
-			const kept = readFileSync(resolve(cwd, file), "utf8")
-				.split("\n")
-				.filter((_, i) => !remove.has(i + 1))
-			const copy = siblingCopyPath(file)
-			writeFileSync(resolve(cwd, copy), kept.join("\n"), { flag: "wx" })
-			created.push(resolve(cwd, copy))
-			copyOf.set(file, copy)
-		}
+		const copyOf = writeStrippedCopies(byFile, cwd, created)
 		const { diagnostics, parseErrors } = lintPaths([...byFile.keys(), ...copyOf.values()], cwd)
 		if (parseErrors.length > 0) throw new Error(`the audit cannot score a file Biome failed to parse:\n  ${parseErrors.join("\n  ")}`)
-		for (const [file, list] of byFile) {
-			for (const d of diagnostics) {
-				if (d.path === file && isBaselined(d.category)) violations.push(`${file}:${d.line} ${d.category} — unsuppressed offender (observed ${parseObserved(d.category, d.message)})`)
-			}
-			for (const rule of BASELINED_RULES) {
-				const expected = list.filter((d) => d.rule === rule).sort((a, b) => a.line - b.line)
-				const observed = diagnostics.filter((d) => d.path === copyOf.get(file) && d.category === rule).sort((a, b) => a.line - b.line)
-				violations.push(...pairAndCompare(file, rule, expected, observed))
-			}
-		}
+		for (const [file, list] of byFile) violations.push(...auditFile(file, list, copyOf.get(file), diagnostics))
 	} finally {
 		for (const p of created) rmSync(p, { force: true })
 	}
 	return { checked: directives.length, violations }
 }
 
+/** Writes beside each file a copy without its directive lines; each path goes into `created` as soon as it exists. */
+function writeStrippedCopies(byFile: Map<string, AcceptedDirective[]>, cwd: string, created: string[]): Map<string, string> {
+	const copyOf = new Map<string, string>()
+	for (const [file, list] of byFile) {
+		const remove = new Set(list.map((d) => d.line))
+		const kept = readFileSync(resolve(cwd, file), "utf8")
+			.split("\n")
+			.filter((_, i) => !remove.has(i + 1))
+		const copy = siblingCopyPath(file)
+		writeFileSync(resolve(cwd, copy), kept.join("\n"), { flag: "wx" })
+		created.push(resolve(cwd, copy))
+		copyOf.set(file, copy)
+	}
+	return copyOf
+}
+
+/** A file's offenders its directives leave uncovered, and the directives its stripped copy no longer matches. */
+function auditFile(file: string, list: AcceptedDirective[], copy: string | undefined, diagnostics: Diagnostic[]): string[] {
+	const violations: string[] = []
+	for (const d of diagnostics) {
+		if (d.path === file && isBaselined(d.category))
+			violations.push(`${file}:${d.line} ${d.category} — unsuppressed offender (observed ${parseObserved(d.category, d.message)})`)
+	}
+	for (const rule of BASELINED_RULES) {
+		const expected = list.filter((d) => d.rule === rule).sort((a, b) => a.line - b.line)
+		const observed = diagnostics.filter((d) => d.path === copy && d.category === rule).sort((a, b) => a.line - b.line)
+		violations.push(...pairAndCompare(file, rule, expected, observed))
+	}
+	return violations
+}
+
 function pairAndCompare(file: string, rule: BaselinedRule, expected: AcceptedDirective[], observed: Diagnostic[]): string[] {
 	if (expected.length === 0 && observed.length === 0) return []
 	if (expected.length !== observed.length) {
-		const stale = expected.length > observed.length ? "a directive no longer has a function over budget under it — remove it and regenerate" : "more offenders than directives"
+		const stale =
+			expected.length > observed.length
+				? "a directive no longer has a function over budget under it — remove it and regenerate"
+				: "more offenders than directives"
 		return [`${file} ${rule} — ${expected.length} accepted directive(s) but ${observed.length} diagnostic(s) once removed: ${stale}`]
 	}
 	const out: string[] = []
@@ -123,7 +142,9 @@ function pairAndCompare(file: string, rule: BaselinedRule, expected: AcceptedDir
 		const actual = parseObserved(rule, observed[i].message)
 		if (actual !== stamp.accepted) {
 			const verb = actual > stamp.accepted ? "grew past" : "fell below"
-			out.push(`${file}:${stamp.line} ${rule} — accepted ${stamp.accepted} → observed ${actual} (the function ${verb} its stamp; edit the stamp to ${actual} or refactor)`)
+			out.push(
+				`${file}:${stamp.line} ${rule} — accepted ${stamp.accepted} → observed ${actual} (the function ${verb} its stamp; edit the stamp to ${actual} or refactor)`,
+			)
 		}
 	}
 	return out
@@ -133,7 +154,9 @@ const isMain = process.argv[1] ? fileURLToPath(import.meta.url) === resolve(proc
 if (isMain) {
 	const result = rescore(scanTree().accepted)
 	if (result.violations.length > 0) {
-		console.error(`complexity rescore FAILED — ${result.violations.length} of ${result.checked} acceptance(s) do not match the function:`)
+		console.error(
+			`complexity rescore FAILED — ${result.violations.length} of ${result.checked} acceptance(s) do not match the function:`,
+		)
 		for (const v of result.violations) console.error(`  • ${v}`)
 		process.exit(1)
 	}
