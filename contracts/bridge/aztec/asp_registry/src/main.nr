@@ -10,6 +10,7 @@ use aztec::macros::aztec;
 #[aztec]
 pub contract AspRootRegistry {
     use crate::label_check::MAX_OBSERVATION_LAG;
+    use pp_hash::MAX_DEPTH;
     use aztec::{
         macros::{events::event, functions::{external, initializer, view}, storage::storage},
         protocol::{address::AztecAddress, traits::{Deserialize, Packable, Serialize}},
@@ -29,7 +30,7 @@ pub contract AspRootRegistry {
     // Events keep the order of several updates in one block, which a storage read at its end loses.
     // Storage stays the authority.
 
-    /// Every accepted post, with `RootRecord`'s fields in its order.
+    /// Every accepted post, with `RootRecord`'s fields in its order, then `ListSizes`'.
     #[event]
     pub struct RootPosted {
         pub sequence: u64,
@@ -37,7 +38,26 @@ pub contract AspRootRegistry {
         pub birth_root: Field,
         pub l1_block: u64,
         pub root_time: u64,
+        pub pool_size: u32,
+        pub birth_size: u32,
     }
+
+    /// How many leaves built each root of the current record; zero for a root that is zero. A LeanIMT
+    /// root does not fix its leaf count, so a list collapsed into inner nodes builds to the same root:
+    /// a client refuses a list whose length differs.
+    #[derive(Deserialize, Eq, Packable, Serialize)]
+    pub struct ListSizes {
+        pub pool: u32,
+        pub birth: u32,
+    }
+
+    // Raw storage outside `Storage`: the token, hub and probe artifacts embed the registry's storage
+    // layout, which their class ids hash. `pool` is here and `birth` one slot up, far above the declared
+    // slots; the registry has no maps. "list_sizes" in ASCII.
+    pub global SIZES_SLOT: Field = 0x6c6973745f73697a6573;
+
+    // The most leaves a label path can prove membership in.
+    global MAX_LIST_SIZE: u32 = 1 << MAX_DEPTH;
 
     /// The record is cleared at `sequence`, which the next post continues from.
     #[event]
@@ -69,9 +89,18 @@ pub contract AspRootRegistry {
         self.storage.birth_intake.write(birth_intake);
     }
 
-    /// `root_time` is the timestamp of Ethereum block `l1_block`, the block the poster read.
+    /// `root_time` is the timestamp of Ethereum block `l1_block`, the block the poster read;
+    /// `pool_size` and `birth_size` are the lengths of the lists the two roots were built from.
     #[external("public")]
-    fn post_root(sequence: u64, pool_root: Field, birth_root: Field, l1_block: u64, root_time: u64) {
+    fn post_root(
+        sequence: u64,
+        pool_root: Field,
+        birth_root: Field,
+        l1_block: u64,
+        root_time: u64,
+        pool_size: u32,
+        birth_size: u32,
+    ) {
         assert(self.msg_sender() == self.storage.poster.read(), "not poster");
         let current = self.storage.current.read().get_value();
         // A retried or stale post fails instead of overwriting a newer one.
@@ -85,10 +114,14 @@ pub contract AspRootRegistry {
         let now = self.context.timestamp();
         assert(root_time <= now, "root time in the future");
         assert(now - root_time <= MAX_OBSERVATION_LAG, "observation too old");
+        assert(pool_size != 0, "zero pool size");
+        assert((birth_size == 0) == (birth_root == 0), "birth size and root disagree");
+        assert((pool_size <= MAX_LIST_SIZE) & (birth_size <= MAX_LIST_SIZE), "size too large");
         self.storage.current.write(WithHash::new(
             RootRecord { sequence, pool_root, birth_root, l1_block, root_time },
         ));
-        self.emit(RootPosted { sequence, pool_root, birth_root, l1_block, root_time });
+        self.context.storage_write(SIZES_SLOT, ListSizes { pool: pool_size, birth: birth_size });
+        self.emit(RootPosted { sequence, pool_root, birth_root, l1_block, root_time, pool_size, birth_size });
     }
 
     /// A dead address freezes posting. Clearing the block and the time lets the next poster recover
@@ -100,6 +133,7 @@ pub contract AspRootRegistry {
         self.storage.current.write(WithHash::new(
             RootRecord { sequence, pool_root: 0, birth_root: 0, l1_block: 0, root_time: 0 },
         ));
+        self.context.storage_write(SIZES_SLOT, ListSizes { pool: 0, birth: 0 });
         self.storage.poster.write(next);
         self.emit(PosterChanged { sequence, poster: next });
     }
@@ -116,6 +150,12 @@ pub contract AspRootRegistry {
     #[view]
     fn get_current() -> RootRecord {
         self.storage.current.read().get_value()
+    }
+
+    #[external("public")]
+    #[view]
+    fn get_sizes() -> ListSizes {
+        self.context.storage_read(SIZES_SLOT)
     }
 
     #[external("public")]

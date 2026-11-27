@@ -120,7 +120,7 @@ pub unconstrained fn post_pool_root_at(h: Hub, sequence: u64, pool_root: Field) 
     h.env.set_next_block_timestamp(now);
     h.env.call_public(
         h.poster,
-        AspRootRegistry::at(h.registry).post_root(sequence, pool_root, BIRTH_ROOT, 100 + sequence, now),
+        AspRootRegistry::at(h.registry).post_root(sequence, pool_root, BIRTH_ROOT, 100 + sequence, now, 1, 1),
     );
     h.env.mine_block_at(now + 1);
 }

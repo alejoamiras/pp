@@ -1,4 +1,4 @@
-use crate::AspRootRegistry::{self, RootRecord};
+use crate::AspRootRegistry::{self, ListSizes, RootRecord, SIZES_SLOT};
 use aztec::{
     event::event_interface::EventInterface,
     ephemeral::EphemeralArray,
@@ -14,6 +14,8 @@ use aztec::{
 
 pub global POOL_ROOT: Field = 0x1001;
 pub global BIRTH_ROOT: Field = 0x2002;
+pub global POOL_SIZE: u32 = 3;
+pub global BIRTH_SIZE: u32 = 2;
 
 pub struct Setup {
     pub env: TestEnvironment,
@@ -38,7 +40,7 @@ pub unconstrained fn setup() -> Setup {
     Setup { env, admin, poster, intake, registry, t0 }
 }
 
-/// Posts `POOL_ROOT` and `BIRTH_ROOT` as `from`, in a block whose timestamp is `now`.
+/// Posts `POOL_ROOT` and `BIRTH_ROOT` with their sizes as `from`, in a block whose timestamp is `now`.
 pub unconstrained fn post_at(
     s: Setup,
     from: AztecAddress,
@@ -50,6 +52,7 @@ pub unconstrained fn post_at(
     post_roots_at(s, from, now, sequence, POOL_ROOT, BIRTH_ROOT, l1_block, root_time);
 }
 
+/// `POOL_SIZE`, and `BIRTH_SIZE` unless `birth_root` is zero.
 pub unconstrained fn post_roots_at(
     s: Setup,
     from: AztecAddress,
@@ -60,15 +63,50 @@ pub unconstrained fn post_roots_at(
     l1_block: u64,
     root_time: u64,
 ) {
+    let birth_size = if birth_root == 0 { 0 } else { BIRTH_SIZE };
+    post_sized_at(s, from, now, sequence, pool_root, birth_root, l1_block, root_time, POOL_SIZE, birth_size);
+}
+
+pub unconstrained fn post_sized_at(
+    s: Setup,
+    from: AztecAddress,
+    now: u64,
+    sequence: u64,
+    pool_root: Field,
+    birth_root: Field,
+    l1_block: u64,
+    root_time: u64,
+    pool_size: u32,
+    birth_size: u32,
+) {
     s.env.set_next_block_timestamp(now);
     s.env.call_public(
         from,
-        AspRootRegistry::at(s.registry).post_root(sequence, pool_root, birth_root, l1_block, root_time),
+        AspRootRegistry::at(s.registry).post_root(
+            sequence,
+            pool_root,
+            birth_root,
+            l1_block,
+            root_time,
+            pool_size,
+            birth_size,
+        ),
     );
 }
 
 pub unconstrained fn current(s: Setup) -> RootRecord {
     s.env.view_public(AspRootRegistry::at(s.registry).get_current())
+}
+
+pub unconstrained fn sizes(s: Setup) -> ListSizes {
+    s.env.view_public(AspRootRegistry::at(s.registry).get_sizes())
+}
+
+/// The two raw slots off-chain readers fetch: `[pool, birth]`.
+pub unconstrained fn raw_sizes(s: Setup) -> [Field; 2] {
+    s.env.public_context_at(s.registry, |context| {
+        [context.storage_read(SIZES_SLOT), context.storage_read(SIZES_SLOT + 1)]
+    })
 }
 
 /// The payload of each `Event` log this registry emitted in the last transaction, in order.
