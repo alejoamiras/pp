@@ -4,7 +4,7 @@ import { deriveHubTokenInstance } from "./hub-token"
 import { assertManifestTokensDerive, deriveManifestHub, manifestToken, parseManifestV2, parseManifestV2Strict } from "./manifest-v2"
 import { predictPortal } from "./portal-address"
 
-const TOKEN_CLASS_ID = "0x0ffdf2f819f7dbbeed8dabe38a38a76aef084445509c653762a3e3158fe1aaaa"
+const TOKEN_CLASS_ID = "0x24c218f6ead283941970e94ece49a54679425f150ec5b44741dedebfb4f53d2f"
 const FACTORY = "0x3333333333333333333333333333333333333333"
 const IMPL = "0x1111111111111111111111111111111111111111"
 const ERC20 = "0x00000000000000000000000000000000000e2c20"
