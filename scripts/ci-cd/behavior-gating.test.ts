@@ -6,7 +6,7 @@
  * gate covers. The unit-test workflow runs this file on every PR; the last test pins that.
  */
 import { describe, expect, test } from "bun:test"
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 
 const ROOT = join(import.meta.dir, "..", "..")
@@ -53,50 +53,102 @@ function filtersOf(workflow: string): Record<string, string[]> {
 
 const manifestOf = (pkg: string) => JSON.parse(readFileSync(join(ROOT, dirOf(pkg), pkg, "package.json"), "utf8"))
 const exportTargets = (e: unknown): string[] => (typeof e === "string" ? [e] : Object.values(e ?? {}).flatMap(exportTargets))
+const SOURCE = /\.(ts|tsx|mts|js|mjs)$/
+const INSTALLED = /(^|\/)(node_modules|dist)\//
 
-/** The `@pp/<dep>` subpaths a package's own files import ("" for the root entry). */
-function importedSubpaths(pkg: string, dep: string): Set<string> {
-  const dir = join(ROOT, dirOf(pkg), pkg)
-  const files = (readdirSync(dir, { recursive: true }) as string[]).filter(
-    (f) => /\.(ts|tsx|mts|js|mjs)$/.test(f) && !/(^|\/)(node_modules|dist)\//.test(f),
+/** Every file under a repo-relative directory, without installed or built output. */
+function filesUnder(dir: string): string[] {
+  if (!existsSync(join(ROOT, dir))) return []
+  return [...new Bun.Glob("**/*").scanSync({ cwd: join(ROOT, dir), onlyFiles: true, dot: true })]
+    .map((f) => join(dir, f))
+    .filter((f) => !INSTALLED.test(f))
+}
+
+/** The repo file a specifier names, trying TypeScript's extension and index rules. */
+function resolveFile(base: string): string | undefined {
+  const stem = base.replace(/\.js$/, "")
+  return [base, `${stem}.ts`, `${stem}.tsx`, `${stem}.mts`, join(base, "index.ts")].find(
+    (c) => !INSTALLED.test(c) && existsSync(join(ROOT, c)) && statSync(join(ROOT, c)).isFile(),
   )
-  const found = new Set<string>()
-  for (const file of files)
-    for (const m of readFileSync(join(dir, file), "utf8").matchAll(/["']@pp\/([\w-]+)(\/[^"']*)?["']/g)) if (m[1] === dep) found.add(m[2] ?? "")
-  return found
+}
+
+/** A workspace's entry files for a subpath: its export targets, or the whole package without `exports`. */
+function entriesOf(pkg: string, sub: string | undefined): string[] {
+  const dir = `${dirOf(pkg)}/${pkg}`
+  const exports = manifestOf(pkg).exports
+  if (exports === undefined) return sub ? [resolveFile(join(dir, sub))].filter((f): f is string => Boolean(f)) : filesUnder(dir)
+  const hit = sub === undefined || typeof exports === "string" ? undefined : exports[`.${sub}`]
+  return exportTargets(hit ?? exports).map((t) => join(dir, t))
 }
 
 /**
- * What a change in `dep` can alter for `pkg`: its manifest and the directory of every export `pkg`
- * imports by name, or of every export when `pkg` imports none by name.
+ * Every file a package can load, transitively: relative imports, and `@pp/*` imports through the named
+ * workspace's exports (Bun's own import scan; type-only imports load nothing). A declared `@pp/*`
+ * dependency nothing imports by name counts through all its entries. npm packages sit outside: a bump
+ * moves bun.lock, which every gate covers.
  */
-function edgePaths(pkg: string, dep: string): string[] {
-  const exports = manifestOf(dep).exports ?? {}
-  const used = [...importedSubpaths(pkg, dep)].map((sub) => exports[`.${sub}`])
-  const targets = used.length && used.every(Boolean) ? used.flatMap(exportTargets) : exportTargets(exports)
-  const dirs = targets.map((t) => join(dirOf(dep), dep, dirname(t)))
-  return [`${dirOf(dep)}/${dep}/package.json`, ...dirs.map((d) => `${d}/**`)]
-}
-
-/**
- * For every package a filter gates whole (`packages/<x>/**`), the paths of its `@pp/*` dependency
- * closure the filter misses, walking each edge with what the dependent imports.
- */
-function closureGaps(patterns: string[]): string[] {
-  // A nested sample path: a recursive glob matches it, a single-file pattern does not.
-  const gated = (path: string) => patterns.some((p) => new Bun.Glob(p).match(path.replace(/\*\*$/, "nested/x.ts")))
-  const gaps = new Set<string>()
-  const seen = new Set<string>()
-  const queue = patterns.map((p) => /^(?:packages|apps)\/([^/]+)\/\*\*$/.exec(p)?.[1]).filter((x): x is string => Boolean(x))
-  for (let pkg = queue.shift(); pkg !== undefined; pkg = queue.shift()) {
-    if (seen.has(pkg)) continue
-    seen.add(pkg)
-    for (const dep of directDeps(pkg)) {
-      for (const path of edgePaths(pkg, dep)) if (!gated(path)) gaps.add(path)
-      queue.push(dep)
+function reachedFiles(target: string): { files: Set<string>; packages: Set<string> } {
+  const files = new Set<string>()
+  const packages = new Set<string>()
+  const named = new Set<string>()
+  const queue = filesUnder(`${dirOf(target)}/${target}`)
+  const add = (f: string) => {
+    if (files.has(f)) return
+    files.add(f)
+    queue.push(f)
+  }
+  const enter = (pkg: string, sub: string | undefined) => {
+    packages.add(pkg)
+    for (const f of entriesOf(pkg, sub)) add(f)
+  }
+  for (let file = queue.shift(); file !== undefined; file = queue.shift()) {
+    if (!SOURCE.test(file)) continue
+    const loader = file.endsWith(".tsx") ? "tsx" : /\.m?js$/.test(file) ? "js" : "ts"
+    // The scan rejects a shebang line.
+    const code = readFileSync(join(ROOT, file), "utf8").replace(/^#!.*/, "")
+    for (const { path: spec } of new Bun.Transpiler({ loader }).scanImports(code)) {
+      if (spec.startsWith(".")) {
+        const hit = resolveFile(join(dirname(file), spec))
+        if (hit) add(hit)
+        continue
+      }
+      const [, pkg, rest] = /^@pp\/([\w-]+)(\/.*)?$/.exec(spec) ?? []
+      if (!pkg || !existsSync(join(ROOT, dirOf(pkg), pkg, "package.json"))) continue
+      named.add(pkg)
+      enter(pkg, rest ?? "")
     }
   }
+  for (const pkg of transitiveDeps(target)) if (!named.has(pkg)) enter(pkg, undefined)
+  return { files, packages }
+}
+
+/**
+ * For every package a filter gates whole (`packages/<x>/**`), the files it can load, and the manifests
+ * of the workspaces it reaches, that the filter leaves out.
+ */
+function closureGaps(patterns: string[]): string[] {
+  const gated = (path: string) => patterns.some((p) => new Bun.Glob(p).match(path))
+  const gaps = new Set<string>()
+  const targets = patterns.map((p) => /^(?:packages|apps)\/([^/]+)\/\*\*$/.exec(p)?.[1]).filter((x): x is string => Boolean(x))
+  for (const target of targets) {
+    const { files, packages } = reachedFiles(target)
+    for (const pkg of packages) files.add(`${dirOf(pkg)}/${pkg}/package.json`)
+    for (const f of files) if (!gated(f)) gaps.add(f)
+  }
   return [...gaps].sort()
+}
+
+/** Filters whose verdict a job of the workflow reads through the changes job's outputs. */
+function readFilters(file: string): string[] {
+  const wf = workflow(file)
+  const outputs: Record<string, string> = wf.jobs.changes?.outputs ?? {}
+  const read = new Set<string>()
+  for (const [name, job] of Object.entries(wf.jobs as Record<string, unknown>)) {
+    if (name === "changes") continue
+    for (const [, out] of JSON.stringify(job).matchAll(/needs\.changes\.outputs\.([\w-]+)/g))
+      for (const [, filter] of (outputs[out ?? ""] ?? "").matchAll(/steps\.[\w-]+\.outputs\.([\w-]+)/g)) read.add(filter ?? "")
+  }
+  return [...read]
 }
 
 const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml", "local-stack.yml", "pool-client.yml"]
@@ -155,24 +207,38 @@ describe("CI aggregator check names", () => {
 })
 
 describe("CI behavior-gating guard", () => {
-  test("a per-package workflow gates its package whole", () => {
+  test("a per-package workflow gates its package whole in a filter its jobs read", () => {
     const named = FILTER_WORKFLOWS.map((wf) => wf.replace(/\.yml$/, "")).filter((name) => existsSync(join(ROOT, "packages", name, "package.json")))
     expect(named.length).toBeGreaterThan(0)
     for (const name of named) {
-      const patterns = Object.values(filtersOf(`${name}.yml`)).flat()
-      expect(patterns, `${name}.yml`).toContain(`packages/${name}/**`)
+      const filters = filtersOf(`${name}.yml`)
+      const read = readFilters(`${name}.yml`).flatMap((f) => filters[f] ?? [])
+      expect(read, `${name}.yml`).toContain(`packages/${name}/**`)
     }
   })
 
-  test("every filter that gates a package whole gates what its workspace dependencies export", () => {
+  test("every filter that gates a package whole gates every file that package can load", () => {
     for (const wf of FILTER_WORKFLOWS)
       for (const [name, patterns] of Object.entries(filtersOf(wf))) expect(closureGaps(patterns), `${wf} → ${name}`).toEqual([])
   })
 
-  test("the closure pin names a dependency a filter leaves out", () => {
+  test("the closure pin names what a filter leaves out", () => {
     const stack = filtersOf("local-stack.yml")["stack"]
-    expect(closureGaps(stack.filter((p) => !p.startsWith("packages/bridge-spec/")))).toEqual(["packages/bridge-spec/package.json", "packages/bridge-spec/src/**"])
-    expect(closureGaps(stack.filter((p) => p !== "packages/bridge-core/**"))).toContain("packages/bridge-core/scripts/sandbox/**")
+    const without = (drop: (p: string) => boolean) => closureGaps(stack.filter((p) => !drop(p)))
+    const spec = without((p) => p.startsWith("packages/bridge-spec/"))
+    expect(spec).toContain("packages/bridge-spec/package.json")
+    expect(spec, "bridge-core imports @pp/bridge-spec/claim-secret").toContain("packages/bridge-spec/src/claim-secret.ts")
+    expect(spec.every((f) => f.startsWith("packages/bridge-spec/")), spec.join(", ")).toBe(true)
+    const core = without((p) => p === "packages/bridge-core/**")
+    expect(core).toContain("packages/bridge-core/scripts/sandbox/index.ts")
+    expect(core).toContain("packages/bridge-core/src/artifacts.ts")
+    expect(without((p) => p.startsWith("contracts/"))).toContain(
+      "contracts/bridge/aztec/token_bridge_hub/target/token_bridge_hub_contract-TokenBridgeHub.json",
+    )
+    // A glob that names the directory but matches no file in it.
+    expect(closureGaps([...stack.filter((p) => p !== "packages/run-isolation/src/**"), "packages/run-isolation/src/*/**/*.ts"])).toContain(
+      "packages/run-isolation/src/process-group.ts",
+    )
   })
 
   test("NO `!` negation patterns anywhere (the dorny some-quantifier footgun)", () => {
