@@ -105,9 +105,9 @@ allowance too.
   root changes, after an admin's reset, or after a list fails a check. When the leaves do not hash to the
   root, the bot posts nothing new, keeps serving a snapshot it holds, and asks again after the 5
   minutes.
-- **Resets.** A list fetched since a reset is reused while the root stays the same. A second reset
-  drops it, and the feed is asked again on a later tick, no sooner than 5 minutes after the previous
-  request.
+- **Resets.** A list fetched since a reset is reused while the root stays the same. When the bot reads
+  a new cleared sequence, it drops the list. It can fetch again on an eligible tick once 5 minutes
+  have passed since the previous request.
 - **One process per pool.** The floor lives in the process's memory, so a restart or a second process
   for the same pool asks again at once. Run one process per pool, and do not restart it in a loop.
 - **The local stack.** Its child bot has no floor.
