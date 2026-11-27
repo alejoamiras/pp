@@ -1,8 +1,9 @@
 /**
  * A testnet build in Chromium behind `serve --deployment`, opened at `http://localhost:<port>/` as the
  * owner opens it, reading the node, the L1 RPC and the proxied services from the page. Under
- * `--no-upstreams` the file's upstream ports are claimed ones nothing serves and `PP_CIRCUITS_DIR` is
- * an empty scratch directory; live, both come from the host.
+ * `--no-upstreams` the file's upstream ports are claimed ones nothing serves, pool1's operator API is
+ * reached only through an `HTTPS_PROXY` on one of them, and `PP_CIRCUITS_DIR` is an empty scratch
+ * directory; live, they come from the host.
  *
  * Usage: [PP_CIRCUITS_DIR=<dir>] bun scripts/testnet-smoke.ts --target <file> [--outDir dist-testnet] [--no-upstreams]
  */
@@ -173,8 +174,12 @@ async function main(): Promise<void> {
 		undo.push(() => rmSync(work, { recursive: true, force: true }))
 		let deployment = resolve(values.target)
 		let circuits = process.env.PP_CIRCUITS_DIR
+		let dead: NodeJS.ProcessEnv = {}
 		if (offline) {
-			deployment = withUpstreams(deployment, work, await claim("smoke-bot"), await claim("smoke-asp"))
+			const asp = await claim("smoke-asp")
+			deployment = withUpstreams(deployment, work, await claim("smoke-bot"), asp)
+			// No inherited exemption either: a NO_PROXY naming the operator would let an offline run reach it.
+			dead = { HTTPS_PROXY: `http://127.0.0.1:${asp}`, https_proxy: `http://127.0.0.1:${asp}`, NO_PROXY: "", no_proxy: "" }
 			circuits = join(work, "circuits")
 			mkdirSync(circuits)
 		}
@@ -191,7 +196,7 @@ async function main(): Promise<void> {
 			"--deployment",
 			deployment,
 		]
-		const g = bunRun(args, { env: { ...envWithout(), PP_CIRCUITS_DIR: circuits }, capture: true })
+		const g = bunRun(args, { env: { ...envWithout(), ...dead, PP_CIRCUITS_DIR: circuits }, capture: true })
 		undo.push(() => g.stop())
 		await untilUp("serve --deployment", port, g)
 		await smoke(port, readTestnetDeployment(deployment), offline).catch((err: unknown) => {

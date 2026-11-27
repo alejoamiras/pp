@@ -1,6 +1,8 @@
 /**
- * `serve --deployment` over a testnet build, checked from outside: against two counting fake upstreams
- * on claimed ports and a fake `HTTP_PROXY` that no forward may reach.
+ * `serve --deployment` over a testnet build, checked from outside: against counting fake upstreams on
+ * claimed ports and a fake `HTTP_PROXY`/`HTTPS_PROXY` that no loopback forward may reach. For pool1,
+ * whose ASP is the operator's pinned https API, that proxy records the CONNECT each upstream request
+ * makes and refuses it, so the check counts requests to the operator and never sends one.
  */
 import { createHash } from "node:crypto"
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -11,11 +13,12 @@ import { CIRCUIT_BUNDLES } from "@pp/pool-client/circuits"
 import { HEADER_FILE, type SecurityHeaders, securityHeaders } from "../src/build/headers.ts"
 import { TARGET_FILE } from "../src/build/plugins.ts"
 import { sponsoredFpcAddress } from "../src/build/sponsored-fpc.ts"
+import { PINNED_URLS } from "@pp/testnet/schema"
 import { readTestnetDeployment, testnetTarget } from "../src/build/testnet.ts"
 import { PROVED_CIRCUIT } from "../src/data/adapters/circuit.ts"
 import { claimPort } from "./ports"
 import { bunRun, envWithout, type Group, scratchDir } from "./proc"
-import { UPSTREAM_DOWN } from "./proxy"
+import { USER_AGENT, UPSTREAM_DOWN } from "./proxy"
 import { assertRefusal, assertServed, releaseAll, untilUp } from "./served"
 import { loadTestnetServing } from "./testnet-serve"
 
@@ -28,14 +31,21 @@ interface Fake {
 	readonly port: number
 	/** Each request's target and headers, in order. */
 	readonly seen: { url: string; headers: IncomingHttpHeaders }[]
+	/** Each CONNECT's authority, in order; every one is answered 502. */
+	readonly connects: string[]
 	close(): Promise<void>
 }
 
 function listen(port: number, answer: RequestListener): Promise<Fake> {
 	const seen: Fake["seen"] = []
+	const connects: string[] = []
 	const server = createServer((req, res) => {
 		seen.push({ url: req.url ?? "", headers: req.headers })
 		answer(req, res)
+	})
+	server.on("connect", (req, socket) => {
+		connects.push(req.url ?? "")
+		socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
 	})
 	return new Promise((resolve, reject) => {
 		server.once("error", reject)
@@ -43,6 +53,7 @@ function listen(port: number, answer: RequestListener): Promise<Fake> {
 			resolve({
 				port: (server.address() as AddressInfo).port,
 				seen,
+				connects,
 				close: () =>
 					new Promise((done) => {
 						server.closeAllConnections()
@@ -59,12 +70,14 @@ const upstreamAnswer: RequestListener = (req, res) => {
 	res.writeHead(status, { "Content-Type": "application/json", "Set-Cookie": "u=1", "X-Upstream": "1" }).end(BODY)
 }
 
-/** A copy of `file` whose upstreams are `bot` and `asp` on loopback. */
+/** A copy of `file` whose bot is `bot` on loopback, and whose ASP is `asp` there too unless it is the operator's. */
 export function withUpstreams(file: string, dir: string, bot: number, asp: number): string {
-	const d = JSON.parse(readFileSync(file, "utf8")) as { network: Record<string, unknown>; pool: Record<string, unknown> }
+	const d = JSON.parse(readFileSync(file, "utf8")) as { target: string; network: Record<string, unknown>; pool: Record<string, unknown> }
 	d.network.botPort = bot
-	d.network.aspPort = asp
-	d.pool.aspApiUrl = `http://127.0.0.1:${asp}`
+	if (d.target === "own") {
+		d.network.aspPort = asp
+		d.pool.aspApiUrl = `http://127.0.0.1:${asp}`
+	}
 	const copy = join(dir, "deployment.json")
 	writeFileSync(copy, JSON.stringify(d))
 	return copy
@@ -152,17 +165,32 @@ async function assertRefused(port: number, asp: number, chain: number, entrypoin
 	console.log(`ok   ${NAME}: Host localhost:${port} is served`)
 }
 
-async function assertForwarded(port: number, h: SecurityHeaders, up: { bot: Fake; asp: Fake }, chain: number, e: string): Promise<void> {
-	const routes: [Fake, string, string, number][] = [
-		[up.bot, "/bot/v1/snapshots/latest?ignored=1", "/v1/snapshots/latest", 200],
-		[
-			up.asp,
-			`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`,
-			`/association-set/root?chainId=${chain}&entrypoint=${e}`,
-			200,
-		],
-		[up.asp, `/asp/${chain}/public/note-events?since=5&entrypoint=${e}`, `/${chain}/public/note-events?entrypoint=${e}&since=5`, 501],
-	]
+type Upstreams = { bot: Fake; asp: Fake | null }
+
+async function assertForwarded(port: number, h: SecurityHeaders, up: Upstreams, chain: number, e: string): Promise<void> {
+	const routes: [Fake, string, string, number][] = [[up.bot, "/bot/v1/snapshots/latest?ignored=1", "/v1/snapshots/latest", 200]]
+	if (up.asp)
+		routes.push(
+			[
+				up.asp,
+				`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`,
+				`/association-set/root?chainId=${chain}&entrypoint=${e}`,
+				200,
+			],
+			// The own pool's mock is never cached: the same route asked again reaches it again.
+			[
+				up.asp,
+				`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`,
+				`/association-set/root?chainId=${chain}&entrypoint=${e}`,
+				200,
+			],
+			[
+				up.asp,
+				`/asp/${chain}/public/note-events?since=5&entrypoint=${e}`,
+				`/${chain}/public/note-events?entrypoint=${e}&since=5`,
+				501,
+			],
+		)
 	for (const [fake, path, upstreamPath, status] of routes) {
 		const before = fake.seen.length
 		const { res, body } = await assertServed(NAME, port, path, {
@@ -177,16 +205,41 @@ async function assertForwarded(port: number, h: SecurityHeaders, up: { bot: Fake
 	}
 }
 
-/** No client header goes up and no upstream header comes back. */
-async function assertIsolated(port: number, asp: Fake): Promise<void> {
-	const res = await fetch(`http://127.0.0.1:${port}/asp/public-key`, { headers: CLIENT_HEADERS })
+/**
+ * The operator's ASP behind its allowance, reached only as a CONNECT through the fake proxy, which
+ * refuses it: each URL is one CONNECT however often it is asked, the answer is the ASP's fixed 502, and
+ * note events are answered here without one.
+ */
+async function assertOperator(port: number, proxy: Fake, chain: number, e: string): Promise<void> {
+	const host = new URL(PINNED_URLS.aspApi[0]).host
+	const asked: [string, number, string][] = [
+		[`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`, 502, UPSTREAM_DOWN.asp],
+		[`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`, 502, UPSTREAM_DOWN.asp],
+		["/asp/public-key", 502, UPSTREAM_DOWN.asp],
+		[`/asp/${chain}/public/note-events?since=5&entrypoint=${e}`, 501, "note events are read from the chain"],
+	]
+	for (const [path, status, body] of asked) {
+		const res = await fetch(`http://127.0.0.1:${port}${path}`)
+		const text = await res.text()
+		if (res.status !== status || text !== body) throw new Error(`${NAME} ${path}: HTTP ${res.status} ${text}; want ${status} ${body}`)
+	}
+	if (proxy.connects.join() !== [`${host}:443`, `${host}:443`].join())
+		throw new Error(`${NAME}: the operator's ASP was asked [${proxy.connects}]; want the root once and the public key once`)
+	console.log(`ok   ${NAME}: pool1's ASP is ${host}, asked once per URL, and never for note events`)
+}
+
+/** No client header goes up, the app's User-Agent does, and no upstream header comes back. */
+async function assertIsolated(port: number, fake: Fake, path: string, upstreamPath: string): Promise<void> {
+	const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers: CLIENT_HEADERS })
 	await res.arrayBuffer()
-	const up = asp.seen.at(-1)
+	const up = fake.seen.at(-1)
 	const leaked = Object.keys(CLIENT_HEADERS).filter((name) => up?.headers[name] !== undefined)
 	const back = ["set-cookie", "x-upstream"].filter((name) => res.headers.has(name))
-	if (res.status !== 200 || up?.url !== "/public-key" || leaked.length > 0 || back.length > 0)
-		throw new Error(`${NAME}: HTTP ${res.status}; client headers upstream: [${leaked}]; upstream headers back: [${back}]`)
-	console.log(`ok   ${NAME}: no client header reaches the ASP and none of its headers comes back`)
+	if (res.status !== 200 || up?.url !== upstreamPath || up.headers["user-agent"] !== USER_AGENT || leaked.length > 0 || back.length > 0)
+		throw new Error(
+			`${NAME} ${path}: HTTP ${res.status}, user-agent ${up?.headers["user-agent"]}; client headers upstream: [${leaked}]; upstream headers back: [${back}]`,
+		)
+	console.log(`ok   ${NAME} ${path}: only the app's User-Agent goes up and no upstream header comes back`)
 }
 
 async function assertUpstreamDown(port: number, bot: Fake): Promise<void> {
@@ -245,27 +298,32 @@ async function assertRefusesToStart(outDir: string, port: number, deployment: st
 	await assertStale(outDir, port, deployment, HEADER_FILE, headers, "is not the header set")
 }
 
-/** Both spellings of the proxy, and no inherited exemption: only the server's own bypass may keep loopback off it. */
+/** Every spelling of the proxy, and no inherited exemption: only the server's own bypass may keep loopback off it. */
 const viaProxy = (port: number): NodeJS.ProcessEnv => {
 	const url = `http://127.0.0.1:${port}`
-	return { HTTP_PROXY: url, http_proxy: url, NO_PROXY: "", no_proxy: "" }
+	return { HTTP_PROXY: url, http_proxy: url, HTTPS_PROXY: url, https_proxy: url, NO_PROXY: "", no_proxy: "" }
 }
 
-async function assertServing(outDir: string, port: number, deployment: string, up: { bot: Fake; asp: Fake }, proxy: Fake): Promise<void> {
+async function assertServing(outDir: string, port: number, deployment: string, up: Upstreams, proxy: Fake): Promise<void> {
 	const d = readTestnetDeployment(deployment)
+	const [chain, e] = [d.network.l1ChainId, d.pool.entrypoint]
 	const headers = JSON.parse(readFileSync(join(outDir, HEADER_FILE), "utf8")) as SecurityHeaders
 	const g = startServe(outDir, port, { deployment, env: { ...viaProxy(proxy.port) } })
 	try {
 		await untilUp(NAME, port, g)
 		for (const path of ["/", "/no/such/route", "/asp/no/such/route"]) await assertServed(NAME, port, path, headers)
-		const asp = Number(new URL(d.pool.aspApiUrl).port)
-		await assertRefused(port, asp, d.network.l1ChainId, d.pool.entrypoint, [up.bot, up.asp, proxy])
-		await assertForwarded(port, headers, up, d.network.l1ChainId, d.pool.entrypoint)
-		await assertIsolated(port, up.asp)
+		await assertRefused(port, up.asp?.port ?? proxy.port, chain, e, [up.bot, ...(up.asp ? [up.asp] : []), proxy])
+		await assertForwarded(port, headers, up, chain, e)
+		if (up.asp) await assertIsolated(port, up.asp, "/asp/public-key", "/public-key")
+		else await assertIsolated(port, up.bot, "/bot/v1/snapshots/latest", "/v1/snapshots/latest")
+		if (!up.asp) await assertOperator(port, proxy, chain, e)
 		await assertCircuitFiles(port, d.bundle)
 		await assertUpstreamDown(port, up.bot)
-		if (proxy.seen.length > 0) throw new Error(`${NAME}: forwards went through HTTP_PROXY (${proxy.seen.map((s) => s.url).join(", ")})`)
-		console.log(`ok   ${NAME}: with HTTP_PROXY set, every forward went straight to its upstream`)
+		if (proxy.seen.length > 0 || (up.asp && proxy.connects.length > 0))
+			throw new Error(
+				`${NAME}: loopback forwards went through the proxy (${[...proxy.seen.map((s) => s.url), ...proxy.connects].join(", ")})`,
+			)
+		console.log(`ok   ${NAME}: with the proxy variables set, every loopback forward went straight to its upstream`)
 	} finally {
 		await g.stop()
 	}
@@ -292,7 +350,8 @@ export async function checkTestnet(file: string, outDir: string): Promise<void> 
 		const work = scratchDir("headers-testnet")
 		undo.push(() => rmSync(work, { recursive: true, force: true }))
 		const deployment = withUpstreams(file, work, bot, asp)
-		const up = { bot: await held(listen(bot, upstreamAnswer)), asp: await held(listen(asp, upstreamAnswer)) }
+		const own = readTestnetDeployment(file).target === "own"
+		const up = { bot: await held(listen(bot, upstreamAnswer)), asp: own ? await held(listen(asp, upstreamAnswer)) : null }
 		const proxy = await held(listen(0, (_req, res) => res.writeHead(502).end()))
 		await assertServing(outDir, port, deployment, up, proxy)
 		await assertRefusesToStart(outDir, port, deployment)

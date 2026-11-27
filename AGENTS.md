@@ -86,6 +86,7 @@ with warm package and toolchain caches.
 | Web stack-build guard | `bun run --cwd apps/web check:stack-build` | 1 min |
 | Web testnet build (fixture file) | `PP_DEPLOYMENT=$PWD/apps/web/src/build/fixtures/testnet-own.json bun run --cwd apps/web build --mode testnet --outDir dist-testnet` | 21 s |
 | Web testnet server | `PP_CIRCUITS_DIR=<the pool checkout's circuit builds> bun run --cwd apps/web test:headers -- --target src/build/fixtures/testnet-own.json` (after the testnet build and pp-env's `fetch`) | 12 s |
+| Web testnet, pool1 (the operator's ASP, counted at a fake proxy) | the build and server rows with `testnet-pool1.json` and `--outDir dist-testnet-pool1` on both | 21 s · 12 s |
 | Web testnet smoke | `bun run --cwd apps/web test:testnet-smoke -- --target src/build/fixtures/testnet-own.json --no-upstreams` (after the testnet build; the page reads the public testnet node and Sepolia RPC) | 5 s |
 | Web e2e (local stack, both builds, Playwright) | `bun run --cwd apps/web e2e` (after `bun run demo:prepare`) | 10 min (7.4 min of tests) |
 | Web e2e on the sandbox (fixture build) | `bun run --cwd packages/e2e-kit test:browser` | 5 min |

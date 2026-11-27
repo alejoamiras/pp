@@ -80,8 +80,10 @@ as far as a check needs:
   reads the list); and the next post is read on the next refresh.
 
 A testnet build (`build --mode testnet` with `PP_DEPLOYMENT`, a testnet deployment file, into
-`dist-testnet/`) targets the own pool on Sepolia and the public Aztec testnet. Its ASP and bot are
-the page's own `/asp` and `/bot`, which `serve --deployment` proxies to the file's loopback ports.
+`dist-testnet/`) targets the own pool, or the operator's `pool1`, on Sepolia and the public Aztec
+testnet. Its ASP and bot are the page's own `/asp` and `/bot`, which `serve --deployment` proxies:
+the bot and the own pool's mock ASP on the file's loopback ports, and pool1's ASP at the operator's
+pinned API within the limits the operator set for automated clients (`scripts/asp-allowance.ts`).
 [`TESTNET.md`](TESTNET.md) is the runbook.
 
 ## Scripts

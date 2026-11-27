@@ -8,6 +8,8 @@ import { sponsoredFpcAddress } from "./sponsored-fpc"
 import { testnetTarget } from "./testnet"
 
 const FIXTURE = join(import.meta.dirname, "fixtures", "testnet-own.json")
+/** The same made-up pool and bridge, as the operator's pool1. */
+const POOL1 = join(import.meta.dirname, "fixtures", "testnet-pool1.json")
 const FPC = "0x2d8fff82a3b0c15d0a89169e7d8d043e079ab94d52031f1de1e4972ebad169d3"
 /** The fixture as plain JSON; an edit sets a section to `undefined` to drop it from the written file. */
 type Draft = {
@@ -88,7 +90,7 @@ describe("testnetTarget", () => {
 
 	test("refuses any other target, chain, endpoint or fee contract, and an incomplete file", () => {
 		const refusals: [string, (d: Draft) => void, RegExp][] = [
-			["operator target", (d) => (d.target = "pool1"), /not this target's ASP URL|own pool only/],
+			["the v9 target", (d) => (d.target = "v9"), /not this target's ASP URL|own pool or pool1/],
 			["operator section", (d) => (d.operator = {}), /operator/],
 			["local chain", (d) => (d.network.l1ChainId = 31337), /Sepolia/],
 			["unpinned L1 RPC", (d) => (d.network.l1Rpc = "https://rpc.example"), /pinned Sepolia RPC/],
@@ -100,6 +102,14 @@ describe("testnetTarget", () => {
 		]
 		for (const [what, edit, message] of refusals) expect(() => testnetTarget(file(edit), {}, FPC), what).toThrow(message)
 		expect(() => testnetTarget(join(dir, "absent.json"), {}, FPC)).toThrow(/cannot be read/)
+	})
+
+	test("takes pool1 with its ASP behind the page's origin, and only with the ceremony bundle", () => {
+		const own = testnetTarget(FIXTURE, {}, FPC)
+		expect(testnetTarget(POOL1, {}, FPC)).toEqual(own)
+		const preCeremony = join(dir, `deployment-${n++}.json`)
+		writeFileSync(preCeremony, JSON.stringify({ ...JSON.parse(readFileSync(POOL1, "utf8")), bundle: "pre-ceremony" }))
+		expect(() => testnetTarget(preCeremony, {}, FPC)).toThrow(/ceremony bundle the app pins/)
 	})
 
 	test("reads PP_DEPLOYMENT alone", () => {

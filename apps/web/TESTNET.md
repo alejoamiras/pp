@@ -1,7 +1,8 @@
 # The app on testnet
 
 This runbook opens the app in your own browser against Sepolia and the public Aztec testnet, on the
-own pool's deployment. Everything runs on one host. Your laptop reaches it through one forwarded port.
+own pool's deployment or the operator's pool1 ("The operator's pool" below). Everything runs on one
+host. Your laptop reaches it through one forwarded port.
 
 Nothing here needs a key. The build reads only the deployment file, which holds public addresses and
 URLs.
@@ -12,8 +13,9 @@ URLs.
   `bun run --cwd packages/pp-env fetch`. The browser check (step 3) needs Playwright's Chromium:
   `apps/web/node_modules/.bin/playwright install chromium` (add `--with-deps` once on a fresh
   machine; it installs system packages and needs root).
-- **The deployment file:** the own pool's testnet deployment file, with its `pool` and `bridge`
-  sections. Use it only if `verify-deployment` passed on it before the factory was opened with `open`.
+- **The deployment file:** the own pool's (or pool1's) testnet deployment file, with its `pool` and
+  `bridge` sections. Use it only if `verify-deployment` passed on it before the factory was opened
+  with `open`.
 - **The testnet services:** the deployment's operator runs `bot` and `asp --owner <canary owner>` on
   the host.
 - **Not in this repository yet:** the deployment file and the commands named here (`verify-deployment`,
@@ -112,6 +114,21 @@ A balance needs two things:
   the deployment's operator runs `seed --recipient <owner address>`; `--recipient` refuses the
   canary owner. The mock ASP then approves the note.
 
+## The operator's pool (pool1)
+
+The same steps serve the operator's poolId 1 from a `pool1` deployment file. Only the ASP differs:
+
+- The host runs `bot` only. There is no mock ASP and no `asp --owner`: deposits are approved by the
+  operator's ASP.
+- `serve` asks the operator's ASP API (`https://api-dev.0xbow.io`) itself, within the limits the
+  operator set for automated clients:
+  - each ASP request goes out at most once every 5 minutes (the public key once an hour), and every
+    tab shares the answer;
+  - the leaves are fetched again only after the root has changed;
+  - note events are never asked of it; the page reads them from Sepolia.
+- So the pool view can lag the operator's API by up to 5 minutes, and a deposit shows as approved only
+  after the next fetch that follows its approval. A `502` on an `/asp/` route also lasts until then.
+
 ## When something fails
 
 | You see | It means | Do this |
@@ -122,6 +139,7 @@ A balance needs two things:
 | "Switch your Ethereum wallet to a separate account: …" | The owner is selected to pay for a bridge | Select the sender account in MetaMask |
 | "Select your signed-in account in your Ethereum wallet: the keystore registers …" | Another account is selected while registering | Select the owner account in MetaMask, then press **Register** |
 | "The pool's keystore holds other keys for this account, …" | The owner registered with another app's keys | Sign in with an owner this app registered, or a fresh one |
+| On pool1, a deposit the operator approved still shows as unapproved | `serve` asks the operator's ASP at most once every 5 minutes | Wait up to 5 minutes, then press Refresh |
 | "Allow list #… being reset: wait for its next post" | The registry's poster was replaced, which clears the list until the new poster posts | Wait for the next post, then press Refresh; leaving to Ethereum still works |
 | "The Aztec node does not answer. …" | The public testnet node is unreachable | Wait, then try again |
 | "The Aztec node serves L1 chain …; this app is built for …" | The node is on another network or rollup | Report it: the deployment file is out of date |
