@@ -70,8 +70,6 @@ unconstrained fn private_balances_by_label_aggregates_pages() {
     assert(rest.get(0) == all.get(1));
 }
 
-// More distinct labels than the 16 × 16 entries of the first sixteen pages: every page lists its
-// share, in first-seen order.
 #[test]
 unconstrained fn private_balances_by_label_lists_past_256_labels() {
     let s = setup();

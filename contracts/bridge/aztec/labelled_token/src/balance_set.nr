@@ -55,7 +55,7 @@ impl LabelledBalanceSet<&mut PrivateContext> {
     /// The PXE picks the notes; the circuit enforces their label and descending value, not that they
     /// are the owner's largest. Returns their total and their common origin; fails if they disagree
     /// on origin. The total may fall short of `amount`; the caller decides. With no note popped the
-    /// origin reads 0, so it means something only once the total covers a nonzero `amount`.
+    /// origin reads 0, so it means something only when the total is nonzero.
     pub fn try_sub(self, label: Field, amount: u128) -> (u128, u8) {
         let options = NoteGetterOptions::with_preprocessor(preprocess_min_sum, amount)
             .select(LabelledNote::properties().label, Comparator.EQ, label)
@@ -94,7 +94,8 @@ impl LabelledBalanceSet<UtilityContext> {
         total
     }
 
-    /// `(label, origin, balance)` per distinct label, in first-seen order, from the `start`-th label.
+    /// `(label, origin, balance)` per distinct (label, origin) pair, in first-seen order, from the
+    /// `start`-th pair.
     /// Reads every note page, so its work grows with the owner's notes and labels.
     pub unconstrained fn labels(
         self,

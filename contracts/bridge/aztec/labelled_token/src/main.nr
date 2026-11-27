@@ -51,7 +51,8 @@ pub contract LabelledToken {
     }
 
     /// The public side of a shield. `birth_id` ties it to one announcement without naming the label;
-    /// once the birth tree admits the label, its new leaf links the two unless approvals are batched.
+    /// once the birth tree admits the label, its new leaf can link the two, and batching approvals only
+    /// narrows that.
     #[event]
     struct ShieldDebited {
         birth_id: Field,
@@ -269,7 +270,7 @@ pub contract LabelledToken {
         self.storage.private_balances.at(owner).balance_of()
     }
 
-    /// `(label, origin, balance)` per distinct label of `owner`, from the `start`-th label.
+    /// `(label, origin, balance)` per distinct (label, origin) pair of `owner`, from the `start`-th pair.
     // No parameter of an external function may be named `offset`: aztec-nr's generated call stubs
     // keep a local of that name and would serialize it in place of the argument.
     #[external("utility")]
