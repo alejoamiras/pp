@@ -6,7 +6,8 @@
 		"test/**/*.ts",
 		"vitest.integration.config.ts",
 		"vitest.registry.config.ts",
-		"vitest.hub.config.ts"
+		"vitest.hub.config.ts",
+		"vitest.stack.config.ts"
 	],
 	"comment": "*.local.ts is the convention for disposable, git-excluded local scripts (never committed) — they must not gate typecheck.",
 	"exclude": ["scripts/**/*.local.ts"]
