@@ -41,14 +41,15 @@ test("shields part of the public balance into a new label that turns Funds enabl
 	test.setTimeout(420_000)
 	const watch = await watchPage(page)
 	const s = await seededStack(run)
-	// The other specs bridge 70% of the first approved note at a time, which leaves too little to halve
-	// three times; the largest is the stack's untouched seed or a change of it.
+	// The stack seeds two notes of 100 base units, and the other specs bridge 70% of the first approved
+	// note at a time: after the three bridges ahead of this file the largest still holds 30 or more, and
+	// halving its 70% three times needs 12.
 	const note = (await s.pool.notes())
 		.filter((n) => n.status === "approved" && n.value > 0n)
 		.reduce<PoolNoteView | undefined>((best, n) => (best && best.value >= n.value ? best : n), undefined)
 	if (!note) throw new Error("the stack holds no approved note with value left")
-	// A seeded note holds 100 base units, so every amount here has at most two significant digits, which
-	// the page prints in full: each balance it shows is the exact amount.
+	// Every amount here is below 100 base units, so it has at most two significant digits, which the page
+	// prints in full: each balance it shows is the exact amount.
 	const shown = (v: bigint) => new RegExp(`^${literal(formatAmount(v, s.decimals, 2))}\\s*${literal(s.symbol)}$`)
 	const amount = (note.value * 7n) / 10n
 	const unshielded = amount / 2n
