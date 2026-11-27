@@ -49,7 +49,7 @@ export interface BridgeMachine {
 	failure: Failure | null
 	/** Oldest first, at most `MAX_NOTICES`. */
 	notices: readonly Notice[]
-	/** A claim the wallet sent that the chain dropped or has not answered; never resent by the page. */
+	/** A claim that may have gone out: the chain dropped it or the wallet never answered; never resent by the page. Its hash when known. */
 	claimTx: Hex | null
 }
 
@@ -68,7 +68,7 @@ export type BridgeEvent =
 	| { type: "claimable" }
 	| { type: "claiming" }
 	| { type: "claim-declined" }
-	| { type: "claim-pending"; txHash: Hex }
+	| { type: "claim-pending"; txHash: Hex | null }
 	| { type: "claimed" }
 	| { type: "failed"; failure: Failure }
 	| { type: "reset" }

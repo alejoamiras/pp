@@ -411,11 +411,20 @@ describe("the bridge driver", () => {
 		expect(h.machine().failure).toBeNull()
 	})
 
-	test("a dropped claim stays pending and is never sent again", async () => {
-		const h = harness({ claim: async () => ({ txHash: "0xdd", status: "dropped" }) })
+	test.each([
+		["dropped claim", async (): Promise<Sent> => ({ txHash: "0xdd", status: "dropped" }), "0xdd"],
+		[
+			"claim unanswered after the handoff",
+			async (): Promise<Sent> => {
+				throw new Error("receipt lookup failed")
+			},
+			null,
+		],
+	] as const)("a %s stays pending and is never sent again", async (_name, claim, txHash) => {
+		const h = harness({ claim })
 		h.atClaimable()
 		await h.claim()
-		expect([h.machine().step, h.machine().phase, h.machine().claimTx]).toEqual(["claiming", "pending", "0xdd"])
+		expect([h.machine().step, h.machine().phase, h.machine().claimTx]).toEqual(["claiming", "pending", txHash])
 		await h.claim()
 		expect(h.session.claim).toHaveBeenCalledTimes(1)
 	})

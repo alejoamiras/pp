@@ -353,8 +353,10 @@ function claimRefusal(st: State, record: BridgeRecordView, ctx: LiveContext): Ui
 }
 
 function claimOutcome(st: State, err: unknown, c: ClaimContext, handedOff: boolean): BridgeEvent {
-	if (!handedOff && !claimCurrent(c, st.deps.context())) return failure("CONTEXT_CHANGED", "claiming", { offer: "claim" })
 	if (isUserRejection(err)) return { type: "claim-declined" }
+	// Past the handoff, anything but the wallet's no may hide a claim that went out.
+	if (handedOff) return { type: "claim-pending", txHash: null }
+	if (!claimCurrent(c, st.deps.context())) return failure("CONTEXT_CHANGED", "claiming", { offer: "claim" })
 	return failure(codeOf(err) ?? "CLAIM_FAILED", "claiming", { offer: "claim" })
 }
 
@@ -380,21 +382,19 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
 	st.claims.add(record.id)
 	dispatch({ type: "claiming" })
 	let handedOff = false
-	// A dropped claim keeps its record blocked: the page never resends it.
-	let keep = false
 	const handoff = () => {
 		if (signal.aborted || !claimCurrent(c, st.deps.context())) throw new ContextChanged()
 		handedOff = true
 	}
+	let event: BridgeEvent
 	try {
-		const sent = await st.deps.session.claim(record.id, { handoff })
-		keep = sent.status === "dropped"
-		if (!signal.aborted) dispatch(sentOutcome(sent))
+		event = sentOutcome(await st.deps.session.claim(record.id, { handoff }))
 	} catch (err) {
-		if (!signal.aborted) dispatch(claimOutcome(st, err, c, handedOff))
-	} finally {
-		if (!keep) st.claims.delete(record.id)
+		event = claimOutcome(st, err, c, handedOff)
 	}
+	// A pending claim keeps its record blocked: the page never resends it.
+	if (event.type !== "claim-pending") st.claims.delete(record.id)
+	if (!signal.aborted) dispatch(event)
 }
 
 /**
