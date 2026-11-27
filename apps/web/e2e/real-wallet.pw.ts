@@ -9,11 +9,12 @@ import { createBridgeClient, type KeyValueStore } from "@pp/bridge-core"
 import { anvilKey } from "@pp/bridge-core/sandbox"
 import { EXECUTE_APPROVAL_MS } from "@pp/e2e-kit/real-wallet/driver.ts"
 import { expect, type RealWallet, refusals, test } from "@pp/e2e-kit/real-wallet/fixture.ts"
+import type { PoolNoteView } from "@pp/pool-client"
 import { createPublicClient, erc20Abi, http } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { formatAmount, plainAmount } from "../src/ui/format"
 import { approvedNote, seededStack } from "./stack"
-import { signInToPool } from "./support"
+import { amountOf, expectNoAccountInPublic, signInToPool } from "./support"
 
 test.describe.configure({ mode: "serial" })
 
@@ -30,6 +31,11 @@ const CRS_HOST = /^crs\.aztec/
 const PRESTO_PORTS = [59833, 59834]
 /** The token observation's wallet steps at their 60 s bounds, with a margin. */
 const OBSERVE_MS = 5 * 60_000
+/** The label's allow-list check, and the label's change once the wallet has seen it. */
+const ACTIVE_MS = 60_000
+const READ_MS = 60_000
+/** The kit's action timeout: a click waits this long for its button to enable (the bridge's recipient check, the exit's notes). */
+const ACTION_MS = 60_000
 
 /**
  * A test's cap: its waits in sequence, plus two minutes for the steps between them. Approval ends
@@ -61,6 +67,21 @@ async function openForm(page: Page, commitment: bigint, amount: string) {
 	return form
 }
 
+/** Needs the pool owner's session open on Balances: it switches to the stack's sender before it opens `note`'s bridge form. */
+async function bridgeAndClaimInWallet(rw: RealWallet, s: Awaited<ReturnType<typeof seededStack>>, note: PoolNoteView, amount: bigint) {
+	const page = rw.appPage
+	await rw.l1.setAccount(anvilKey(s.stack.accounts.sender.index))
+	const form = await openForm(page, note.commitment, plainAmount(amount, s.decimals))
+	await form.getByRole("button", { name: "Bridge to Aztec" }).click()
+	const screen = page.getByTestId("bridge-screen")
+	await expect(screen).toHaveAttribute("data-step", "claimable", { timeout: CLAIMABLE_MS })
+	const start = Date.now()
+	await rw.driver.approveExecute(() => screen.getByRole("button", { name: "Claim on Aztec" }).click())
+	await expect(screen).toHaveAttribute("data-step", "claimed", { timeout: PROVED_MS })
+	rw.log(`claim approved to claimed in ${((Date.now() - start) / 1000).toFixed(1)} s`)
+	return screen
+}
+
 test("boot", async ({ realWallet: rw }) => {
 	await rw.driver.onboard()
 	const id = await rw.driver.addNetwork("pp-local", rw.node.url)
@@ -84,7 +105,7 @@ test("connects", async ({ realWallet: rw }) => {
 // Fails if the wallet cannot prove or send the claim from the app, if the claim does not also
 // initialize the wallet's account, if anyone but the SponsoredFPC pays, or if proving reached past the seeded points.
 test("claims", async ({ realWallet: rw, run }, testInfo) => {
-	test.setTimeout(capOf(CLAIMABLE_MS, EXECUTE_APPROVAL_MS, PROVED_MS, OBSERVE_MS))
+	test.setTimeout(capOf(ACTION_MS, CLAIMABLE_MS, EXECUTE_APPROVAL_MS, PROVED_MS, OBSERVE_MS))
 	const began = Date.now()
 	const page = rw.appPage
 	const s = await seededStack(run)
@@ -98,15 +119,7 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 
 	await rw.l1.setAccount(anvilKey(s.stack.accounts.user.index))
 	await signInToPool(page)
-	await rw.l1.setAccount(anvilKey(s.stack.accounts.sender.index))
-	const form = await openForm(page, note.commitment, plainAmount(amount, s.decimals))
-	await form.getByRole("button", { name: "Bridge to Aztec" }).click()
-	const screen = page.getByTestId("bridge-screen")
-	await expect(screen).toHaveAttribute("data-step", "claimable", { timeout: CLAIMABLE_MS })
-	const start = Date.now()
-	await rw.driver.approveExecute(() => screen.getByRole("button", { name: "Claim on Aztec" }).click())
-	await expect(screen).toHaveAttribute("data-step", "claimed", { timeout: PROVED_MS })
-	rw.log(`claim approved to claimed in ${((Date.now() - start) / 1000).toFixed(1)} s`)
+	const screen = await bridgeAndClaimInWallet(rw, s, note, amount)
 
 	const sent = rw.node.sentTxHashes()
 	const sendSeq = rw.node.calls().find((c) => c.name === "sendTx")?.seq ?? Number.POSITIVE_INFINITY
@@ -227,4 +240,64 @@ test("ragequits", async ({ realWallet: rw, run }) => {
 		rw.context.pages().filter((p) => p.url().includes("/src/popup/index.html#/windows/execute")),
 		"no second execute window waits",
 	).toEqual([])
+})
+
+// Last, on a note of its own: in the pinned wallet, a ragequit requested after a private exit never opens.
+// Fails if the wallet refuses, cannot simulate or cannot prove the hub's private exit from the app, if
+// anyone but the SponsoredFPC pays, if its public effects name the account, if no ticket to the payee
+// comes from the exit the wallet sent, or if the wallet does not see its own change.
+test("withdraws", async ({ realWallet: rw, run }) => {
+	test.setTimeout(
+		capOf(ACTION_MS, CLAIMABLE_MS, EXECUTE_APPROVAL_MS, PROVED_MS, ACTIVE_MS, ACTION_MS, EXECUTE_APPROVAL_MS, PROVED_MS, READ_MS),
+	)
+	if (!claimed) throw new Error("claims left no label")
+	const emptied = claimed.label
+	const page = rw.appPage
+	const s = await seededStack(run)
+	const note = (await s.pool.notes()).find((n) => n.value > 0n && n.status === "approved" && n.label !== emptied)
+	if (!note) throw new Error("the stack holds no approved note under another label")
+	const amount = (note.value * 7n) / 10n
+	const withdrawn = amount / 2n
+	const payee = privateKeyToAccount(generatePrivateKey()).address
+	await page.getByRole("button", { name: "Balances" }).click()
+	const account = await page.getByTestId("aztec-account").getAttribute("data-address")
+	if (!account) throw new Error("the app shows no connected account")
+
+	expect(rw.node.sentTxHashes(), "the claim and the ragequit are the wallet's only sends so far").toHaveLength(2)
+	const screen = await bridgeAndClaimInWallet(rw, s, note, amount)
+	expect(rw.node.sentTxHashes(), "the second claim went out once").toHaveLength(3)
+	await screen.getByRole("button", { name: "Back to balances" }).last().click()
+	const row = page.locator(`[data-testid="label-row"][data-label="${note.label}"]`)
+	await expect(row).toHaveAttribute("data-state", "ACTIVE", { timeout: ACTIVE_MS })
+	await row.getByRole("button", { name: "Withdraw to Ethereum" }).click()
+	const dialog = page.getByTestId("action-dialog")
+	await dialog.getByLabel(/Amount/).fill(plainAmount(withdrawn, s.decimals))
+	await dialog.getByLabel("Payee on Ethereum").fill(payee)
+	await dialog.getByRole("button", { name: "Review" }).click()
+	const start = Date.now()
+	await rw.driver.approveExecute(() => dialog.getByTestId("exit-review").getByRole("button", { name: "Withdraw to Ethereum" }).click())
+	await expect(dialog).toHaveAttribute("data-state", "done", { timeout: PROVED_MS })
+	rw.log(`private exit approved to sent in ${((Date.now() - start) / 1000).toFixed(1)} s`)
+
+	const sent = rw.node.sentTxHashes()
+	expect(sent, "the wallet sent exactly one more transaction").toHaveLength(4)
+	const tx = await rw.chain.sentTx(sent[3] ?? "")
+	const sponsorship = await rw.chain.sponsorship(tx)
+	rw.log(
+		`private exit: ${JSON.stringify({ hash: tx.hash, succeeded: tx.succeeded, sponsorship }, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`,
+	)
+	expect(tx.succeeded, "the private exit succeeded").toBe(true)
+	expect(sponsorship.written, "the SponsoredFPC's balance dropped by exactly the fee").toBe(sponsorship.before - sponsorship.fee)
+	await expectNoAccountInPublic(rw.chain.node, tx.hash, s.manifest.bridge.hub, account)
+
+	const client = createBridgeClient({ manifest: s.manifest, journal: memoryJournal() })
+	const [ticket, ...none] = await client.exitTickets({ payee })
+	expect(none, "one ticket to the payee").toEqual([])
+	expect(ticket).toMatchObject({ kind: "public", payee, amount: withdrawn })
+	expect(ticket?.l2TxHash.toLowerCase(), "the ticket comes from the exit the wallet sent").toBe(tx.hash.toLowerCase())
+	await dialog.getByRole("button", { name: "Close" }).click()
+	await expect(amountOf(row)).toHaveText(`${formatAmount(amount - withdrawn, s.decimals, 2)}${s.symbol}`, {
+		timeout: READ_MS,
+	})
+	expect(rw.node.sentTxHashes(), "the wallet sent nothing after the exit").toHaveLength(4)
 })

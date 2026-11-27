@@ -104,7 +104,7 @@ const L1_LIBS: string[][] = [
 ]
 
 /** `real-wallet/count-reporter.ts`'s total; `nightly.test.ts` holds the two equal. */
-const REAL_WALLET_TESTS = 4
+const REAL_WALLET_TESTS = 5
 
 export const SUITES: Suite[] = [
 	// contracts/bridge/evm owns the script and the Foundry `nightly` profile it runs; the libraries and

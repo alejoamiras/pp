@@ -5,12 +5,11 @@
  */
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import { TxHash } from "@aztec-labs/aztec.js/tx"
-import type { Locator } from "@playwright/test"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
 import type { PoolNoteView } from "@pp/pool-client"
 import { formatAmount, plainAmount } from "../src/ui/format"
 import { seededStack } from "./stack"
-import { bridgeAndClaim, stepLog, submitted, watchPage } from "./support"
+import { amountOf, bridgeAndClaim, stepLog, submitted, watchPage } from "./support"
 
 test.use({ family: "shield", cells: 2, spares: 0 })
 test.skip(({ run }) => run.mode !== "stack", "the sandbox build shields in the fixture world, which the unit suite covers")
@@ -24,8 +23,6 @@ const WAIT = { claimable: 60_000, claimed: 90_000, active: 30_000, sent: 60_000,
 const step = stepLog("shield-spec")
 
 const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-/** A row's amount, which `Amount` renders as the figure followed by the symbol in a `small`. */
-const amountOf = (row: Locator) => row.locator("span:has(> small)")
 
 // Fails if the wallet's execution refuses the stage's grant or the shield's payload, if the bot never
 // approves the birth or the page's refetch does not show it without a reload, or if the token refuses
