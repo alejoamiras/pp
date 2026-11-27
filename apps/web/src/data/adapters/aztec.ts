@@ -106,26 +106,31 @@ async function settle(node: AztecDeps["node"], txHash: TxHash): Promise<Sent> {
 	}
 }
 
-/**
- * The grant is the connect's snapshot, and a wallet can drop an account or move to another rollup over
- * the same channel without disconnecting, so its own answers are read again before a send. The scopes
- * it granted cannot be read back without asking the user again; they stay the connect's.
- */
-async function assertWalletStill(d: AztecDeps, held: HeldWallet, from: AztecAddress): Promise<void> {
-	const [accounts, chain, node] = await Promise.all([held.wallet.getAccounts(), held.wallet.getChainInfo(), d.node.getNodeInfo()])
+type Accounts = Awaited<ReturnType<Wallet["getAccounts"]>>
+type Chain = Awaited<ReturnType<Wallet["getChainInfo"]>>
+
+/** Whether the wallet still lists `from` and sits on the node's chain and rollup. */
+function assertWalletStill(accounts: Accounts, chain: Chain, node: { l1ChainId: number; rollupVersion: number }, from: AztecAddress) {
 	if (!accounts.some((a) => parseAztecAddress(a.item.toString()) === from)) throw new BridgeFailure("RECIPIENT_NOT_IN_WALLET")
 	if (chain.chainId.toBigInt() !== BigInt(node.l1ChainId) || chain.version.toBigInt() !== BigInt(node.rollupVersion))
 		throw new BridgeFailure("CONTEXT_CHANGED")
 }
 
-/** One Aztec send. Every refusal is thrown before `handoff`, so the caller knows nothing was sent. */
+/**
+ * One Aztec send. Every refusal is thrown before `handoff`, so the caller knows nothing was sent. The
+ * grant is the connect's snapshot, and a wallet can drop an account or move to another rollup over the
+ * same channel without disconnecting, so its own answers are read again, its accounts last. The scopes
+ * it granted cannot be read back without asking the user again; they stay the connect's.
+ */
 export async function sendThroughWallet(d: AztecDeps, s: AztecSend): Promise<Sent> {
 	const first = boundTo(d, s.epoch)
 	if (!first.grant.accounts.includes(s.from)) throw new BridgeFailure("RECIPIENT_NOT_IN_WALLET")
 	if (!grantedPayload(first, "transaction", s.payload)) throw new BridgeFailure("NOT_GRANTED")
 	await registerScoped(d, first, s.contracts)
-	await assertWalletStill(d, first, s.from)
-	// Nothing awaits between this check, the handoff and the wallet call.
+	const [chain, node] = await Promise.all([first.wallet.getChainInfo(), d.node.getNodeInfo()])
+	const accounts = await first.wallet.getAccounts()
+	// Nothing awaits between the last read, these checks, the handoff and the wallet call.
+	assertWalletStill(accounts, chain, node, s.from)
 	const held = boundTo(d, s.epoch)
 	s.handoff()
 	const { txHash } = await held.wallet.sendTx(s.payload, { from: sdk(s.from), wait: NO_WAIT })

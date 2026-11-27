@@ -39,16 +39,13 @@ function rig(o: { contracts?: AztecAddress[]; served?: (a: { toString(): string 
 	}
 	const held: HeldWallet = { epoch: 3, wallet: wallet as unknown as Wallet, grant: grant(o.contracts) }
 	let live: HeldWallet | null = held
-	const d: AztecDeps = {
-		deployment: { hub: HUB, token: TOKEN },
-		node: {
-			getContract: vi.fn(async (a: { toString(): string }) => (o.served ? o.served(a) : { address: a })),
-			getTxReceipt: vi.fn(async () => receipt(o.ok ?? true)),
-			getNodeInfo: vi.fn(async () => ({ l1ChainId: 31337, rollupVersion: 5 })),
-		} as never,
-		current: () => live,
+	const node = {
+		getContract: vi.fn(async (a: { toString(): string }) => (o.served ? o.served(a) : { address: a })),
+		getTxReceipt: vi.fn(async () => receipt(o.ok ?? true)),
+		getNodeInfo: vi.fn(async () => ({ l1ChainId: 31337, rollupVersion: 5 })),
 	}
-	return { d, wallet, held, drop: () => (live = null) }
+	const d: AztecDeps = { deployment: { hub: HUB, token: TOKEN }, node: node as never, current: () => live }
+	return { d, wallet, node, held, drop: () => (live = null) }
 }
 
 const payload = (...calls: [AztecAddress, string][]) =>
@@ -97,6 +94,26 @@ describe("the Aztec adapter", () => {
 			}),
 		).rejects.toThrow("context changed")
 		expect(held.wallet.sendTx).not.toHaveBeenCalled()
+	})
+
+	test("reads the wallet's accounts last, so a recipient it drops while the node answers reaches no sendTx", async () => {
+		const r = rig()
+		let asked = () => {}
+		const nodeAsked = new Promise<void>((res) => (asked = res))
+		let answer = () => {}
+		r.node.getNodeInfo.mockImplementationOnce(
+			() =>
+				new Promise((res) => {
+					answer = () => res({ l1ChainId: 31337, rollupVersion: 5 })
+					asked()
+				}),
+		)
+		const sending = sendThroughWallet(r.d, { epoch: 3, from: ME, payload: CLAIM, contracts: ["hub", "token"], handoff: () => {} })
+		await nodeAsked
+		r.wallet.getAccounts.mockResolvedValue([])
+		answer()
+		await expect(sending).rejects.toMatchObject({ code: "RECIPIENT_NOT_IN_WALLET" })
+		expect(r.wallet.sendTx).not.toHaveBeenCalled()
 	})
 
 	test("answers a sent transaction's hash with its outcome", async () => {
