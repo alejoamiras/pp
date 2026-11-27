@@ -5,12 +5,14 @@ import { propertyParams } from "../../../../vitest.base"
 import { BridgeClientError } from "./errors"
 import { messageIndices } from "./exits"
 
-/** Drawn from a pool of at most four hashes, so repeats, shortages and duplicate exits occur by construction. */
-const pool = fc.uniqueArray(fc.stringMatching(/^[0-9a-f]{64}$/), { minLength: 1, maxLength: 4 })
+/** One to eight hashes (a transaction's message limit), so repeats and shortages occur by construction. */
+const pool = fc.uniqueArray(fc.stringMatching(/^[0-9a-f]{64}$/), { minLength: 1, maxLength: 8, size: "max" })
+// Eight distinct hashes, a transaction's most, with the messages in the reverse of the tickets' order.
+const EIGHT = Array.from({ length: 8 }, (_, i) => `0x${(i + 1).toString(16).padStart(64, "0")}` as Hex)
 const drawn = (hashes: readonly string[]) =>
 	fc.array(
 		fc.tuple(fc.constantFrom(...hashes), fc.boolean()).map(([h, upper]) => `0x${upper ? h.toUpperCase() : h}` as Hex),
-		{ maxLength: 12 },
+		{ maxLength: 12, size: "max" },
 	)
 
 /** The k-th ticket for a hash takes that hash's k-th occurrence, compared without case. */
@@ -37,7 +39,7 @@ const outcome = (tickets: readonly Hex[], messages: readonly Hex[]): number[] | 
 
 describe("messageIndices", () => {
 	const name = "each ticket takes its hash's next unused occurrence, or the read is inconsistent"
-	const p = propertyParams(import.meta.url, name, 300, 500)
+	const p = propertyParams(import.meta.url, name, 300, 1_000)
 	it(
 		name,
 		() => {
@@ -57,7 +59,7 @@ describe("messageIndices", () => {
 						expect(new Set(got).size, "distinct indices").toBe(got.length)
 					},
 				),
-				p.fc,
+				{ ...p.fc, examples: [[[EIGHT, [...EIGHT].reverse()]]] },
 			)
 		},
 		p.testTimeout,
