@@ -325,6 +325,7 @@ async function submit(
 	let handedOff = false
 	const hooks: SubmitHooks = {
 		reproving: (code) => emit({ type: "reproving", code }),
+		sent: (txHash) => emit({ type: "sent", txHash }),
 		// Aborting stops a wallet request only before it starts; one already issued still needs its
 		// outcome remembered, so the catch below runs `outcome` for an aborted run too.
 		handoff: () => {

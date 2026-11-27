@@ -94,6 +94,8 @@ export interface SubmitHooks {
 	reproving(code: StaleRootCode): void
 	/** Runs right before the wallet is asked to send or sign; when it throws, nothing is sent. */
 	handoff(): void
+	/** The wallet returned the transaction's hash and the journal holds it; the receipt is still to come. */
+	sent(txHash: Hash): void
 }
 
 export interface ClaimHooks {

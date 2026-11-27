@@ -51,6 +51,8 @@ export interface BridgeMachine {
 	notices: readonly Notice[]
 	/** A claim that may have gone out: the chain dropped it or the wallet never answered; never resent by the page. Its hash when known. */
 	claimTx: Hex | null
+	/** The Ethereum transaction's hash once the wallet returns it, before its receipt. */
+	l1TxHash: Hash | null
 }
 
 export type BridgeEvent =
@@ -63,6 +65,7 @@ export type BridgeEvent =
 	| { type: "proved" }
 	| { type: "reproving"; code: StaleRootCode }
 	| { type: "handoff" }
+	| { type: "sent"; txHash: Hash }
 	| { type: "declined" }
 	| { type: "record"; record: BridgeRecordView }
 	| { type: "claimable" }
@@ -84,6 +87,7 @@ export const initialBridge: BridgeMachine = {
 	failure: null,
 	notices: [],
 	claimTx: null,
+	l1TxHash: null,
 }
 
 /** The offer that follows each outcome code; anything unlisted offers a fresh proof. */
@@ -143,11 +147,13 @@ const HANDLERS: Handlers = {
 	invalidate: (s) =>
 		at(s, "preparing", "idle", "preflight", "ready") && s.attempt === null ? { ...s, phase: "idle", binding: null } : s,
 	refused: (s, e) => notice(s, { kind: "refused", code: e.code }),
-	submit: (s, e) => (canSubmit(s) ? { ...s, step: "preparing", phase: "starting", attempt: e.attempt, failure: null, record: null } : s),
+	submit: (s, e) =>
+		canSubmit(s) ? { ...s, step: "preparing", phase: "starting", attempt: e.attempt, failure: null, record: null, l1TxHash: null } : s,
 	proving: (s) => (at(s, "preparing", "starting") ? { ...s, phase: "proving" } : s),
 	proved: (s) => (at(s, "preparing", "proving") ? { ...s, step: "prepared", phase: "sending" } : s),
 	reproving: (s, e) => (at(s, "prepared", "sending") ? notice(s, { kind: "reproving", code: e.code }) : s),
 	handoff: (s) => (at(s, "prepared", "sending") ? { ...s, step: "submitted", phase: "waiting" } : s),
+	sent: (s, e) => (at(s, "submitted", "waiting") ? { ...s, l1TxHash: e.txHash } : s),
 	declined: (s) =>
 		at(s, "prepared", "sending") || at(s, "submitted", "waiting")
 			? notice({ ...s, step: "preparing", phase: "idle", attempt: null, binding: null }, { kind: "declined" })

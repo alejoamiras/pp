@@ -31,6 +31,12 @@ function NowPanel({ m }: { m: BridgeMachine }) {
 	return (
 		<Callout tone="wait" busy role="status" title={now.title}>
 			{now.body}
+			{/* A known hash is shown while it waits: the page sends nothing more for this note. */}
+			{step === "submitted" && m.l1TxHash ? (
+				<p className="mt-1 font-mono text-xs break-all" data-testid="pending-tx">
+					{m.l1TxHash}
+				</p>
+			) : null}
 		</Callout>
 	)
 }

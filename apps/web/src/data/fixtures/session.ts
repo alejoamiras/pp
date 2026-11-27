@@ -161,11 +161,11 @@ async function submit(c: Ctx, a: Attempt, on: SubmitHooks, o?: { acceptUncertain
 		if (providerCode(err) === 4001) restore(w, a.note, before)
 		throw err
 	}
-	if (sendFault === "PENDING") {
-		upsertBridge(w, journalled(c, a, note, "sent", hash))
-		// bridge-core waits for the receipt, which this transaction never gets.
-		return never()
-	}
+	// The journal gains the hash when the wallet returns it; the receipt comes after.
+	upsertBridge(w, journalled(c, a, note, "sent", hash))
+	on.sent(hash)
+	// bridge-core waits for the receipt, which this transaction never gets.
+	if (sendFault === "PENDING") return never()
 	if (sendFault === "REVERTED") {
 		// A revert settles this send only: an unconfirmed earlier one may still land, so its record stays
 		// the note's, and later submits still need the override until the chain shows the event.

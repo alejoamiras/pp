@@ -196,6 +196,19 @@ describe("the bridge screen", () => {
 		expect(screen.queryByRole("button", { name: "Claim on Aztec" })).toBeNull()
 	})
 
+	test("a send pending at the RPC shows its hash on the bridge screen while it waits, with no send offered", async () => {
+		const app = await openBridge()
+		app.control.failNext("send", "PENDING")
+		await submit(app)
+		await screen.findByText("Sent: waiting for the Ethereum transaction to be mined")
+		await waitFor(() => {
+			const hash = app.control.state().bridges[0]?.l1TxHash
+			expect(hash).toBeDefined()
+			expect(within(screen.getByTestId("bridge-screen")).getByTestId("pending-tx").textContent).toBe(hash)
+		})
+		for (const name of ["Send again", "Prove again", "Check again"]) expect(screen.queryByRole("button", { name })).toBeNull()
+	})
+
 	test("a record whose transaction is pending at the RPC shows IN_FLIGHT with its hash and offers no send", async () => {
 		const store = memoryStore()
 		const first = await openBridge(store)
