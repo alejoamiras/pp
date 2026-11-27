@@ -40,7 +40,8 @@ already shares an interactive handshake (see below).
 - `scripts/prove.ts`: `bun run bench:prove` boots its own local network and measures, on one proving
   wallet, the whole-tx gates and the client proving time of a 1-note `transfer_private` against the
   stock token's `transfer_private_to_private`, to a recipient the sender has paid before and to a
-  fresh one, plus an 8-note spend. It writes `bench/proving.json` and fails unless the reused-recipient
+  fresh one, plus an 8-note spend; the two tokens' proofs alternate, so changing host load hits both
+  alike. It writes `bench/proving.json` and fails unless the reused-recipient
   row stays within stock + 60,000 gates and 1.5 × stock's median proving time.
 
 ## Tests

@@ -6,7 +6,8 @@
  *
  * Each row is one gate profile plus a warm-up and five proofs, none sent. "Reused" sends to a
  * recipient whose handshake with the sender already landed, the steady state and the budget;
- * "first contact" sends to a fresh address each time, opening a handshake (informational).
+ * "first contact" sends to a fresh address each time, opening a handshake (informational). The two
+ * tokens' proofs alternate, so load that changes during the run weighs on both sides alike.
  */
 import { writeFileSync } from "node:fs"
 import { cpus } from "node:os"
@@ -44,16 +45,28 @@ interface Row {
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] as number
 
-/** A warm-up proof, then `SAMPLES` timed ones; `to` may differ per proof. */
-async function measure(d: Device, call: (i: number) => ContractFunctionInteraction): Promise<Row> {
-	const profile = (await call(0).profile({ profileMode: "gates", from: d.from, fee: d.fee } as never)) as {
+type Call = (i: number) => ContractFunctionInteraction
+
+async function wholeTxGates(d: Device, call: ContractFunctionInteraction): Promise<number> {
+	const profile = (await call.profile({ profileMode: "gates", from: d.from, fee: d.fee } as never)) as {
 		executionSteps: { gateCount?: number }[]
 	}
-	const gates = profile.executionSteps.reduce((sum, s) => sum + (s.gateCount ?? 0), 0)
-	await prove(d, call(0))
-	const samples: number[] = []
-	for (let i = 1; i <= SAMPLES; i++) samples.push(Math.round((await prove(d, call(i))).provingMs))
-	return { gates, provingMs: { median: median(samples), samples } }
+	return profile.executionSteps.reduce((sum, s) => sum + (s.gateCount ?? 0), 0)
+}
+
+/** One row per call: its gates, a warm-up proof each, then `SAMPLES` rounds proving every call in turn. */
+async function measure(d: Device, calls: Call[]): Promise<Row[]> {
+	const gates: number[] = []
+	for (const call of calls) gates.push(await wholeTxGates(d, call(0)))
+	for (const call of calls) await prove(d, call(0))
+	const samples = calls.map((): number[] => [])
+	for (let i = 1; i <= SAMPLES; i++) {
+		for (const [j, call] of calls.entries()) samples[j]?.push(Math.round((await prove(d, call(i))).provingMs))
+	}
+	return calls.map((_, j) => {
+		const xs = samples[j] ?? []
+		return { gates: gates[j] ?? 0, provingMs: { median: median(xs), samples: xs } }
+	})
 }
 
 async function bench(nodeUrl: string) {
@@ -106,21 +119,16 @@ async function bench(nodeUrl: string) {
 	const stockTo = (to: (i: number) => AztecAddress) => (i: number) => stock.methods.transfer_private_to_private(sender.from, to(i), 1n, 0)
 	const at = (i: number) => fresh[i] as AztecAddress
 	await registry.post(POOL.root, BIRTH.root)
+	const [reused, stockReused] = await measure(sender, [oursTo(() => known.ours), stockTo(() => known.stock)])
+	const [firstContact, stockFirstContact] = await measure(sender, [oursTo(at), stockTo(at)])
+	// Eight 10-unit K notes cover 75 only together, so the spend takes all eight and returns 5.
+	const [eightNotes] = await measure(sender, [() => ours.methods.transfer_private(known.ours, 75n, K, POOL.path(K))])
 	return {
-		"transfer_private, reused": await measure(
-			sender,
-			oursTo(() => known.ours),
-		),
-		"transfer_private_to_private (stock), reused": await measure(
-			sender,
-			stockTo(() => known.stock),
-		),
-		"transfer_private, first contact": await measure(sender, oursTo(at)),
-		"transfer_private_to_private (stock), first contact": await measure(sender, stockTo(at)),
-		// Eight 10-unit K notes cover 75 only together, so the spend takes all eight and returns 5.
-		"transfer_private, 8 notes with change": await measure(sender, () =>
-			ours.methods.transfer_private(known.ours, 75n, K, POOL.path(K)),
-		),
+		"transfer_private, reused": reused as Row,
+		"transfer_private_to_private (stock), reused": stockReused as Row,
+		"transfer_private, first contact": firstContact as Row,
+		"transfer_private_to_private (stock), first contact": stockFirstContact as Row,
+		"transfer_private, 8 notes with change": eightNotes as Row,
 	}
 }
 
