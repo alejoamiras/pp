@@ -20,10 +20,12 @@ export function loadOnce<T>(load: () => Promise<T>): () => Promise<T> {
 
 /**
  * A chunk import whose failure reads `PAGE_LOAD_FAILED`. Browsers word a failed chunk fetch
- * differently, so the code comes from where the import is, never from the error's message. Pass the
- * bare `import()`: a failure of what runs after it keeps its own error.
+ * differently, so the code comes from where the import is, never from the error's message, which
+ * goes only to the console. Pass the bare `import()`: a failure of what runs after it keeps its own
+ * error.
  */
 export const importChunk = <M>(chunk: Promise<M>): Promise<M> =>
-	chunk.catch(() => {
+	chunk.catch((err: unknown) => {
+		console.error("[pp] a part of the page failed to load", err)
 		throw new BridgeFailure("PAGE_LOAD_FAILED")
 	})

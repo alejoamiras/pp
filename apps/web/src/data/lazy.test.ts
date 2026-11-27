@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest"
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest"
 import { BridgeFailure, codeOf } from "./errors"
 import { importChunk, loadOnce } from "./lazy"
 import { connectErrorMessage } from "./wallet/types"
@@ -28,10 +28,17 @@ describe("loadOnce", () => {
 })
 
 describe("importChunk", () => {
-	test("a failed import reads PAGE_LOAD_FAILED whatever the browser's message", async () => {
+	const log = vi.spyOn(console, "error").mockImplementation(() => {})
+	beforeEach(() => log.mockClear())
+	afterAll(() => log.mockRestore())
+
+	test("a failed import reads PAGE_LOAD_FAILED whatever the browser's message, and logs the browser's error once", async () => {
 		for (const message of ["Failed to fetch dynamically imported module: /a.js", "error loading dynamically imported module", ""]) {
-			const err = await importChunk(Promise.reject(new TypeError(message))).catch((e: unknown) => e)
+			const browser = new TypeError(message)
+			log.mockClear()
+			const err = await importChunk(Promise.reject(browser)).catch((e: unknown) => e)
 			expect(codeOf(err)).toBe("PAGE_LOAD_FAILED")
+			expect(log.mock.calls).toEqual([["[pp] a part of the page failed to load", browser]])
 		}
 	})
 
