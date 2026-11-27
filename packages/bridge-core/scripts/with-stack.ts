@@ -19,6 +19,7 @@ import { dirname, join } from "node:path"
 import { createInterface } from "node:readline"
 import { setTimeout as sleep } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
+import { endGroup, groupAlive } from "./process-group"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
 const CACHE = join(homedir(), ".cache", "pp")
@@ -59,15 +60,6 @@ function awaitReady(run: Run): Promise<string> {
 	return promise.finally(() => clearTimeout(timer))
 }
 
-const groupAlive = (pgid: number) => {
-	try {
-		process.kill(-pgid, 0)
-		return true
-	} catch (err) {
-		return (err as NodeJS.ErrnoException).code !== "ESRCH"
-	}
-}
-
 const portRefuses = (port: number) =>
 	new Promise<boolean>((resolve) => {
 		const s = connect({ host: "127.0.0.1", port })
@@ -86,27 +78,6 @@ function portsOwnedBy(runId: string): number[] {
 		.map((l) => l.split("|").map((c) => c.trim()))
 		.filter((c) => /^\d+$/.test(c[1] ?? "") && owners.has(c[3] ?? ""))
 		.map((c) => Number(c[1]))
-}
-
-/** Resolves once `pgid` has no member left or `ms` passed; whether it is gone. */
-async function groupGone(pgid: number, ms: number): Promise<boolean> {
-	for (const end = Date.now() + ms; groupAlive(pgid) && Date.now() < end; ) await sleep(50)
-	return !groupAlive(pgid)
-}
-
-const signalGroup = (pgid: number, s: NodeJS.Signals) => {
-	try {
-		process.kill(-pgid, s)
-	} catch {}
-}
-
-/** SIGTERM to the group, SIGKILL to whatever is left after the grace period; whether it is gone. */
-async function endGroup(pgid: number): Promise<boolean> {
-	if (!groupAlive(pgid)) return true
-	signalGroup(pgid, "SIGTERM")
-	if (await groupGone(pgid, GRACE_MS)) return true
-	signalGroup(pgid, "SIGKILL")
-	return groupGone(pgid, GRACE_MS)
 }
 
 /** What a stopped stack must not have left: its group, its ports and registry rows, its directories. */
@@ -149,7 +120,7 @@ async function runCommand(run: Run, command: string, manifest: string): Promise<
 	)
 	run.command = undefined
 	if (groupAlive(pgid) && !run.signal) run.leaks.push(`command group ${pgid} outlived its shell`)
-	if (!(await endGroup(pgid))) run.leaks.push(`command group ${pgid} survived SIGKILL`)
+	if (!(await endGroup(pgid, GRACE_MS))) run.leaks.push(`command group ${pgid} survived SIGKILL`)
 	return code
 }
 
@@ -169,7 +140,7 @@ function onSignals(run: Run): { interrupted: Promise<never>; dispose: () => void
 	const handler = (s: NodeJS.Signals) => {
 		if (run.signal) return
 		run.signal = s
-		if (run.command) void endGroup(run.command)
+		if (run.command) void endGroup(run.command, GRACE_MS)
 		reject(new Error(`received ${s}`))
 	}
 	for (const s of SIGNALS) process.on(s, handler)
