@@ -7,7 +7,12 @@ const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 type StepLine = { step: string; seconds: number }
 
 /** The slice of a booted stack the CLI prints and stops. */
-export type CliStack = { manifestPath: string; manifest: { l1Rpc: string; aztecNode: string }; stop(): Promise<void> }
+export type CliStack = {
+	manifestPath: string
+	manifest: { l1Rpc: string; aztecNode: string }
+	seeded: { user: string; sender: string }
+	stop(): Promise<void>
+}
 
 export type CliDeps = {
 	startStack(o: { runId: string; signal: AbortSignal; onStep: (s: StepLine) => void }): Promise<CliStack>
@@ -68,6 +73,7 @@ export async function runCli(args: readonly string[], deps: CliDeps): Promise<nu
 		return abort.signal.aborted ? 130 : err instanceof AttachRefused ? 2 : 1
 	}
 	deps.log(`[stack] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s — PP_STACK_MANIFEST=${stack.manifestPath}`)
+	deps.log(`[stack] pool user ${stack.seeded.user} (two approved notes of 100); bridge sender ${stack.seeded.sender}`)
 	deps.log(`SANDBOX_L1_RPC=${stack.manifest.l1Rpc} SANDBOX_NODE_URL=${stack.manifest.aztecNode}`)
 	if (parsed.keep) await signalled
 	try {

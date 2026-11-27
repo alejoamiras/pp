@@ -20,6 +20,7 @@ function harness(start: CliDeps["startStack"]) {
 const fakeStack = (stopped: string[]): CliStack => ({
 	manifestPath: "/runs/stack-1-test/manifest.json",
 	manifest: { l1Rpc: "http://127.0.0.1:1", aztecNode: "http://127.0.0.1:2" },
+	seeded: { user: "0x000000000000000000000000000000000000000d", sender: "0x000000000000000000000000000000000000000c" },
 	stop: async () => {
 		stopped.push("stop")
 	},
@@ -57,6 +58,7 @@ describe("demo CLI", () => {
 		expect(h.lines[0]).toBe(`[stack] run stack-1-test pid ${process.pid}`)
 		expect(h.lines).toContain("[stack] network up in 40.5 s")
 		expect(h.lines.some((l) => l.endsWith("PP_STACK_MANIFEST=/runs/stack-1-test/manifest.json"))).toBe(true)
+		expect(h.lines.some((l) => l.includes("pool user 0x000000000000000000000000000000000000000d"))).toBe(true)
 		expect(h.lines.at(-1)).toBe("SANDBOX_L1_RPC=http://127.0.0.1:1 SANDBOX_NODE_URL=http://127.0.0.1:2")
 	})
 

@@ -9,9 +9,11 @@ export type ManifestInputs = {
 	pool: { poolVault: Address; entrypoint: Address; aspRegistry: Address; keystore: Address; deployBlock: bigint }
 	asset: Address
 	aspUrl: string
+	/** Present once the bridge step opened entries. */
+	bridge?: StackManifest["bridge"]
 }
 
-/** The pool-only manifest of a local stack; `serializeStackManifest` validates it. */
+/** A local stack's manifest; `serializeStackManifest` validates it. */
 export function buildManifest(i: ManifestInputs): StackManifest {
 	return {
 		version: 1,
@@ -19,5 +21,6 @@ export function buildManifest(i: ManifestInputs): StackManifest {
 		l1Rpc: i.l1Rpc,
 		aztecNode: i.aztecNode,
 		pool: { ...i.pool, asset: i.asset, aspApiUrl: i.aspUrl },
+		...(i.bridge ? { bridge: i.bridge } : {}),
 	}
 }

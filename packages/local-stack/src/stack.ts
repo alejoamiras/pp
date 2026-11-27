@@ -1,15 +1,24 @@
 import { rm } from "node:fs/promises"
 import { join } from "node:path"
 import { type StackManifest, serializeStackManifest } from "@pp/bridge-core"
-import { type LocalNetwork, startLocalNetwork } from "@pp/bridge-core/sandbox"
+import {
+	deployBridgeGeneration,
+	type ExpectedBindings,
+	openBridgeEntries,
+	type StackBridgeBlock,
+	type UnopenedBridge,
+} from "@pp/bridge-core/deploy"
+import { anvilKey, HARNESS_INDEX, type LocalNetwork, startLocalNetwork } from "@pp/bridge-core/sandbox"
 import { type PoolEnv, startPoolEnv } from "@pp/pp-env"
-import { type Address, createPublicClient, http, type PublicClient } from "viem"
+import { type Address, createPublicClient, http, maxUint256, type PublicClient } from "viem"
 import { refuseAttach } from "./attach.ts"
 import { BeatPolicy, type ChainView, type L1Tx } from "./beat-policy.ts"
 import { type Heartbeat, startHeartbeat } from "./heartbeat.ts"
 import { buildManifest } from "./manifest.ts"
 import { nodeInfo, nodeRpc } from "./node-rpc.ts"
+import { assertPrerequisites } from "./prerequisites.ts"
 import { createRunDir, newRunId, RUNS_DIR, removeRunDir, writeAtomic } from "./run-dir.ts"
+import { type Seeded, seedPool } from "./seed.ts"
 import { Teardown } from "./teardown.ts"
 
 export const STACK_CHAIN_ID = 31337
@@ -20,7 +29,9 @@ const LATE_BEAT_MS = 180_000
 const STOP_WAIT_MS = 60_000
 /** pp-env's default deployer; bridge-core's harness and actors sit at 15 and from 1 up. */
 const POOL_DEPLOYER_INDEX = 14
-export type StepName = "network" | "pool" | "manifest" | "heartbeat"
+/** The bridge's owner and guardian: bridge-core's harness index, below pp-env's deployer and above the actors. */
+const BRIDGE_DEPLOYER_INDEX = HARNESS_INDEX
+export type StepName = "network" | "pool" | "bridge" | "seed" | "manifest" | "heartbeat"
 
 export type StartStackOptions = {
 	/** Defaults to a fresh `stack-<pid>-<time>`; a chosen one must be unique on the host (see the README's teardown notes). */
@@ -43,6 +54,8 @@ export interface Stack {
 	manifest: StackManifest
 	/** pp-env's handle, for in-process tests (createUser, deployStub). */
 	pool: PoolEnv
+	/** The demo's pool user and its separate Ethereum sender. */
+	seeded: Seeded
 	/** Idempotent; stops the heartbeat, withdraws the manifest, then stops the pool and the network. */
 	stop(): Promise<void>
 }
@@ -156,48 +169,103 @@ function beatEvery(intervalMs: number, nodeUrl: string, policy: BeatPolicy): Hea
 	})
 }
 
+/** Test seams on the real boot path; module-internal, never exported from the package. */
+export type BootFaults = {
+	/** Maps the expectations the bridge read-back checks, so a case can make it fail. */
+	bridgeExpectations?: (e: ExpectedBindings) => ExpectedBindings
+	/** Runs after the bridge read-back failed and before teardown. */
+	onBridgeFailure?: (u: UnopenedBridge) => void | Promise<void>
+}
+
+type Booted = { runDir: string; net: LocalNetwork; pool: PoolEnv }
+
 /**
- * Boots one anvil carrying both the Aztec local network and the pool, writes the manifest once the
- * stack is ready, and keeps blocks coming while work waits on them. Anything started is torn down
- * again when a later step fails or `signal` aborts between steps.
- * @throws AttachRefused when `SANDBOX_L1_RPC` or `SANDBOX_NODE_URL` is set.
+ * Deploys the generation with entries paused, hands its PXE to the teardown the moment it exists,
+ * and opens entries only after the read-back agrees. Blocks come from the orchestrator's own mine:
+ * the heartbeat starts after the manifest.
  */
-export async function startStack(o: StartStackOptions = {}): Promise<Stack> {
+async function bridgeStep(o: StartStackOptions, faults: BootFaults, b: Booted, teardown: Teardown): Promise<StackBridgeBlock> {
+	const u = await deployBridgeGeneration({
+		l1Rpc: b.net.anvilUrl,
+		aztecNode: b.net.nodeUrl,
+		chainId: STACK_CHAIN_ID,
+		pool: { poolVault: b.pool.deployment.pool, asset: b.pool.asset },
+		deployerKey: anvilKey(BRIDGE_DEPLOYER_INDEX),
+		lifetimeCap: maxUint256,
+		forceBlock: async () => {
+			await mineBlock(b.net.nodeUrl, o.signal)
+		},
+		dataDir: join(b.runDir, "bridge"),
+	})
+	teardown.push("bridge deployer", () => u.stop())
+	try {
+		return await openBridgeEntries(u, faults.bridgeExpectations?.(u.expected) ?? u.expected)
+	} catch (err) {
+		await faults.onBridgeFailure?.(u)
+		throw err
+	}
+}
+
+async function bootChains(o: StartStackOptions, runId: string, teardown: Teardown): Promise<Booted> {
+	const runDir = await createRunDir(o.runsDir ?? RUNS_DIR, runId)
+	teardown.push("run dir", () => removeRunDir(runDir))
+	const net = await runStep(
+		o,
+		"network",
+		// Checked with no await before the harness reads the same variables.
+		() => {
+			refuseAttach()
+			return startLocalNetwork({ runId, signals: false })
+		},
+		(n) => teardown.push("network", () => stopNetwork(n)),
+	)
+	console.log(`[stack] pool starting on ${net.anvilUrl}`)
+	const pool = await runStep(
+		o,
+		"pool",
+		() => startPoolEnv({ rpcUrl: net.anvilUrl, deployerIndex: POOL_DEPLOYER_INDEX, runId: `${runId}-pool`, signals: false }),
+		(p) => teardown.push("pool", () => p.stop()),
+	)
+	return { runDir, net, pool }
+}
+
+function manifestOf(b: Booted, bridge: StackBridgeBlock): StackManifest {
+	const { pool: poolVault, entrypoint, aspRegistry, keystore, deployBlock } = b.pool.deployment
+	return buildManifest({
+		chainId: STACK_CHAIN_ID,
+		l1Rpc: b.net.anvilUrl,
+		aztecNode: b.net.nodeUrl,
+		pool: { poolVault, entrypoint, aspRegistry, keystore, deployBlock },
+		asset: b.pool.asset,
+		aspUrl: b.pool.asp.url,
+		bridge,
+	})
+}
+
+/** `startStack` with test seams; see `BootFaults`. */
+export async function bootStack(o: StartStackOptions, faults: BootFaults): Promise<Stack> {
+	assertPrerequisites()
 	const runId = o.runId ?? newRunId()
 	const teardown = new Teardown()
 	try {
-		const runDir = await createRunDir(o.runsDir ?? RUNS_DIR, runId)
-		teardown.push("run dir", () => removeRunDir(runDir))
-		const net = await runStep(
+		const b = await bootChains(o, runId, teardown)
+		const client = createPublicClient({ transport: http(b.net.anvilUrl) })
+		await assertReady(client, b.net.nodeUrl, b.pool, o.signal)
+		const policy = o.heartbeat === false ? undefined : await firstBeat(client, b.net.nodeUrl, o.signal)
+		const bridge = await runStep(
 			o,
-			"network",
-			// Checked with no await before the harness reads the same variables.
-			() => {
-				refuseAttach()
-				return startLocalNetwork({ runId, signals: false })
-			},
-			(n) => teardown.push("network", () => stopNetwork(n)),
+			"bridge",
+			() => bridgeStep(o, faults, b, teardown),
+			() => {},
 		)
-		console.log(`[stack] pool starting on ${net.anvilUrl}`)
-		const pool = await runStep(
+		const seeded = await runStep(
 			o,
-			"pool",
-			() => startPoolEnv({ rpcUrl: net.anvilUrl, deployerIndex: POOL_DEPLOYER_INDEX, runId: `${runId}-pool`, signals: false }),
-			(p) => teardown.push("pool", () => p.stop()),
+			"seed",
+			() => seedPool(b.pool),
+			() => {},
 		)
-		const client = createPublicClient({ transport: http(net.anvilUrl) })
-		await assertReady(client, net.nodeUrl, pool, o.signal)
-		const policy = o.heartbeat === false ? undefined : await firstBeat(client, net.nodeUrl, o.signal)
-		const { pool: poolVault, entrypoint, aspRegistry, keystore, deployBlock } = pool.deployment
-		const manifest = buildManifest({
-			chainId: STACK_CHAIN_ID,
-			l1Rpc: net.anvilUrl,
-			aztecNode: net.nodeUrl,
-			pool: { poolVault, entrypoint, aspRegistry, keystore, deployBlock },
-			asset: pool.asset,
-			aspUrl: pool.asp.url,
-		})
-		const manifestPath = join(runDir, "manifest.json")
+		const manifest = manifestOf(b, bridge)
+		const manifestPath = join(b.runDir, "manifest.json")
 		await runStep(
 			o,
 			"manifest",
@@ -208,12 +276,25 @@ export async function startStack(o: StartStackOptions = {}): Promise<Stack> {
 			await runStep(
 				o,
 				"heartbeat",
-				async () => beatEvery(o.heartbeatMs ?? HEARTBEAT_MS, net.nodeUrl, policy),
+				async () => beatEvery(o.heartbeatMs ?? HEARTBEAT_MS, b.net.nodeUrl, policy),
 				(hb) => teardown.push("heartbeat", () => hb.stop()),
 			)
-		return { runId, manifestPath, manifest, pool, stop: () => teardown.run() }
+		return { runId, manifestPath, manifest, pool: b.pool, seeded, stop: () => teardown.run() }
 	} catch (err) {
 		await teardown.run().catch((e: unknown) => console.warn(`[stack] ${runId}: teardown after a failed boot also failed`, e))
 		throw err
 	}
+}
+
+/**
+ * Boots one anvil carrying both the Aztec local network and the pool, opens the bridge, seeds the
+ * demo user, writes the manifest once the stack is ready, and keeps blocks coming while work waits
+ * on them. Anything started is torn down again when a later step fails or `signal` aborts between
+ * steps.
+ * @throws Error naming `bun run demo:prepare`, before anything starts, when pp-env's checkout or
+ *   the forge artifacts are missing
+ * @throws AttachRefused when `SANDBOX_L1_RPC` or `SANDBOX_NODE_URL` is set.
+ */
+export function startStack(o: StartStackOptions = {}): Promise<Stack> {
+	return bootStack(o, {})
 }

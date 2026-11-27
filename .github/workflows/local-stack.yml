@@ -50,12 +50,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only. The stack boots bridge-core's harness and pp-env's pool, so both packages
-          # move it whole. Pinned by scripts/ci-cd/behavior-gating.test.ts.
+          # move it whole; its bridge step deploys the contracts and imports bridge-core's libraries.
+          # Pinned by scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             stack:
               - 'packages/local-stack/**'
               - 'packages/bridge-core/**'
               - 'packages/pp-env/**'
+              - 'contracts/bridge/**'
+              - 'packages/bridge-spec/src/**'
+              - 'packages/bridge-spec/package.json'
+              - 'packages/pool-client/src/**'
+              - 'packages/pool-client/package.json'
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'
@@ -95,6 +101,25 @@ jobs:
 
       - uses: ./.github/actions/ppv2-fetch
 
+      # Same pins as the bridge-contracts integration job: the stack's bridge step deploys from
+      # these artifacts.
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: "1.7.1"
+
+      - name: Install forge libraries
+        working-directory: contracts/bridge/evm
+        run: |
+          forge install \
+            foundry-rs/forge-std@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b \
+            OpenZeppelin/openzeppelin-contracts@cab19933c33c2ad1d4c7a84864a3601dddfd16f3
+
+      - name: Generate remappings + forge build
+        run: |
+          bun packages/bridge-core/scripts/gen-remappings.ts
+          forge build --root contracts/bridge/evm
+
       - name: Unit tests
         run: bun run --cwd packages/local-stack test
 
@@ -103,7 +128,7 @@ jobs:
         # runner stays green and a hang fails well inside the job's ceiling. Setup and the pool fetch,
         # cold on every run of a pull request that changes its pin, fall outside it.
         # behavior-gating.test.ts requires an entry per suite file.
-        timeout-minutes: ${{ fromJSON('{"heartbeat":11,"imports":2,"shared-anvil":11,"teardown":6}')[matrix.suite] || 20 }}
+        timeout-minutes: ${{ fromJSON('{"bridge":3,"heartbeat":14,"imports":2,"shared-anvil":12,"teardown":11}')[matrix.suite] || 20 }}
         # A skipped or todo case is a gate that never ran, and the heartbeat's liveness case must pass by name.
         run: |
           start=$(date +%s)
