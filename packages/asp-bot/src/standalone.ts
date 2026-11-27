@@ -5,7 +5,7 @@ import { type Hex, MAX_OBSERVATION_LAG } from "@pp/label-paths"
 import { claimRows, releaseNamed } from "@pp/run-isolation/ports"
 import { CleanupStack } from "@pp/run-isolation/process"
 import { createPublicClient, http } from "viem"
-import { type AspScope, BOT_PRODUCT, fetchScopedLeaves } from "./asp"
+import { type AspScope, BOT_PRODUCT, fetchScopedLeaves, isBotUserAgent } from "./asp"
 import type { L1Tag } from "./l1"
 import { type LivePost, liveFrom } from "./live"
 import { ownPosts } from "./own-posts"
@@ -66,8 +66,6 @@ export function checkStandaloneConfig(c: StandaloneBotConfig, s: BotSecrets): vo
 	checkAspConfig(c)
 }
 
-const USER_AGENT = new RegExp(`^${BOT_PRODUCT}[\\x21-\\x7e]*(?: [\\x21-\\x7e]+)*$`)
-
 /** The scope and name every ASP request carries, checked at runtime because the config arrives as JSON. */
 function checkAspConfig(c: StandaloneBotConfig): void {
 	const { chainId, entrypoint } = c.deployment
@@ -75,7 +73,7 @@ function checkAspConfig(c: StandaloneBotConfig): void {
 	if (typeof entrypoint !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(entrypoint))
 		throw new RangeError("deployment.entrypoint must be a 20-byte hex address")
 	const ua = c.userAgent
-	if (ua !== undefined && (typeof ua !== "string" || ua.length > 128 || !USER_AGENT.test(ua)))
+	if (ua !== undefined && !isBotUserAgent(ua))
 		throw new RangeError(`userAgent must be printable ASCII of at most 128 characters starting with ${BOT_PRODUCT}`)
 }
 

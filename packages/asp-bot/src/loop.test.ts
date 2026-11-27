@@ -143,6 +143,27 @@ describe("a tick", () => {
 		expect(s.fetches).toBe(2)
 	})
 
+	it("fetches again after a second reset, even when the post between the two resets failed after it landed", async () => {
+		const { s, ports } = chain()
+		s.aspLeaves = [root(set1)]
+		const bot = new Poster(ports, new SnapshotBook(), { self: SELF, inclusionMarginSec: 144n })
+		const post = ports.post
+		ports.post = async (a) => {
+			await post(a)
+			throw new Error("no inclusion block")
+		}
+		expect(await bot.tick()).toEqual({ post: false, reason: "error" })
+		expect(s.record).toMatchObject({ sequence: 1n, poolSize: 1n })
+		ports.post = post
+		// The feed is fixed, and the admin resets the record that post left before the bot reads it again.
+		s.aspLeaves = set1
+		s.record = { ...s.record, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		s.aztecTime += 300n
+		s.l1 = { number: 30n, hash: "0x0b", timestamp: 1_150n }
+		expect((await bot.tick()).post).toBe(true)
+		expect([s.record.sequence, s.record.poolSize, s.fetches]).toEqual([2n, 2n, 2])
+	})
+
 	it("asks the feed at most once per floor, failures included, and never starves the post a reset waits for", async () => {
 		const { s, ports } = chain()
 		const fields: Record<string, unknown>[] = []
@@ -170,6 +191,7 @@ describe("a tick", () => {
 		expect(await at(1)).toEqual({ post: false, reason: "asp_deferred" })
 		expect(await at(300_000)).toEqual({ post: false, reason: "asp_root_mismatch" })
 		expect(fields.at(-1)).toMatchObject({ chainRoot: root(set2), aspRoot: root(set1) })
+		expect(fields.at(-1)?.why).toContain("do not hash")
 		expect(fields.at(-1)?.next).toContain("request floor")
 		for (const ms of [300_001, 599_999]) expect(await at(ms)).toEqual({ post: false, reason: "asp_deferred" })
 		expect([s.fetches, s.record.sequence, book.body("latest")]).toEqual([2, 1n, latest])

@@ -57,8 +57,8 @@ export class Poster {
 	private pool: Pool | null = null
 	private lastReadTime: bigint | null = null
 	private lastFetch = Number.NEGATIVE_INFINITY
-	/** Whether the record was cleared as this process last saw it, its own posts included. */
-	private cleared = false
+	/** The sequence of the cleared record last read, or `null` when it was not cleared. */
+	private resetAt: bigint | null = null
 
 	/**
 	 * `leavesFloorMs` (default 0) is the least time between two leaves requests, counted from the start of
@@ -84,6 +84,12 @@ export class Poster {
 		const p = this.ports
 		const tip = await p.tip()
 		const record = await p.record(tip.hash)
+		// A cleared record is the admin's reset, and `set_poster` keeps the sequence: a list cached before a
+		// reset is fetched again, once; one fetched since is kept, so the post the reset waits for needs no
+		// second request.
+		const resetAt = record.poolRoot === 0n ? record.sequence : null
+		if (resetAt !== null && resetAt !== this.resetAt) this.pool = null
+		this.resetAt = resetAt
 		// Before any other read can fail: after `set_poster` clears the roots, `/latest` must stop serving.
 		this.book.setCurrent(record)
 		const poster = await p.poster(tip.hash)
@@ -92,11 +98,6 @@ export class Poster {
 		if (!e) return this.halt("no_l1_block", { aztecTime: tip.time })
 		const root = await p.aspRootAt(e)
 		if (root === null) return this.halt("empty_set", { l1Block: e.number })
-		// A cleared record is the admin's reset: a list cached before it is fetched again, once; one fetched
-		// since is kept, so a post the reset waits for never needs a second request.
-		const cleared = record.poolRoot === 0n
-		if (cleared && !this.cleared) this.pool = null
-		this.cleared = cleared
 		const pool = await this.poolFor(root)
 		if (pool === "deferred") return { post: false, reason: "asp_deferred" }
 		if (!pool) return { post: false, reason: "asp_root_mismatch" }
@@ -131,7 +132,6 @@ export class Poster {
 		this.book.hold({ sequence: d.args.sequence, poolRoot: root, birthRoot, poolLeaves: pool.leaves, birthLeaves })
 		const { inclusionTime } = await p.post(d.args)
 		this.book.setCurrent(d.args)
-		this.cleared = false
 		this.lastReadTime = tip.time
 		p.log("posted", { ...d.args, readTime: tip.time, inclusionTime, age: inclusionTime - d.args.rootTime })
 		return d

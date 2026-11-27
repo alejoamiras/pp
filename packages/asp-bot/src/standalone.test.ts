@@ -8,7 +8,7 @@ import { aspLeaf, buildLeanImt } from "@pp/bridge-spec"
 import type { RootRecord } from "@pp/label-paths"
 import { claimRows, PortClaimConflict } from "@pp/run-isolation/ports"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { fetchLeaves } from "./asp"
+import { DEFAULT_USER_AGENT, fetchLeaves } from "./asp"
 import { type Ports, Poster } from "./loop"
 import { SnapshotBook } from "./server"
 import { checkStandaloneConfig, runStandaloneBot, type StandaloneBotConfig, scopedLeaves } from "./standalone"
@@ -19,17 +19,19 @@ const LEAVES = [aspLeaf(11n), aspLeaf(22n), aspLeaf(33n)]
 /** Answers 404 unless the query names the pool. */
 async function stubAsp() {
 	const queries: Record<string, string>[] = []
+	const agents: (string | undefined)[] = []
 	const server = createServer((req, res) => {
 		const url = new URL(req.url ?? "/", "http://stub")
 		const q = Object.fromEntries(url.searchParams)
 		queries.push(q)
+		agents.push(req.headers["user-agent"])
 		if (url.pathname !== "/association-set/leaves" || q.chainId !== "11155111" || q.entrypoint !== ENTRYPOINT)
 			return res.writeHead(404).end(`No enabled pool found for chainId ${q.chainId}`)
 		res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ leaves: LEAVES.map(String) }))
 	})
 	await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok))
 	const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
-	return { url, queries, close: () => new Promise<void>((ok) => server.close(() => ok())) }
+	return { url, queries, agents, close: () => new Promise<void>((ok) => server.close(() => ok())) }
 }
 
 const config = (o: Partial<StandaloneBotConfig["deployment"]> & { port?: number; runId?: string } = {}): StandaloneBotConfig => ({
@@ -74,6 +76,8 @@ describe("the standalone bot", () => {
 			expect(tick.post).toBe(true)
 			expect(record.poolRoot).toBe(buildLeanImt(LEAVES).root)
 			expect(asp.queries.at(-1)).toEqual({ chainId: "11155111", entrypoint: ENTRYPOINT })
+			await scopedLeaves(config({ aspApiUrl: asp.url }).deployment, "pp-aztec-bridge-bot/9 (b)")()
+			expect(asp.agents.slice(-2)).toEqual([DEFAULT_USER_AGENT, "pp-aztec-bridge-bot/9 (b)"])
 		} finally {
 			await asp.close()
 		}
@@ -145,6 +149,7 @@ describe("the standalone bot", () => {
 				true,
 				"curl/8",
 				" pp-aztec-bridge-bot",
+				"pp-aztec-bridge-bot-extra",
 				"pp-aztec-bridge-bot\r\nx: y",
 				`pp-aztec-bridge-bot/${"a".repeat(110)}`,
 			])
