@@ -10,7 +10,7 @@ vi.mock("viem", async (actual) => ({
 	...(await actual<typeof import("viem")>()),
 	createPublicClient: () => ({ getBlock: async () => ({ number: 1n }) }),
 }))
-vi.mock("@pp/sepolia-fork/src/anvil.ts", () => ({
+vi.mock("@pp/sepolia-fork/anvil", () => ({
 	startForkAnvil: async () => {
 		throw new Error("the fork did not start")
 	},

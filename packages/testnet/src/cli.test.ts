@@ -5,7 +5,7 @@ import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "no
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Fr } from "@aztec-labs/aztec.js/fields"
-import { ANVIL_CLIENT_VERSION } from "@pp/sepolia-fork/src/anvil.ts"
+import { ANVIL_CLIENT_VERSION } from "@pp/sepolia-fork/anvil"
 import { encodeAbiParameters, maxUint256, toFunctionSelector } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest"

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { ANVIL_CLIENT_VERSION } from "@pp/sepolia-fork/src/anvil.ts"
+import { ANVIL_CLIENT_VERSION } from "@pp/sepolia-fork/anvil"
 import type { Address, Hex } from "viem"
 import { generatePrivateKey, mnemonicToAccount, privateKeyToAccount } from "viem/accounts"
 import { describe, expect, it } from "vitest"
