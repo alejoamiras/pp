@@ -29,6 +29,7 @@ import { type ArtifactSource, PoolClientError, type PoolClientErrorCode, secretD
 import { createArtifacts } from "@pp/pool-client/circuits"
 import {
 	BaseError,
+	ChainMismatchError,
 	type Hash,
 	isAddressEqual,
 	type PublicClient,
@@ -152,11 +153,16 @@ const REGISTRATION_CODES: Partial<Record<PoolClientErrorCode, UiCode>> = {
 	REGISTERED_TO_OTHER_KEYS: "KEYS_REGISTERED_ELSEWHERE",
 }
 
-/** viem wraps the wallet's no in its own error; the page reads a refusal as a top-level 4001. */
-const walletNo = (err: unknown): unknown =>
-	err instanceof BaseError && err.walk((e) => e instanceof UserRejectedRequestError)
-		? new ProviderError(4001, "The wallet declined the request.")
-		: err
+/**
+ * viem wraps the wallet's no, and its own chain check before the send, in its errors; the page reads
+ * them as a top-level 4001 and `CHAIN_MISMATCH`.
+ */
+function walletError(err: unknown): unknown {
+	if (!(err instanceof BaseError)) return err
+	if (err.walk((e) => e instanceof UserRejectedRequestError)) return new ProviderError(4001, "The wallet declined the request.")
+	if (err.walk((e) => e instanceof ChainMismatchError)) return new BridgeFailure("CHAIN_MISMATCH")
+	return err
+}
 
 /** Registration's calls go out from the owner through the injected wallet, never the demo sender. */
 function registration(c: Ctx, live: () => void): Pick<Session, "registrationStep" | "sendRegistration" | "registrationReceipt"> {
@@ -176,14 +182,15 @@ function registration(c: Ctx, live: () => void): Pick<Session, "registrationStep
 			return wallet
 				.sendTransaction({ to: call.to, data: call.data, value: call.value, chain: wallet.chain })
 				.catch((err: unknown) => {
-					throw walletNo(err)
+					throw walletError(err)
 				})
 		},
+		// viem answers a replaced transaction with its replacement's receipt.
 		registrationReceipt: (hash) =>
 			deps.reads
 				.waitForTransactionReceipt({ hash, timeout: timing.receiptTimeoutMs, pollingInterval: timing.pollingIntervalMs })
 				.then(
-					(r) => ({ status: r.status, blockNumber: r.blockNumber }),
+					(r) => ({ status: r.status, blockNumber: r.blockNumber, hash: r.transactionHash }),
 					() => null,
 				),
 	}

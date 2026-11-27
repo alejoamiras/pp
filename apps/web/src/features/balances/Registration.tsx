@@ -1,19 +1,19 @@
 /**
- * The pool's keystore step after sign-in. Until the keystore holds the owner's two keys, it stands in
- * for the pool notes: an unregistered account can hold none this app reads, and senders cannot find it.
+ * The pool's keystore step after sign-in. Until the keystore holds both of the owner's keys, it stands
+ * in for the note list: senders cannot encrypt to the owner, or its spends have no keystore leaf.
+ * Notes this client already found under its own viewing key still count in the total above it.
  */
-import { useQuery } from "@tanstack/react-query"
-import { type ReactNode, useState } from "react"
+import { useIsMutating, useMutation, useMutationState, useQuery } from "@tanstack/react-query"
+import type { ReactNode } from "react"
 import { isAddressEqual } from "viem"
 import { useApp } from "../../app/context"
 import { useLive } from "../../app/live"
+import { REGISTRATION_KEY } from "../../app/queries"
 import { codeOf, messageOf, type UiCode } from "../../data/errors"
 import type { Session } from "../../data/ports"
 import { type RegisterResult, registerOwner } from "../../data/register"
 import type { RegistrationCall } from "../../data/stack-types"
 import { ActionButton, Callout, shortHex } from "../../ui"
-
-export const REGISTRATION_KEY = "registration"
 
 type Failed = Extract<RegisterResult, { ok: false }>
 
@@ -33,6 +33,11 @@ function RegisterFailed({ failed, onCheck }: { failed: Failed; onCheck(): void }
 	return (
 		<div className="mt-2 grid gap-1" role="alert" data-testid="register-failed" data-code={failed.code}>
 			<p>{REGISTER_MESSAGES[failed.code] ?? messageOf(failed.code)}</p>
+			{failed.done ? (
+				<p className="text-xs" title={failed.done}>
+					An earlier transaction of this registration mined and set its key: {shortHex(failed.done)}.
+				</p>
+			) : null}
 			{failed.txHash ? (
 				<p className="font-mono text-xs" title={failed.txHash}>
 					Transaction {shortHex(failed.txHash)}
@@ -57,16 +62,29 @@ function useRegisterBlock(session: Session, busy: boolean): string | undefined {
 	return undefined
 }
 
-function RegisterStep({ session, next, onCheck }: { session: Session; next: RegistrationCall["function"]; onCheck(): void }) {
+/**
+ * The run lives in the page's mutation cache, not in this step: leaving Balances while the wallet holds
+ * a call keeps Register blocked when it shows again, and keeps the run's outcome.
+ */
+function useRegisterRun(session: Session) {
 	const { source, live, refresh } = useApp()
-	const [state, setState] = useState<{ kind: "idle" } | { kind: "registering" } | { kind: "failed"; failed: Failed }>({ kind: "idle" })
-	const block = useRegisterBlock(session, state.kind === "registering")
-	const register = async () => {
-		setState({ kind: "registering" })
-		const r = await registerOwner({ session, live: live.context, chainId: source.deployment.chainId })
-		setState(r.ok ? { kind: "idle" } : { kind: "failed", failed: r })
-		refresh()
-	}
+	const mutationKey = [REGISTRATION_KEY, "run", session.owner]
+	const run = useMutation({
+		mutationKey,
+		mutationFn: () => registerOwner({ session, live: live.context, chainId: source.deployment.chainId }),
+		onSettled: () => refresh(),
+	})
+	const busy = useIsMutating({ mutationKey }) > 0
+	const latest = useMutationState({ filters: { mutationKey }, select: (m) => m.state }).at(-1)
+	const result = latest?.status === "success" ? (latest.data as RegisterResult) : undefined
+	const failed: Failed | undefined =
+		result?.ok === false ? result : latest?.status === "error" ? { ok: false, code: codeOf(latest.error) ?? "UNKNOWN" } : undefined
+	return { register: () => run.mutate(), busy, failed }
+}
+
+function RegisterStep({ session, next, onCheck }: { session: Session; next: RegistrationCall["function"]; onCheck(): void }) {
+	const { register, busy, failed } = useRegisterRun(session)
+	const block = useRegisterBlock(session, busy)
 	const calls = next === "setAuthPolicy" ? "two Ethereum transactions" : "one more Ethereum transaction"
 	return (
 		<Callout tone="attn" title="Register with the pool" role="status">
@@ -77,11 +95,11 @@ function RegisterStep({ session, next, onCheck }: { session: Session; next: Regi
 					senders encrypt your notes to.
 				</p>
 				<div>
-					<ActionButton variant="primary" disabledReason={block} onClick={() => void register()}>
+					<ActionButton variant="primary" disabledReason={block} onClick={register}>
 						Register
 					</ActionButton>
 				</div>
-				{state.kind === "failed" ? <RegisterFailed failed={state.failed} onCheck={onCheck} /> : null}
+				{failed && !busy ? <RegisterFailed failed={failed} onCheck={onCheck} /> : null}
 			</div>
 		</Callout>
 	)

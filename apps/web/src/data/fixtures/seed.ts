@@ -109,8 +109,8 @@ export interface WorldState {
 	counter: number
 	sent: { l1: number; aztec: number }
 	declineNextGrant: boolean
-	/** Which of the owner's two keys the keystore holds; a world without it is registered. */
-	keystore?: { authPolicy: boolean; viewingKey: boolean }
+	/** Which of each Ethereum account's two keys the keystore holds, by lower-case address; an account absent here is registered. */
+	keystore?: Record<string, { authPolicy: boolean; viewingKey: boolean }>
 }
 
 export function seedWorld(chainId: number): WorldState {

@@ -2,10 +2,12 @@
  * `window.__ppFixtures`: how tests and the demo drive the fixture world. Fixture builds only; a stack
  * build that names it fails the guard. Inputs are checked, since any page script can call it.
  */
+import { type Address, isAddress } from "viem"
 import type { StaleRootCode } from "../stack-types"
 import { approveBirths } from "./allow-list"
 import { type FixtureOp, isFixtureOp } from "./faults"
 import { selectedAccount } from "./l1"
+import { ACCOUNTS } from "./seed"
 import type { World } from "./world"
 
 const STALE_CODES: readonly StaleRootCode[] = ["STATE_ROOT_STALE", "KEYSTORE_ROOT_STALE", "ASP_ROOT_STALE"]
@@ -41,8 +43,8 @@ export interface FixtureControl {
 	setL1Chain(chainId: number): void
 	/** The next connect's grant leaves out the contract scope, as the kit's `declineNextGrant`. */
 	declineNextGrant(): void
-	/** Clears the owner's keys from the fixture keystore, as for an account that never registered. */
-	unregisterOwner(): void
+	/** Clears an account's keys (the owner's by default) from the fixture keystore, as for one that never registered. */
+	unregisterOwner(account?: Address): void
 	/** The Aztec wallet disconnects on its own. */
 	disconnectAztec(): void
 	/** Back to the first state; also clears the stored copy. */
@@ -118,10 +120,12 @@ export function createControl(w: World, wallet: { remoteDisconnect(): void }): F
 			w.update((s) => {
 				s.declineNextGrant = true
 			}),
-		unregisterOwner: () =>
+		unregisterOwner: (account = ACCOUNTS.owner) => {
+			if (!isAddress(account)) throw new Error(`__ppFixtures.unregisterOwner: bad address ${JSON.stringify(account)}`)
 			w.update((s) => {
-				s.keystore = { authPolicy: false, viewingKey: false }
-			}),
+				s.keystore = { ...s.keystore, [account.toLowerCase()]: { authPolicy: false, viewingKey: false } }
+			})
+		},
 		disconnectAztec: () => wallet.remoteDisconnect(),
 		reset: () => w.reset(),
 	}

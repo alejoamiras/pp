@@ -11,6 +11,8 @@ import { readPool } from "../data/reconcile"
 import type { DataSource } from "../data/source"
 
 export const POOL_KEY = "pool"
+/** The owner's keystore step, and its run as a mutation; a sign-out drops both with the pool side. */
+export const REGISTRATION_KEY = "registration"
 
 /**
  * `recipients`: the connected Aztec accounts, whose bridges `recover` finds even with no journal here;

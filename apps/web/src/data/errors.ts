@@ -36,6 +36,7 @@ export type AppCode =
 	| "KEYSTORE_MISMATCH"
 	| "KEYS_REGISTERED_ELSEWHERE"
 	| "REGISTER_FROM_OWNER"
+	| "REGISTRATION_REPLACED"
 	| "UNKNOWN"
 
 /**
@@ -114,6 +115,8 @@ const MESSAGES: Record<UiCode, string> = {
 		"The pool's keystore holds other keys for this account, so this app cannot register it or read its notes. Sign in with the account you use here.",
 	REGISTER_FROM_OWNER:
 		"Select your signed-in account in your Ethereum wallet: the keystore registers whichever account sends, so only that one can register.",
+	REGISTRATION_REPLACED:
+		"Your wallet replaced the registration with another transaction, which set nothing in the keystore. Register again when you are ready.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",
 }
 

@@ -6,27 +6,21 @@ import type { BridgeClient, BridgeReceipt, BridgeSession, openBridgeSession, Pre
 import { tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
 import { PoolClientError, secretDerivationTypedData } from "@pp/pool-client"
 import { createArtifacts } from "@pp/pool-client/circuits"
-import {
-	type Address,
-	BaseError,
-	type Hash,
-	type Hex,
-	TransactionNotFoundError,
-	TransactionReceiptNotFoundError,
-	UserRejectedRequestError,
-} from "viem"
+import { type Address, type Hash, type Hex, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem"
 import { describe, expect, test, vi } from "vitest"
 import type { StackManifestJson } from "../../build/target"
 import { virtualTimer } from "../../test-utils/timer"
 import { createBridgeDriver, createOutstanding, type LiveContext } from "../bridge-driver"
 import { stageManifest } from "../capabilities"
-import { isUserRejection, isWalletRefusal } from "../errors"
+import { isUserRejection, isWalletRefusal, ProviderError } from "../errors"
 import type { Attempt, Proved, SubmitHooks } from "../ports"
+import { registerOwner } from "../register"
 import type { AztecAddress, BridgeRecordView } from "../stack-types"
 import { readPool } from "../reconcile"
 import type { HeldWallet } from "../wallet/connector"
 import { parseGrant } from "../wallet/grant"
 import type { AztecDeps } from "./aztec"
+import { type InjectedWallet, stackL1 } from "./l1"
 import type { DelegatingProver } from "./prover"
 import { JOURNAL_PREFIX, journalStore, l1TxState, type PageStorage, type SessionDeps, stackSessions } from "./session"
 
@@ -482,11 +476,23 @@ describe("registration through the stack session", () => {
 	const KEYSTORE: Address = "0x00000000000000000000000000000000000000c3"
 	const call = (from: Address) => ({ function: "setAuthPolicy" as const, from, to: KEYSTORE, data: "0x01" as Hex, value: 0n as const })
 
-	function registering(pool: { registrationStep: () => Promise<unknown> }, send: () => Promise<Hash>) {
-		const sendTransaction = vi.fn(send)
-		const settleWallet = vi.fn(() => ({ chain: { id: 31337 }, sendTransaction }))
-		const open = (async () => ({ l1Address: OWNER, pool })) as unknown as typeof openBridgeSession
-		return { r: rig({ open, l1: { settleWallet } as unknown as SessionDeps["l1"] }), settleWallet, sendTransaction }
+	/** The real Ethereum port over an injected wallet on `chainId`, whose sends do `onSend`. */
+	function registering(o: { onSend?: () => unknown; chainId?: number; step?: () => Promise<unknown>; mined?: Hash } = {}) {
+		const sends: { method: string; from: unknown }[] = []
+		const wallet: InjectedWallet = {
+			async request({ method, params }) {
+				if (method === "eth_chainId") return `0x${(o.chainId ?? 31337).toString(16)}`
+				if (method !== "eth_sendTransaction" && method !== "wallet_sendTransaction") throw new Error(`${method} unexpected`)
+				sends.push({ method, from: (params as [{ from: unknown }])[0].from })
+				return (o.onSend ?? (() => TX))()
+			},
+		}
+		const step = o.step ?? (async () => ({ status: "send", call: call(OWNER) }))
+		const open = (async () => ({ l1Address: OWNER, pool: { registrationStep: step } })) as unknown as typeof openBridgeSession
+		const reads = {
+			waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 7n, transactionHash: o.mined ?? TX }),
+		} as unknown as SessionDeps["reads"]
+		return { r: rig({ open, reads, l1: stackL1({ l1ChainId: 31337, l1RpcUrl: MANIFEST.l1Rpc }, wallet) }), sends }
 	}
 
 	test("reads the pool client's keystore refusals in the page's codes", async () => {
@@ -494,26 +500,45 @@ describe("registration through the stack session", () => {
 			["KEYSTORE_MISMATCH", "KEYSTORE_MISMATCH"],
 			["REGISTERED_TO_OTHER_KEYS", "KEYS_REGISTERED_ELSEWHERE"],
 		] as const) {
-			const { r } = registering(
-				{ registrationStep: async () => Promise.reject(new PoolClientError(poolCode, "x")) },
-				async () => `0x${"ab".repeat(32)}` as Hash,
-			)
+			const { r } = registering({ step: async () => Promise.reject(new PoolClientError(poolCode, "x")) })
 			await expect((await r.open()).registrationStep()).rejects.toMatchObject({ code })
 		}
 	})
 
-	test("sends only the owner's call, from the injected wallet pinned to the owner, and reads the wallet's no as a 4001", async () => {
-		const no = new BaseError("send failed", { cause: new UserRejectedRequestError(new Error("rejected")) })
-		const { r, settleWallet, sendTransaction } = registering({ registrationStep: async () => ({ status: "registered" }) }, async () => {
-			throw no
+	test("sends only the owner's call, from the owner; the wallet's no reads as a refusal, its other chain as CHAIN_MISMATCH before the handoff", async () => {
+		const handoff = vi.fn()
+		const declined = registering({
+			onSend: () => {
+				throw new ProviderError(4001, "User rejected the request.")
+			},
 		})
-		const s = await r.open()
-		const handoff = () => {}
+		const s = await declined.r.open()
 		await expect(s.sendRegistration(call(SENDER), handoff)).rejects.toMatchObject({ code: "REGISTER_FROM_OWNER" })
-		expect(settleWallet).not.toHaveBeenCalled()
-		const refused = await s.sendRegistration(call(OWNER), handoff).catch((e: unknown) => e)
-		expect(isWalletRefusal(refused)).toBe(true)
-		expect(settleWallet).toHaveBeenCalledWith({ sender: OWNER, demo: false }, handoff)
-		expect(sendTransaction).toHaveBeenCalledWith({ to: KEYSTORE, data: "0x01", value: 0n, chain: { id: 31337 } })
+		expect(isWalletRefusal(await s.sendRegistration(call(OWNER), handoff).catch((e: unknown) => e))).toBe(true)
+		expect(declined.sends).toEqual([{ method: "eth_sendTransaction", from: OWNER }])
+		expect(handoff).toHaveBeenCalledTimes(1)
+
+		const elsewhere = registering({ chainId: 1 })
+		await expect((await elsewhere.r.open()).sendRegistration(call(OWNER), handoff)).rejects.toMatchObject({ code: "CHAIN_MISMATCH" })
+		expect(elsewhere.sends).toEqual([])
+		expect(handoff).toHaveBeenCalledTimes(1)
+	})
+
+	test("asks the wallet once when viem would retry a failed send through wallet_sendTransaction, and the run reads it as uncertain", async () => {
+		const { r, sends } = registering({
+			onSend: () => {
+				throw Object.assign(new Error("the node refused the transaction"), { code: -32000 })
+			},
+		})
+		const session = await r.open()
+		const live = { owner: OWNER, account: OWNER, chainId: 31337, epoch: null, aztecAccounts: [] }
+		expect(await registerOwner({ session, live: () => live, chainId: 31337 })).toEqual({ ok: false, code: "UNCERTAIN" })
+		expect(sends).toEqual([{ method: "eth_sendTransaction", from: OWNER }])
+	})
+
+	test("reads the hash of the transaction that mined, which is another when the wallet replaced the call", async () => {
+		const REPLACEMENT: Hash = `0x${"ee".repeat(32)}`
+		const { r } = registering({ mined: REPLACEMENT })
+		expect(await (await r.open()).registrationReceipt(TX)).toEqual({ status: "success", blockNumber: 7n, hash: REPLACEMENT })
 	})
 })

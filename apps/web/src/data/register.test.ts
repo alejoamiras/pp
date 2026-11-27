@@ -11,12 +11,27 @@ const OTHER: Address = "0x00000000000000000000000000000000000000B2"
 const KEYSTORE: Address = "0x00000000000000000000000000000000000000c3"
 const CHAIN = 31337
 
-/** What the wallet does once the guard lets a send through. */
-type Wallet = "send" | "reject" | "lose" | "revert" | "no-receipt" | "mine-nothing" | "wrong-chain"
+/**
+ * What the wallet does once the guard lets a send through. `cancel` and `speed-up` replace the call
+ * under another hash, the first with a self-transfer, the second with the same call.
+ */
+type Wallet = "send" | "reject" | "lose" | "revert" | "no-receipt" | "mine-nothing" | "wrong-chain" | "cancel" | "speed-up"
 
-function world(o: { wallets: Wallet[]; auth?: boolean; account?: Address; stepRefuses?: UiCode }) {
+const REPLACEMENT = `0x${"e".repeat(64)}` as Hash
+const SETS_KEY: ReadonlySet<Wallet> = new Set(["send", "speed-up"])
+const REPLACES: ReadonlySet<Wallet> = new Set(["cancel", "speed-up"])
+
+function world(o: {
+	wallets: Wallet[]
+	auth?: boolean
+	account?: Address
+	stepRefuses?: UiCode /** The read, counted from 1, that fails. */
+	stepFailsAt?: number
+}) {
 	const chain = { auth: o.auth ?? false, viewing: false, block: 10n }
-	const ctx: { now: SendContext } = { now: { account: o.account ?? OWNER, chainId: CHAIN, epoch: null, aztecAccounts: [] } }
+	const ctx: { now: SendContext & { owner: Address | null } } = {
+		now: { owner: OWNER, account: o.account ?? OWNER, chainId: CHAIN, epoch: null, aztecAccounts: [] },
+	}
 	const steps: (bigint | undefined)[] = []
 	const asked: RegistrationCall["function"][] = []
 	const pending = new Map<Hash, { fn: RegistrationCall["function"]; wallet: Wallet }>()
@@ -27,14 +42,16 @@ function world(o: { wallets: Wallet[]; auth?: boolean; account?: Address; stepRe
 		async registrationStep(after): Promise<RegistrationStep> {
 			steps.push(after)
 			if (o.stepRefuses) throw new BridgeFailure(o.stepRefuses)
+			if (steps.length === o.stepFailsAt) throw new Error("the RPC dropped the read")
 			if (chain.auth && chain.viewing) return { status: "registered" }
 			const fn = chain.auth ? "setViewingKey" : "setAuthPolicy"
 			return { status: "send", call: { function: fn, from: OWNER, to: KEYSTORE, data: "0x01" as Hex, value: 0n } }
 		},
 		async sendRegistration(call, handoff) {
 			const wallet = o.wallets[asked.length] ?? "send"
+			// The adapter reads viem's chain check, which runs before the handoff, as `CHAIN_MISMATCH`.
+			if (wallet === "wrong-chain") throw new BridgeFailure("CHAIN_MISMATCH")
 			// viem wraps whatever the provider throws, the guard's refusal included.
-			if (wallet === "wrong-chain") throw Object.assign(new Error("chain"), { name: "ChainMismatchError" })
 			try {
 				handoff()
 			} catch (cause) {
@@ -51,9 +68,10 @@ function world(o: { wallets: Wallet[]; auth?: boolean; account?: Address; stepRe
 			const p = pending.get(hash)
 			if (p === undefined || p.wallet === "no-receipt") return null
 			chain.block++
-			if (p.wallet === "send") chain[p.fn === "setAuthPolicy" ? "auth" : "viewing"] = true
+			if (SETS_KEY.has(p.wallet)) chain[p.fn === "setAuthPolicy" ? "auth" : "viewing"] = true
 			for (const f of afterReceipt.splice(0)) f()
-			return { status: p.wallet === "revert" ? "reverted" : "success", blockNumber: chain.block }
+			const mined = REPLACES.has(p.wallet) ? REPLACEMENT : hash
+			return { status: p.wallet === "revert" ? "reverted" : "success", blockNumber: chain.block, hash: mined }
 		},
 	} satisfies Pick<Session, "owner" | "registrationStep" | "sendRegistration" | "registrationReceipt">
 	const run = () => registerOwner({ session, live: () => ctx.now, chainId: CHAIN })
@@ -80,10 +98,22 @@ describe("registerOwner", () => {
 		],
 		["a wallet on another chain, before the handoff", { wallets: ["wrong-chain"] as Wallet[] }, { code: "CHAIN_MISMATCH" }, []],
 		[
-			"a declined second step",
+			"a declined second step, naming the first that mined",
 			{ wallets: ["send", "reject"] as Wallet[] },
-			{ code: "WALLET_REJECTED" },
+			{ code: "WALLET_REJECTED", done: hash(1) },
 			["setAuthPolicy", "setViewingKey"],
+		],
+		[
+			"a read failing after the first receipt, naming the call that mined",
+			{ stepFailsAt: 2 },
+			{ code: "RPC_FAILED", done: hash(1) },
+			["setAuthPolicy"],
+		],
+		[
+			"a call the wallet cancelled with another transaction",
+			{ wallets: ["cancel"] as Wallet[] },
+			{ code: "REGISTRATION_REPLACED", txHash: REPLACEMENT },
+			["setAuthPolicy"],
 		],
 		["a handed-off send with no hash", { wallets: ["lose"] as Wallet[] }, { code: "UNCERTAIN" }, ["setAuthPolicy"]],
 		["a call with no receipt", { wallets: ["no-receipt"] as Wallet[] }, { code: "TX_UNCONFIRMED", txHash: hash(1) }, ["setAuthPolicy"]],
@@ -110,9 +140,24 @@ describe("registerOwner", () => {
 		w.afterReceipt.push(() => {
 			w.ctx.now = { ...w.ctx.now, account: OTHER }
 		})
-		expect(await w.run()).toEqual({ ok: false, code: "CONTEXT_CHANGED" })
+		expect(await w.run()).toEqual({ ok: false, code: "CONTEXT_CHANGED", done: hash(1) })
 		expect(w.asked).toEqual(["setAuthPolicy"])
 		expect(w.chain).toMatchObject({ auth: true, viewing: false })
+	})
+
+	it("refuses the second step once the owner signed out after the first receipt, the account and chain unchanged", async () => {
+		const w = world({ wallets: [] })
+		w.afterReceipt.push(() => {
+			w.ctx.now = { ...w.ctx.now, owner: null }
+		})
+		expect(await w.run()).toEqual({ ok: false, code: "CONTEXT_CHANGED", done: hash(1) })
+		expect(w.asked).toEqual(["setAuthPolicy"])
+	})
+
+	it("goes on from a call the wallet sped up, under the replacement's hash", async () => {
+		const w = world({ wallets: ["speed-up"] })
+		expect(await w.run()).toEqual({ ok: true })
+		expect(w.asked).toEqual(["setAuthPolicy", "setViewingKey"])
 	})
 
 	it("goes on after a revert when the chain moved past that call, as when another tab sent it first", async () => {

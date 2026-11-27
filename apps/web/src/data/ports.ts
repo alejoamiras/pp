@@ -166,11 +166,15 @@ export interface Session {
 	/**
 	 * Sends `call` from the owner through the injected wallet, pinned to the owner and the deployment's chain
 	 * behind the guard, which runs `handoff` right before the wallet is asked. Resolves with the wallet's hash.
-	 * @throws BridgeFailure `REGISTER_FROM_OWNER` when `call` is not the owner's, before anything is asked
+	 * @throws BridgeFailure `REGISTER_FROM_OWNER` when `call` is not the owner's, before anything is asked;
+	 *   `CHAIN_MISMATCH` when the wallet is on another chain, before the handoff
 	 */
 	sendRegistration(call: RegistrationCall, handoff: () => void): Promise<Hash>
-	/** The transaction's receipt within the deployment's receipt wait; `null` when none came in time. */
-	registrationReceipt(hash: Hash): Promise<{ status: "success" | "reverted"; blockNumber: bigint } | null>
+	/**
+	 * The receipt within the deployment's receipt wait, `null` when none came in time. `hash` is the
+	 * transaction that mined: another than the one asked for when the wallet replaced it.
+	 */
+	registrationReceipt(hash: Hash): Promise<{ status: "success" | "reverted"; blockNumber: bigint; hash: Hash } | null>
 	close(): void
 }
 

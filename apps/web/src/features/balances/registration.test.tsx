@@ -47,6 +47,37 @@ describe("the pool registration step", () => {
 		expect(control.state().sent.l1).toBe(2)
 	})
 
+	test("stays blocked after leaving Balances while the wallet holds the call, so a second run cannot start", async () => {
+		const { user, control } = unregistered()
+		await clickSignIn(user)
+		await screen.findByTestId("register-step")
+		control.hangNext("send")
+		await user.click(registerButton())
+		await user.click(screen.getByRole("button", { name: "Exits" }))
+		await user.click(screen.getByRole("button", { name: "Balances" }))
+		await waitFor(() => expect(registerButton().disabled).toBe(true))
+		expect(step().getByText("Your Ethereum wallet has the registration.")).toBeTruthy()
+	})
+
+	test("reads the keystore again after a sign-out, never the answer from before it", async () => {
+		const { user, control } = renderApp()
+		await signIn(user)
+		await user.click(screen.getByRole("button", { name: "Sign out" }))
+		control.unregisterOwner()
+		control.hangNext("register")
+		await clickSignIn(user)
+		await screen.findByText("Checking your pool registration…")
+		expect(screen.queryByText("Notes by label")).toBeNull()
+	})
+
+	test("keeps each account's keys apart", async () => {
+		const { user, control } = unregistered()
+		act(() => control.selectL1Account("sender"))
+		await clickSignIn(user)
+		await screen.findByText(/This account is registered with the pool/)
+		expect(screen.queryByTestId("register-step")).toBeNull()
+	})
+
 	test("is closed while another account is selected, and sends nothing", async () => {
 		const { user, control } = unregistered()
 		await clickSignIn(user)

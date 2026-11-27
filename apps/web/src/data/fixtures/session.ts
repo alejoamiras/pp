@@ -228,7 +228,8 @@ function registration(c: Ctx, live: () => void): Pick<Session, "registrationStep
 			live()
 			const fault = w.takeFault("register")
 			if (fault !== null) fail(fault)
-			const k = w.s.keystore ?? REGISTERED
+			if (w.takeHang("register")) await new Promise<never>(() => {})
+			const k = w.s.keystore?.[c.owner.toLowerCase()] ?? REGISTERED
 			if (k.authPolicy && k.viewingKey) return { status: "registered" }
 			const fn = k.authPolicy ? "setViewingKey" : "setAuthPolicy"
 			return {
@@ -255,9 +256,11 @@ function registration(c: Ctx, live: () => void): Pick<Session, "registrationStep
 			const key = s.fn === "setAuthPolicy" ? "authPolicy" : "viewingKey"
 			w.update((st) => {
 				st.l1Block++
-				if (s.fault !== "REVERTED") st.keystore = { ...(st.keystore ?? REGISTERED), [key]: true }
+				const owner = c.owner.toLowerCase()
+				if (s.fault !== "REVERTED")
+					st.keystore = { ...st.keystore, [owner]: { ...(st.keystore?.[owner] ?? REGISTERED), [key]: true } }
 			})
-			return { status: s.fault === "REVERTED" ? "reverted" : "success", blockNumber: BigInt(w.s.l1Block) }
+			return { status: s.fault === "REVERTED" ? "reverted" : "success", blockNumber: BigInt(w.s.l1Block), hash }
 		},
 	}
 }
