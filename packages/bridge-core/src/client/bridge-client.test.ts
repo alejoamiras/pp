@@ -175,5 +175,15 @@ describe("createBridgeClient", () => {
 		expectTypeOf<Parameters<BridgeClient["claimPayload"]>>().toEqualTypeOf<[BridgeSession, BridgeReceipt]>()
 		expectTypeOf<Parameters<BridgeClient["recover"]>>().toEqualTypeOf<[BridgeSession, AztecAddress]>()
 		expectTypeOf<Parameters<BridgeClient["records"]>>().toEqualTypeOf<[BridgeSession]>()
+		expectTypeOf<keyof Parameters<BridgeClient["ragequitPayload"]>[0]>().toEqualTypeOf<"payee" | "amount" | "label">()
+		expectTypeOf<keyof Parameters<BridgeClient["exitPublicPayload"]>[0]>().toEqualTypeOf<"payee" | "amount">()
+		expectTypeOf<keyof Parameters<BridgeClient["exitTickets"]>[0]>().toEqualTypeOf<"payee" | "fromBlock">()
+	})
+
+	it("refuses to build a public exit, after the deployment check, with the final signature", async () => {
+		const t = setup()
+		const payee: Address = "0x000000000000000000000000000000000000bEEF"
+		await expect(t.client.exitPublicPayload({ payee, amount: 1n })).rejects.toMatchObject({ code: "STAGE_UNSUPPORTED" })
+		expect(t.bindingReads()).toBeGreaterThan(0)
 	})
 })

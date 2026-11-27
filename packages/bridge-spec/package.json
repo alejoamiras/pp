@@ -6,7 +6,8 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./claim-secret": "./src/claim-secret.ts",
-		"./birth": "./src/birth.ts"
+		"./birth": "./src/birth.ts",
+		"./vectors/v1.json": "./vectors/v1.json"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",

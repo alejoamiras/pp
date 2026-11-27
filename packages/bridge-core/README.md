@@ -12,7 +12,7 @@ package re-derives it rather than trusting a file.
 
 | Import | What |
 |---|---|
-| `@pp/bridge-core` | `src/index.ts`: the bridge client (`openBridgeSession`, `prepareBridgeSpend`, `createBridgeClient`), hub reads, exit consumption on L1, readiness, hashes, secrets, journal. |
+| `@pp/bridge-core` | `src/index.ts`: the bridge client (`openBridgeSession`, `prepareBridgeSpend`, `createBridgeClient`), hub reads, readiness, hashes, secrets, journal. |
 | `@pp/bridge-core/artifacts` | The committed hub and labelled-token artifacts. |
 | `@pp/bridge-core/sandbox` | `scripts/sandbox/`: boot a local network, deploy a generation, read its bindings back. Also the generation manifest schema (`manifest-v2`), a per-run handoff. Node only. |
 
@@ -20,9 +20,9 @@ package re-derives it rather than trusting a file.
 
 | File | Purpose |
 |---|---|
-| `client/` | The bridge client: the session and its keys, the sealed journal, the spend checks, `submit` and its resolver, claims, `records` and `recover`. `createBridgeClient` wires them over the manifest's RPC and node and checks the deployment once. |
+| `client/` | The bridge client: the session and its keys, the sealed journal, the spend checks, `submit` and its resolver, claims, `records` and `recover`, and exits (`ragequitPayload`, `exitTickets`, `exitStatus`, `settle`). `createBridgeClient` wires them over the manifest's RPC and node and checks the deployment once. |
 | `hub-l2.ts` | Reads of the L2 hub: `hubAt`, and an ERC-20's token binding through `token_for` or straight from public storage (`hubBindingAt`). |
-| `flows.ts` / `l1-receipt.ts` / `l1-to-l2-readiness.ts` | `consumeWithdrawal` (the pre-v1 portal's `withdraw`; v1 portals settle with `settleRagequit` and `settlePublicExit`) + `isOutboxMessageConsumed` for exits, the resilient receipt wait, and when an L1→L2 message becomes consumable. |
+| `l1-receipt.ts` / `l1-to-l2-readiness.ts` | The resilient receipt wait, and when an L1→L2 message becomes consumable. |
 | `hub-token.ts` / `portal-address.ts` | The L2 token the hub derives for an ERC-20 (`LabelledToken`, `deployer = hub`, `salt = erc20`, the hub's ASP registry among its constructor arguments) and the portal clone the factory derives (salt = token). Both pinned against the on-chain derivations. |
 | `register-hash.ts` / `claim-secret.ts` / `content-hash.ts` | The three-toolchain keystones (Solidity ↔ Noir ↔ TS): the factory's `register` message, the recipient-committed private-claim secret (re-exported from `@pp/bridge-spec/claim-secret`), the deposit/withdraw content hashes. |
 | `factory-abi.ts` / `factory-registry.ts` / `erc20.ts` | Hand-written ABIs pinned against the forge artifacts; the factory's frozen registration; gas-capped ERC-20 metadata reads decoded from the factory's own bytes. |
@@ -54,10 +54,16 @@ are trusted beyond that.
 
 Fees: every L2 transaction the client builds pays through the SponsoredFPC: the claim, and with it
 the recipient's account deployment, which the wallet sends in the same transaction (`preflight`
-only simulates the sponsored path). No option takes a fee or a payment method, so the
-holder's own Fee Juice never pays: the fee payer is public, and paying from the account would link
-it to its bridge. This holds only where a sponsored FPC exists, which today means the local network
-and the testnet.
+only simulates the sponsored path), and each ragequit burn. No option takes a fee or a payment
+method, so the holder's own Fee Juice never pays: the fee payer is public, and paying from the
+account would link it to its bridge or to its exit ticket. This holds only where a sponsored FPC
+exists, which today means the local network and the testnet.
+
+Exits: `exitTickets` reads the hub's `RagequitTicket` and `PublicExitTicket` events for the
+manifest's token and matches each to its own Outbox message, so identical exits in one transaction
+settle separately. `exitStatus` and `settle` key a ticket by its witness's `(epoch, leafId)`, never
+by content. `exitPublicPayload` throws `STAGE_UNSUPPORTED`: this client does not build the hub's
+`exit_public` yet, though it reads and settles a public exit's ticket.
 
 ## The local network
 

@@ -15,7 +15,8 @@ const PORTAL_CREATED = getAbiItem({ abi: PORTAL_FACTORY_ABI, name: "PortalCreate
 /** What a manifest names for one bridge generation, copied out of it. */
 export type NamedDeployment = Omit<BridgeDeployment, "rollupVersion"> & { factory: Address; hub: Hex }
 
-export type ClientDeployment = BridgeDeployment & { id: string }
+/** A checked deployment; `outbox` is the Outbox the portal and the node both name. */
+export type ClientDeployment = BridgeDeployment & { id: string; outbox: Address }
 
 export type DeploymentReader = BindingsClient & Pick<PublicClient, "getChainId" | "getBlockNumber" | "getLogs">
 
@@ -59,6 +60,6 @@ export function verifyDeployment(reader: DeploymentReader, node: DeploymentNode,
 		)
 		if (!created.length) throw new BridgeClientError("DEPLOYMENT_MISMATCH")
 		const { factory: _, ...rest } = d
-		return { ...rest, rollupVersion: rollup.rollupVersion, id: deploymentId(d) }
+		return { ...rest, rollupVersion: rollup.rollupVersion, outbox: rollup.outbox, id: deploymentId(d) }
 	})
 }
