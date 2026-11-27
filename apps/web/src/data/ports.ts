@@ -213,6 +213,7 @@ export interface AllowListView {
 }
 
 /** The running check's tree build: `hashed` of `total` hashes. */
+/** A running check; `total` is 0 until a tree build starts, while the list downloads and loads. */
 export interface AllowListProgress {
 	hashed: number
 	total: number

@@ -20,7 +20,9 @@ function AllowListProgressLine() {
 	if (p === null) return null
 	return (
 		<span data-testid="allow-list-progress" className="flex flex-wrap items-center gap-2 text-meta text-ink-2" role="status">
-			{`Checking the allow list: ${p.hashed.toLocaleString("en")} of ${p.total.toLocaleString("en")} hashed`}
+			{p.total === 0
+				? "Checking the allow list…"
+				: `Checking the allow list: ${p.hashed.toLocaleString("en")} of ${p.total.toLocaleString("en")} hashed`}
 			<ActionButton onClick={() => source.allowList.cancel()}>Cancel</ActionButton>
 		</span>
 	)

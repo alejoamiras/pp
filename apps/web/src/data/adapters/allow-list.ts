@@ -27,6 +27,8 @@ const NODE_TIMEOUT_MS = 10_000
 export interface JobWorker {
 	post(req: JobRequest): void
 	onReply(f: (reply: JobReply) => void): void
+	/** The worker failed to load, crashed, or sent a message that could not be read. */
+	onError(f: () => void): void
 	terminate(): void
 }
 
@@ -48,6 +50,10 @@ export function browserWorker(): JobWorker {
 	return {
 		post: (req) => w.postMessage(req),
 		onReply: (f) => w.addEventListener("message", (e: MessageEvent<JobReply>) => f(e.data)),
+		onError(f) {
+			w.addEventListener("error", () => f())
+			w.addEventListener("messageerror", () => f())
+		},
 		terminate: () => w.terminate(),
 	}
 }
@@ -163,6 +169,14 @@ class StackAllowList implements AllowListPort {
 			if (reply.kind === "progress") this.progress({ hashed: reply.hashed, total: reply.total })
 			else this.answer?.(reply)
 		})
+		// A dead worker never answers: the waiting check fails as unavailable, and the next one starts afresh.
+		w.onError(() => {
+			if (w !== this.worker) return
+			w.terminate()
+			this.worker = null
+			this.loaded = null
+			this.answer?.({ kind: "failed", failure: "NOT_LOADED" })
+		})
 		this.worker = w
 		return w
 	}
@@ -223,6 +237,8 @@ class StackAllowList implements AllowListPort {
 		if (held) throw new AllowListError(held.code, this.waitLeft(key, held))
 		const abort = new AbortController()
 		this.active = abort
+		// Shown, with its Cancel, from the start: the download and the load come before any hash.
+		this.progress({ hashed: 0, total: 0 })
 		try {
 			await this.ensureLoaded(view, key, abort.signal)
 			const nowSec = view.nowSec + PROVING_BUDGET_SEC

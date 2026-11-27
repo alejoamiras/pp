@@ -58,9 +58,10 @@ function chain() {
 
 /** In-process workers over the real job code; `hold` keeps every check unanswered. */
 function workers(o: { hold?: boolean } = {}) {
-	const made: { requests: JobRequest[]; terminated: boolean }[] = []
+	const made: { requests: JobRequest[]; terminated: boolean; crash(): void }[] = []
 	const factory = (): JobWorker => {
-		const log = { requests: [] as JobRequest[], terminated: false }
+		let crash = () => {}
+		const log = { requests: [] as JobRequest[], terminated: false, crash: () => crash() }
 		made.push(log)
 		let reply: Parameters<JobWorker["onReply"]>[0] = () => {}
 		const jobs = snapshotJobs((r) => reply(r))
@@ -71,6 +72,9 @@ function workers(o: { hold?: boolean } = {}) {
 			},
 			onReply(f) {
 				reply = f
+			},
+			onError(f) {
+				crash = f
 			},
 			terminate() {
 				log.terminated = true
@@ -162,6 +166,24 @@ describe("the stack's allow list", () => {
 		void r.port.check(view, 11n, 0).catch(() => {})
 		await vi.waitFor(() => expect(r.w.made).toHaveLength(2))
 		expect(r.s.bot).toHaveLength(2)
+	})
+
+	test("a worker that dies fails its check as unavailable, frees the queue behind it, and the next check starts a new one", async () => {
+		const r = rig({ hold: true })
+		r.s.snapshots.set(7n, body(7n))
+		const view = { record: recordOf(7n), nowSec: 1_100n }
+		const progress: unknown[] = []
+		r.port.onProgress((p) => progress.push(p))
+		const held = r.port.check(view, 11n, 0)
+		const queued = r.port.check(view, 22n, 0)
+		await vi.waitFor(() => expect(progress[0]).toEqual({ hashed: 0, total: 0 }))
+		await vi.waitFor(() => expect(r.w.made[0]?.requests.some((q) => q.kind === "check")).toBe(true))
+		r.w.made[0]?.crash()
+		await expect(held).rejects.toMatchObject({ code: "LIST_UNAVAILABLE" })
+		expect(r.w.made[0]?.terminated).toBe(true)
+		await vi.waitFor(() => expect(r.w.made).toHaveLength(2))
+		r.w.made[1]?.crash()
+		await expect(queued).rejects.toMatchObject({ code: "LIST_UNAVAILABLE" })
 	})
 
 	test("Cancel also ends a download still under way", async () => {
