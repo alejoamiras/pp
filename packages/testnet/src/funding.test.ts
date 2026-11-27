@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest"
-import { FUNDING_GAS, fundingPlan, needOf } from "./funding"
+import { FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, needOf } from "./funding"
 
 describe("fundingPlan", () => {
-	it("tops each key up to its budget at twice the fee and counts the deployer's own budget in the total", () => {
+	it("tops each key up to its budget at twice the fee, floored at 1 gwei, and counts the deployer's own budget in the total", () => {
 		const fee = 3n
 		const need = needOf("guardian", fee)
-		expect(need).toBe(FUNDING_GAS.guardian * fee * 2n)
+		expect(need).toBe(FUNDING_GAS.guardian * FEE_FLOOR_WEI * 2n)
+		expect(needOf("guardian", 5n * FEE_FLOOR_WEI)).toBe(FUNDING_GAS.guardian * 10n * FEE_FLOOR_WEI)
 		const plan = fundingPlan(
 			[
 				{ role: "guardian", address: "0x0000000000000000000000000000000000000001", balance: need + 1n },

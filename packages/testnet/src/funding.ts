@@ -7,17 +7,19 @@ import type { TestnetDeployment } from "./schema"
  */
 export const FUNDING_GAS = {
 	l1Deployer: 8_000_000n,
-	poolDeployer: 60_000_000n,
+	poolDeployer: 40_000_000n,
 	aspPostman: 3_000_000n,
 	guardian: 500_000n,
 	canaryOwner: 5_000_000n,
-	canarySender: 2_000_000n,
+	canarySender: 5_000_000n,
 } as const satisfies Record<string, bigint>
 
 export type FundedRole = keyof typeof FUNDING_GAS
 
 /** Each budget is priced at twice the fee estimate when funded, so a fee spike mid-run still clears. */
 export const FEE_MARGIN = 2n
+/** Sepolia's fee sits near zero for hours, so pricing at today's estimate alone would underfund every key after a spike. */
+export const FEE_FLOOR_WEI = 1_000_000_000n
 
 export type Recipient = { role: Exclude<FundedRole, "l1Deployer">; address: Address }
 
@@ -34,7 +36,8 @@ export function recipientsOf(e: NonNullable<TestnetDeployment["expected"]>): Rec
 	return out
 }
 
-export const needOf = (role: FundedRole, maxFeePerGas: bigint): bigint => FUNDING_GAS[role] * maxFeePerGas * FEE_MARGIN
+export const needOf = (role: FundedRole, maxFeePerGas: bigint): bigint =>
+	FUNDING_GAS[role] * (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN
 
 export type Plan = { sends: (Recipient & { balance: bigint; amount: bigint })[]; deployerNeed: bigint; total: bigint }
 

@@ -9,7 +9,7 @@ import { type ParseArgsConfig, parseArgs } from "node:util"
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import { laggingTolerant, PUBLIC_CHAIN_TIMING } from "@pp/bridge-core"
 import { createPublicClient, http, type PublicClient } from "viem"
-import { assertL1Chain, assertNode, assertTransport, GuardError, type Mode } from "../guards"
+import { assertL1Chain, assertNode, assertNoSeed, assertTransport, GuardError, type Mode } from "../guards"
 import { redact } from "../redact"
 import { parseDeployment, requireSections, type Section, type TestnetDeployment } from "../schema"
 
@@ -118,6 +118,7 @@ export function logLine(line: string): void {
 /** Runs a CLI body: a guard refusal exits 2 with its reason, any other failure 1, and `body`'s code otherwise. */
 export async function main(body: () => Promise<number | undefined>): Promise<never> {
 	try {
+		assertNoSeed(process.env)
 		process.exit((await body()) ?? 0)
 	} catch (e) {
 		const refused = e instanceof GuardError

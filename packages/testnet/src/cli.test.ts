@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
-import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Fr } from "@aztec-labs/aztec.js/fields"
@@ -17,10 +17,10 @@ const OWN = JSON.parse(readFileSync(fileURLToPath(new URL("../deployments/testne
 type Run = { code: number | null; out: string }
 
 /** Runs a CLI under `home` with stdin closed; async, so this process keeps serving the fake L1. */
-function cli(name: string, args: string[], home: string): Promise<Run> {
+function cli(name: string, args: string[], home: string, extra: Record<string, string> = {}): Promise<Run> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [join(CLI, `${name}.ts`), ...args], {
-			env: { PATH: process.env.PATH, HOME: home },
+			env: { PATH: process.env.PATH, HOME: home, ...extra },
 			stdio: ["ignore", "pipe", "pipe"],
 		})
 		let out = ""
@@ -152,6 +152,13 @@ describe("keys", () => {
 		chmodSync(dirname(path), 0o750)
 		const loose = await cli("keys", [], home)
 		expect([loose.code, loose.out]).toEqual([2, expect.stringMatching(/mode 750/)])
+	}, 60_000)
+
+	it("refuses to run while SEED makes Aztec's randomness predictable, creating nothing", async () => {
+		const home = scratchHome()
+		const seeded = await cli("keys", [], home, { SEED: "seed-value-31337" })
+		expect([seeded.code, /refused: env: SEED is set/.test(seeded.out), seeded.out.includes("31337")]).toEqual([2, true, false])
+		expect(existsSync(dirname(keyFilePath(home)))).toBe(false)
 	}, 60_000)
 })
 

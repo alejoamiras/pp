@@ -3,7 +3,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { generatePrivateKey } from "viem/accounts"
 import { describe, expect, it } from "vitest"
-import { isKeyValue, KEY_NAMES, keyFilePath, loadKeys } from "./keyfile"
+import { generateKey, isKeyValue, KEY_NAMES, keyFilePath, loadKeys } from "./keyfile"
 import { RUN_KEYS } from "./keys"
 import { scratchHome, writeKeyFile } from "./test-support"
 
@@ -64,6 +64,18 @@ describe("the key file loader", () => {
 		expect(refusal(() => loadKeys(GUARDIAN, linked, UID))).toMatch(/cannot be opened \(ELOOP\)/)
 		expect(refusal(() => loadKeys(GUARDIAN, target, UID + 1))).toMatch(/belongs to uid/)
 		expect(refusal(() => loadKeys(GUARDIAN, keyFilePath(scratchHome()), UID))).toMatch(/run `keys`/)
+	})
+})
+
+describe("generateKey", () => {
+	it("draws from the given CSPRNG bytes: an L2 secret reduces 64 bytes into the field, an L1 key redraws out of range", () => {
+		const r = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001n
+		const l2 = generateKey("l2", (n) => new Uint8Array(n).fill(0xff))
+		expect(BigInt(l2)).toBe(((1n << 512n) - 1n) % r)
+		const draws = [new Uint8Array(32), new Uint8Array(32).fill(0xff), new Uint8Array(32).fill(0x11)]
+		expect(generateKey("l1", () => draws.shift() as Uint8Array)).toBe(`0x${"11".repeat(32)}`)
+		expect(draws).toHaveLength(0)
+		expect([isKeyValue("l1", generateKey("l1")), isKeyValue("l2", generateKey("l2"))]).toEqual([true, true])
 	})
 })
 

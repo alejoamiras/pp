@@ -4,15 +4,11 @@
 // name's public address and whether this run created it; no value is ever printed.
 import { constants, lstatSync, mkdirSync, readFileSync } from "node:fs"
 import { dirname } from "node:path"
-import { Fr } from "@aztec-labs/aztec.js/fields"
-import { generatePrivateKey } from "viem/accounts"
 import { addressesOf } from "../accounts"
 import { GuardError } from "../guards"
-import { appendKeyLines, assertKeyDir, isKeyValue, KEY_NAMES, type KeySpec, keyFilePath, openKeyFile, parseKeyLines } from "../keyfile"
+import { appendKeyLines, assertKeyDir, generateKey, isKeyValue, KEY_NAMES, keyFilePath, openKeyFile, parseKeyLines } from "../keyfile"
+import { remember } from "../redact"
 import { main, report } from "./common"
-
-const generate = (kind: KeySpec["kind"]): `0x${string}` =>
-	kind === "l1" ? generatePrivateKey() : (Fr.random().toString() as `0x${string}`)
 
 const exists = (path: string) => {
 	try {
@@ -40,7 +36,8 @@ await main(async () => {
 			throw new GuardError("keys", `${name} in ${path} is not a valid ${kind} key; fix or remove that line`)
 	}
 	const created = KEY_NAMES.filter((k) => !names.includes(k.name))
-	for (const { name, kind } of created) values.set(name, generate(kind))
+	for (const { name, kind } of created) values.set(name, generateKey(kind))
+	remember(values.values())
 	appendKeyLines(
 		fd,
 		text,

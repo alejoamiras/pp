@@ -83,6 +83,15 @@ export async function assertNode(node: { getNodeInfo(): Promise<NodeInfoLike> },
 	same("outbox", a.outboxAddress.toString(), n.outbox)
 }
 
+/**
+ * `SEED` turns Aztec's foundation randomness (secrets, salts, note randomness in its wallet) into a
+ * seeded PRNG, so no testnet command runs with it set. Its value is never read into a message.
+ * @throws GuardError `env`
+ */
+export function assertNoSeed(env: NodeJS.ProcessEnv): void {
+	if (env.SEED !== undefined) throw new GuardError("env", "SEED is set, which makes Aztec's randomness predictable; unset it")
+}
+
 /** Anvil's well-known accounts, the only L1 keys a local rehearsal accepts. */
 const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"
 const ANVIL_ACCOUNTS = 32

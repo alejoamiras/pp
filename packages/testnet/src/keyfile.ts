@@ -2,6 +2,7 @@
  * The one key file, `~/.config/pp/testnet.env`: `NAME=value` lines, written by `keys` and read only here.
  * No value ever reaches an error: a refusal names the file, a line number or a variable, never content.
  */
+import { randomBytes } from "node:crypto"
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, type Stats, writeSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -38,6 +39,21 @@ export function isKeyValue(kind: KeySpec["kind"], v: string): v is `0x${string}`
 	if (!isHex(v) || v.length !== 66) return false
 	const n = BigInt(v)
 	return kind === "l1" ? n > 0n && n < SECP256K1_N : n < BN254_R
+}
+
+/**
+ * A fresh key from the OS's CSPRNG. Never `Fr.random()` or anything else on Aztec's foundation
+ * randomness, which turns into a seeded PRNG when `SEED` is set. An L2 secret reduces 64 bytes into the
+ * field (bias below 2^-250); an L1 key redraws until it lies in [1, n).
+ */
+export function generateKey(kind: KeySpec["kind"], bytes: (n: number) => Uint8Array = randomBytes): `0x${string}` {
+	const hex = (n: bigint) => `0x${n.toString(16).padStart(64, "0")}` as const
+	const draw = (n: number) => BigInt(`0x${Buffer.from(bytes(n)).toString("hex")}`)
+	if (kind === "l2") return hex(draw(64) % BN254_R)
+	for (;;) {
+		const k = draw(32)
+		if (k > 0n && k < SECP256K1_N) return hex(k)
+	}
 }
 
 const NAME = /^[A-Z][A-Z0-9_]*$/
