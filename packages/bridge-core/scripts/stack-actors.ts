@@ -98,13 +98,17 @@ export type Device = {
 
 /**
  * A device: an embedded wallet that knows the SponsoredFPC (unless `knowsFpc` is false), the hub and
- * its token. Its store is `dataDirectory` when given, else one this process owns and removes.
+ * its token. Its store is `dataDirectory` when given, else one this process owns and removes. It holds
+ * sandbox keys unless `sandboxKeysOnly` is false, which needs a tmpfs `/dev/shm` (`createL2Wallet`).
  */
-export async function device(m: BridgeStack, o: { dataDirectory?: string; knowsFpc?: boolean } = {}): Promise<Device> {
+export async function device(
+	m: BridgeStack,
+	o: { dataDirectory?: string; knowsFpc?: boolean; sandboxKeysOnly?: boolean } = {},
+): Promise<Device> {
 	const wallet = await createL2Wallet({
 		nodeUrl: m.aztecNode,
 		proverEnabled: false,
-		sandboxKeysOnly: true,
+		sandboxKeysOnly: o.sandboxKeysOnly ?? true,
 		dataDirectory: o.dataDirectory,
 	})
 	try {

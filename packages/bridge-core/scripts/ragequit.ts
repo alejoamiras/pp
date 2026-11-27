@@ -8,10 +8,11 @@
  *   bun run ragequit [--amount <n>] [--label <n>] [--payee <address>]
  *   bun run ragequit --settle-only --payee <address>
  *
- * `PP_AZTEC_SECRET` is the account's local-network secret and `PP_L1_KEY` the settling Ethereum key:
- * read only after the manifest and the live RPC and node show chain 31337, never printed. The payee
- * defaults to `PP_L1_KEY`'s address. On a host without a tmpfs `/dev/shm` the wallet store holding the
- * secret's keys sits on disk until exit.
+ * `PP_AZTEC_SECRET` is the account's secret and `PP_L1_KEY` the settling Ethereum key: read only after
+ * the manifest and the live RPC and node show chain 31337, never printed. The payee defaults to
+ * `PP_L1_KEY`'s address. Chain 31337 bounds where the secret is used, not what it is worth elsewhere, so
+ * its wallet store is a real-key one: in a tmpfs `/dev/shm`, never on disk, and the CLI refuses to burn
+ * on a host without one.
  */
 import { readFileSync } from "node:fs"
 import { parseArgs } from "node:util"
@@ -29,6 +30,7 @@ import type { ExitTicket } from "../src/client/types"
 import { parseStackManifest, requireBlocks } from "../src/stack-manifest"
 import { createNode } from "./script-bootstrap"
 import { account, device, memoryJournal, send } from "./stack-actors"
+import { storeRoot } from "./wallet-store"
 
 const LOCAL_CHAIN_ID = 31337
 /** `private_notes_by_label` returns at most this many values per call (`VALUES_PER_PAGE`). */
@@ -214,7 +216,7 @@ type Holder = {
 
 /** The account `secret` derives, on a fresh device that knows the SponsoredFPC, the hub and its token. */
 async function holderOf(m: Manifest, secret: Hex): Promise<Holder> {
-	const d = await device(m)
+	const d = await device(m, { sandboxKeysOnly: false })
 	try {
 		const { address } = await account(d, secret)
 		const token = await Contract.at(d.token, labelledTokenArtifact, d.wallet as never)
@@ -307,6 +309,15 @@ async function run(a: RagequitArgs, m: Manifest, keys: Keys, log: (s: string) =>
 	}
 }
 
+/** Refuses before any key is read where the secret's wallet store could not stay off disk. */
+function realKeyStore(): void {
+	try {
+		storeRoot({ sandboxKeysOnly: false })
+	} catch {
+		throw new UsageError("burning needs a tmpfs /dev/shm to keep PP_AZTEC_SECRET's wallet store off disk")
+	}
+}
+
 /**
  * What a failure prints. The client's codes (with an uncertain settle's L1 hash) and the CLI's own
  * words carry public values only. Once keys are loaded (`raw` false), a lower layer's message never
@@ -342,6 +353,7 @@ export async function main(argv: string[], env: Record<string, string | undefine
 	try {
 		if ((await chains(m)).some((id) => id !== LOCAL_CHAIN_ID))
 			throw new UsageError(`the manifest's RPC or node is not on the local chain ${LOCAL_CHAIN_ID}`)
+		if (!a.settleOnly) realKeyStore()
 		keys = keysFrom(env, a.settleOnly)
 	} catch (e) {
 		return fail(e, true)
