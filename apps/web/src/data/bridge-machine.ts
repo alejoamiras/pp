@@ -158,7 +158,9 @@ const HANDLERS: Handlers = {
 		at(s, "claimable", "ready") || failedWith(s, "claim") ? { ...s, step: "claiming", phase: "sending", failure: null } : s,
 	"claim-declined": (s) =>
 		at(s, "claiming", "sending") ? notice({ ...s, step: "claimable", phase: "ready" }, { kind: "claim-declined" }) : s,
-	"claim-pending": (s, e) => (at(s, "claiming", "sending") ? { ...s, phase: "pending", claimTx: e.txHash } : s),
+	// From `claimable`: a record reopened while its claim is still out.
+	"claim-pending": (s, e) =>
+		at(s, "claiming", "sending") || at(s, "claimable", "ready") ? { ...s, step: "claiming", phase: "pending", claimTx: e.txHash } : s,
 	claimed: (s) => (at(s, "claiming", "sending", "pending") ? { ...s, step: "claimed", phase: "done" } : s),
 	failed: (s, e) => (s.step === "claimed" ? s : { ...s, step: { error: e.failure.code }, phase: "failed", failure: e.failure }),
 	reset: () => initialBridge,

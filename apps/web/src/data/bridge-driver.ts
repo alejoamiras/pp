@@ -4,7 +4,7 @@
  * can hang without an error. A preflight is re-run at Submit once it is 9 minutes old, since bridge-core
  * keeps one for 10.
  */
-import { type Address, isAddressEqual } from "viem"
+import { type Address, type Hex, isAddressEqual } from "viem"
 import type { AztecAddress, BridgeRecordView, PoolNoteView } from "./stack-types"
 import type { BridgeEvent, Failure } from "./bridge-machine"
 import { offerFor } from "./bridge-machine"
@@ -130,8 +130,8 @@ interface State {
 	inFlight: ReadonlySet<bigint>
 	/** Notes spent outside this bridge: they never send again from this page. */
 	closed: Map<bigint, UiCode>
-	/** Records with a claim under way, or one the chain dropped or never answered. */
-	claims: Set<string>
+	/** Records with a claim under way, or one the chain dropped or never answered, with its hash when known. */
+	claims: Map<string, Hex | null>
 }
 
 /** Why Submit must not start, or `null`. Each refusal happens before any call into the session. */
@@ -356,6 +356,9 @@ async function submit(
 }
 
 async function follow(st: State, record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal): Promise<void> {
+	// The journal still says claimable while a claim is out; the screen must show it pending, not offer it.
+	const claimTx = st.claims.get(record.id)
+	if (claimTx !== undefined) return signal.aborted ? undefined : dispatch({ type: "claim-pending", txHash: claimTx })
 	if (record.step !== "mined" && record.step !== "submitted") return
 	try {
 		await st.deps.session.waitClaimable(record.id, signal)
@@ -400,7 +403,7 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
 		epoch: ctx.epoch as number,
 		recipient: record.recipient,
 	}
-	st.claims.add(record.id)
+	st.claims.set(record.id, null)
 	dispatch({ type: "claiming" })
 	let handedOff = false
 	const handoff = () => {
@@ -414,7 +417,8 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
 		event = claimOutcome(st, err, c, handedOff)
 	}
 	// A pending claim keeps its record blocked: the page never resends it.
-	if (event.type !== "claim-pending") st.claims.delete(record.id)
+	if (event.type === "claim-pending") st.claims.set(record.id, event.txHash)
+	else st.claims.delete(record.id)
 	if (!signal.aborted) dispatch(event)
 }
 
@@ -423,7 +427,7 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
  * waits for it to become claimable (also after a reload); `claim` sends it from its recipient.
  */
 export function createBridgeDriver(deps: DriverDeps) {
-	const st: State = { deps, seq: 0, binding: null, active: new Set(), inFlight: new Set(), closed: new Map(), claims: new Set() }
+	const st: State = { deps, seq: 0, binding: null, active: new Set(), inFlight: new Set(), closed: new Map(), claims: new Map() }
 	return {
 		/** Preflight and warm-up for the connected recipient, ahead of Submit. */
 		preflight: (recipient: string, dispatch: Dispatch, signal: AbortSignal) => preflight(st, recipient, dispatch, signal),

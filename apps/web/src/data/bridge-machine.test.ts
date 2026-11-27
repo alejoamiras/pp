@@ -62,6 +62,7 @@ describe("the bridge machine", () => {
 		["claimable, claiming", S.claimable, { type: "claiming" }, ["claiming", "sending"]],
 		["claiming, wallet declines", S.claiming, { type: "claim-declined" }, ["claimable", "ready"]],
 		["claiming, dropped", S.claiming, { type: "claim-pending", txHash: "0xaa" }, ["claiming", "pending"]],
+		["claimable, reopened with its claim out", S.claimable, { type: "claim-pending", txHash: null }, ["claiming", "pending"]],
 		["claiming, claimed", S.claiming, { type: "claimed" }, ["claimed", "done"]],
 		["pending, claimed later", S.pending, { type: "claimed" }, ["claimed", "done"]],
 		["proving, failed", S.proving, fail("PROVE_TIMEOUT", "prove-again", "preparing"), [{ error: "PROVE_TIMEOUT" }, "failed"]],

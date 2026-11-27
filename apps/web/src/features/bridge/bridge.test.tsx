@@ -178,6 +178,24 @@ describe("the bridge screen", () => {
 		noteRow(NOTE).getByRole("button", { name: "Send again" })
 	})
 
+	test("a dropped claim reopened after another bridge still shows pending, with no Claim button", async () => {
+		const app = await openBridge()
+		await submit(app)
+		await landed()
+		act(() => app.control.advance(6))
+		await screen.findByText("Next, you")
+		app.control.failNext("claim", "DROPPED")
+		await app.user.click(screen.getByRole("button", { name: "Claim on Aztec" }))
+		await screen.findByText("Aztec has not included the claim yet")
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		const [change] = await screen.findAllByRole("button", { name: "Bridge to Aztec" })
+		await app.user.click(change as HTMLElement)
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		await app.user.click(within(await screen.findByTestId("bridge-record")).getByRole("button", { name: "Open" }))
+		await screen.findByText("Aztec has not included the claim yet")
+		expect(screen.queryByRole("button", { name: "Claim on Aztec" })).toBeNull()
+	})
+
 	test("a record whose transaction is pending at the RPC shows IN_FLIGHT with its hash and offers no send", async () => {
 		const store = memoryStore()
 		const first = await openBridge(store)
