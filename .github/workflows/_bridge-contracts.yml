@@ -38,9 +38,7 @@ jobs:
       # validated against. Bump it deliberately, re-running halmos when you do. 1.8.1 was tried
       # with halmos 0.3.3: 0 of 12 proofs pass, and the gas snapshot moves by 8%.
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: "1.7.1"
+        uses: ./.github/actions/setup-foundry
 
       # lib/ is gitignored; the script pins each library to a commit.
       - name: Install forge libraries
@@ -283,9 +281,7 @@ jobs:
 
       # Same pins as the forge job: the generation deploys from these artifacts.
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: "1.7.1"
+        uses: ./.github/actions/setup-foundry
 
       - name: Install forge libraries
         run: bash contracts/bridge/evm/scripts/install-libs.sh

@@ -8,10 +8,11 @@ description: >
 runs:
   using: composite
   steps:
+    # setup-foundry's script, from this action's directory: a nested `uses: ./…` resolves against
+    # the workspace instead.
     - name: Install Foundry
-      uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-      with:
-        version: "1.7.1"
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/../setup-foundry/install.sh"
 
     - name: Install forge libraries
       shell: bash

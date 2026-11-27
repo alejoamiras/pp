@@ -1,0 +1,13 @@
+name: setup-foundry
+description: >-
+  Foundry 1.7.1 (forge, cast, anvil, chisel) from its release archive, checked against the SHA-256
+  that install.sh commits, first on PATH; never foundryup. Linux X64 runners only. A composite
+  action runs install.sh from its own directory instead of naming this action in `uses:`: a nested
+  `./` action resolves against the workspace, which in the nightly holds another commit.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Foundry 1.7.1 from its checked archive
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/install.sh"

@@ -37,7 +37,10 @@ repository.
 - **Foundry 1.7.1 and halmos 0.3.3** for the L1 suites. Newer Foundry fails every halmos proof
   (setUp goes through a cheatcode halmos 0.3.3 lacks), so keep these two on your `PATH` for
   `contracts/bridge/evm`. The forge that Aztec bundles is used only to build the sandbox's
-  deploy artifacts.
+  deploy artifacts. CI installs Foundry through
+  [`setup-foundry`](.github/actions/setup-foundry/install.sh), which checks the release archive
+  against a committed SHA-256 and never runs `foundryup`; a bump changes the version and the hash
+  there.
 
 ## Fast loop
 

@@ -230,6 +230,26 @@ const AGGREGATOR_CHECKS: Record<string, string> = {
 // biome-ignore lint/suspicious/noExplicitAny: parsed-YAML shape is dynamic.
 const workflow = (file: string): any => Bun.YAML.parse(readFileSync(join(ROOT, ".github/workflows", file), "utf8"))
 
+type Step = { id?: string; if?: string; uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, unknown> }
+const actionSteps = (action: string): Step[] =>
+	Bun.YAML.parse(readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")).runs.steps
+
+/**
+ * The actions a composite action calls: through a nested `uses: ./.github/actions/<name>`, or by
+ * running `$GITHUB_ACTION_PATH/../<name>/<file>`, the one spelling of a sibling's path it may use.
+ */
+function actionsRunBy(action: string): string[] {
+	const text = readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")
+	const runs = (text.match(/(?:GITHUB_ACTION_PATH|action_path)\S*/g) ?? []).flatMap((ref) => {
+		if (!ref.includes("..")) return []
+		const name = /^GITHUB_ACTION_PATH\/\.\.\/([\w-]+)\/[\w.-]+"?$/.exec(ref)?.[1]
+		if (name === undefined) throw new Error(`${action}: ${ref} is not $GITHUB_ACTION_PATH/../<action>/<file>`)
+		return [name]
+	})
+	const uses = actionSteps(action).flatMap((step) => step.uses?.match(/^\.\/\.github\/actions\/([\w-]+)$/)?.[1] ?? [])
+	return [...new Set([...runs, ...uses])]
+}
+
 /** Files outside a package that its shipped source imports by relative path, repo-relative. */
 function importsOutside(pkg: string): string[] {
 	const src = join(ROOT, "packages", pkg, "src")
@@ -460,8 +480,26 @@ describe("CI behavior-gating guard", () => {
 			"patches/**",
 			".github/actions/setup-aztec/**",
 			".github/actions/setup-bun/**",
+			".github/actions/setup-foundry/**",
 		]) {
 			expect(contracts, `bridge-contracts must gate ${p}`).toContain(p)
+		}
+	})
+
+	// A composite action that runs a sibling's script names it in no `uses:`, so only this keeps the
+	// sibling gated wherever the caller is.
+	test("a filter that names an action also names every action it runs", () => {
+		expect(actionsRunBy("ppv2-fetch")).toEqual(["setup-foundry"])
+		expect(actionsRunBy("bridge-evm-build")).toEqual(["setup-foundry"])
+		const filters = FILTER_WORKFLOWS.flatMap((file) =>
+			Object.entries(filtersOf(file)).map(([key, patterns]) => ({ where: `${file} ${key}`, patterns })),
+		)
+		for (const { where, patterns } of filters) {
+			const actions = patterns.flatMap((p) => /^\.github\/actions\/([\w-]+)\/\*\*$/.exec(p)?.[1] ?? [])
+			for (const [action, dep] of actions.flatMap((a) => actionsRunBy(a).map((d) => [a, d] as const))) {
+				expect(existsSync(join(ROOT, ".github/actions", dep, "action.yml")), `${action} runs ${dep}`).toBe(true)
+				expect(patterns, `${where}: ${action} runs ${dep}`).toContain(`.github/actions/${dep}/**`)
+			}
 		}
 	})
 
@@ -589,15 +627,8 @@ describe("Noir crate manifest", () => {
 	})
 })
 
-type NightlyStep = {
-	id?: string
-	if?: string
-	uses?: string
-	run?: string
-	env?: Record<string, string>
-	with?: Record<string, unknown>
-	"timeout-minutes"?: number
-}
+type NightlyStep = Step & { "timeout-minutes"?: number }
+const NIGHTLY_ACTION = /^\.\/\.nightly-ci\/\.github\/actions\/([^/]+)$/
 type NightlyJob = { "timeout-minutes"?: number; "cache-mode"?: string; steps: NightlyStep[] }
 
 /** A nightly job is bounded, reads caches only, keeps no credentials and calls this commit's actions. */
@@ -610,9 +641,11 @@ function expectNightlyJobReadsOnly(name: string, job: NightlyJob): void {
 		if (uses.startsWith("actions/checkout@")) expect(step.with?.["persist-credentials"], uses).toBe(false)
 		if (uses.startsWith("./")) {
 			expect(uses, "composite actions come from this workflow's commit").toMatch(/^\.\/\.nightly-ci\//)
-			expect(step.with?.["cache-save"], uses).toBe("false")
+			// An action of `run:` steps alone never reaches the cache service, so it takes no cache-save.
+			const action = NIGHTLY_ACTION.exec(uses)?.[1]
+			if (action === undefined || actionSteps(action).some((s) => s.uses !== undefined))
+				expect(step.with?.["cache-save"], uses).toBe("false")
 		}
-		if (uses.startsWith("foundry-rs/foundry-toolchain@")) expect(step.with?.cache, uses).toBe(false)
 	}
 	expect(
 		job.steps.some((s) => s.run?.includes("bun run nightly")),
@@ -622,13 +655,11 @@ function expectNightlyJobReadsOnly(name: string, job: NightlyJob): void {
 
 /** Every caching step of a composite action is off, or saves nothing, when the caller passes `cache-save: false`. */
 function expectActionSavesNothing(action: string): void {
-	const steps: NightlyStep[] = Bun.YAML.parse(readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")).runs.steps
-	for (const step of steps) {
+	for (const step of actionSteps(action)) {
 		const uses = step.uses ?? ""
 		if (/^actions\/cache(\/save)?@/.test(uses))
 			expect(step.if, `${action}: a saving cache step must be off when cache-save is false`).toContain("inputs.cache-save != 'false'")
 		if (uses.startsWith("oven-sh/setup-bun@")) expect(step.with?.["no-cache"], action).toBe("${{ inputs.cache-save == 'false' }}")
-		if (uses.startsWith("foundry-rs/foundry-toolchain@")) expect(step.with?.cache, action).toBe(false)
 	}
 }
 
@@ -644,9 +675,10 @@ test("the nightly reads only: restore-only caches, this commit's actions, no cre
 	for (const [name, job] of jobs) expectNightlyJobReadsOnly(name, job)
 	// Every composite action the job calls, so a new one cannot bring a saving cache along.
 	const actions = jobs
-		.flatMap(([, job]) => job.steps.map((s) => s.uses?.match(/^\.\/\.nightly-ci\/\.github\/actions\/([^/]+)$/)?.[1]))
+		.flatMap(([, job]) => job.steps.map((s) => s.uses?.match(NIGHTLY_ACTION)?.[1]))
 		.filter((name): name is string => Boolean(name))
 	expect(actions).toContain("ppv2-fetch")
+	expect(actions).toContain("setup-foundry")
 	for (const action of actions) expectActionSavesNothing(action)
 })
 
@@ -708,6 +740,26 @@ test("the nightly takes suite names as data and uploads only reports and logs, o
 	const allowed = ["test-results/", "playwright-report/", "sandbox.log", "stack.log", "build-wallet.log", "build-app.log"]
 	expect(paths.filter((p) => !p.startsWith("!"))).toEqual(allowed.map((p) => base + p))
 	expect(paths.filter((p) => p.startsWith("!"))).toEqual([`!${base}real-wallet/**`])
+})
+
+// foundryup fetches an attestation at run time, and that endpoint's outage failed every job that
+// installed Foundry; setup-foundry checks the release archive against a committed hash instead.
+test("no workflow or action installs Foundry through foundryup or foundry-toolchain", () => {
+	const steps: [string, Step][] = [
+		...readdirSync(join(ROOT, ".github/workflows")).flatMap((file) =>
+			(Object.entries(workflow(file).jobs) as [string, { steps?: Step[] }][]).flatMap(([job, { steps }]) =>
+				(steps ?? []).map((step): [string, Step] => [`${file} ${job}`, step]),
+			),
+		),
+		...readdirSync(join(ROOT, ".github/actions")).flatMap((action) =>
+			actionSteps(action).map((step): [string, Step] => [action, step]),
+		),
+	]
+	expect(steps.some(([, step]) => step.uses?.endsWith("/setup-foundry"))).toBe(true)
+	for (const [where, step] of steps) {
+		expect(step.uses ?? "", where).not.toMatch(/^foundry-rs\/foundry-toolchain@/)
+		expect(step.run ?? "", where).not.toMatch(/foundryup/)
+	}
 })
 
 test("the unit-test workflow runs this suite", () => {
