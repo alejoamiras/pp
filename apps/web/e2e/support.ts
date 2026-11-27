@@ -1,11 +1,19 @@
 /**
  * What the web specs share: the watch every test ends on (zero CSP violations, zero page errors), the
- * wallet frame and its control hook, the connect flow and the pool sign-in. A function
+ * wallet frame and its control hook, the connect flow, the pool sign-in and a bridge claimed to the
+ * connected account. A function
  * passed to `evaluate` runs in the page, so each one reaches its hook on its own.
  */
-import type { Frame, Page } from "@playwright/test"
+import type { Frame, Locator, Page } from "@playwright/test"
+import { anvilKey } from "@pp/bridge-core/sandbox"
+import type { L1WalletControl } from "@pp/e2e-kit/fixtures/l1-wallet.ts"
 import { expect } from "@pp/e2e-kit/fixtures/test.ts"
 import type { TestWalletControl } from "@pp/e2e-kit/test-wallet/globals"
+import type { PoolNoteView } from "@pp/pool-client"
+import { formatAmount, plainAmount } from "../src/ui/format"
+import type { seededStack } from "./stack"
+
+type Seeded = Awaited<ReturnType<typeof seededStack>>
 
 declare global {
 	interface Window {
@@ -95,8 +103,69 @@ export async function chooseWallet(page: Page, o: WalletChoice): Promise<Frame> 
 	return frame
 }
 
+/** The bridge form of `commitment`'s row with `amount` typed in. */
+export async function openForm(page: Page, commitment: bigint, amount: string) {
+	await page.locator(`[data-testid="note-row"][data-commitment="${commitment}"]`).getByRole("button", { name: "Bridge to Aztec" }).click()
+	const form = page.getByTestId("bridge-form")
+	await form.getByLabel(/Amount to bridge/).fill(amount)
+	return form
+}
+
 /** Signs in to the pool as the Ethereum wallet's selected account, its owner, and waits for a note. */
 export async function signInToPool(page: Page): Promise<void> {
 	await page.getByTestId("eth-sign-in").click()
 	await expect(page.getByTestId("note-row").first()).toBeVisible()
+}
+
+/** Logs how long each step took since the previous one (`start` resets), so a spec's waits stay sized from measurements. */
+export function stepLog(spec: string): (name: string) => void {
+	let last = Date.now()
+	return (name) => {
+		const now = Date.now()
+		if (name !== "start") console.log(`[${spec}] ${name}: ${((now - last) / 1000).toFixed(2)} s`)
+		last = now
+	}
+}
+
+export interface ClaimedLabel {
+	/** The connected wallet's session frame. */
+	frame: Frame
+	/** The bridged label's row, once it shows the claimed amount. */
+	row: Locator
+}
+
+/**
+ * From a fresh page: signs in as the stack's user, connects `o.wallet`, bridges `o.amount` of `o.note`
+ * from the build's demo sender and claims it to the wallet's account.
+ */
+export async function bridgeAndClaim(
+	page: Page,
+	o: {
+		s: Seeded
+		note: PoolNoteView
+		amount: bigint
+		wallet: WalletChoice
+		l1: Pick<L1WalletControl, "setAccount">
+		step(name: string): void
+		wait: { claimable: number; claimed: number }
+	},
+): Promise<ClaimedLabel> {
+	const screen = page.getByTestId("bridge-screen")
+	await page.goto("/")
+	await o.l1.setAccount(anvilKey(o.s.stack.accounts.user.index))
+	await signInToPool(page)
+	const frame = await connectWallet(page, o.wallet)
+	const form = await openForm(page, o.note.commitment, plainAmount(o.amount, o.s.decimals))
+	await form.getByRole("button", { name: "Send from the local dev account" }).click()
+	o.step("start")
+	await form.getByRole("button", { name: "Bridge to Aztec" }).click()
+	await expect(screen).toHaveAttribute("data-step", "claimable", { timeout: o.wait.claimable })
+	o.step("claimable")
+	await screen.getByRole("button", { name: "Claim on Aztec" }).click()
+	await expect(screen).toHaveAttribute("data-step", "claimed", { timeout: o.wait.claimed })
+	o.step("claimed")
+	await screen.getByRole("button", { name: "Back to balances" }).last().click()
+	const row = page.locator(`[data-testid="label-row"][data-label="${o.note.label}"]`)
+	await expect(row).toContainText(formatAmount(o.amount, o.s.decimals, 2), { timeout: 30_000 })
+	return { frame, row }
 }

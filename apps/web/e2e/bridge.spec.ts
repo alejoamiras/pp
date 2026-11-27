@@ -14,7 +14,7 @@ import { DEMO_SENDER_ADDRESS } from "@pp/local-stack/accounts"
 import { messageOf } from "../src/data/errors"
 import { formatAmount, plainAmount } from "../src/ui/format"
 import { approvedNote, seededStack } from "./stack"
-import { connectWallet, signInToPool, submitted, watchPage } from "./support"
+import { connectWallet, openForm, signInToPool, stepLog, submitted, watchPage } from "./support"
 
 test.use({ family: "bridge", cells: 3, spares: 0 })
 test.skip(({ run }) => run.mode !== "stack", "the sandbox build bridges in the fixture world, which the unit suite covers")
@@ -25,21 +25,7 @@ test.skip(({ run }) => run.mode !== "stack", "the sandbox build bridges in the f
  */
 const WAIT = { mined: 45_000, claimable: 15_000, claimed: 90_000 }
 
-let last = 0
-/** Logs how long each step took since the previous one (`start` resets), so the waits stay sized from measurements. */
-function step(name: string): void {
-	const now = Date.now()
-	if (name !== "start") console.log(`[bridge-spec] ${name}: ${((now - last) / 1000).toFixed(2)} s`)
-	last = now
-}
-
-/** The bridge form of `commitment`'s row with `amount` typed in. */
-async function openForm(page: Page, commitment: bigint, amount: string) {
-	await page.locator(`[data-testid="note-row"][data-commitment="${commitment}"]`).getByRole("button", { name: "Bridge to Aztec" }).click()
-	const form = page.getByTestId("bridge-form")
-	await form.getByLabel(/Amount to bridge/).fill(amount)
-	return form
-}
+const step = stepLog("bridge-spec")
 
 /** Every value the page's storage holds, keys included, lower-cased. */
 const storageText = (page: Page) =>

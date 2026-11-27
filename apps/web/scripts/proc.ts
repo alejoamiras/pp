@@ -1,12 +1,13 @@
 /**
  * Child processes this package starts and stops by ownership: each one leads its own process group
  * and `stop` signals that group alone, so another agent's servers on the same host are never touched.
+ * A group also ends when the process that started it dies, by any death.
  */
-import { spawn } from "node:child_process"
 import { mkdirSync, mkdtempSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { spawnWatched } from "@pp/run-isolation/process"
 import { endGroup } from "@pp/run-isolation/process-group"
 
 export const APP_ROOT = fileURLToPath(new URL("..", import.meta.url))
@@ -22,12 +23,11 @@ export interface Group {
 	stop(): Promise<void>
 }
 
-export function startGroup(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; capture?: boolean } = {}): Group {
-	const child = spawn(cmd, args, {
-		cwd: o.cwd ?? APP_ROOT,
+/** Starts `cmd` in this process's working directory. */
+export function startGroup(cmd: string, args: string[], o: { env?: NodeJS.ProcessEnv; capture?: boolean } = {}): Group {
+	const child = spawnWatched(cmd, args, {
 		env: o.env ?? process.env,
-		detached: true,
-		stdio: o.capture ? ["ignore", "pipe", "pipe"] : "inherit",
+		stdio: o.capture ? ["ignore", "pipe", "pipe"] : ["inherit", "inherit", "inherit"],
 	})
 	const pid = child.pid
 	if (pid === undefined) throw new Error(`could not start ${cmd}`)
@@ -51,7 +51,7 @@ export function startGroup(cmd: string, args: string[], o: { cwd?: string; env?:
 
 /** `bun run <args>` in the app root, as its own group: how the kit itself runs `vite`. */
 export function bunRun(args: string[], o: { env?: NodeJS.ProcessEnv; capture?: boolean } = {}): Group {
-	return startGroup(process.execPath, ["run", ...args], o)
+	return startGroup(process.execPath, ["run", "--cwd", APP_ROOT, ...args], o)
 }
 
 /** A fresh directory under `~/.cache/pp/web/`: real disk, never `/tmp`. */

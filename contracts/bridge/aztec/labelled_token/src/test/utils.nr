@@ -101,6 +101,14 @@ pub unconstrained fn ragequit(s: Setup, from: AztecAddress, amount: u128, label:
     s.env.call_private(from, BridgeStub::at(s.stub).ragequit(s.token, amount, label));
 }
 
+/// The stub's screened exit burn of `from`'s notes, as the hub's private exit makes it.
+pub unconstrained fn exit_checked(s: Setup, from: AztecAddress, amount: u128, label: Field, path: LabelPath) {
+    s.env.call_private(
+        from,
+        BridgeStub::at(s.stub).exit_checked(s.token, amount, label, path.index, path.depth, path.siblings),
+    );
+}
+
 pub unconstrained fn labels(s: Setup, owner: AztecAddress) -> BoundedVec<(Field, u8, u128), 16> {
     s.env.execute_utility(LabelledToken::at(s.token).private_balances_by_label(owner, 0))
 }

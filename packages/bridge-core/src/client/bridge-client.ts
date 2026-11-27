@@ -6,6 +6,7 @@ import type { StackManifest } from "../stack-manifest"
 import { guarded, translate } from "./boundary"
 import { abortable, type ClaimNode, claimPayload, type WaitClaimableOptions, waitClaimable } from "./claim"
 import { type ClientDeployment, type DeploymentNode, type DeploymentReader, namedDeployment, verifyDeployment } from "./deployment"
+import { type ExitPrivateNode, type ExitPrivateRequest, exitPrivatePayload } from "./exit-private"
 import { exitPublicPayload } from "./exit-public"
 import { exitStatusOf, exitState } from "./exits"
 import { type ExitContext, type ExitNode, type ExitReader, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
@@ -52,6 +53,17 @@ export interface BridgeClient {
 	 * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`
 	 */
 	exitPublicPayload(a: { payee: Address; amount: bigint }): Promise<ExecutionPayload>
+	/**
+	 * The hub's `exit_private` of `amount` of the sender's `label` notes to `payee`, checked against
+	 * `path` (built from the registry record and its snapshot, e.g. with `@pp/label-paths`), paid by the
+	 * SponsoredFPC. Its ticket is a public exit's (`kind: "public"`, the content type, not an account),
+	 * so `exitTickets`, `exitStatus` and `settle` serve it unchanged. At most 8 notes of the label are
+	 * spent; the change keeps the label. `a`, path included, is read once, at the call.
+	 * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`;
+	 * `STAGE_UNSUPPORTED` when the deployment's hub or token is not this commit's or it has no registry
+	 * (`source` `HubClass`, `TokenClass`, `NoRegistry`)
+	 */
+	exitPrivatePayload(a: ExitPrivateRequest): Promise<ExecutionPayload>
 	/** The deployment token's ragequit and public exit tickets from L2 block `fromBlock` on, from chain data alone. */
 	exitTickets(a: { payee?: Address; fromBlock?: bigint }): Promise<ExitTicket[]>
 	/** `proving` until an Outbox root covers the ticket, then `ready`, then `settled` once the portal paid its exact leaf. */
@@ -62,7 +74,7 @@ export interface BridgeClient {
 
 export type ClientIo = {
 	reader: SubmitReader & DeploymentReader & ExitReader
-	node: ClaimNode & PreflightNode & DeploymentNode & ExitNode
+	node: ClaimNode & PreflightNode & DeploymentNode & ExitNode & ExitPrivateNode
 	store: KeyValueStore
 }
 
@@ -152,6 +164,19 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { tim
 		records: async (s) => records(await recordsContext(), s),
 		ragequitPayload: (a) => payload(() => ({ payee: a.payee, amount: a.amount, label: a.label }), ragequitPayload),
 		exitPublicPayload: (a) => payload(() => ({ payee: a.payee, amount: a.amount }), exitPublicPayload),
+		exitPrivatePayload: (a) =>
+			payload(
+				() => {
+					const p = a.path
+					return {
+						payee: a.payee,
+						amount: a.amount,
+						label: a.label,
+						path: { index: p.index, depth: p.depth, siblings: [...p.siblings] },
+					}
+				},
+				(deployment, x) => exitPrivatePayload({ deployment, node }, x),
+			),
 		exitTickets: (a) => exits((c) => exitTickets(c, a)),
 		exitStatus: (t) => exits(async (c) => exitStatusOf(await exitState(exitReads(c), t))),
 		settle: (t, l1) => exits((c) => settle(c, t, l1)),

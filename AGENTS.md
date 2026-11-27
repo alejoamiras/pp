@@ -20,7 +20,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 | [`packages/pool-client`](packages/pool-client/README.md) | `@pp/pool-client`: Privacy Pools v2 notes and a checked one-input spend to a processor, in Node, Bun and the browser; never submits. `@pp/pool-client/testing` seeds a running `pp-env up`. |
 | [`packages/run-isolation`](packages/run-isolation/README.md) | `@pp/run-isolation`: the primitives a local run uses to own its ports and processes: the host port registry and its lock, group-leader children that end with the process that spawned them and their teardown, and `./process-group`, which tells a running group from one of unreaped zombies. Node-only, no dependencies. |
 | [`packages/sepolia-fork`](packages/sepolia-fork/README.md) | `@pp/sepolia-fork`: the bridge's Ethereum side against the real Sepolia pool and Aztec testnet Inbox, on an anvil fork it owns at a pinned block, with the pins checked on the fork and live. |
-| [`packages/testnet`](packages/testnet/README.md) | `@pp/testnet`: the bridge on Sepolia and the Aztec testnet: deployment files per target, the key file outside the repository, and the guarded commands from `keys` to `canary` and `pause`. |
+| [`packages/testnet`](packages/testnet/README.md) | `@pp/testnet`: the bridge on Sepolia and the Aztec testnet: deployment files per target, the key file outside the repository, and the guarded commands from `keys` to `canary` and `pause`. `@pp/testnet/schema` imports only zod, so a browser build can read a deployment file and refuse unpinned endpoints. |
 | [`scripts/`](scripts) | CI-gating tests (`scripts/ci-cd/`), the complexity baseline, the absolute-path guard. |
 | [`.github/`](.github) | PR workflows, each with a `changes` filter and an exact-state aggregator. |
 
@@ -80,7 +80,7 @@ with warm package and toolchain caches.
 | Pool client, unit | `bun run --cwd packages/pool-client test` and `test:node` | 10 s |
 | Web server headers (preview and `serve`) | `bun run --cwd apps/web test:headers` (after `build`) | 12 s |
 | Web stack-build guard | `bun run --cwd apps/web check:stack-build` | 1 min |
-| Web e2e (local stack, both builds, Playwright) | `bun run --cwd apps/web e2e` (after `bun run demo:prepare`) | 8.5 min (5.6 min of tests) |
+| Web e2e (local stack, both builds, Playwright) | `bun run --cwd apps/web e2e` (after `bun run demo:prepare`) | 10 min (7.4 min of tests) |
 | Web e2e on the sandbox (fixture build) | `bun run --cwd packages/e2e-kit test:browser` | 5 min |
 | Real-wallet tier (the wallet's pinned release, local stack, Playwright) | `bun run --cwd packages/e2e-kit test:real-wallet` or `bun run nightly real-wallet`, either after `bun run demo:prepare` | 5.5 min |
 | Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |

@@ -1,11 +1,12 @@
 /**
  * The stack behind `#data`: the deployment and endpoints from the build's stack target, the asset's
  * decimals and symbol from the factory's registration, Ethereum through the page's injected wallet, chain time from both chains, the owner's session over
- * pool-client and the bridge client, and the token's views through the connected Aztec wallet. The
- * exit and allow-list ports have no stack adapter yet and refuse.
+ * pool-client and the bridge client, the token's views, its checked spends and the ragequit through
+ * the connected Aztec wallet, exit tickets over the bridge client, and the allow list from the
+ * registry's record and the bot's snapshots, checked in a worker.
  *
- * Everything that carries aztec.js, the contract artifacts or the bridge client loads on first use,
- * so the main chunk stays free of them.
+ * Everything that carries aztec.js, the contract artifacts, the bridge client or the allow list's
+ * reader loads on first use, so the main chunk stays free of them.
  */
 import { demoSender } from "#demo-sender"
 import { getAddress } from "viem"
@@ -39,7 +40,7 @@ function aztecAddress(value: string, field: string): AztecAddress {
 const deployment: Omit<Deployment, "decimals" | "symbol"> = {
 	id: `${manifest.chainId}:${manifest.bridge.portal.toLowerCase()}:${manifest.bridge.hub.toLowerCase()}`,
 	chainId: manifest.chainId,
-	stage: "2a",
+	stage: "2b",
 	portal: getAddress(manifest.bridge.portal),
 	hub: aztecAddress(manifest.bridge.hub, "bridge.hub"),
 	token: aztecAddress(manifest.bridge.token, "bridge.token"),
@@ -59,7 +60,7 @@ const loadConnector = (): Promise<RealConnector> =>
 	(connectorLoad ??= loadRealConnector(stageManifest(deployment.stage, deployment)).then((c) => (connector = c)))
 const current = (): HeldWallet | null => connector?.current() ?? null
 
-type AztecSide = { deps: AztecDeps; port: Pick<AztecPort, "balancesByLabel" | "notesByLabel"> }
+type AztecSide = { deps: AztecDeps; port: Pick<AztecPort, "balancesByLabel" | "notesByLabel" | "publicBalance"> }
 let aztecLoad: Promise<AztecSide> | undefined
 const loadAztec = (): Promise<AztecSide> =>
 	(aztecLoad ??= import("./aztec").then((m) => {
@@ -82,6 +83,20 @@ const loadSessions = (): Promise<SessionPort> =>
 		}),
 	))
 
+type ExitSide = Pick<AztecPort, "ragequit"> & ExitPort
+let exitsLoad: Promise<ExitSide> | undefined
+const loadExits = (): Promise<ExitSide> =>
+	(exitsLoad ??= Promise.all([import("./session"), loadAztec()]).then(([m, side]) =>
+		m.stackExits({ manifest, deployment, aztec: side.deps, notes: (owner, label) => side.port.notesByLabel(owner, label), l1 }),
+	))
+
+type SendSide = Pick<AztecPort, "transferPrivate" | "unshield">
+let sendsLoad: Promise<SendSide> | undefined
+const loadSends = (): Promise<SendSide> =>
+	(sendsLoad ??= Promise.all([import("./token-sends"), loadAztec()]).then(([m, side]) =>
+		m.stackTokenSends({ aztec: side.deps, allowList, sponsoredFpc: deployment.sponsoredFpc }),
+	))
+
 const sessions: SessionPort = {
 	open: async (a) => (await loadSessions()).open(a),
 	forget: async () => (await loadSessions()).forget(),
@@ -90,24 +105,52 @@ const sessions: SessionPort = {
 const aztec: AztecPort = {
 	balancesByLabel: async (owner) => (await loadAztec()).port.balancesByLabel(owner),
 	notesByLabel: async (owner, label) => (await loadAztec()).port.notesByLabel(owner, label),
-	publicBalance: unavailable("AztecPort.publicBalance"),
-	transferPrivate: unavailable("AztecPort.transferPrivate"),
-	unshield: unavailable("AztecPort.unshield"),
+	publicBalance: async (owner) => (await loadAztec()).port.publicBalance(owner),
+	transferPrivate: async (from, a, on) => (await loadSends()).transferPrivate(from, a, on),
+	unshield: async (from, a, on) => (await loadSends()).unshield(from, a, on),
 	shield: unavailable("AztecPort.shield"),
-	ragequit: unavailable("AztecPort.ragequit"),
+	ragequit: async (from, a, on) => (await loadExits()).ragequit(from, a, on),
 	exitPublic: unavailable("AztecPort.exitPublic"),
 }
-const exits: ExitPort = { tickets: unavailable("ExitPort.tickets"), settle: unavailable("ExitPort.settle") }
+const exits: ExitPort = {
+	tickets: async (payee) => (await loadExits()).tickets(payee),
+	settle: async (t, from, on) => (await loadExits()).settle(t, from, on),
+}
+/** The allow list loads on first use; its worker starts at the first check. */
+let allowLoad: Promise<AllowListPort> | undefined
+let allowPort: AllowListPort | null = null
+const progress = new Set<Parameters<AllowListPort["onProgress"]>[0]>()
+const loadAllowList = (): Promise<AllowListPort> =>
+	(allowLoad ??= import("./allow-list").then((m) => {
+		const port = m.stackAllowList({
+			nodeUrl: target.nodeUrl,
+			registry: aztecAddress(manifest.bridge.registry, "bridge.registry"),
+			botUrl: stack.botUrl,
+			timer: browserTimer,
+			worker: m.browserWorker,
+		})
+		port.onProgress((p) => {
+			for (const f of [...progress]) f(p)
+		})
+		allowPort = port
+		return port
+	}))
+
 const allowList: AllowListPort = {
-	current: unavailable("AllowListPort.current"),
-	state: () => {
-		throw new Error("AllowListPort.state has no stack adapter in this build")
+	current: async () => (await loadAllowList()).current(),
+	check: async (view, label, origin) => (await loadAllowList()).check(view, label, origin),
+	onProgress(f) {
+		progress.add(f)
+		return () => void progress.delete(f)
 	},
+	cancel: () => allowPort?.cancel(),
+	checkAgain: (view) => allowPort?.checkAgain(view) ?? true,
 }
 
 const ports: Omit<DataSource, "deployment"> = {
 	mode: "stack",
 	clock: stackClock(l1.reads, target.nodeUrl),
+	receipts: { aztec: async (txHash) => (await import("./aztec")).readReceipt((await loadAztec()).deps.node, txHash) },
 	timer: browserTimer,
 	l1,
 	sessions,

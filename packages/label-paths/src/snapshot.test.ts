@@ -2,7 +2,7 @@ import { aspLeaf, assertLeanImtMember, BN254_P, buildLeanImt } from "@pp/bridge-
 import { describe, expect, it } from "vitest"
 import fixture from "../test/fixtures/mock-asp.json"
 import { parseAspSnapshot, parseAspSnapshotUnverified, serializeAspSnapshot } from "./codec"
-import { type AspSnapshot, labelState, MAX_LEAVES, pathFor, type RootRecord, SnapshotError, verifySnapshot } from "./snapshot"
+import { type AspSnapshot, labelState, MAX_LEAVES, pathFor, type RootRecord, rootFresh, SnapshotError, verifySnapshot } from "./snapshot"
 
 const poolLeaves = fixture.leaves.map(BigInt)
 const birthLabels = [11n, 22n, 33n, 44n, 55n]
@@ -53,6 +53,7 @@ describe("snapshots", () => {
 		expect(labelState(r, snap, label(0), 0, T + 1800n)).toBe("ACTIVE")
 		expect(labelState(r, snap, label(0), 0, T + 1801n)).toBe("STALE_ROOT")
 		expect(labelState(r, snap, label(0), 0, T - 1n)).toBe("STALE_ROOT")
+		expect([T - 1n, T, T + 1800n, T + 1801n].map((now) => rootFresh(r, now))).toEqual([false, true, true, false])
 		expect(labelState({ ...r, poolRoot: 1n }, snap, label(0), 0, T)).toBe("STALE_ROOT")
 		expect(labelState(r, snap, label(4), 0, T)).toBe("ABSENT")
 		const noBirths = { ...snap, birthLeaves: [], birthRoot: 0n }

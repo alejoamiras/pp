@@ -85,6 +85,14 @@ export function pathFor(s: AspSnapshot, label: bigint, origin: Origin): LabelPat
 }
 
 /**
+ * `check_label`'s time rule: whether `r`'s roots may still be spent against at `nowSec`, with the same
+ * anchor time plus proving budget `labelState` takes. Needs no snapshot.
+ */
+export function rootFresh(r: Pick<RootRecord, "rootTime">, nowSec: bigint): boolean {
+	return r.rootTime <= nowSec && r.rootTime + MAX_ROOT_AGE >= nowSec + SPEND_WINDOW
+}
+
+/**
  * Mirrors `check_label`. `r` must be the record at the block the proof will anchor to, and `nowSec`
  * that block's timestamp. Roots are compared, not `sequence`: a heartbeat keeps both roots and every path.
  * `ACTIVE` at the exact age limit fails a proof anchored one block later, so pass the anchor time plus
@@ -93,7 +101,7 @@ export function pathFor(s: AspSnapshot, label: bigint, origin: Origin): LabelPat
  */
 export function labelState(r: RootRecord, s: AspSnapshot, label: bigint, origin: Origin, nowSec: bigint): LabelState {
 	if (s.poolRoot !== r.poolRoot || s.birthRoot !== r.birthRoot) return "STALE_ROOT"
-	if (r.rootTime > nowSec || r.rootTime + MAX_ROOT_AGE < nowSec + SPEND_WINDOW) return "STALE_ROOT"
+	if (!rootFresh(r, nowSec)) return "STALE_ROOT"
 	if (treeOf(s, origin).root === 0n) return "ABSENT"
 	return pathFor(s, label, origin) === null ? "ABSENT" : "ACTIVE"
 }

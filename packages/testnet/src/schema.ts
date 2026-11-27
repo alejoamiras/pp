@@ -3,9 +3,15 @@
  * transport and rollup fields; `expected` is committed before a deploy and never read from the chain;
  * `pool` and `bridge` are promoted from a keyed run's candidate.
  */
-import type { Address, Hex } from "viem"
 import z from "zod"
-import { isPinned, LOCAL, loopback, SEPOLIA } from "./network"
+import { isPinned, LOCAL, loopback, SEPOLIA } from "./network.ts"
+
+export type { PinnedKind } from "./network.ts"
+export { isPinned, PINNED_URLS } from "./network.ts"
+
+// viem's shapes, declared here so the entry needs no viem, even for types.
+type Address = `0x${string}`
+type Hex = `0x${string}`
 
 /** Every address field names an account or a contract, so none of them may be zero. */
 const evmAddress = z

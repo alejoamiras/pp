@@ -9,7 +9,7 @@ import { MAX_NOTES_PER_BURN, ragequitChunks } from "../chunks"
 import { BridgeFailure, ProviderError } from "../errors"
 import { BALANCES_PAGE, NOTES_PAGE, readAllPages } from "../paging"
 import { BN254_P, isAztecPoint, parseBalanceRow, parsePayee, parseU128 } from "../parse"
-import type { AztecPort, LabelBalance, Sent } from "../ports"
+import type { AztecPort, AztecReceipt, LabelBalance, ReceiptPort, Sent } from "../ports"
 import { fixtureLabelState } from "./allow-list"
 import type { FixtureOp } from "./faults"
 import type { AztecNote } from "./seed"
@@ -39,6 +39,17 @@ function notesView(w: World, owner: AztecAddress, label: bigint, start: number):
 		.slice(start, start + NOTES_PAGE)
 }
 
+/** Each world's included sends by hash, as its node would answer for them; a dropped one is never included. */
+const included = new WeakMap<World, Map<string, AztecReceipt>>()
+
+function record(w: World, sent: Sent): Sent {
+	const m = included.get(w) ?? new Map<string, AztecReceipt>()
+	included.set(w, m)
+	if (sent.txHash && sent.status === "success") m.set(sent.txHash, { status: "success" })
+	if (sent.txHash && sent.status === "reverted") m.set(sent.txHash, { status: "reverted", block: sent.block })
+	return sent
+}
+
 /** One wallet send: an armed fault answers like the wallet or the chain would; `effect` returns a revert reason or applies. */
 function send(w: World, op: FixtureOp, effect: () => string | null): Sent {
 	const fault = w.takeFault(op)
@@ -46,9 +57,15 @@ function send(w: World, op: FixtureOp, effect: () => string | null): Sent {
 	const txHash = w.nextHex(32)
 	w.update((s) => void s.sent.aztec++)
 	if (fault === "DROPPED") return { txHash, status: "dropped" }
-	if (fault === "REVERTED") return { txHash, status: "reverted", reason: `${op}: reverted` }
+	if (fault === "UNCONFIRMED") return { txHash, status: "unconfirmed" }
+	if (fault === "REVERTED") return record(w, { txHash, status: "reverted", block: w.aztecBlock(), reason: `${op}: reverted` })
 	const reason = effect()
-	return reason === null ? { txHash, status: "success" } : { txHash, status: "reverted", reason }
+	return record(w, reason === null ? { txHash, status: "success" } : { txHash, status: "reverted", block: w.aztecBlock(), reason })
+}
+
+/** The node's read of a send this world made; any other hash is not included. */
+export function fixtureReceipts(w: World): ReceiptPort {
+	return { aztec: async (txHash) => included.get(w)?.get(txHash) ?? { status: "pending" } }
 }
 
 /** Takes the largest notes of one label and origin until `amount`, at most 8; returns the change or a revert reason. */
@@ -120,16 +137,18 @@ export function fixtureAztec(w: World): AztecPort {
 			return values.map(parseU128).filter((v): v is bigint => v !== null)
 		},
 		publicBalance: async (owner) => publicOf(w, owner),
-		async transferPrivate(from, { to, amount, label, origin }) {
+		async transferPrivate(from, { to, amount, label, origin }, on) {
 			// The wallet refuses an address that cannot receive notes before it proves anything.
 			if (!isAztecPoint(to)) throw new BridgeFailure("RECIPIENT_INVALID")
+			on.handoff()
 			return send(
 				w,
 				"transferPrivate",
 				checkedSpend(w, from, label, origin, amount, () => w.s.aztecNotes.push({ owner: to, label, origin, value: amount })),
 			)
 		},
-		async unshield(from, { amount, label, origin }) {
+		async unshield(from, { amount, label, origin }, on) {
+			on.handoff()
 			return send(
 				w,
 				"unshield",
@@ -148,10 +167,11 @@ export function fixtureAztec(w: World): AztecPort {
 				return null
 			})
 		},
-		async ragequit(from, { payee, label, amount }) {
+		async ragequit(from, { payee, label, amount }, on) {
 			checkPayee(w, payee)
 			const values = ofLabel(w, from, label).map((n) => n.value)
 			if (ragequitChunks(values, amount).length !== 1) throw new BridgeFailure("NO_EXACT_CHUNKS")
+			on.handoff()
 			return send(w, "ragequit", () => {
 				const origin = ofLabel(w, from, label)[0]?.origin ?? 0
 				const change = spend(w, from, label, origin, amount)

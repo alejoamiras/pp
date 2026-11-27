@@ -1,7 +1,7 @@
 /**
  * Ethereum for a stack build: reads over the target's RPC, signatures and sends through the page's
- * injected wallet (EIP-1193). A bridge spend's wallet client is pinned to the attempt's sender and the
- * target's chain (viem checks the wallet's chain right before it sends) over the deny-by-default guard.
+ * injected wallet (EIP-1193). A bridge spend's or a settle's wallet client is pinned to its sender and
+ * the target's chain (viem checks the wallet's chain right before it sends) over the deny-by-default guard.
  */
 import {
 	type Account,
@@ -80,6 +80,8 @@ export interface StackL1 extends L1Port {
 	 * `hooks.sent` hears the hash.
 	 */
 	spendWallet(a: Attempt, assertCurrent: () => void, hooks: Pick<SubmitHooks, "sent">): WalletClient<Transport, Chain, Account>
+	/** The client a settle sends through, chosen as for a spend, pinned to `from.sender` and the target's chain, behind the same guard. */
+	settleWallet(from: Pick<Attempt, "sender" | "demo">, assertCurrent: () => void): WalletClient<Transport, Chain, Account>
 }
 
 export function stackL1(
@@ -93,6 +95,9 @@ export function stackL1(
 		if (!wallet) throw new BridgeFailure("NO_SENDER")
 		return wallet
 	}
+	// A wallet may hold the dev account too; only the page's own choice routes a send to the demo sender.
+	const senderOf = (from: Pick<Attempt, "sender" | "demo">): Eip1193Provider =>
+		from.demo && demo && isAddressEqual(from.sender, demo.address) ? demo.provider : need()
 	const follow = (event: string, f: (value: unknown) => void) => {
 		wallet?.on?.(event, f)
 		return () => void wallet?.removeListener?.(event, f)
@@ -109,13 +114,13 @@ export function stackL1(
 		onChainChanged: (f) => follow("chainChanged", (v) => f(Number(v))),
 		...(demo ? { demo: { address: demo.address, ready: () => demo.ready() } } : {}),
 		spendWallet(a, assertCurrent, hooks) {
-			// A wallet may hold the dev account too; only the attempt's own choice routes a spend to the demo sender.
-			const inner = a.demo && demo && isAddressEqual(a.sender, demo.address) ? demo.provider : need()
 			return createWalletClient({
 				account: a.sender,
 				chain,
-				transport: custom(reportSends(guardedProvider(inner, assertCurrent), hooks.sent)),
+				transport: custom(reportSends(guardedProvider(senderOf(a), assertCurrent), hooks.sent)),
 			})
 		},
+		settleWallet: (from, assertCurrent) =>
+			createWalletClient({ account: from.sender, chain, transport: custom(guardedProvider(senderOf(from), assertCurrent)) }),
 	}
 }

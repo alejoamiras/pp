@@ -30,7 +30,7 @@ import {
 } from "viem"
 import { tokenBridgeHubArtifact } from "../artifacts"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
-import { guarded, walletRefusal } from "./boundary"
+import { guarded, innermostSource, walletRefusal } from "./boundary"
 import type { ClientDeployment } from "./deployment"
 import { BridgeClientError } from "./errors"
 import { allPages, type ExitPin, type ExitReads, type ExitWitness, messageIndices, settledAt, settleWith } from "./exits"
@@ -271,12 +271,13 @@ async function sendSettle(c: ExitContext, l1: WalletClient, account: Account, t:
 	const base = { address: c.deployment.portal, abi: PROCESSOR_PORTAL_ABI, account } as const
 	const proof = [w.epoch, w.numCheckpointsInEpoch, w.leafIndex, w.path] as const
 	const chain = l1.chain ?? null
-	// Awaited inside the try: a wallet client can throw before it returns a promise.
+	// Awaited inside the try: a wallet client can throw before it returns a promise. Anything but the
+	// user's no may follow a broadcast, as in `submit`, so it is never reported as a failed read.
 	const send = async (write: () => Promise<Hash>): Promise<Hash> => {
 		try {
 			return await write()
 		} catch (e) {
-			throw walletRefusal(e) ?? e
+			throw walletRefusal(e) ?? new BridgeClientError("UNCERTAIN", innermostSource(e))
 		}
 	}
 	if (t.kind === "ragequit") {
@@ -295,7 +296,8 @@ async function sendSettle(c: ExitContext, l1: WalletClient, account: Account, t:
  * @throws BridgeClientError `CHAIN_MISMATCH` when the wallet is on another chain at the call;
  * `RPC_FAILED` with source `UserRejectedRequestError` when the user refuses the send (`walletRefusal`
  * states what that is taken to prove); `EXIT_NOT_READY` while no Outbox root covers it; `TICKET_NOT_FOUND`; `UNCERTAIN` with `l1TxHash`
- * when the send has no receipt in time or the event read after it fails; `REVERTED`
+ * when the send has no receipt in time or the event read after it fails, and without one when the
+ * wallet's send fails any other way than the user's refusal; `REVERTED`
  */
 export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): Promise<Hash> {
 	const { account, chain } = l1

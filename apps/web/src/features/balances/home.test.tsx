@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { act, cleanup, screen, waitFor } from "@testing-library/react"
-import { afterEach, describe, expect, test } from "vitest"
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import type { PoolNoteView } from "../../data/stack-types"
-import { BridgeFailure, messageOf } from "../../data/errors"
+import { AllowListError, BridgeFailure, messageOf } from "../../data/errors"
 import { LABELS } from "../../data/fixtures/seed"
 import { connectAztec, labelRow, noteRow, renderApp, signIn } from "../../test-utils/app"
 
@@ -94,5 +94,46 @@ describe("home", () => {
 		const active = labelRow(LABELS.active)
 		expect(reasonOf(active.getByRole("button", { name: "Unshield" }))).toBe("Send and Unshield wait for the next allow-list post")
 		expect(isDisabled(active.getByRole("button", { name: /Leave to Ethereum/ }))).toBe(false)
+	})
+
+	test("a list that failed its check closes the spends with its own words; Check again waits out its backoff, and Cancel stops a check", async () => {
+		let progress: ((p: { hashed: number; total: number } | null) => void) | null = null
+		const cancel = vi.fn()
+		const checkAgain = vi.fn(() => true)
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				allowList: {
+					...s.allowList,
+					check: async () => Promise.reject(new AllowListError("LIST_MISMATCH", 5_000)),
+					onProgress: (f) => {
+						progress = f
+						return () => {}
+					},
+					cancel,
+					checkAgain,
+				},
+			}),
+		})
+		await connectAztec(app.user)
+		const row = await waitFor(() => labelRow(LABELS.active))
+		await waitFor(() => row.getByText("Allow list does not match the chain"))
+		row.getByText(messageOf("LIST_MISMATCH"), { exact: false })
+		expect(isDisabled(row.getByRole("button", { name: "Send privately" }))).toBe(true)
+		expect(isDisabled(row.getByRole("button", { name: /Leave to Ethereum/ }))).toBe(false)
+		const again = () => labelRow(LABELS.active).getByRole("button", { name: "Check again" })
+		expect(isDisabled(again())).toBe(true)
+		act(() => app.control.advance(1))
+		await waitFor(() => expect(isDisabled(again())).toBe(false))
+		await app.user.click(again())
+		expect(checkAgain).toHaveBeenCalledOnce()
+
+		act(() => progress?.({ hashed: 1_000, total: 262_143 }))
+		const line = await screen.findByTestId("allow-list-progress")
+		expect(line.textContent).toContain("1,000 of 262,143 hashed")
+		await app.user.click(within(line).getByRole("button", { name: "Cancel" }))
+		expect(cancel).toHaveBeenCalledOnce()
+		act(() => progress?.(null))
+		expect(screen.queryByTestId("allow-list-progress")).toBeNull()
 	})
 })

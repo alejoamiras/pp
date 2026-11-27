@@ -1,9 +1,10 @@
 import { useState } from "react"
-import { useApp } from "../../app/context"
+import { type App, useApp } from "../../app/context"
 import type { AztecAddress } from "../../data/stack-types"
-import { messageOf, RECIPIENT_MESSAGE } from "../../data/errors"
+import { codeOf, messageOf, RECIPIENT_MESSAGE } from "../../data/errors"
 import { isAztecPoint, parseAztecAddress } from "../../data/parse"
-import type { LabelBalance } from "../../data/ports"
+import type { AztecSendHooks, LabelBalance } from "../../data/ports"
+import { bindAztecSend } from "../../data/sends"
 import { ActionButton, Callout, Field, LabelChip } from "../../ui"
 import { ActionShell, AmountField, useAction, useAmount } from "./shared"
 
@@ -15,19 +16,30 @@ interface Props {
 
 const submitReason = (sending: boolean, missing: string | null) => (sending ? "Sending…" : (missing ?? undefined))
 
+/** The send bound to the connection that lists `account` at the click, or `null` with the dialog failed. */
+function bound(live: App["live"], account: AztecAddress, act: ReturnType<typeof useAction>): AztecSendHooks | null {
+	try {
+		return bindAztecSend(live.get, account)
+	} catch (err) {
+		act.fail(codeOf(err) ?? "CONTEXT_CHANGED")
+		return null
+	}
+}
+
 /** A private transfer under the same label. The page sends one transaction at a time, so a first send to a new recipient goes alone. */
 export function SendDialog({ account, balance, onClose }: Props) {
-	const { aztec, tx } = useApp()
+	const { aztec, tx, live } = useApp()
 	const [to, setTo] = useState("")
 	const typed = parseAztecAddress(to)
 	const recipient = typed !== null && isAztecPoint(typed) ? typed : null
 	const toError = to === "" || recipient ? undefined : typed === null ? RECIPIENT_MESSAGE : messageOf("RECIPIENT_INVALID")
 	const amount = useAmount(balance.balance)
-	const act = useAction()
+	const act = useAction(account)
 	const send = () => {
 		if (!recipient || amount.amount === null) return
 		const a = { to: recipient, amount: amount.amount, label: balance.label, origin: balance.origin }
-		void act.send("transferPrivate", () => aztec.transferPrivate(account, a), recipient)
+		const on = bound(live, account, act)
+		if (on) void act.send("transferPrivate", (guard) => aztec.transferPrivate(account, a, guard(on)), recipient)
 	}
 	const missing = recipient === null ? "Enter the recipient first." : amount.amount === null ? "Enter an amount first." : null
 	return (
@@ -56,13 +68,14 @@ export function SendDialog({ account, balance, onClose }: Props) {
 
 /** Moves part of a label's balance to the account's public balance, which carries no label. */
 export function UnshieldDialog({ account, balance, onClose }: Props) {
-	const { aztec } = useApp()
+	const { aztec, live } = useApp()
 	const amount = useAmount(balance.balance)
-	const act = useAction()
+	const act = useAction(account)
 	const send = () => {
 		if (amount.amount === null) return
 		const a = { amount: amount.amount, label: balance.label, origin: balance.origin }
-		void act.send("unshield", () => aztec.unshield(account, a))
+		const on = bound(live, account, act)
+		if (on) void act.send("unshield", (guard) => aztec.unshield(account, a, guard(on)))
 	}
 	return (
 		<ActionShell
@@ -90,7 +103,7 @@ export function UnshieldDialog({ account, balance, onClose }: Props) {
 export function ShieldDialog({ account, amount: available, onClose }: { account: AztecAddress; amount: bigint; onClose(): void }) {
 	const { aztec } = useApp()
 	const amount = useAmount(available)
-	const act = useAction()
+	const act = useAction(account)
 	const send = () => {
 		const value = amount.amount
 		if (value === null) return

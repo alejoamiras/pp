@@ -7,7 +7,7 @@ import { stageManifest } from "../capabilities"
 import type { DataSource } from "../source"
 import { loadRealConnector } from "../wallet/load"
 import { fixtureAllowList } from "./allow-list"
-import { fixtureAztec } from "./aztec"
+import { fixtureAztec, fixtureReceipts } from "./aztec"
 import { fixtureConnector } from "./connector"
 import { createControl, type FixtureControl } from "./control"
 import { fixtureExits } from "./exits"
@@ -37,6 +37,7 @@ export function createFixtureSource(storage: KeyValue | null): { source: DataSou
 		mode: "fixtures",
 		deployment: world.deployment,
 		clock: world.clock,
+		receipts: fixtureReceipts(world),
 		timer: world.timer,
 		l1,
 		sessions: fixtureSessions(world, l1.provider),

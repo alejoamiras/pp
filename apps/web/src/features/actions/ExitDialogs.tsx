@@ -4,13 +4,16 @@ import { useApp } from "../../app/context"
 import { useLabelNotes } from "../../app/queries"
 import type { AztecAddress } from "../../data/stack-types"
 import { ragequitChunks, singleCallAmounts } from "../../data/chunks"
-import { codeOf, messageOf } from "../../data/errors"
-import type { LabelBalance } from "../../data/ports"
+import { BridgeFailure, codeOf, messageOf } from "../../data/errors"
+import type { AztecSendHooks, LabelBalance } from "../../data/ports"
+import { bindAztecSend } from "../../data/sends"
 import { ActionButton, Amount, Callout, Choices, Facts, formatAmount, LabelChip } from "../../ui"
 import { ActionShell, AmountField, OwnerWarning, PayeeField, useAction, useAmount, usePayee } from "./shared"
 
 const PUBLIC_LABEL = "Leaving to Ethereum is public: it shows this label on Ethereum, next to the payee."
 const COLLECT = "The exit is on Aztec. Collect it on Ethereum from Exits once its epoch is proven."
+const COLLECT_PAYER =
+	"Collecting it on Ethereum later takes a funded Ethereum account to pay the gas. Not your pool owner's: collecting from it links the owner to this payee in public."
 
 interface ReviewProps {
 	payee: Address
@@ -35,6 +38,9 @@ function ExitReview({ payee, amount, label, confirm, busy, onBack, onConfirm }: 
 				]}
 			/>
 			<OwnerWarning payee={payee} />
+			<p className="text-xs text-ink-3" data-testid="exit-collect-payer">
+				{COLLECT_PAYER}
+			</p>
 			<div className="flex flex-wrap gap-2">
 				<ActionButton onClick={onBack}>Back</ActionButton>
 				<ActionButton
@@ -71,25 +77,41 @@ interface RagequitProps {
 
 /**
  * Exact chunks only, so nothing is left as change. The confirmed amount is re-derived against the
- * notes as they are right before sending, so a note set that changed under the dialog sends nothing.
+ * notes as they are right before sending, so a note set that changed under the dialog sends nothing,
+ * and the send stays bound to the Aztec connection the confirm was made in.
  */
 export function RagequitDialog({ account, balance, onClose }: RagequitProps) {
-	const { aztec, addPayee } = useApp()
+	const { aztec, live, addPayee } = useApp()
 	const { notes, choices } = useChunkChoices(account, balance.label)
 	const payee = usePayee()
 	const [pick, setPick] = useState<string | null>(null)
 	const [review, setReview] = useState(false)
-	const act = useAction()
+	const act = useAction(account)
 	const amount = pick === null ? null : BigInt(pick)
 	const confirm = async () => {
 		const to = payee.payee
 		if (amount === null || !to) return
+		let on: AztecSendHooks
 		try {
-			if (ragequitChunks(await aztec.notesByLabel(account, balance.label), amount).length !== 1) return act.fail("NO_EXACT_CHUNKS")
+			on = bindAztecSend(live.get, account)
 		} catch (err) {
-			return act.fail(codeOf(err) ?? "RPC_FAILED")
+			return act.fail(codeOf(err) ?? "CONTEXT_CHANGED")
 		}
-		if (await act.send("ragequit", () => aztec.ragequit(account, { payee: to, label: balance.label, amount }))) addPayee(to)
+		// The note read runs under the send lock, so a second click or a Back meanwhile sends nothing more.
+		// The payee joins Exits at the handoff: an exit whose outcome is never read must still be listed.
+		await act.send("ragequit", async (guard) => {
+			if (ragequitChunks(await aztec.notesByLabel(account, balance.label), amount).length !== 1)
+				throw new BridgeFailure("NO_EXACT_CHUNKS")
+			const g = guard(on)
+			const listed = {
+				...g,
+				handoff() {
+					g.handoff()
+					addPayee(to)
+				},
+			}
+			return aztec.ragequit(account, { payee: to, label: balance.label, amount }, listed)
+		})
 	}
 	const missing = amount === null ? "Pick an amount first." : !payee.payee ? "Enter a valid payee first." : undefined
 	return (
@@ -111,7 +133,10 @@ export function RagequitDialog({ account, balance, onClose }: RagequitProps) {
 					label={balance.label}
 					confirm="Leave to Ethereum"
 					busy={act.state.kind === "sending"}
-					onBack={() => setReview(false)}
+					onBack={() => {
+						act.stop()
+						setReview(false)
+					}}
 					onConfirm={() => void confirm()}
 				/>
 			) : (
@@ -143,7 +168,7 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 	const amount = useAmount(available)
 	const payee = usePayee()
 	const [review, setReview] = useState(false)
-	const act = useAction()
+	const act = useAction(account)
 	const confirm = async () => {
 		if (amount.amount === null || !payee.payee) return
 		const a = { payee: payee.payee, amount: amount.amount }
@@ -166,7 +191,10 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 					label={null}
 					confirm="Withdraw to Ethereum"
 					busy={act.state.kind === "sending"}
-					onBack={() => setReview(false)}
+					onBack={() => {
+						act.stop()
+						setReview(false)
+					}}
 					onConfirm={() => void confirm()}
 				/>
 			) : (

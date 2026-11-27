@@ -1,13 +1,15 @@
 import { useState } from "react"
-import type { Address } from "viem"
-import { useApp } from "../../app/context"
-import { useLive } from "../../app/live"
+import type { Address, Hash } from "viem"
+import { type CollectFailure, useApp } from "../../app/context"
+import { type LiveStore, useLive } from "../../app/live"
 import { exitKey, useExits } from "../../app/queries"
 import type { ExitStatus } from "../../data/stack-types"
-import { codeOf, isUserRejection, messageOf, PAYEE_MESSAGES, type UiCode } from "../../data/errors"
+import { BridgeFailure, codeOf, isWalletRefusal, messageOf, PAYEE_MESSAGES, type UiCode } from "../../data/errors"
 import { parsePayee } from "../../data/parse"
 import type { ExitView } from "../../data/ports"
+import { bindL1Send } from "../../data/sends"
 import { ActionButton, Amount, Callout, EmptyState, Field, LabelChip, Panel, StateBadge, shortHex, type Tone } from "../../ui"
+import { type CollectFrom, CollectReview, sameAddress, TxHashes } from "./CollectReview"
 
 const STATUS: Record<ExitStatus, { text: string; tone: Tone; note: string }> = {
 	proving: {
@@ -19,32 +21,116 @@ const STATUS: Record<ExitStatus, { text: string; tone: Tone; note: string }> = {
 	settled: { text: "Collected", tone: "ok", note: "Paid out on Ethereum." },
 }
 
-type Collect = { kind: "idle" } | { kind: "collecting" } | { kind: "failed"; code: UiCode }
+type Failed = CollectFailure
+type Collect = { kind: "idle" } | { kind: "collecting" } | ({ kind: "failed" } & Failed)
+
+/** The Ethereum transaction a coded failure names, read as untrusted and lower-cased so one transaction has one spelling. */
+const hashOf = (err: unknown): Hash | undefined => {
+	const h = typeof err === "object" && err !== null ? (err as { l1TxHash?: unknown }).l1TxHash : undefined
+	return typeof h === "string" && /^0x[0-9a-fA-F]{64}$/.test(h) ? (h.toLowerCase() as Hash) : undefined
+}
+
+function failureOf(err: unknown, refused: "owner" | "context" | null): Failed {
+	if (refused === "owner") return { code: "SENDER_IS_OWNER" }
+	if (refused === "context") return { code: "CONTEXT_CHANGED" }
+	if (isWalletRefusal(err)) return { code: "WALLET_REJECTED" }
+	const txHash = hashOf(err)
+	return { code: codeOf(err) ?? "RPC_FAILED", ...(txHash ? { txHash } : {}) }
+}
+
+/**
+ * The collect's handoff: the confirmed sender, chain and demo choice, and the owner's address only
+ * with the user's yes to it, since the owner may have signed in since the review.
+ */
+function collectHandoff(live: LiveStore, from: CollectFrom) {
+	const bound = bindL1Send(live.context, from.sender, from.chainId, from.demo)
+	let owner = false
+	return {
+		handoff() {
+			if (!from.asOwner && sameAddress(live.context().owner, from.sender)) {
+				owner = true
+				throw new BridgeFailure("SENDER_IS_OWNER")
+			}
+			bound.handoff()
+		},
+		refused: (): "owner" | "context" | null => (owner ? "owner" : bound.refused() ? "context" : null),
+	}
+}
 
 function useCollect(view: ExitView) {
-	const { source, live, refresh } = useApp()
-	const [state, setState] = useState<Collect>({ kind: "idle" })
-	const collect = async () => {
-		const { account, chainId } = live.get()
-		if (account === null) return setState({ kind: "failed", code: "NO_SENDER" })
-		if (chainId !== source.deployment.chainId) return setState({ kind: "failed", code: "CHAIN_MISMATCH" })
-		setState({ kind: "collecting" })
-		try {
-			await source.exits.settle(view.ticket, account)
-			setState({ kind: "idle" })
-		} catch (err) {
-			setState({ kind: "failed", code: isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED") })
-		} finally {
-			refresh()
-		}
+	const { source, live, collecting, refresh } = useApp()
+	const key = exitKey(view)
+	const collect = async (from: CollectFrom) => {
+		// A retry that ends in anything but a payout must not hide an earlier collect that may still land.
+		const pending = pendingOf(collecting.failure(key))
+		const on = collectHandoff(live, from)
+		await collecting.run(key, async () => {
+			try {
+				await source.exits.settle(view.ticket, { sender: from.sender, demo: from.demo }, { handoff: on.handoff })
+				return undefined
+			} catch (err) {
+				const f = failureOf(err, on.refused())
+				const earlier = pending.filter((h) => h !== f.txHash)
+				return earlier.length > 0 ? { ...f, earlier } : f
+			} finally {
+				refresh()
+			}
+		})
 	}
-	return { state, collect }
+	const failed = collecting.failure(key)
+	const state: Collect = collecting.has(key) ? { kind: "collecting" } : failed ? { kind: "failed", ...failed } : { kind: "idle" }
+	return { state, collect, earlier: pendingOf(failed) }
+}
+
+const REFRESH_FIRST =
+	"Refresh before collecting again: an exit pays out once, so a second collect fails but still costs gas, and sent from another account it also shows that account next to the payee in public."
+
+/** Where the page's sentence for a code speaks of a bridge note, a collect says what it means for an exit. */
+const COLLECT_MESSAGES: Partial<Record<UiCode, string>> = {
+	UNCERTAIN: `This page could not confirm whether your collect went out. ${REFRESH_FIRST}`,
+	UNKNOWN: `Something went wrong while collecting, and the collect may have gone out. ${REFRESH_FIRST}`,
+	REVERTED:
+		"The collect reverted on Ethereum and paid nothing. Refresh: if another payer collected this exit first, it shows as Collected.",
+	SENDER_IS_OWNER: "Your pool owner signed in with the sending account before the collect went out, so nothing was sent.",
+}
+
+/** Outcomes where the collect may be on Ethereum, as is any other one that names a transaction but a revert. */
+const COLLECT_UNCONFIRMED: ReadonlySet<UiCode> = new Set(["UNCERTAIN", "UNKNOWN"])
+
+const unconfirmed = (f: Failed): boolean => f.code !== "REVERTED" && (COLLECT_UNCONFIRMED.has(f.code) || f.txHash !== undefined)
+
+/** Every collect transaction that may still pay the exit out, oldest first: the earlier ones', then this failure's own. */
+const pendingOf = (f: Failed | undefined): readonly Hash[] =>
+	f === undefined ? [] : [...new Set([...(f.earlier ?? []), ...(unconfirmed(f) && f.txHash ? [f.txHash] : [])])]
+
+const DEMO_COLLECT_NOTE = "Collecting sends one Ethereum transaction from the local demo's dev account, no wallet."
+
+function CollectFailed({ failed }: { failed: Failed }) {
+	return (
+		<Callout tone="bad" title={unconfirmed(failed) || failed.earlier ? "Not confirmed" : "Not collected"} role="alert">
+			{COLLECT_MESSAGES[failed.code] ?? messageOf(failed.code)}
+			{failed.txHash ? (
+				<span className="mt-1 block font-mono" title={failed.txHash}>
+					Transaction {shortHex(failed.txHash)}
+				</span>
+			) : null}
+			{failed.earlier ? (
+				<span className="mt-1 block">
+					{failed.earlier.length === 1 ? "An earlier collect, transaction" : "Earlier collects, transactions"}{" "}
+					<TxHashes hashes={failed.earlier} />, may still pay this exit out. {REFRESH_FIRST}
+				</span>
+			) : null}
+		</Callout>
+	)
 }
 
 function ExitRow({ view }: { view: ExitView }) {
-	const { source } = useApp()
-	const { state, collect } = useCollect(view)
+	const { source, live } = useApp()
+	const { state, collect, earlier } = useCollect(view)
+	const [reviewing, setReviewing] = useState(false)
 	const s = STATUS[view.status]
+	const fromDemo = useLive(live).demo && source.l1.demo !== undefined
+	const note = view.status === "ready" && fromDemo ? DEMO_COLLECT_NOTE : s.note
 	const { ticket } = view
 	return (
 		<li
@@ -68,21 +154,29 @@ function ExitRow({ view }: { view: ExitView }) {
 					to {shortHex(ticket.payee)}
 				</span>
 			</div>
-			<p className="text-xs text-ink-3">{s.note}</p>
+			<p className="text-xs text-ink-3">{note}</p>
 			{view.status === "ready" ? (
 				<ActionButton
 					variant="primary"
 					disabledReason={state.kind === "collecting" ? "Collecting…" : undefined}
-					onClick={() => void collect()}
+					onClick={() => setReviewing(true)}
 				>
 					Collect on Ethereum
 				</ActionButton>
 			) : null}
-			{state.kind === "failed" ? (
-				<Callout tone="bad" title="Not collected" role="alert">
-					{messageOf(state.code)}
-				</Callout>
+			{reviewing && view.status === "ready" ? (
+				<CollectReview
+					view={view}
+					earlier={earlier}
+					onClose={() => setReviewing(false)}
+					onConfirm={(from) => {
+						setReviewing(false)
+						void collect(from)
+					}}
+				/>
 			) : null}
+			{/* A failure read before the exit was settled says nothing once the chain shows it paid. */}
+			{state.kind === "failed" && view.status !== "settled" ? <CollectFailed failed={state} /> : null}
 		</li>
 	)
 }

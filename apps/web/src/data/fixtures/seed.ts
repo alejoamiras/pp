@@ -31,7 +31,7 @@ export function fixtureDeployment(chainId: number): Deployment {
 	return {
 		id: `${chainId}:${portal}:${hub}`.toLowerCase(),
 		chainId,
-		stage: "2c",
+		stage: "2d",
 		portal,
 		hub,
 		token: az("0b2c", "70c3"),

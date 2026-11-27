@@ -77,7 +77,7 @@ export function chainAge(then: bigint, now: bigint): ChainAge {
 }
 
 /** How long ago the allow list was posted, against the latest Aztec block. */
-export async function allowListAge(clock: ChainClock, record: RootRecord): Promise<ChainAge> {
+export async function allowListAge(clock: Pick<ChainClock, "aztecNow">, record: RootRecord): Promise<ChainAge> {
 	return chainAge(record.rootTime, await clock.aztecNow())
 }
 

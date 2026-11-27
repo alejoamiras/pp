@@ -11,6 +11,7 @@ import { z } from "zod"
 // The config runs under Node, which cannot load `@pp/bridge-core`'s barrel (its imports carry no
 // extensions); this module is self-contained and isomorphic.
 import { parseStackManifest, requireBlocks } from "@pp/bridge-core/stack-manifest"
+import { isLocalStack } from "../data/local-chain"
 
 export type DataMode = "fixtures" | "stack"
 export type ConnectorMode = "fixture" | "real"
@@ -158,12 +159,9 @@ function attempt<T>(source: string, f: () => T): T {
 	}
 }
 
-const LOCAL_CHAIN_ID = 31337
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost"])
-
-/** The demo sender rides only on the local stack, chain 31337 over a loopback L1 RPC; anywhere else it is dropped. */
+/** The demo sender rides only on the local stack; anywhere else it is dropped. */
 function localDemoSender(m: { chainId: number; l1Rpc: string }, address: string | undefined): string | null {
-	if (address === undefined || m.chainId !== LOCAL_CHAIN_ID || !LOOPBACK_HOSTS.has(new URL(m.l1Rpc).hostname)) return null
+	if (address === undefined || !isLocalStack(m)) return null
 	if (!isAddress(address) || getAddress(address) !== address) fail("the demo sender", "is not a checksummed address")
 	return address
 }

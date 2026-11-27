@@ -62,11 +62,11 @@ const ACTIONS: Record<AztecAction, ActionSpec> = {
 	publicBalance: { stage: "2b", contract: "token", fn: "balance_of_public", kind: "view" },
 	transferPrivate: { stage: "2b", contract: "token", fn: "transfer_private", kind: "send" },
 	unshield: { stage: "2b", contract: "token", fn: "unshield", kind: "send" },
-	exitPublic: { stage: "2b", contract: "hub", fn: "exit_public", kind: "send" },
 	shield: { stage: "2c", contract: "token", fn: "shield", kind: "send" },
+	exitPublic: { stage: "2d", contract: "hub", fn: "exit_public", kind: "send" },
 }
 
-const STAGE_ORDER: Record<Stage, number> = { "2a": 0, "2b": 1, "2c": 2 }
+const STAGE_ORDER: Record<Stage, number> = { "2a": 0, "2b": 1, "2c": 2, "2d": 3 }
 const SPONSOR = "sponsor_unconditionally"
 
 export const inStage = (action: AztecAction, stage: Stage): boolean => STAGE_ORDER[ACTIONS[action].stage] <= STAGE_ORDER[stage]

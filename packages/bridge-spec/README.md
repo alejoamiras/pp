@@ -77,7 +77,7 @@ content hash; `bridge_message` therefore asserts the payee width itself.
 
 | Check | Owner |
 |---|---|
-| `payee ≠ portal` | the portal's `settleRagequit` and `settlePublicExit`; the hub's `ragequit` and `exit_public` |
+| `payee ≠ portal` | the portal's `settleRagequit` and `settlePublicExit`; the hub's `ragequit`, `exit_public` and `exit_private` |
 | the claim's recipient | the portal builds `TransactParams`; the hub derives the claim secret from its caller |
 | root freshness and the note's origin tree | the registry's `check_label`, the token |
 | signer and payload of the claim-key signature | `@pp/pool-client` (§ Claim key and salt) |

@@ -22,7 +22,7 @@ export interface Failure {
 	during: PlainStep
 	offer: Offer
 	stale?: StaleRootCode | null
-	/** Untrusted text from the chain (a revert reason); interpolate only. */
+	/** Untrusted text from the chain (a revert reason); it reaches the screen only through `revertCopy`. */
 	reason?: string
 	l1TxHash?: Hash
 }

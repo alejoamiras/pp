@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest"
 import type { AztecAddress } from "./stack-types"
-import { canDispatch, guardAztec, NotGrantedError } from "./actions"
+import { canDispatch, dispatchRefusal, guardAztec, NotGrantedError } from "./actions"
 import { type AztecAction, stageManifest } from "./capabilities"
 import type { AztecPort } from "./ports"
 import { parseGrant } from "./wallet/grant"
@@ -21,12 +21,14 @@ function answer(edit: (caps: Cap[]) => Cap[] = (c) => c): unknown {
 }
 const without = (type: string) => (caps: Cap[]) => caps.filter((c) => c.type !== type)
 const allowed = (ans: unknown, action: AztecAction) => canDispatch(parseGrant(request, ans), action, "2b", T)
-const SENDS: AztecAction[] = ["claim", "ragequit", "transferPrivate", "unshield", "exitPublic"]
+const SENDS: AztecAction[] = ["claim", "ragequit", "transferPrivate", "unshield"]
 
 describe("dispatch", () => {
 	test("allows what was requested and granted in full", () => {
 		for (const a of [...SENDS, "balances", "notes", "publicBalance"] as const) expect(allowed(answer(), a), a).toBe(true)
 		expect(parseGrant(request, answer()).accounts).toEqual([ACCOUNT])
+		// The 2b request does not name the public exit, whose client call comes with 2d.
+		expect(dispatchRefusal(parseGrant(request, answer()), "exitPublic", "2b", T)).toBe("STAGE_UNSUPPORTED")
 	})
 
 	test("refuses every send when the grant lacks the transaction scope, and every dry run when it lacks simulation", () => {
@@ -67,7 +69,11 @@ describe("dispatch", () => {
 		const ragequit = vi.fn(async () => ({ txHash: "0x01" as const, status: "success" as const }))
 		const port = guardAztec({ ragequit } as unknown as AztecPort, (a) => a !== "ragequit")
 		await expect(
-			port.ragequit(ACCOUNT, { payee: "0x0000000000000000000000000000000000000001", label: 1n, amount: 1n }),
+			port.ragequit(
+				ACCOUNT,
+				{ payee: "0x0000000000000000000000000000000000000001", label: 1n, amount: 1n },
+				{ epoch: 1, handoff: () => {} },
+			),
 		).rejects.toBeInstanceOf(NotGrantedError)
 		expect(ragequit).not.toHaveBeenCalled()
 	})

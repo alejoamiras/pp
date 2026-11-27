@@ -7,8 +7,8 @@ use crate::{
     test::{
         paths::{BIRTH_ROOT, POOL_PATHS, POOL_ROOT},
         utils::{
-            assert_labels, balance, L, labels, mint, post, post_now, public_balance, ragequit, setup, Setup,
-            setup_with_registry, transfer, unshield,
+            assert_labels, balance, exit_checked, L, labels, mint, post, post_now, public_balance, ragequit, setup,
+            Setup, setup_with_registry, transfer, unshield,
         },
     },
 };
@@ -182,6 +182,16 @@ unconstrained fn check_accepts_birth_path() {
     repost(s, 2, POOL_ROOT, root);
     transfer(s, s.user, s.admin, 15, b.label, path);
     assert_labels(s, s.admin, [(b.label, ORIGIN_BIRTH, 15)]);
+    assert_labels(s, s.user, [(b.label, ORIGIN_BIRTH, 5)]);
+}
+
+#[test]
+unconstrained fn burn_checked_for_exit_accepts_birth_label() {
+    let s = funded();
+    let b = born(s, 20);
+    let (root, path) = solo(b.label);
+    repost(s, 2, POOL_ROOT, root);
+    exit_checked(s, s.user, 15, b.label, path);
     assert_labels(s, s.user, [(b.label, ORIGIN_BIRTH, 5)]);
 }
 
