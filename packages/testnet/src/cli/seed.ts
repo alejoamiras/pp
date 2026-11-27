@@ -4,7 +4,6 @@
 // address instead, which must already hold a registered viewing key; the owner's keystore is left as it
 // is. Prints the label the ASP approves: the depositor is the canary owner either way. The own pool's
 // ASP must already be running: the deposit encrypts its label to the key the ASP serves.
-import { sepoliaPoolUser } from "@pp/pp-env/sepolia"
 import { type Address, erc20Abi, getAddress, isAddress, isAddressEqual } from "viem"
 import { l1AddressOf } from "../accounts"
 import { GuardError, readKeys } from "../guards"
@@ -38,6 +37,8 @@ await main(async () => {
 	if (!isAddressEqual(owner, d.expected.canaryOwner))
 		throw new GuardError("account", `the owner key is for ${owner}, the file expects ${d.expected.canaryOwner}`)
 	const { poolVault, entrypoint, keystore, aspRegistry, deployBlock, asset, aspApiUrl } = d.pool
+	// Past the guards: this entry loads the pool checkout, which a refusal must not need.
+	const { sepoliaPoolUser } = await import("@pp/pp-env/sepolia")
 	const user = await sepoliaPoolUser({
 		rpcUrl: d.network.l1Rpc,
 		chainId: SEPOLIA,

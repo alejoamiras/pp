@@ -18,6 +18,12 @@ export type DeployPoolOnOptions = {
 	mint: { to: Address; amount: bigint }
 	/** The run's own directory: forge's cache copy and broadcast logs land here. */
 	runDir: string
+	/**
+	 * Runs once the pool and the fixtures are built with no key in reach and before `deployerKey` reaches
+	 * any child or signs: the caller compares the built artifacts with its pins here. A throw stops the
+	 * deploy with nothing sent.
+	 */
+	checkBuild: () => void | Promise<void>
 	log?: (line: string) => void
 }
 

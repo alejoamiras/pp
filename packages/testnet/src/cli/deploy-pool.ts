@@ -2,7 +2,6 @@
 // Deploys the own pool on Sepolia: the pinned pool with the postman role granted to the file's ASP
 // postman, the six-decimal test token minted to the canary owner and enabled, every contract's runtime
 // code checked against the build. Writes the candidate `pool` section to the run directory.
-import { deployPoolOn } from "@pp/pp-env/sepolia"
 import { isAddressEqual } from "viem"
 import { l1AddressOf } from "../accounts"
 import { GuardError, readKeys } from "../guards"
@@ -14,6 +13,14 @@ import { cliArgs, guarded, logLine, main, report, runDir, writeCandidate } from 
 
 /** Canary runs one test-token mint covers; the token's mint is open, so more can be minted later. */
 const MINTED_RUNS = 5n
+
+/** The pool and test-token artifacts pp-env just built are the ones `pool-creation-codes.json` pins. */
+async function checkPoolPins(): Promise<void> {
+	const { committedPoolCodes, pinMismatches, poolCreationCodes } = await import("../pins")
+	const bad = pinMismatches(poolCreationCodes(), committedPoolCodes())
+	if (bad.length) throw new Error(`the pool build is not the pinned one:\n  ${bad.join("\n  ")}`)
+	logLine("the pool build matches its pins")
+}
 
 await main(async () => {
 	const { file, mode } = cliArgs(process.argv.slice(2), {})
@@ -28,6 +35,8 @@ await main(async () => {
 	if (!d.expected.poolDeployer || !isAddressEqual(deployer, d.expected.poolDeployer))
 		throw new GuardError("account", `the pool deployer key is for ${deployer}, the file expects ${d.expected.poolDeployer ?? "none"}`)
 	const dir = runDir(d, "deploy-pool", mode)
+	// Past the guards: this entry loads the pool checkout, which a refusal must not need.
+	const { deployPoolOn } = await import("@pp/pp-env/sepolia")
 	const pool = await deployPoolOn({
 		rpcUrl: d.network.l1Rpc,
 		chainId: SEPOLIA,
@@ -35,6 +44,7 @@ await main(async () => {
 		...(d.expected.aspPostman !== undefined && { postman: d.expected.aspPostman }),
 		mint: { to: d.expected.canaryOwner, amount: d.expected.amounts.debit * MINTED_RUNS },
 		runDir: dir,
+		checkBuild: checkPoolPins,
 		log: logLine,
 	})
 	const p = pool.deployment

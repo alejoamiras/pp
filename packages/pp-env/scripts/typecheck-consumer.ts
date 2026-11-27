@@ -35,9 +35,9 @@ export async function use(): Promise<bigint> {
 	const [proof] = spend.args
 	// @ts-expect-error pubSignals rows are bigint arrays
 	const wrong: string = proof.pubSignals[0]
-	const pool: SepoliaPool = await deployPoolOn({ rpcUrl: "", chainId: 11155111, deployerKey: "0x", mint: { to: env.asset, amount: 1n }, runDir: "" })
+	const pool: SepoliaPool = await deployPoolOn({ rpcUrl: "", chainId: 11155111, deployerKey: "0x", mint: { to: env.asset, amount: 1n }, runDir: "", checkBuild: () => {} })
 	// @ts-expect-error only Sepolia is accepted
-	await deployPoolOn({ rpcUrl: "", chainId: 1, deployerKey: "0x", mint: { to: env.asset, amount: 1n }, runDir: "" })
+	await deployPoolOn({ rpcUrl: "", chainId: 1, deployerKey: "0x", mint: { to: env.asset, amount: 1n }, runDir: "", checkBuild: () => {} })
 	const asp: MockAsp = await startMockAsp({ rpcUrl: "", chainId: 11155111, postmanKey: "0x", deployment: pool.deployment, port: 1, owner: env.asset })
 	const checked = await verifyPoolCode({ rpcUrl: "", chainId: 11155111, deployment: { ...pool.deployment, asset: pool.asset } })
 	void [checked.length, asp.approved(), fork.clientConfig.circuitBundle, bundle, chain, wrong, STUB_PROCESSOR_ABI.length, TRANSACT_ABI.length, secretDerivationTypedData(env.asset).primaryType]

@@ -10,10 +10,12 @@ import type { DeployPoolOnOptions, SepoliaPool } from "./types.ts"
 /**
  * Deploys the pinned pool to Sepolia through `DeployE2ELocal.runLocal()`, the path the local env
  * takes, with no state written by cheat code: the canonical Poseidon libraries must already be there.
- * Then grants `postman` the postman role, deploys the six-decimal test token, enables it and mints
- * `mint`, and checks every deployed contract's runtime code against the build.
+ * The pool and the fixtures are built keyless and passed to `checkBuild` before the key is used. Then
+ * grants `postman` the postman role, deploys the six-decimal test token, enables it and mints `mint`,
+ * and checks every deployed contract's runtime code against the build.
  * @throws Error when either chain id is not 11155111, Poseidon's code is not canonical, forge would
- * recompile, any transaction fails, or a contract's code is not the build's; what already landed stays
+ * recompile, `checkBuild` throws, any transaction fails, or a contract's code is not the build's; what
+ * already landed stays
  */
 export async function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool> {
 	const log = o.log ?? (() => {})
@@ -32,6 +34,7 @@ export async function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool>
 		deployer: account.address,
 		workDir: o.runDir,
 		client,
+		checkBuild: o.checkBuild,
 	})
 	log(`pool deployed: entrypoint ${deployment.entrypoint}, vault ${deployment.pool}, from block ${deployment.deployBlock}`)
 	const wallet = createWalletClient({ account, chain: sepolia, transport: http(o.rpcUrl) })

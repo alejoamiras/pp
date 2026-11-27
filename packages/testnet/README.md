@@ -48,7 +48,7 @@ hashes and allowlisted URLs only. A guard refusal exits 2 before any key is read
 | `addresses` | every name | prints every key's address, for `expected`; no network |
 | `fund [--quote]` | L1 deployer | tops the other L1 addresses up to their roles' budgets |
 | `verify-inputs` | none | a clean working tree (naming HEAD), frozen lockfile, the pinned Forge binary with FFI off, a forced bridge build and the pool build against their pins, L2 class ids, and both endpoints' reads by block hash |
-| `deploy-pool` (own) | pool deployer | the pinned pool, the test token minted to the canary owner, the postman role for the ASP key, every contract's runtime code checked against the build |
+| `deploy-pool` (own) | pool deployer | the pinned pool, built with no key and checked against `pool-creation-codes.json` before its key reaches Forge; the test token minted to the canary owner, the postman role for the ASP key, every contract's runtime code checked against the build |
 | `asp --owner <address>` (own) | ASP postman | the mock ASP on its loopback port: approves only that owner's deposits, posts roots, serves reads only |
 | `seed [--recipient <address>]` | canary owner | registers and makes the canary deposit; with `--recipient`, deposits it for that registered address instead |
 | `deploy` | L1 deployer, L2 deployer | the bridge generation with entries paused |

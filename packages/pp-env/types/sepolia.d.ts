@@ -32,10 +32,11 @@ export type {
 export declare function sepoliaPoolUser(o: SepoliaUserOptions): Promise<SepoliaPoolUser>
 
 /**
- * Deploys the pinned pool to chain 11155111 through the local env's forge path, without cheat codes;
- * grants `postman` the postman role, deploys, enables and mints the six-decimal test token, and checks
- * every deployed contract's runtime code against the build. Refuses any other chain, and Poseidon
- * libraries that do not hold the canonical code.
+ * Deploys the pinned pool to chain 11155111 through the local env's forge path, without cheat codes,
+ * after building it with no key in forge's environment and running `checkBuild`; grants `postman` the
+ * postman role, deploys, enables and mints the six-decimal test token, and checks every deployed
+ * contract's runtime code against the build. Refuses any other chain, Poseidon libraries that do not
+ * hold the canonical code, and a build that recompiles or fails `checkBuild`.
  */
 export declare function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool>
 

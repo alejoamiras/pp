@@ -102,6 +102,8 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 		const runDir = join(RUNS_DIR, runId)
 		cleanup.push(() => rm(runDir, { recursive: true, force: true }))
 		const ownerWallet = wallet(anvilKey(USER_INDEX))
+		const deployer = privateKeyToAccount(anvilKey(DEPLOYER_INDEX)).address
+		let sentBeforeCheck: number | undefined
 		pool = await deployPoolOn({
 			rpcUrl,
 			chainId: CHAIN,
@@ -109,7 +111,11 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 			postman,
 			mint: { to: ownerWallet.account.address, amount: 1_000n },
 			runDir,
+			checkBuild: async () => {
+				sentBeforeCheck = await client.getTransactionCount({ address: deployer })
+			},
 		})
+		expect(sentBeforeCheck).toBe(0)
 		const config: ClientConfig = {
 			rpcUrl,
 			chainId: CHAIN,
@@ -134,6 +140,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 			deployerKey: anvilKey(DEPLOYER_INDEX),
 			mint: { to: owner.address, amount: 1n },
 			runDir: "",
+			checkBuild: () => {},
 		}
 		await expect(deployPoolOn(wrong)).rejects.toThrow("chain 1 refused")
 		await expect(

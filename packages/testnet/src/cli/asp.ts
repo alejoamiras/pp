@@ -1,7 +1,6 @@
 // asp <deployment file> --owner <address> [--rehearse-fork <url>]
 // Runs the own pool's mock ASP on the file's loopback port until SIGINT or SIGTERM: it approves only
 // the canary owner's deposits, posts each grown set's root with the postman key, and serves reads only.
-import { startMockAsp } from "@pp/pp-env/sepolia"
 import { claimRows, releaseNamed } from "@pp/run-isolation/ports"
 import { getAddress, isAddress, isAddressEqual } from "viem"
 import { l1AddressOf } from "../accounts"
@@ -29,6 +28,8 @@ await main(async () => {
 	const postman = l1AddressOf(postmanKey)
 	if (d.expected.aspPostman !== undefined && !isAddressEqual(postman, d.expected.aspPostman))
 		throw new GuardError("account", `the postman key is for ${postman}, the file expects ${d.expected.aspPostman}`)
+	// Past the guards: this entry loads the pool checkout, which a refusal must not need.
+	const { startMockAsp } = await import("@pp/pp-env/sepolia")
 	const port = d.network.aspPort as number
 	const runId = `pp-testnet-asp-${d.target}-${process.pid}`
 	await claimRows(runId, { [SERVICE]: port }, process.pid)
