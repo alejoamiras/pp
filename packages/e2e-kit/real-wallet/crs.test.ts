@@ -62,6 +62,15 @@ describe("prepareCrs", () => {
 		expect(decompress).not.toHaveBeenCalled()
 	})
 
+	it.each([
+		["an input", { ...pin, inputs: { ...pin.inputs, "bn254_g2.dat": { ...pin.inputs["bn254_g2.dat"], sha256: "" } } }],
+		["the decompressed G1", { ...pin, g1Uncompressed: { ...pin.g1Uncompressed, sha256: "" } }],
+	])("refuses a pin whose hash for %s is not a sha256, before downloading", async (_what, unpinned) => {
+		const fetchImpl = vi.fn(cdn())
+		await expect(prepareCrs(unpinned, fresh(), { fetchImpl, decompress: async () => {} })).rejects.toThrow(/not a sha256/)
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
 	it("refuses a decompressed G1 that does not match its pin", async () => {
 		const decompress = async (dir: string) => writeFileSync(join(dir, "bn254_g1.dat"), Buffer.alloc(128, 5))
 		await expect(prepareCrs(pin, fresh(), { fetchImpl: cdn(), decompress })).rejects.toThrow(/decompressed G1/)

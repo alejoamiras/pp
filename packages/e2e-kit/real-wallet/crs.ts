@@ -66,15 +66,23 @@ async function fetchInput(input: CrsInput, fetchImpl?: typeof fetch): Promise<Bu
 	}
 }
 
+type PrepareOptions = { fetchImpl?: typeof fetch; decompress?: Decompress }
+
+const SHA256 = /^[0-9a-f]{64}$/
+
 /**
  * Downloads and checks the inputs into `crsDir` (created, must not exist), decompresses G1, checks it.
- * @throws Error when an input or the decompressed G1 does not match its pin; bb.js never sees an unchecked input
+ * @throws Error when a pin hash is not a sha256 (before any download), or when an input or the
+ *   decompressed G1 does not match its pin; bb.js never sees an unchecked input
  */
-export async function prepareCrs(
-	pin: CrsPin,
-	crsDir: string,
-	o: { fetchImpl?: typeof fetch; decompress?: Decompress } = {},
-): Promise<SeedArrays> {
+export async function prepareCrs(pin: CrsPin, crsDir: string, o: PrepareOptions = {}): Promise<SeedArrays> {
+	const pinned = [...Object.entries(pin.inputs), ["decompressed G1", pin.g1Uncompressed] as const]
+	for (const [name, p] of pinned) if (!SHA256.test(p.sha256)) throw new Error(`crs: the pin's hash for ${name} is not a sha256`)
+	return prepare(pin, crsDir, o)
+}
+
+/** An empty hash is skipped only here, for `measurePin`'s cold measurement; `prepareCrs` refuses one. */
+async function prepare(pin: CrsPin, crsDir: string, o: PrepareOptions): Promise<SeedArrays> {
 	mkdirSync(crsDir)
 	const got: Record<string, Buffer> = {}
 	for (const [name, input] of Object.entries(pin.inputs)) {
@@ -110,7 +118,7 @@ async function measurePin(): Promise<void> {
 	mkdirSync(join(homedir(), ".cache/pp"), { recursive: true })
 	const base = mkdtempSync(join(homedir(), ".cache/pp/crs-pin-"))
 	try {
-		const seed = await prepareCrs(unpinned, join(base, "crs"))
+		const seed = await prepare(unpinned, join(base, "crs"), {})
 		for (const [name, i] of Object.entries(unpinned.inputs)) i.sha256 = sha256(readFileSync(join(base, "crs", name)))
 		unpinned.g1Uncompressed.sha256 = sha256(seed.g1Data)
 		console.log(JSON.stringify(unpinned, null, "\t"))
