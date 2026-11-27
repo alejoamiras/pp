@@ -73,6 +73,9 @@ describe("a top-up within the owner's limits", () => {
 		expect(at({ now: 1.873, sent: 0.6, amount: 0.25 })).toThrow(/over its 0.8 ETH limit/)
 		expect(at({ now: 1.2, sent: 0.67, amount: 0.1 })).not.toThrow()
 		expect(at({ start: 1.1, now: 1.1, amount: 0.1 })).toThrow(/under its 1 ETH floor/)
+		// The whole plan, before any send: today's quote passes, fresh keys' full budgets do not.
+		expect(at({ now: 1.873, amount: 0.722886 })).not.toThrow()
+		expect(at({ now: 1.873, amount: 0.849196 })).toThrow(/over its 0.8 ETH limit/)
 	})
 })
 
