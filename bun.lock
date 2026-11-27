@@ -79,7 +79,6 @@
       "name": "@pp/bridge-core",
       "version": "0.1.0",
       "dependencies": {
-        "@aztec-foundation/aztec-standards": "6.0.0",
         "@aztec-foundation/l1-artifacts": "6.0.0",
         "@aztec-labs/accounts": "6.0.0",
         "@aztec-labs/aztec.js": "6.0.0",
