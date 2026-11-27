@@ -106,8 +106,6 @@ export interface WorldState {
 	exits: FixtureExit[]
 	allowList: { sequence: bigint; rootTime: bigint; l1Block: bigint; pool: bigint[]; birth: bigint[]; pendingBirths: bigint[] }
 	faults: { fail: { op: FixtureOp; code: string }[]; reprove: string[]; hang: FixtureOp[] }
-	/** Notes whose last send is uncertain: a later submit needs `acceptUncertain`. */
-	uncertain: bigint[]
 	counter: number
 	sent: { l1: number; aztec: number }
 	declineNextGrant: boolean
@@ -143,7 +141,6 @@ export function seedWorld(chainId: number): WorldState {
 			pendingBirths: [LABELS.shielded],
 		},
 		faults: { fail: [], reprove: [], hang: [] },
-		uncertain: [],
 		counter: 0,
 		sent: { l1: 0, aztec: 0 },
 		declineNextGrant: false,

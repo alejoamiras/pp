@@ -148,6 +148,20 @@ describe("the bridge screen", () => {
 		expect(second.control.state().sent.l1).toBe(1)
 	})
 
+	test("a resend that reverts leaves the earlier unconfirmed send on the note, with its controls", async () => {
+		const app = await openBridge()
+		app.control.failNext("send", "LOST")
+		await submit(app)
+		await screen.findByText("We can't see your transaction yet")
+		app.control.failNext("send", "REVERTED")
+		await app.user.click(screen.getByRole("button", { name: "Send again" }))
+		await screen.findByText(messageOf("REVERTED"))
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		await waitFor(() => noteRow(NOTE).getByText("We can't see your transaction yet"))
+		noteRow(NOTE).getByRole("button", { name: "Check again" })
+		noteRow(NOTE).getByRole("button", { name: "Send again" })
+	})
+
 	test("a record whose transaction is pending at the RPC shows IN_FLIGHT with its hash and offers no send", async () => {
 		const store = memoryStore()
 		const first = await openBridge(store)

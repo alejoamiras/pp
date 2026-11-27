@@ -78,16 +78,10 @@ function upsertBridge(w: World, b: FixtureBridge): void {
 	})
 }
 
-/** The journal as it stood before a send, for the note: its record and whether it was uncertain. */
-interface Before {
-	record: FixtureBridge | undefined
-	uncertain: bigint[]
-}
-
-function restore(w: World, note: bigint, before: Before): void {
+/** Puts back the note's record as it stood before a send, or none. */
+function restore(w: World, note: bigint, before: FixtureBridge | undefined): void {
 	w.update((s) => {
-		s.bridges = [...s.bridges.filter((b) => b.id !== idOf(note)), ...(before.record ? [before.record] : [])]
-		s.uncertain = before.uncertain
+		s.bridges = [...s.bridges.filter((b) => b.id !== idOf(note)), ...(before ? [before] : [])]
 	})
 }
 
@@ -114,7 +108,6 @@ function mine(c: Ctx, a: Attempt, note: FixtureNote, l1TxHash: Hex): FixtureBrid
 		note.status = "spent"
 		// The change keeps the label and its approval; a whole-note bridge leaves it at 0.
 		s.notes.push({ commitment: changeCommitment, label: note.label, value: note.value - a.amount, status: "approved" })
-		s.uncertain = s.uncertain.filter((n) => n !== a.note)
 	})
 	upsertBridge(c.w, b)
 	return b
@@ -127,11 +120,13 @@ function checkSubmit(c: Ctx, a: Attempt, o?: { acceptUncertain?: true }): void {
 	if (isAddressEqual(a.sender, c.owner)) fail("SENDER_IS_OWNER")
 	if ((c.preflights.get(a.recipient) ?? -1) < w.timer.now()) fail("PREFLIGHT_REQUIRED")
 	const fault = w.takeFault("submit")
-	if (fault === "UNCERTAIN") w.update((s) => void s.uncertain.push(a.note))
+	const note = w.s.notes.find((n) => n.commitment === a.note)
+	// The journal's answer for an earlier attempt that left no hash, so the page reads it back the same way.
+	if (fault === "UNCERTAIN" && note) upsertBridge(w, journalled(c, a, note, "pending"))
 	if (fault !== null) fail(fault)
 	const prior = w.s.bridges.find((b) => b.id === idOf(a.note))
 	if (prior?.state === "sent") fail("IN_FLIGHT")
-	if ((prior?.state === "pending" || w.s.uncertain.includes(a.note)) && !o?.acceptUncertain) fail("UNCERTAIN")
+	if (prior?.state === "pending" && !o?.acceptUncertain) fail("UNCERTAIN")
 }
 
 async function reprove(w: World, on: SubmitHooks): Promise<void> {
@@ -155,13 +150,8 @@ async function submit(c: Ctx, a: Attempt, on: SubmitHooks, o?: { acceptUncertain
 	if (note?.status !== "approved" || note.value < a.amount) return fail("CONSUMED_ELSEWHERE")
 	const sendFault = w.takeFault("send")
 	const wallet = guardedProvider(sendingWallet(c.provider, sendFault, w.takeHang("send")), on.handoff)
-	const before: Before = { record: w.s.bridges.find((b) => b.id === idOf(a.note)), uncertain: w.s.uncertain }
-	// Journalled before the wallet is asked, so a reload mid-send still knows a bridge may be out. An
-	// override of a hashless attempt leaves that attempt out there too: the note stays uncertain until mined.
-	if (o?.acceptUncertain && before.record?.state === "pending")
-		w.update((s) => {
-			s.uncertain = [...s.uncertain, a.note]
-		})
+	const before = w.s.bridges.find((b) => b.id === idOf(a.note))
+	// Journalled before the wallet is asked, so a reload mid-send still knows a bridge may be out.
 	upsertBridge(w, journalled(c, a, note, "pending"))
 	let hash: Hex
 	try {
@@ -177,7 +167,10 @@ async function submit(c: Ctx, a: Attempt, on: SubmitHooks, o?: { acceptUncertain
 		return never()
 	}
 	if (sendFault === "REVERTED") {
-		upsertBridge(w, journalled(c, a, note, "reverted", hash))
+		// A revert settles this send only: an unconfirmed earlier one may still land, so its record stays
+		// the note's, and later submits still need the override until the chain shows the event.
+		if (before?.state === "pending") restore(w, a.note, before)
+		else upsertBridge(w, journalled(c, a, note, "reverted", hash))
 		w.update((s) => void s.l1Block++)
 		throw new BridgeFailure("REVERTED", { l1TxHash: hash, stale: null })
 	}
@@ -307,7 +300,6 @@ export function fixtureSessions(w: World, provider: Eip1193Provider): SessionPor
 			// Only a mined bridge is on chain for `recover`; every other record lived in this journal alone.
 			w.update((s) => {
 				s.bridges = s.bridges.filter((b) => b.state !== "pending" && b.state !== "sent").map((b) => ({ ...b, forgotten: true }))
-				s.uncertain = []
 			})
 		},
 	}
