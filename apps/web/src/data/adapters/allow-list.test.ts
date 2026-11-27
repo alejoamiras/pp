@@ -159,6 +159,16 @@ describe("the stack's allow list", () => {
 		expect(r.s.bot.slice(2)).toEqual(["/v1/snapshots/7", "/v1/snapshots/9"])
 	})
 
+	test("after a 404 fetches nothing more when the latest record keeps the roots but commits to another length", async () => {
+		const r = rig()
+		r.post(41, 1_500, { ...recordOf(9n, 1_400n), poolSize: 3n })
+		const longer = JSON.parse(body(9n)) as { poolLeaves: string[] }
+		r.s.snapshots.set(9n, JSON.stringify({ ...longer, poolLeaves: [...longer.poolLeaves, String(aspLeaf(33n))] }))
+		const view = { record: recordOf(7n), nowSec: 1_100n }
+		await expect(r.port.check(view, 11n, 0)).rejects.toMatchObject({ code: "LIST_UNAVAILABLE" })
+		expect(r.s.bot).toEqual(["/v1/snapshots/7"])
+	})
+
 	test("a list that does not match the chain is not fetched again until a Check again, which backs off", async () => {
 		const r = rig()
 		r.s.snapshots.set(7n, body(7n, poolRoot + 1n))
@@ -187,7 +197,7 @@ describe("the stack's allow list", () => {
 	test("a list that declares the record's roots but whose leaves build another never answers absent", async () => {
 		const r = rig()
 		const whole = JSON.parse(body(7n)) as { poolLeaves: string[] }
-		r.s.snapshots.set(7n, JSON.stringify({ ...whole, poolLeaves: whole.poolLeaves.slice(0, 1) }))
+		r.s.snapshots.set(7n, JSON.stringify({ ...whole, poolLeaves: [whole.poolLeaves[0], String(aspLeaf(55n))] }))
 		await expect(r.port.check({ record: recordOf(7n), nowSec: 1_100n }, 22n, 0)).rejects.toMatchObject({ code: "LIST_MISMATCH" })
 	})
 

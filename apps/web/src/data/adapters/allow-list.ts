@@ -102,11 +102,11 @@ type Held = { code: AllowListCode; at: number }
 class StackAllowList implements AllowListPort {
 	private readonly fetchFn: typeof fetch
 	private readonly listeners = new Set<(p: AllowListProgress | null) => void>()
-	/** Failures by roots key until a Check again clears them; `attempts` outlives the clear, so the backoff grows. */
+	/** Failures by lists key until a Check again clears them; `attempts` outlives the clear, so the backoff grows. */
 	private readonly failures = new Map<string, Held>()
 	private readonly attempts = new Map<string, number>()
 	private worker: JobWorker | null = null
-	/** The roots key of the list the worker holds. */
+	/** The lists key of the snapshot the worker holds. */
 	private loaded: string | null = null
 	/** The running check's abort, and where the worker's next answer goes. */
 	private active: AbortController | null = null

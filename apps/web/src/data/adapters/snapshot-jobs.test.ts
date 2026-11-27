@@ -41,10 +41,13 @@ describe("the allow-list worker", () => {
 		expect(w.check(11n)).toEqual([{ kind: "failed", failure: "NOT_LOADED" }])
 	})
 
-	test("answers no check for a record with the held roots but other lengths: that is another list", () => {
+	test.each([
+		["pool", { poolSize: 5n }],
+		["birth", { birthSize: 1n }],
+	])("answers no check for a record with the held roots but another %s length: that is another list", (_, length) => {
 		const w = rig()
 		expect(w.load()).toEqual([{ kind: "loaded" }])
-		expect(w.check(11n, { ...record, sequence: 8n, poolSize: 5n })).toEqual([{ kind: "failed", failure: "NOT_LOADED" }])
+		expect(w.check(11n, { ...record, sequence: 8n, ...length })).toEqual([{ kind: "failed", failure: "NOT_LOADED" }])
 		expect(outcome(w.check(11n))).toMatchObject({ kind: "checked", result: { state: "ACTIVE" } })
 	})
 

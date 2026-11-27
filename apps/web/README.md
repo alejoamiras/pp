@@ -58,12 +58,13 @@ as far as a check needs:
 - The download is bounded by its bytes, counted as they arrive (the canonical largest list plus 1
   KiB; a Content-Length is never trusted), by 30 s of silence and by 300 s in all. Hashing has no
   deadline: one would refuse a legal list on a slow device.
-- The snapshot's declared roots must be the record's before anything is hashed. A label not in its
-  origin's list is "not found" with no tree built; a found label builds that origin's tree once,
-  and every other label of the same list reuses it.
+- The snapshot's declared roots and its lists' lengths must be the record's before anything is
+  hashed. A check of a non-empty list builds its label's origin tree once and answers, found or not,
+  only once that tree has the record's root; every other label of the same list reuses it. An empty
+  list (root 0) holds no label.
 - Work is keyed by the record's lists, both roots and both lengths, never the sequence: a root does
   not fix its list's length, and the bot's heartbeat (the same lists under a new sequence) costs no
-  download and no hash. A 404 reads the latest record and, when it keeps the lists, fetches its
+  download and no tree build. A 404 reads the latest record and, when it keeps the lists, fetches its
   sequence once.
 - A list that timed out, does not match the chain, is too large, or whose check was cancelled fails
   at once, with no work, until Check again, which waits 5 s, then twice as long each time, up to
