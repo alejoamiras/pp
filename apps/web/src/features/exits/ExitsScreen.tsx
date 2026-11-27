@@ -47,6 +47,12 @@ function useCollect(view: ExitView) {
 	return { state, collect }
 }
 
+/** Where the page's sentence for a code speaks of a bridge note, a collect says what it means for an exit. */
+const COLLECT_MESSAGES: Partial<Record<UiCode, string>> = {
+	UNCERTAIN:
+		"This page could not confirm whether your collect was sent. Refresh before collecting again: an exit pays out once, so a second send fails and costs gas only.",
+}
+
 const DEMO_COLLECT_NOTE = "Collecting sends one Ethereum transaction from the local demo's dev account, no wallet."
 
 function ExitRow({ view }: { view: ExitView }) {
@@ -90,7 +96,7 @@ function ExitRow({ view }: { view: ExitView }) {
 			) : null}
 			{state.kind === "failed" ? (
 				<Callout tone="bad" title="Not collected" role="alert">
-					{messageOf(state.code)}
+					{COLLECT_MESSAGES[state.code] ?? messageOf(state.code)}
 				</Callout>
 			) : null}
 		</li>

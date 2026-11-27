@@ -2,7 +2,7 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import type { ExitStatus, ExitTicket } from "../../data/stack-types"
-import { messageOf, ProviderError } from "../../data/errors"
+import { BridgeFailure, messageOf, ProviderError } from "../../data/errors"
 import { ACCOUNTS, LABELS } from "../../data/fixtures/seed"
 import type { ExitView } from "../../data/ports"
 import { renderApp } from "../../test-utils/app"
@@ -10,6 +10,15 @@ import { renderApp } from "../../test-utils/app"
 afterEach(cleanup)
 
 const L2_TX = `0x${"ab".repeat(32)}` as const
+
+/** One ready public exit to the owner. */
+const oneReady = (d: { id: string; token: ExitTicket["token"] }): ExitView[] => [
+	{
+		key: { deployment: d.id, l2TxHash: L2_TX, messageIndexInTx: 0 },
+		ticket: { kind: "public", token: d.token, payee: ACCOUNTS.owner, amount: 1n, l2TxHash: L2_TX, messageIndexInTx: 0 },
+		status: "ready",
+	},
+]
 
 describe("exits", () => {
 	test("two identical exits, one settled, are two rows; a ready one collects after a declined try; a proving one offers nothing", async () => {
@@ -51,6 +60,24 @@ describe("exits", () => {
 		expect(settle).toHaveBeenCalledTimes(2)
 	})
 
+	test("an uncertain collect says so in terms of the exit, not of a bridge note", async () => {
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				exits: {
+					tickets: async () => oneReady(s.deployment),
+					settle: async () => {
+						throw new BridgeFailure("UNCERTAIN")
+					},
+				},
+			}),
+		})
+		await app.user.click(screen.getByRole("button", { name: "Exits" }))
+		await app.user.click(await screen.findByRole("button", { name: "Collect on Ethereum" }))
+		await screen.findByText(/could not confirm whether your collect was sent/)
+		expect(screen.queryByText(messageOf("UNCERTAIN"))).toBeNull()
+	})
+
 	test("a collect still in flight when the Exits screen is left and reopened is not offered again", async () => {
 		let release: (h: typeof L2_TX) => void = () => {}
 		const settle = vi.fn(() => new Promise<typeof L2_TX>((r) => (release = r)))
@@ -58,20 +85,7 @@ describe("exits", () => {
 			patch: (s) => ({
 				...s,
 				exits: {
-					tickets: async () => [
-						{
-							key: { deployment: s.deployment.id, l2TxHash: L2_TX, messageIndexInTx: 0 },
-							ticket: {
-								kind: "public",
-								token: s.deployment.token,
-								payee: ACCOUNTS.owner,
-								amount: 1n,
-								l2TxHash: L2_TX,
-								messageIndexInTx: 0,
-							},
-							status: "ready",
-						},
-					],
+					tickets: async () => oneReady(s.deployment),
 					settle,
 				},
 			}),
