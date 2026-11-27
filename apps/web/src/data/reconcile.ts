@@ -29,6 +29,16 @@ const GONE: ReadonlySet<PoolNoteStatus> = new Set(["spent", "exiting", "exited"]
 
 const isOpen = (r: BridgeRecordView) => typeof r.step !== "object" && r.step !== "claimed"
 
+/** What an open record's attempt is on chain: a bridge to follow, pending at the RPC, unconfirmed, or beaten to its note. */
+export type PriorKind = "bridge" | "in-flight" | "uncertain" | "consumed"
+
+/** `seen`: `recover` found the record's event; `tx`: the RPC's answer for its hash; `unspent`: its note. */
+function classify(seen: boolean, tx: L1TxState | undefined, unspent: boolean): PriorKind {
+	if (seen || tx === "mined") return "bridge"
+	if (unspent && tx === "pending") return "in-flight"
+	return unspent ? "uncertain" : "consumed"
+}
+
 /**
  * `recovered` is `recover` for the recipients, `unspent` maps each unspent note's nullifier to the note,
  * and `txs` holds the RPC's answer for each open record's hash.
@@ -45,16 +55,32 @@ export function reconcile(
 	const consumed: BridgeRecordView[] = []
 	for (const r of records.filter(isOpen)) {
 		const seen = recovered.find((x) => x.id === r.id)
-		const tx = r.l1TxHash ? txs.get(r.l1TxHash) : undefined
 		const note = unspent.get(r.nullifier)
-		if (seen || tx === "mined") bridges.push(seen ?? r)
-		else if (note && tx === "pending") inFlight.set(note.commitment, r)
-		else if (note) uncertain.set(note.commitment, r)
-		else consumed.push(r)
+		const kind = classify(seen !== undefined, r.l1TxHash ? txs.get(r.l1TxHash) : undefined, note !== undefined)
+		if (kind === "bridge") bridges.push(seen ?? r)
+		else if (kind === "consumed" || note === undefined) consumed.push(r)
+		else (kind === "in-flight" ? inFlight : uncertain).set(note.commitment, r)
 	}
 	const known = new Set(records.map((r) => r.id))
 	bridges.push(...recovered.filter((x) => !known.has(x.id)))
 	return { bridges, inFlight, uncertain, consumed }
+}
+
+export interface Prior {
+	kind: PriorKind
+	/** The chain's copy when `recover` found it, else the journal's. */
+	record: BridgeRecordView
+}
+
+/** The note's open journal record, read against the chain exactly as `reconcile` reads it; `null` when it has none. */
+export async function priorAttempt(session: Session, commitment: bigint): Promise<Prior | null> {
+	const [nullifier, records, notes] = await Promise.all([session.nullifierOf(commitment), session.records(), session.notes()])
+	const r = records.find((x) => isOpen(x) && x.nullifier === nullifier)
+	if (!r) return null
+	const [recovered, tx] = await Promise.all([session.recover(r.recipient), r.l1TxHash ? session.l1TxState(r.l1TxHash) : undefined])
+	const seen = recovered.find((x) => x.id === r.id)
+	const note = notes.find((n) => n.commitment === commitment)
+	return { kind: classify(seen !== undefined, tx, note !== undefined && !GONE.has(note.status)), record: seen ?? r }
 }
 
 /** Reads notes, records and what the chain shows for them; `connected` are the Aztec accounts to recover for. */

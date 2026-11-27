@@ -11,6 +11,7 @@ import { offerFor } from "./bridge-machine"
 import { codeOf, isUserRejection, type UiCode } from "./errors"
 import { parseAztecAddress } from "./parse"
 import type { Attempt, Deployment, Proved, Sent, Session, SubmitHooks, Timer } from "./ports"
+import { type Prior, type PriorKind, priorAttempt } from "./reconcile"
 
 /** The prover hangs without an error on some internal failures; 60 s covers the first use's 21 MB fetch. */
 export const PROVE_DEADLINE_MS = 60_000
@@ -251,7 +252,7 @@ function freeze(st: State, input: SubmitInput, ctx: LiveContext): Attempt {
 	})
 }
 
-/** Nothing here answers for an uncertain note: its journal and the chain decide, inside `Session.submit`. */
+/** Nothing here answers for an uncertain note from memory: its journal and the chain decide, in `priorOutcome` and `Session.submit`. */
 function refusalOf(st: State, input: SubmitInput, ctx: LiveContext): UiCode | null {
 	const n = input.note.commitment
 	const closed = st.closed.get(n)
@@ -259,6 +260,30 @@ function refusalOf(st: State, input: SubmitInput, ctx: LiveContext): UiCode | nu
 	if (st.inFlight.has(n)) return "IN_FLIGHT"
 	if (!st.deps.canClaim()) return "NOT_GRANTED"
 	return submitRefusal(input, ctx, st.deps.deployment.chainId)
+}
+
+const PRIOR_CODES: Record<Exclude<PriorKind, "bridge">, UiCode> = {
+	"in-flight": "IN_FLIGHT",
+	uncertain: "UNCERTAIN",
+	consumed: "CONSUMED_ELSEWHERE",
+}
+
+/**
+ * Without the override, the note's earlier attempt answers first, from the session's journal and the
+ * chain, so a check never waits on or fails in a proof. `null`: none is open, so prove and send.
+ */
+async function priorOutcome(st: State, a: Attempt): Promise<BridgeEvent | null> {
+	let prior: Prior | null
+	try {
+		prior = await priorAttempt(st.deps.session, a.note)
+	} catch (err) {
+		return failure(codeOf(err) ?? "RPC_FAILED", "preparing")
+	}
+	if (prior === null) return null
+	if (prior.kind === "bridge") return { type: "record", record: prior.record }
+	const code = PRIOR_CODES[prior.kind]
+	remember(st, code, a)
+	return failure(code, "preparing")
 }
 
 async function prepareAndProve(st: State, a: Attempt, dispatch: Dispatch, signal: AbortSignal): Promise<Proved> {
@@ -311,6 +336,11 @@ async function submit(
 		},
 	}
 	try {
+		const prior = flags.acceptUncertain ? null : await priorOutcome(st, a)
+		if (prior !== null) {
+			emit(prior)
+			return prior.type === "record" ? prior.record : null
+		}
 		const proved = await prepareAndProve(st, a, emit, signal)
 		during = "prepared"
 		emit({ type: "proved" })

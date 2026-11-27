@@ -112,7 +112,7 @@ describe("the bridge screen", () => {
 		await landed()
 	})
 
-	test("UNCERTAIN states the worst case; Check again asks the session without the override, Send again sends with it", async () => {
+	test("UNCERTAIN states the worst case; Check again answers from the journal with no submit, Send again sends with the override", async () => {
 		const submits = submitsOf()
 		const app = await openBridge(memoryStore(), submits.patch)
 		app.control.failNext("submit", "UNCERTAIN")
@@ -121,8 +121,8 @@ describe("the bridge screen", () => {
 		screen.getByText(UNCERTAIN_WORST_CASE)
 		expect(screen.queryByRole("button", { name: "Prove again" })).toBeNull()
 		await app.user.click(screen.getByRole("button", { name: "Check again" }))
-		await waitFor(() => expect(submits.options).toEqual([undefined, undefined]))
-		await screen.findByTestId("bridge-failure")
+		await screen.findByText("We can't see your transaction yet")
+		expect(submits.options).toEqual([undefined])
 		expect(app.control.state().sent.l1).toBe(0)
 		await app.user.click(screen.getByRole("button", { name: "Send again" }))
 		await landed()
@@ -146,6 +146,22 @@ describe("the bridge screen", () => {
 		await second.user.click(noteRow(NOTE).getByRole("button", { name: "Send again" }))
 		await landed()
 		expect(second.control.state().sent.l1).toBe(1)
+	})
+
+	test("Check again after a lost send reads the journal and the chain before proving, so a failing prover cannot hide it", async () => {
+		const submits = submitsOf()
+		const app = await openBridge(memoryStore(), submits.patch)
+		app.control.failNext("send", "LOST")
+		await submit(app)
+		await screen.findByText("We can't see your transaction yet")
+		app.control.failNext("prove", "PROVE_FAILED")
+		await app.user.click(screen.getByRole("button", { name: "Check again" }))
+		await screen.findByText("We can't see your transaction yet")
+		expect(screen.queryByText(messageOf("PROVE_FAILED"))).toBeNull()
+		expect(submits.options).toEqual([undefined])
+		// The prove fault is still armed: Send again is the first to prove.
+		await app.user.click(screen.getByRole("button", { name: "Send again" }))
+		await screen.findByText(messageOf("PROVE_FAILED"))
 	})
 
 	test("a resend that reverts leaves the earlier unconfirmed send on the note, with its controls", async () => {

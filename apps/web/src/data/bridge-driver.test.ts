@@ -399,6 +399,31 @@ describe("the bridge driver", () => {
 		expect(f.sent).toEqual([])
 	})
 
+	test.each([
+		["no hash the chain knows", {}, "UNCERTAIN"],
+		["a hash pending at the RPC", { tx: "pending" }, "IN_FLIGHT"],
+		["its note spent by another transaction", { spent: true }, "CONSUMED_ELSEWHERE"],
+		["the bridge's event on chain", { seen: true }, null],
+	] as const)("an open record with %s answers a Submit without the override, before any proof", async (_name, o, code) => {
+		const h = harness()
+		const open: BridgeRecordView = {
+			id: "r0",
+			nullifier: NOTE.commitment + 1n,
+			recipient: RECIPIENT,
+			amount: 70n,
+			step: "submitted",
+			...("tx" in o ? { l1TxHash: `0x${"ef".repeat(32)}` as Hex } : {}),
+		}
+		h.session.records = async () => [open]
+		h.session.l1TxState = async () => ("tx" in o ? o.tx : "unknown")
+		h.session.recover = async () => ("seen" in o ? [{ ...open, step: "mined" }] : [])
+		if ("spent" in o) h.session.notes = async () => [{ ...NOTE, status: "spent" }]
+		const record = await h.submit()
+		expect(h.session.prove).not.toHaveBeenCalled()
+		if (code === null) expect([record?.step, h.machine().step]).toEqual(["mined", "mined"])
+		else expect(h.machine().failure?.code).toBe(code)
+	})
+
 	test("a wallet rejection on claim returns to claimable", async () => {
 		const h = harness({
 			claim: async () => {
