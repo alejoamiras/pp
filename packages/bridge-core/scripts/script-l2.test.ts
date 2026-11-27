@@ -12,7 +12,7 @@ import { deployAccountIfAbsent, deriveInstance, registerHub, registerHubToken } 
 const FACTORY = "0x3333333333333333333333333333333333333333"
 const ASP_REGISTRY = `0x${"0".repeat(61)}ab1`
 /** The committed LabelledToken class — the same pin as noir-artifact-classids.test.ts. */
-const TOKEN_CLASS_ID = "0x24c218f6ead283941970e94ece49a54679425f150ec5b44741dedebfb4f53d2f"
+const TOKEN_CLASS_ID = "0x04999e44146bf207240c03ba11b7ea3dbaac99aad3fa35c21fafd90e47b00f6c"
 const ERC20 = "0x00000000000000000000000000000000000e2c20"
 const HUB_SALT = `0x${"0".repeat(24)}${FACTORY.slice(2)}`
 
