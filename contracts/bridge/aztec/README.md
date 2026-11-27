@@ -75,8 +75,14 @@ timestamp of the Ethereum block the poster read. A token checks a label with one
 rule and the expiry, and proves `hash_1([label])` is in the tree of the notes' origin with
 `pp_hash`'s LeanIMT path. An unshield then re-checks the roots in public with `assert_current`.
 
+Beside the record, `post_root` stores the length of each list (`ListSizes`, read with `get_sizes`),
+in a fixed slot outside the declared storage: the token, hub and probe artifacts embed the registry's
+storage layout, which their class ids hash. A LeanIMT root does not fix its list's length, so a client
+needs the length to refuse a list collapsed into inner nodes; no contract reads it.
+
 Posting rules: exactly the next `sequence`; `pool_root != 0`; `l1_block` and `root_time` never go
-back; a repeated `l1_block` keeps its `root_time`; `root_time <= now`; `now - root_time <= 1800 s`.
+back; a repeated `l1_block` keeps its `root_time`; `root_time <= now`; `now - root_time <= 1800 s`;
+`pool_size != 0`; `birth_size` is 0 exactly when `birth_root` is; neither length exceeds 2^18.
 The repeated-block rule catches a bot bug, not a dishonest poster, which can raise the block instead.
 It also means block 0 can never be posted, first or after a reset, and that after an Ethereum reorg
 the replacement block must still carry a time no earlier than the last post's.
@@ -84,16 +90,17 @@ the replacement block must still carry a time no earlier than the last post's.
 What each key can do:
 
 - **Poster.** Post records within those rules. It can approve any Aztec-born label (`birth_root`),
-  post a `pool_root` that differs from Ethereum's (visible to anyone who compares), pair an old root
-  with a fresh time, or stop posting. It cannot change the poster, the admin or the birth intake,
+  post a `pool_root` that differs from Ethereum's (visible to anyone who compares), post a length
+  other than its list's (a collapsed list then passes the client's check), pair an old root with a
+  fresh time, or stop posting. It cannot change the poster, the admin or the birth intake,
   and nothing here can mint, burn, move notes or block a claim or a ragequit.
-- **Admin.** Replace the poster (which clears the roots, the block and the time for later anchors,
-  and keeps the sequence) and set the birth intake (zero pauses shields). A new or zero intake
+- **Admin.** Replace the poster (which clears the roots, the lengths, the block and the time for
+  later anchors, and keeps the sequence) and set the birth intake (zero pauses shields). A new or zero intake
   applies to shields anchored after it: a shield anchored earlier still announces to the old intake
   until its transaction expires. It cannot post unless it makes itself poster, and nobody can change
   the admin.
 
-Events: `post_root` emits `RootPosted` (the record's five fields), `set_poster` emits
+Events: `post_root` emits `RootPosted` (the record's five fields, then both lengths), `set_poster` emits
 `PosterChanged` (the kept sequence and the new poster) and `set_birth_intake` emits
 `BirthIntakeChanged`. They keep the order of several updates in one block for a watcher; storage
 stays the authority, and nothing on chain reads them.

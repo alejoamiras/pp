@@ -13,7 +13,17 @@ export type PostNowCommand = { cmd: "post-now"; id: number }
 
 export const line = (value: object): string => `${JSON.stringify(value, (_, v) => (typeof v === "bigint" ? v.toString() : v))}\n`
 
-const FIELDS = ["sequence", "poolRoot", "birthRoot", "l1Block", "rootTime"] as const
+// A key per field, so a field `RootRecord` gains fails the build here instead of vanishing on the wire.
+const FIELD_SET: Record<keyof RootRecord, true> = {
+	sequence: true,
+	poolRoot: true,
+	birthRoot: true,
+	l1Block: true,
+	rootTime: true,
+	poolSize: true,
+	birthSize: true,
+}
+const FIELDS = Object.keys(FIELD_SET) as (keyof RootRecord)[]
 
 export const encodeRecord = (r: RootRecord): Record<keyof RootRecord, string> =>
 	Object.fromEntries(FIELDS.map((k) => [k, r[k].toString()])) as Record<keyof RootRecord, string>

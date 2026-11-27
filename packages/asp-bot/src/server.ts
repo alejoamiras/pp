@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { type AspSnapshot, type RootRecord, serializeAspSnapshot } from "@pp/label-paths"
 
-type Held = { poolRoot: bigint; birthRoot: bigint; body: string }
+type Held = { poolRoot: bigint; birthRoot: bigint; poolSize: bigint; birthSize: bigint; body: string }
 
 /** Snapshots this process can back: the ones it posted and the record it found current at start. */
 export class SnapshotBook {
@@ -11,7 +11,9 @@ export class SnapshotBook {
 
 	/** Throws if the snapshot's roots do not rebuild. */
 	hold(s: AspSnapshot): void {
-		this.held.set(s.sequence, { poolRoot: s.poolRoot, birthRoot: s.birthRoot, body: serializeAspSnapshot(s) })
+		const body = serializeAspSnapshot(s)
+		const [poolSize, birthSize] = [BigInt(s.poolLeaves.length), BigInt(s.birthLeaves.length)]
+		this.held.set(s.sequence, { poolRoot: s.poolRoot, birthRoot: s.birthRoot, poolSize, birthSize, body })
 	}
 
 	has(sequence: bigint): boolean {
@@ -20,12 +22,17 @@ export class SnapshotBook {
 
 	/**
 	 * Points `/latest` at the registry's current record, or at nothing when this process holds no snapshot
-	 * with its roots: `set_poster` keeps the sequence but clears the roots.
+	 * with its roots and lengths: `set_poster` keeps the sequence but clears the roots.
 	 */
-	setCurrent(r: Pick<RootRecord, "sequence" | "poolRoot" | "birthRoot">): void {
+	setCurrent(r: Pick<RootRecord, "sequence" | "poolRoot" | "birthRoot" | "poolSize" | "birthSize">): void {
 		const h = this.held.get(r.sequence)
-		const same = h !== undefined && h.poolRoot === r.poolRoot && h.birthRoot === r.birthRoot
-		// A post under this sequence with other roots means the held body is a send that lost; a zero
+		const same =
+			h !== undefined &&
+			h.poolRoot === r.poolRoot &&
+			h.birthRoot === r.birthRoot &&
+			h.poolSize === r.poolSize &&
+			h.birthSize === r.birthSize
+		// A post under this sequence with other roots or lengths means the held body is a send that lost; a zero
 		// pool root is `set_poster`'s clear, after which the held body still serves older anchors.
 		if (h && !same && r.poolRoot !== 0n) this.held.delete(r.sequence)
 		this.current = same ? r.sequence : null

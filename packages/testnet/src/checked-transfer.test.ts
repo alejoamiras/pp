@@ -20,8 +20,8 @@ const passing = (): SpendFacts => ({
 	post: { block: 100, blockHash: h(100) },
 	anchor: { number: 120, hash: h(120), timestamp: ANCHOR_TIME },
 	canonical: { anchor: h(120), post: h(100) },
-	record: { sequence: 5n, poolRoot: 11n, birthRoot: 12n, l1Block: 900n, rootTime: rootTimeFor(400n) },
-	snapshot: { sequence: 5n, poolRoot: 11n, birthRoot: 12n, poolLeaves: [], birthLeaves: [] },
+	record: { sequence: 5n, poolRoot: 11n, birthRoot: 12n, l1Block: 900n, rootTime: rootTimeFor(400n), poolSize: 1n, birthSize: 1n },
+	snapshot: { sequence: 5n, poolRoot: 11n, birthRoot: 12n, poolLeaves: [11n], birthLeaves: [12n] },
 	l1: { l1Block: 900n, l1BlockHash: h(900), latestRoot: 11n, timestamp: rootTimeFor(400n) },
 })
 

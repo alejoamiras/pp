@@ -23,12 +23,28 @@ export interface Ports {
 	log(event: string, fields?: Record<string, unknown>): void
 }
 
-type Halt = "not_poster" | "no_l1_block" | "empty_set" | "asp_root_mismatch"
+type Halt = "not_poster" | "no_l1_block" | "empty_set" | "asp_root_mismatch" | "size_mismatch"
 export type TickResult = Decision | { post: false; reason: Halt | "error" }
 
 type Pool = { root: bigint; leaves: bigint[] }
 
 const ascending = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0)
+
+const SIZE_MISMATCH = {
+	why: "a posted root now comes with a list of another length; one root has one honest list, so one of the two is collapsed",
+	next: "the bot asks the feed again every tick and resumes once the lengths agree; otherwise compare both lists with the ASP's published list: if the feed is wrong, fix it or restart the bot; if the posted length is wrong, fix the feed first, then the admin calls set_poster, which clears the record, and the bot posts again",
+}
+
+function sizeMismatch(record: RootRecord, pool: Pool, birthLeaves: bigint[], birthRoot: bigint): Record<string, unknown> | null {
+	const lists = [
+		{ list: "pool", root: pool.root, posted: record.poolRoot, postedSize: record.poolSize, size: pool.leaves.length },
+		{ list: "birth", root: birthRoot, posted: record.birthRoot, postedSize: record.birthSize, size: birthLeaves.length },
+	]
+	for (const { list, root, posted, postedSize, size } of lists) {
+		if (posted !== 0n && posted === root && postedSize !== BigInt(size)) return { list, root, postedSize, size, ...SIZE_MISMATCH }
+	}
+	return null
+}
 
 /** The poster's state lives in memory only: a restart rebuilds it from the chain and the ASP. */
 export class Poster {
@@ -63,10 +79,19 @@ export class Poster {
 		if (!e) return this.halt("no_l1_block", { aztecTime: tip.time })
 		const root = await p.aspRootAt(e)
 		if (root === null) return this.halt("empty_set", { l1Block: e.number })
+		// A cleared record is the admin's reset: fetch the feed again rather than repost a list cached before it.
+		if (record.poolRoot === 0n) this.pool = null
 		const pool = await this.poolFor(root)
 		if (!pool) return { post: false, reason: "asp_root_mismatch" }
 		const birthLeaves = (await p.birthLeaves(tip)).sort(ascending)
 		const birthRoot = buildLeanImt(birthLeaves).root
+		// The feed must not replace a length the record already holds for its root.
+		const mismatch = sizeMismatch(record, pool, birthLeaves, birthRoot)
+		if (mismatch) {
+			// The cached list builds to the root, so only a fresh fetch can bring back the honest one.
+			this.pool = null
+			return this.halt("size_mismatch", mismatch)
+		}
 		this.holdCurrent(record, pool, birthLeaves, birthRoot)
 
 		const d = decide({
@@ -75,6 +100,8 @@ export class Poster {
 			e,
 			poolRoot: root,
 			birthRoot,
+			poolSize: BigInt(pool.leaves.length),
+			birthSize: BigInt(birthLeaves.length),
 			lastReadTime: this.lastReadTime,
 			postNow,
 			inclusionMarginSec: this.opts.inclusionMarginSec,
@@ -92,6 +119,7 @@ export class Poster {
 		return d
 	}
 
+	/** A root already held reuses its leaves without asking the feed. */
 	private async poolFor(root: bigint): Promise<Pool | null> {
 		if (this.pool?.root === root) return this.pool
 		const leaves = await this.ports.aspLeaves()
@@ -104,9 +132,13 @@ export class Poster {
 		return this.pool
 	}
 
-	/** Serves the current record when its roots are the ones this process holds, as after a restart. */
+	/** Serves the current record when its roots and lengths are the lists this process holds, as after a restart. */
 	private holdCurrent(record: RootRecord, pool: Pool, birthLeaves: bigint[], birthRoot: bigint): void {
-		const ours = record.poolRoot === pool.root && record.birthRoot === birthRoot
+		const ours =
+			record.poolRoot === pool.root &&
+			record.birthRoot === birthRoot &&
+			record.poolSize === BigInt(pool.leaves.length) &&
+			record.birthSize === BigInt(birthLeaves.length)
 		if (record.sequence > 0n && ours && !this.book.has(record.sequence)) {
 			this.book.hold({ sequence: record.sequence, poolRoot: pool.root, birthRoot, poolLeaves: pool.leaves, birthLeaves })
 		}

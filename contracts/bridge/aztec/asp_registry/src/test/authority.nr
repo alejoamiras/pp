@@ -1,5 +1,5 @@
-use crate::AspRootRegistry::{self, BirthIntakeChanged, PosterChanged, RootPosted, RootRecord};
-use crate::test::utils::{current, event_logs, post_at, setup};
+use crate::AspRootRegistry::{self, BirthIntakeChanged, ListSizes, PosterChanged, RootPosted, RootRecord};
+use crate::test::utils::{current, event_logs, post_at, raw_sizes, setup, sizes};
 use aztec::{
     protocol::{address::AztecAddress, traits::ToField},
     test::helpers::test_environment::TestEnvironment,
@@ -42,6 +42,8 @@ unconstrained fn set_poster_resets_record_keeps_sequence() {
     post_at(s, s.poster, s.t0 + 1, 2, 101, s.t0 - 10);
     s.env.call_public(s.admin, AspRootRegistry::at(s.registry).set_poster(next));
     assert_eq(current(s), RootRecord { sequence: 2, pool_root: 0, birth_root: 0, l1_block: 0, root_time: 0 });
+    assert_eq(sizes(s), ListSizes { pool: 0, birth: 0 });
+    assert_eq(raw_sizes(s), [0, 0]);
     assert_eq(s.env.view_public(AspRootRegistry::at(s.registry).get_poster()), next);
 }
 
@@ -112,7 +114,7 @@ unconstrained fn set_poster_emits_poster_changed() {
     let logs = event_logs::<PosterChanged, 2>(s);
     assert_eq(logs.len(), 1);
     assert_eq(logs.get(0), [1, s.intake.to_field()]);
-    assert_eq(event_logs::<RootPosted, 5>(s).len(), 0);
+    assert_eq(event_logs::<RootPosted, 7>(s).len(), 0);
 }
 
 #[test]

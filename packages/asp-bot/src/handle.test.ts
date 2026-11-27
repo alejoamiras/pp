@@ -52,7 +52,15 @@ describe("startBot", () => {
 			},
 		})
 		expect(bot.poster).toBe("0x0b")
-		expect(await bot.postNow()).toEqual({ sequence: 5n, poolRoot: 11n, birthRoot: 0n, l1Block: 30n, rootTime: 1150n })
+		expect(await bot.postNow()).toEqual({
+			sequence: 5n,
+			poolRoot: 11n,
+			birthRoot: 0n,
+			l1Block: 30n,
+			rootTime: 1150n,
+			poolSize: 2n,
+			birthSize: 0n,
+		})
 		await expect(bot.postNow()).rejects.toThrow("no_newer_block")
 		expect(groupAlive(bot.pgid)).toBe(true)
 

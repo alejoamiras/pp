@@ -7,7 +7,7 @@ import { type JobReply, type JobRequest, rootsKey } from "./snapshot-protocol"
 const LISTED = [11n, 22n, 33n, 44n]
 const poolLeaves = LISTED.map(aspLeaf)
 const poolRoot = buildLeanImt(poolLeaves).root
-const record: RootRecord = { sequence: 7n, poolRoot, birthRoot: 0n, l1Block: 1n, rootTime: 1_000n }
+const record: RootRecord = { sequence: 7n, poolRoot, birthRoot: 0n, l1Block: 1n, rootTime: 1_000n, poolSize: 4n, birthSize: 0n }
 const KEY = rootsKey(record)
 const text = (sequence = 7n) => serializeAspSnapshot({ sequence, poolRoot, birthRoot: 0n, poolLeaves, birthLeaves: [] })
 

@@ -230,6 +230,135 @@ const AGGREGATOR_CHECKS: Record<string, string> = {
 // biome-ignore lint/suspicious/noExplicitAny: parsed-YAML shape is dynamic.
 const workflow = (file: string): any => Bun.YAML.parse(readFileSync(join(ROOT, ".github/workflows", file), "utf8"))
 
+type Step = { id?: string; if?: string; uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, unknown> }
+const actionSteps = (action: string): Step[] =>
+	Bun.YAML.parse(readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")).runs.steps
+
+/**
+ * The actions a composite action calls: through a nested `uses: ./.github/actions/<name>`, or by
+ * running `$GITHUB_ACTION_PATH/../<name>/<file>`. Every mention of the action's path must be
+ * `$GITHUB_ACTION_PATH/<file>` or that sibling form: any other spelling (`${{ github.action_path }}`,
+ * braces, `env.`) is refused, since a sibling it names would go unseen.
+ */
+function actionsRunBy(action: string): string[] {
+	const text = readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")
+	const runs = (text.match(/\S*(?:GITHUB_ACTION_PATH|action_path)\S*/gi) ?? []).flatMap((ref) => {
+		const path = /^"?\$GITHUB_ACTION_PATH\/(?:\.\.\/([\w-]+)\/)?[\w.-]+"?$/.exec(ref)
+		if (path === null) throw new Error(`${action}: ${ref} is not $GITHUB_ACTION_PATH/<file> or $GITHUB_ACTION_PATH/../<action>/<file>`)
+		return path[1] === undefined ? [] : [path[1]]
+	})
+	const uses = actionSteps(action).flatMap((step) => step.uses?.match(/^\.\/\.github\/actions\/([\w-]+)$/)?.[1] ?? [])
+	return [...new Set([...runs, ...uses])]
+}
+
+type Job = { if?: string; uses?: string; needs?: string | string[]; steps?: Step[] }
+const LOCAL_ACTION = /^\.\/\.github\/actions\/([\w-]+)$/
+const LOCAL_WORKFLOW = /^\.\/\.github\/workflows\/([\w.-]+)$/
+
+/** Every local action a job runs: its steps', a called workflow's jobs', and what each of those runs in turn. */
+function actionsOfJob(job: Job, found = new Set<string>()): Set<string> {
+	const visit = (action: string): void => {
+		if (found.has(action)) return
+		found.add(action)
+		for (const dep of actionsRunBy(action)) visit(dep)
+	}
+	if (job.uses !== undefined) {
+		const called = LOCAL_WORKFLOW.exec(job.uses)?.[1]
+		if (called === undefined) throw new Error(`a job calls ${job.uses}, not ./.github/workflows/<file>`)
+		for (const inner of Object.values(workflow(called).jobs) as Job[]) actionsOfJob(inner, found)
+		return found
+	}
+	for (const uses of (job.steps ?? []).flatMap((s) => (s.uses?.startsWith("./") ? [s.uses] : []))) {
+		const action = LOCAL_ACTION.exec(uses)?.[1]
+		if (action === undefined) throw new Error(`a step uses ${uses}, not ./.github/actions/<name>`)
+		visit(action)
+	}
+	return found
+}
+
+const GATE = /^needs\.changes\.outputs\.([\w-]+) == 'true'$/
+const STEP_OUTPUT = /^steps\.([\w-]+)\.outputs\.([\w-]+)$/
+const EXPRESSION = /^\$\{\{ (.+) \}\}$/
+type ChangesJob = { outputs?: Record<string, string>; steps?: Step[] }
+
+/**
+ * The paths-filter keys any one of which runs a job. Only shapes whose keys provably run the job are
+ * read: an `if` of `needs.changes.outputs.<out> == 'true'`, an output that ORs step outputs, and a
+ * step whose script ORs `[ "$VAR" = "true" ]` tests into that output. An OR term of another shape
+ * only adds runs, so it adds no key; any other `if` is refused.
+ */
+function filterKeysOf(wf: { jobs: Record<string, ChangesJob> }, job: Job): string[] {
+	const out = GATE.exec(job.if ?? "")?.[1]
+	if (out === undefined) throw new Error(`unsupported gate \`${job.if}\`: use needs.changes.outputs.<out> == 'true'`)
+	const steps = wf.jobs.changes?.steps ?? []
+	const isFilter = (id: string) => steps.some((s) => s.id === id && s.uses?.includes("dorny/paths-filter") === true)
+	const body = EXPRESSION.exec((wf.jobs.changes?.outputs?.[out] ?? "").trim())?.[1] ?? ""
+	const terms = body.split(" || ").map((term) => STEP_OUTPUT.exec(term))
+	if (terms.some((term) => term === null)) return []
+	return terms.flatMap((term) => {
+		const [, id = "", name = ""] = term ?? []
+		return isFilter(id)
+			? [name]
+			: orredFilters(
+					steps.find((s) => s.id === id),
+					name,
+					isFilter,
+				)
+	})
+}
+
+/** The filter keys a step's script ORs into its output `name`; none for a script of any other shape. */
+function orredFilters(step: Step | undefined, name: string, isFilter: (id: string) => boolean): string[] {
+	const echo = (value: string) => `\\s+echo "${name}=${value}" >> "\\$GITHUB_OUTPUT"\\n`
+	const script = new RegExp(`^if (.+); then\\n${echo("true")}else\\n${echo("false")}fi\\n?$`)
+	const vars = (script.exec(step?.run ?? "")?.[1]?.split(" || ") ?? []).map((test) => /^\[ "\$(\w+)" = "true" \]$/.exec(test)?.[1])
+	if (vars.length === 0 || vars.includes(undefined)) return []
+	return vars.flatMap((v) => {
+		const [, id = "", key = ""] = STEP_OUTPUT.exec(EXPRESSION.exec(step?.env?.[v ?? ""] ?? "")?.[1] ?? "") ?? []
+		return isFilter(id) ? [key] : []
+	})
+}
+
+/** Every job a job waits on, directly or through others. */
+function upstreamOf(jobs: Record<string, Job>, name: string, seen = new Set<string>()): Set<string> {
+	for (const need of [jobs[name]?.needs ?? []].flat())
+		if (!seen.has(need)) {
+			seen.add(need)
+			upstreamOf(jobs, need, seen)
+		}
+	return seen
+}
+
+/**
+ * Each job of a PR workflow that runs a local action is gated by filters that cover every file of
+ * that action. A job with no gate of its own may not wait on a gated one, even through others,
+ * whose gate it would inherit unchecked. Returns how many jobs it checked.
+ */
+function expectJobsCoverTheirActions(file: string): number {
+	const wf = workflow(file)
+	const filters = filtersOf(file)
+	const jobs = Object.entries(wf.jobs) as [string, Job][]
+	const gatedJobs = new Set(jobs.filter(([, j]) => /needs\.changes\.outputs/.test(j.if ?? "")).map(([name]) => name))
+	let checked = 0
+	for (const [name, job] of jobs) {
+		const files = [...actionsOfJob(job)].flatMap((a) => filesUnder(`.github/actions/${a}`))
+		if (name === "changes" || files.length === 0) continue
+		if (!gatedJobs.has(name)) {
+			expect(
+				[...upstreamOf(wf.jobs, name)].filter((n) => gatedJobs.has(n)),
+				`${file} ${name}: give it its own gate`,
+			).toEqual([])
+			continue
+		}
+		const keys = filterKeysOf(wf, job)
+		expect(keys.length, `${file} ${name}: its if reads no filter`).toBeGreaterThan(0)
+		const covered = (path: string) => keys.some((k) => (filters[k] ?? []).some((p) => new Bun.Glob(p).match(path)))
+		for (const path of files) expect(covered(path), `${file} ${name} runs ${path}`).toBe(true)
+		checked++
+	}
+	return checked
+}
+
 /** Files outside a package that its shipped source imports by relative path, repo-relative. */
 function importsOutside(pkg: string): string[] {
 	const src = join(ROOT, "packages", pkg, "src")
@@ -460,9 +589,23 @@ describe("CI behavior-gating guard", () => {
 			"patches/**",
 			".github/actions/setup-aztec/**",
 			".github/actions/setup-bun/**",
+			".github/actions/setup-foundry/**",
 		]) {
 			expect(contracts, `bridge-contracts must gate ${p}`).toContain(p)
 		}
+	})
+
+	// A job must re-run when anything it executes changes, including an action reached only through
+	// another action's script or through a called workflow.
+	test("each gated job's filters cover every file of every local action it runs", () => {
+		expect(actionsRunBy("ppv2-fetch")).toEqual(["setup-foundry"])
+		expect(actionsRunBy("bridge-evm-build")).toEqual(["setup-foundry"])
+		const prWorkflows = readdirSync(join(ROOT, ".github/workflows")).filter(
+			(f) => !f.startsWith("_") && "pull_request" in workflow(f).on,
+		)
+		const gated = prWorkflows.filter((f) => workflow(f).jobs.changes !== undefined)
+		expect(gated.sort(), "every PR workflow with a changes job is listed").toEqual([...FILTER_WORKFLOWS].sort())
+		expect(gated.reduce((n, file) => n + expectJobsCoverTheirActions(file), 0)).toBeGreaterThan(gated.length)
 	})
 
 	test("pp-env covers its package, its graph, the shared vitest config, and every action its suites job calls", () => {
@@ -589,15 +732,8 @@ describe("Noir crate manifest", () => {
 	})
 })
 
-type NightlyStep = {
-	id?: string
-	if?: string
-	uses?: string
-	run?: string
-	env?: Record<string, string>
-	with?: Record<string, unknown>
-	"timeout-minutes"?: number
-}
+type NightlyStep = Step & { "timeout-minutes"?: number }
+const NIGHTLY_ACTION = /^\.\/\.nightly-ci\/\.github\/actions\/([^/]+)$/
 type NightlyJob = { "timeout-minutes"?: number; "cache-mode"?: string; steps: NightlyStep[] }
 
 /** A nightly job is bounded, reads caches only, keeps no credentials and calls this commit's actions. */
@@ -610,9 +746,12 @@ function expectNightlyJobReadsOnly(name: string, job: NightlyJob): void {
 		if (uses.startsWith("actions/checkout@")) expect(step.with?.["persist-credentials"], uses).toBe(false)
 		if (uses.startsWith("./")) {
 			expect(uses, "composite actions come from this workflow's commit").toMatch(/^\.\/\.nightly-ci\//)
-			expect(step.with?.["cache-save"], uses).toBe("false")
+			// An action of `run:` steps alone calls no cache action, so it takes no cache-save; the
+			// job's `cache-mode: read`, required above, is what stops any save.
+			const action = NIGHTLY_ACTION.exec(uses)?.[1]
+			if (action === undefined || actionSteps(action).some((s) => s.uses !== undefined))
+				expect(step.with?.["cache-save"], uses).toBe("false")
 		}
-		if (uses.startsWith("foundry-rs/foundry-toolchain@")) expect(step.with?.cache, uses).toBe(false)
 	}
 	expect(
 		job.steps.some((s) => s.run?.includes("bun run nightly")),
@@ -622,13 +761,11 @@ function expectNightlyJobReadsOnly(name: string, job: NightlyJob): void {
 
 /** Every caching step of a composite action is off, or saves nothing, when the caller passes `cache-save: false`. */
 function expectActionSavesNothing(action: string): void {
-	const steps: NightlyStep[] = Bun.YAML.parse(readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")).runs.steps
-	for (const step of steps) {
+	for (const step of actionSteps(action)) {
 		const uses = step.uses ?? ""
 		if (/^actions\/cache(\/save)?@/.test(uses))
 			expect(step.if, `${action}: a saving cache step must be off when cache-save is false`).toContain("inputs.cache-save != 'false'")
 		if (uses.startsWith("oven-sh/setup-bun@")) expect(step.with?.["no-cache"], action).toBe("${{ inputs.cache-save == 'false' }}")
-		if (uses.startsWith("foundry-rs/foundry-toolchain@")) expect(step.with?.cache, action).toBe(false)
 	}
 }
 
@@ -644,9 +781,10 @@ test("the nightly reads only: restore-only caches, this commit's actions, no cre
 	for (const [name, job] of jobs) expectNightlyJobReadsOnly(name, job)
 	// Every composite action the job calls, so a new one cannot bring a saving cache along.
 	const actions = jobs
-		.flatMap(([, job]) => job.steps.map((s) => s.uses?.match(/^\.\/\.nightly-ci\/\.github\/actions\/([^/]+)$/)?.[1]))
+		.flatMap(([, job]) => job.steps.map((s) => s.uses?.match(NIGHTLY_ACTION)?.[1]))
 		.filter((name): name is string => Boolean(name))
 	expect(actions).toContain("ppv2-fetch")
+	expect(actions).toContain("setup-foundry")
 	for (const action of actions) expectActionSavesNothing(action)
 })
 
@@ -708,6 +846,33 @@ test("the nightly takes suite names as data and uploads only reports and logs, o
 	const allowed = ["test-results/", "playwright-report/", "sandbox.log", "stack.log", "build-wallet.log", "build-app.log"]
 	expect(paths.filter((p) => !p.startsWith("!"))).toEqual(allowed.map((p) => base + p))
 	expect(paths.filter((p) => p.startsWith("!"))).toEqual([`!${base}real-wallet/**`])
+})
+
+// foundryup fetches an attestation at run time, and that endpoint's outage failed every job that
+// used foundry-toolchain; setup-foundry checks the release archive against a committed hash instead.
+test("no workflow or action installs Foundry through foundryup or foundry-toolchain", () => {
+	const steps: [string, Step][] = [
+		...readdirSync(join(ROOT, ".github/workflows")).flatMap((file) =>
+			(Object.entries(workflow(file).jobs) as [string, { steps?: Step[] }][]).flatMap(([job, { steps }]) =>
+				(steps ?? []).map((step): [string, Step] => [`${file} ${job}`, step]),
+			),
+		),
+		...readdirSync(join(ROOT, ".github/actions")).flatMap((action) =>
+			actionSteps(action).map((step): [string, Step] => [action, step]),
+		),
+	]
+	expect(steps.some(([, step]) => step.uses?.endsWith("/setup-foundry"))).toBe(true)
+	for (const [where, step] of steps) {
+		expect(step.uses ?? "", where).not.toMatch(/^foundry-rs\/foundry-toolchain@/i)
+		expect(step.run ?? "", where).not.toMatch(/foundryup/i)
+	}
+	// A step can reach it through a script, so the code of every shell script in the repository counts too.
+	const scripts = (walkable ??= listWalkable()).filter((f) => f.endsWith(".sh"))
+	expect(scripts).toContain(".github/actions/setup-foundry/install.sh")
+	for (const script of scripts) {
+		const code = readFileSync(join(ROOT, script), "utf8").replace(/^\s*#.*$/gm, "")
+		expect(code, script).not.toMatch(/foundryup/i)
+	}
 })
 
 test("the unit-test workflow runs this suite", () => {

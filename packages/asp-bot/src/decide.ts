@@ -1,4 +1,4 @@
-import { type Hex, MAX_OBSERVATION_LAG, type RootRecord } from "@pp/label-paths"
+import { type Hex, MAX_LEAVES, MAX_OBSERVATION_LAG, type RootRecord } from "@pp/label-paths"
 
 /** Re-post unchanged roots once this much Aztec chain time has passed since the last landed post's read. */
 export const HEARTBEAT_SEC = 300n
@@ -17,13 +17,24 @@ export type DecideInput = {
 	/** `latestASPRoot()` at `e`. */
 	poolRoot: bigint
 	birthRoot: bigint
+	/** The lengths of the lists behind `poolRoot` and `birthRoot`. */
+	poolSize: bigint
+	birthSize: bigint
 	/** The read time `A` of this process's last landed post; `null` before its first. */
 	lastReadTime: bigint | null
 	postNow: boolean
 	inclusionMarginSec: bigint
 }
 
-export type PostArgs = { sequence: bigint; poolRoot: bigint; birthRoot: bigint; l1Block: bigint; rootTime: bigint }
+export type PostArgs = {
+	sequence: bigint
+	poolRoot: bigint
+	birthRoot: bigint
+	l1Block: bigint
+	rootTime: bigint
+	poolSize: bigint
+	birthSize: bigint
+}
 
 export type SkipReason =
 	| "unchanged"
@@ -35,6 +46,9 @@ export type SkipReason =
 	| "root_time_in_future"
 	| "lag"
 	| "sequence_overflow"
+	| "zero_pool_size"
+	| "birth_size_disagrees"
+	| "size_too_large"
 
 export type Decision = { post: true; args: PostArgs } | { post: false; reason: SkipReason }
 
@@ -64,6 +78,9 @@ function refused(i: DecideInput): SkipReason | null {
 	if (e.timestamp > i.aztecTime) return "root_time_in_future"
 	// The inclusion block's time, not the read's, is what the contract checks.
 	if (i.aztecTime + i.inclusionMarginSec - e.timestamp > MAX_OBSERVATION_LAG) return "lag"
+	if (i.poolSize === 0n) return "zero_pool_size"
+	if ((i.birthSize === 0n) !== (i.birthRoot === 0n)) return "birth_size_disagrees"
+	if (i.poolSize > BigInt(MAX_LEAVES) || i.birthSize > BigInt(MAX_LEAVES)) return "size_too_large"
 	return null
 }
 
@@ -80,6 +97,8 @@ export function decide(i: DecideInput): Decision {
 			birthRoot: i.birthRoot,
 			l1Block: i.e.number,
 			rootTime: i.e.timestamp,
+			poolSize: i.poolSize,
+			birthSize: i.birthSize,
 		},
 	}
 }

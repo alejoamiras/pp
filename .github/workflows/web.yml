@@ -82,6 +82,7 @@ jobs:
               - '.github/actions/setup-playwright/**'
               - '.github/actions/ppv2-fetch/**'
               - '.github/actions/bridge-evm-build/**'
+              - '.github/actions/setup-foundry/**'
       - name: Override for manual dispatch
         if: github.event_name == 'workflow_dispatch'
         id: override

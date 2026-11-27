@@ -94,10 +94,7 @@ jobs:
       # Pinned for the same reason as the pull-request job: newer Foundry breaks halmos 0.3.3, and the
       # suites were validated on this version.
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: "1.7.1"
-          cache: false
+        uses: ./.nightly-ci/.github/actions/setup-foundry
 
       # The local-stack suite boots the pool on its anvil.
       - uses: ./.nightly-ci/.github/actions/ppv2-fetch

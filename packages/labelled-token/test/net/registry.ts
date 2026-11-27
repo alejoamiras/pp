@@ -56,8 +56,10 @@ export async function deployRegistry(d: Device, node: L2Base["node"]): Promise<R
 			if (!head) throw new Error("the node has no latest block")
 			sequence += 1n
 			const rootTime = head.header.globalVariables.timestamp
-			// The sequence doubles as the L1 block, which must rise whenever the time does.
-			await contract.methods.post_root(sequence, pool, birth, sequence, rootTime).send(sendOpts(d) as never)
+			// The sequence doubles as the L1 block, which must rise whenever the time does. The token
+			// reads no list length, so any length the registry accepts will do.
+			const sizes = [1, birth === 0n ? 0 : 1]
+			await contract.methods.post_root(sequence, pool, birth, sequence, rootTime, ...sizes).send(sendOpts(d) as never)
 			return rootTime
 		},
 		async setIntake(intake) {
