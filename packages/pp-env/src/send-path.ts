@@ -5,20 +5,20 @@
  * Before a send leaves, its envelope is decoded: it must be of type 0, 1 or 2, for the expected chain id,
  * signed by one of the expected addresses, and no other transaction of that sender's at that nonce may
  * have gone out through this path. Only the bytes received are forwarded, and their hash is computed
- * here. Success is an allow-list: the endpoint answered the local hash, or "already known" or "already
- * imported" (a hash commits to the exact signed bytes), or a lookup found the hash. Each answer is
- * classified:
+ * here. Success is an allow-list: the endpoint answered the local hash, or exactly "already known" or
+ * "transaction already imported" (a hash commits to the exact signed bytes), or a lookup found the hash.
+ * Each answer is classified:
  *
  * - the local hash: admitted. Another hash: refused at once.
- * - "already known" or "already imported", word for word: admitted.
- * - "nonce too low" or "replacement underpriced": admitted if either endpoint knows the local hash; else a
- *   conflict, reported with the hash and nonce.
- * - refused (HTTP 429 or 503, a JSON-RPC code or message alloy retries as a rate limit, a connection
- *   refused before the write) and ambiguous (a timeout, a reset, HTTP 500, 502 or 504, an unreadable body):
- *   the same bytes go again, inside one budget shorter than forge's 45 s request timeout, the last attempt
- *   just before it ends. Then either endpoint knowing the hash makes it admitted; else it fails, with the
- *   hash and nonce.
- * - anything else, worded or not as any client words it today: final, passed through at once.
+ * - exactly "already known" or "transaction already imported", in any case: admitted.
+ * - "nonce too low" or "replacement (transaction) underpriced": admitted if either endpoint knows the
+ *   local hash; else a conflict, reported with the hash and nonce.
+ * - refused (HTTP 429 or 503, a JSON-RPC error alloy retries, a connection refused before the write) and
+ *   ambiguous (a timeout, a reset, HTTP 500, 502 or 504, an unreadable body): the same bytes go again,
+ *   inside one budget shorter than forge's 45 s request timeout, the last attempt just before it ends.
+ *   Then either endpoint knowing the hash makes it admitted; else it fails, with the hash and nonce.
+ * - anything else, however worded: admitted if either endpoint knows the local hash; else final, passed
+ *   through as the endpoint gave it, and the same bytes sent again get that answer without leaving.
  *
  * An endpoint knows a transaction when it answers `eth_getTransactionByHash` with HTTP 200 and that hash.
  * After an admission the read endpoint must show the hash within `visibilityMs`; each time it does not,
@@ -27,15 +27,24 @@
  */
 import { type Address, type Hex, isAddressEqual, keccak256, parseTransaction, recoverTransactionAddress } from "viem"
 
-const KNOWN = /\balready known\b|\balready imported\b/i
-const CONFLICT = /\bnonce too low\b|\breplacement transaction underpriced\b/i
-/**
- * The JSON-RPC codes and messages alloy's retry layer repeats on its own (`ErrorPayload::is_retry_err`);
- * here they are refusals, re-sent inside the budget, so no client re-sends behind the path.
- */
-const REFUSED_CODES = new Set([-32005, -32055, 429, 1008])
-const REFUSED_MESSAGE =
-	/rate limit|rate exceeded|too many requests|credits|request limit|maximum number of concurrent requests|header not found|daily request count exceeded/i
+const KNOWN = /^\s*(?:already known|transaction already imported)\s*$/i
+const CONFLICT = /\bnonce too low\b|\breplacement (?:transaction )?underpriced\b/i
+/** Codes alloy-json-rpc 2.0.1 retries whatever the message, and those it retries with a message part. */
+const RETRIED_CODES = new Set([429, -32005, 1008, -32055])
+const RETRIED_WITH: ReadonlyMap<number, string> = new Map([
+	[-32016, "rate limit"],
+	[-32012, "credits"],
+	[-32007, "request limit reached"],
+])
+const RETRIED_EXACT = new Set(["header not found", "daily request count exceeded, request rate limited"])
+const RETRIED_PARTS = [
+	"rate limit",
+	"rate exceeded",
+	"too many requests",
+	"credits limited",
+	"request limit",
+	"maximum number of concurrent requests",
+]
 /** Typed envelopes a send may carry: legacy, EIP-2930, EIP-1559. */
 const TYPES: ReadonlySet<string> = new Set(["legacy", "eip2930", "eip1559"])
 /** Upstream words go to the send log; a raw transaction an endpoint echoes back is cut to its length. */
@@ -118,9 +127,19 @@ export function parseAnswer(text: string): Answer | undefined {
 	}
 }
 
-/** Whether an error answer is a refusal alloy would repeat on its own. */
-export const isRefusal = (error: NonNullable<Answer["error"]>): boolean =>
-	REFUSED_CODES.has(Number(error.code)) || REFUSED_MESSAGE.test(String(error.message ?? ""))
+/**
+ * Whether alloy would repeat this error answer on its own: `ErrorPayload::is_retry_err` of
+ * alloy-json-rpc 2.0.1, the version forge 1.7.1 carries, rule for rule and case-sensitive. Here such an
+ * answer is a refusal, re-sent inside the budget, so no client re-sends behind the path.
+ */
+export function isRefusal(error: NonNullable<Answer["error"]>): boolean {
+	const code = Number(error.code)
+	const message = String(error.message ?? "")
+	if (RETRIED_CODES.has(code)) return true
+	const part = RETRIED_WITH.get(code)
+	if (part !== undefined && message.includes(part)) return true
+	return RETRIED_EXACT.has(message) || RETRIED_PARTS.some((p) => message.includes(p))
+}
 
 function classifyError(status: number, text: string, error: NonNullable<Answer["error"]>): Outcome {
 	const message = String(error.message ?? "")
@@ -222,6 +241,8 @@ export class SendPath {
 	readonly sent = new Map<Hex, SentTx>()
 	/** The one hash each sender's nonce may go out as, from its first attempt on. */
 	private readonly claimed = new Map<string, Hex>()
+	/** Sends that got a final answer, which the same bytes get again without leaving. */
+	private readonly finals = new Map<Hex, SendPathError>()
 	private readonly watches = new Map<Hex, Promise<number | undefined>>()
 	private closed = false
 
@@ -279,8 +300,12 @@ export class SendPath {
 				return this.admitted(raw, tx)
 			case "other-hash":
 				return new SendPathError("other-hash", `the send endpoint answered ${out.got} for ${tx.hash}`, tx)
-			case "final":
-				return new SendPathError("final", `${tx.hash} (nonce ${tx.nonce}) was refused: ${out.detail}`, tx, out)
+			case "final": {
+				if (await this.known(tx)) return this.admitted(raw, tx)
+				const final = new SendPathError("final", `${tx.hash} (nonce ${tx.nonce}) was refused: ${out.detail}`, tx, out)
+				this.finals.set(tx.hash, final)
+				return final
+			}
 			case "conflict":
 				if (await this.known(tx)) return this.admitted(raw, tx)
 				return new SendPathError("conflict", `${tx.hash} lost nonce ${tx.nonce} to another transaction`, tx, undefined, out.detail)
@@ -289,10 +314,6 @@ export class SendPath {
 		}
 	}
 
-	/**
-	 * Sends `raw` under the rules above and resolves to its local hash once it is admitted.
-	 * @throws SendPathError naming the hash and nonce of a send that was not admitted
-	 */
 	/** Claims `tx`'s sender and nonce for its hash; another hash at that nonce never leaves. */
 	private claim(tx: SentTx): void {
 		const key = `${tx.sender.toLowerCase()}:${tx.nonce}`
@@ -321,9 +342,15 @@ export class SendPath {
 		return `0x${next.toString(16)}`
 	}
 
+	/**
+	 * Sends `raw` under the rules above and resolves to its local hash once it is admitted.
+	 * @throws SendPathError naming the hash and nonce of a send that was not admitted
+	 */
 	async send(raw: Hex): Promise<Hex> {
 		const tx = await checkEnvelope(raw, this.o.chainId, this.o.senders)
 		this.claim(tx)
+		const final = this.finals.get(tx.hash)
+		if (final) throw final
 		const deadline = Date.now() + this.o.budgetMs
 		// What the last attempt gets of the budget at least; a shorter one could not be answered.
 		const reserve = Math.min(1_000, this.o.budgetMs / 10)
@@ -369,6 +396,7 @@ export class SendPath {
 				this.note(tx, "read", `visible after ${Date.now() - start} ms`)
 				return Date.now() - start
 			}
+			if (this.closed) break
 			if (Date.now() - pushedAt >= this.o.visibilityMs) {
 				if (pushes === this.o.rePushes) break
 				pushes++

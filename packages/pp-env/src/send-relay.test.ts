@@ -80,8 +80,12 @@ describe("the send relay", () => {
 				return ++estimates < 3 ? { error: { code: -32000, message: "execution reverted" } } : { result: "0x5208" }
 			return { result: null }
 		})
-		// Neither an empty object nor another transaction's receipt is this one's.
-		for (receipt of [{}, { transactionHash: `0x${"cd".repeat(32)}`, blockNumber: "0x1" }])
+		// Neither an empty object, another transaction's receipt, nor one with no hex block number is this one's.
+		for (receipt of [
+			{},
+			{ transactionHash: `0x${"cd".repeat(32)}`, blockNumber: "0x1" },
+			{ transactionHash: hash.result, blockNumber: "invalid" },
+		])
 			await call("eth_getTransactionReceipt", [hash.result])
 		expect((await call("eth_getTransactionCount", [SENDER.address, "latest"])).result).toBe("0x3")
 		receipt = { transactionHash: hash.result, blockNumber: "0x1", status: "0x1" }

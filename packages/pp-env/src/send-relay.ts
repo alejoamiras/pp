@@ -5,7 +5,8 @@
  * read endpoint never shows, so the relay keeps the read side from ever looking older than what it served:
  *
  * - a sender's latest or pending nonce is never answered below one past the last of its transactions whose
- *   receipt the relay served, a receipt counting only when it names that transaction's hash and a block;
+ *   receipt the relay served, a receipt counting only when it names that transaction's hash and a hex block
+ *   number;
  * - an `eth_estimateGas` error within `freshMs` of such a receipt's first serving is asked again until
  *   `freshMs` has passed or the request's budget ends; an error it then gives up on is answered as it came;
  * - a null receipt of a transaction the relay sent is asked again until it is not null or the request's
@@ -28,6 +29,7 @@ const JSON_HEADERS = { "content-type": "application/json" }
 const MAX_BODY = 4 * 1024 * 1024
 /** Seconds a connection may wait on its answer: above forge's 45 s request timeout and every budget here. */
 const IDLE_TIMEOUT_S = 60
+const HEX_QUANTITY = /^0x[0-9a-f]+$/i
 
 export type RelayTuning = {
 	/** The registry owner of the relay's port row; default one per process. */
@@ -155,7 +157,8 @@ class Relay {
 		const tx = this.sentTx(c)
 		const receipt = parseAnswer(r.text)?.result as { transactionHash?: unknown; blockNumber?: unknown } | null | undefined
 		const names = typeof receipt?.transactionHash === "string" && receipt.transactionHash.toLowerCase() === tx?.hash
-		if (!tx || !names || typeof receipt?.blockNumber !== "string" || this.receipted.has(tx.hash)) return
+		const inBlock = typeof receipt?.blockNumber === "string" && HEX_QUANTITY.test(receipt.blockNumber)
+		if (!tx || !names || !inBlock || this.receipted.has(tx.hash)) return
 		const who = tx.sender.toLowerCase()
 		this.floor.set(who, Math.max(this.floor.get(who) ?? 0, tx.nonce + 1))
 		this.receipted.add(tx.hash)

@@ -31,17 +31,21 @@ const HASH = `0x${"ab".repeat(32)}` as Hex
 const rpcError = (code: number, message: string) => JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code, message } })
 
 describe("an endpoint's answer to a send", () => {
-	// Real wording: geth's txpool errors, anvil 1.7.1's (observed), both pinned endpoints' (recorded), alloy's retry fixtures.
+	// Real wording: geth's txpool errors, anvil 1.7.1's (observed), both pinned endpoints' (recorded), and
+	// alloy-json-rpc 2.0.1's `is_retry_err` rules, the version forge 1.7.1 carries.
 	it.each([
 		["the local hash", 200, JSON.stringify({ jsonrpc: "2.0", id: 1, result: HASH }), "admitted"],
 		["geth: already known", 200, rpcError(-32000, "already known"), "known"],
 		["anvil: transaction already imported", 200, rpcError(-32003, "transaction already imported"), "known"],
+		["already known, in another case and padded", 200, rpcError(-32000, " Already Known "), "known"],
+		["transaction is not already known", 200, rpcError(-32000, "transaction is not already known"), "final"],
 		["unknown transaction", 200, rpcError(-32000, "unknown transaction"), "final"],
 		["another hash", 200, JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x${"cd".repeat(32)}` }), "other-hash"],
 		["a null result", 200, JSON.stringify({ jsonrpc: "2.0", id: 1, result: null }), "ambiguous"],
 		["both endpoints: insufficient funds", 200, rpcError(-32003, "insufficient funds for gas * price + value"), "final"],
 		["geth: nonce too low", 200, rpcError(-32000, "nonce too low"), "conflict"],
 		["geth: replacement transaction underpriced", 200, rpcError(-32000, "replacement transaction underpriced"), "conflict"],
+		["replacement underpriced", 200, rpcError(-32000, "replacement underpriced"), "conflict"],
 		["geth: transaction underpriced", 200, rpcError(-32000, "transaction underpriced"), "final"],
 		["geth: intrinsic gas too low", 200, rpcError(-32000, "intrinsic gas too low"), "final"],
 		["geth: exceeds block gas limit", 200, rpcError(-32000, "exceeds block gas limit"), "final"],
@@ -58,6 +62,14 @@ describe("an endpoint's answer to a send", () => {
 			"refused",
 		],
 		["alloy: header not found", 200, rpcError(-32000, "header not found"), "refused"],
+		["alloy: 1008 alone", 200, rpcError(1008, "too busy"), "refused"],
+		["alloy: -32055 alone", 200, rpcError(-32055, "upstream error"), "refused"],
+		["alloy: -32016 with rate limit", 200, rpcError(-32016, "over rate limit"), "refused"],
+		["alloy: -32016 without it", 200, rpcError(-32016, "over quota"), "final"],
+		["alloy: -32012 with credits", 200, rpcError(-32012, "credits limited to 6000/sec"), "refused"],
+		["alloy: credits on another code", 200, rpcError(-32003, "insufficient funds: no account credits"), "final"],
+		["alloy: daily request count", 200, rpcError(-32000, "daily request count exceeded, request rate limited"), "refused"],
+		["alloy: message parts are case-sensitive", 200, rpcError(-32000, "Rate Limit exceeded"), "final"],
 		["HTTP 502", 502, "Bad Gateway", "ambiguous"],
 		["an unreadable body", 200, "<html>", "ambiguous"],
 	])("%s", (_, status, text, kind) => {
@@ -166,6 +178,7 @@ describe("a send", () => {
 		],
 		["another hash", { result: `0x${"cd".repeat(32)}` }, "other-hash"],
 	])("answered with %s fails at once", async (_, a, kind) => {
+		read.set(() => ({ result: null }))
 		send.set((m) => (m === "eth_sendRawTransaction" ? a : { result: null }))
 		const e = failure(
 			await path()
@@ -174,6 +187,28 @@ describe("a send", () => {
 		)
 		expect([String(e.kind), send.sends().length]).toEqual([kind, 1])
 		if (kind === "final") expect(e.upstream?.body).toContain("insufficient funds")
+	})
+
+	it.each([
+		["found", true],
+		["not found", false],
+	])("answered in wording no rule names is decided by a lookup of its hash (%s)", async (_, found) => {
+		const raw = await signed(14)
+		read.set(knownOn(found ? [keccak256(raw)] : []))
+		send.set((m) => (m === "eth_sendRawTransaction" ? { error: { code: -32010, message: "AlreadyKnown" } } : { result: null }))
+		const out = await path().send(raw).catch(failure)
+		expect(found ? out : String((out as SendPathError).kind)).toBe(found ? keccak256(raw) : "final")
+		expect(send.sends()).toHaveLength(1)
+	})
+
+	it("answers the same bytes sent again after a final answer with that answer, without forwarding them", async () => {
+		const raw = await signed(15)
+		read.set(() => ({ result: null }))
+		send.set((m) => (m === "eth_sendRawTransaction" ? { error: { code: -32003, message: "insufficient funds" } } : { result: null }))
+		const p = path()
+		const first = failure(await p.send(raw).catch((x) => x))
+		expect(failure(await p.send(raw).catch((x) => x))).toBe(first)
+		expect([String(first.kind), send.sends()]).toEqual(["final", [raw]])
 	})
 
 	it("gets a last attempt just before its budget ends", async () => {
@@ -243,6 +278,18 @@ describe("a send", () => {
 		expect(await p.visible(await p.send(raw))).toBeUndefined()
 		expect(send.sends()).toHaveLength(2)
 		p.close()
+	})
+
+	it("does not push again once closed while it was waiting on the read endpoint", async () => {
+		const raw = await signed(16)
+		send.set((m) => (m === "eth_sendRawTransaction" ? { result: keccak256(raw) } : { result: null }))
+		read.set(() => ({ hangMs: 150, result: null }))
+		const p = path({ visibilityMs: 1, visibilityPollMs: 10 })
+		const hash = await p.send(raw)
+		await Bun.sleep(50)
+		p.close()
+		expect(await p.visible(hash)).toBeUndefined()
+		expect(send.sends()).toEqual([raw])
 	})
 
 	it("goes again as the same bytes when the read endpoint does not show it in time", async () => {
