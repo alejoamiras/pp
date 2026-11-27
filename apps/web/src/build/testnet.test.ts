@@ -112,8 +112,14 @@ describe("testnetTarget", () => {
 	})
 
 	test("takes pool1 with its ASP behind the page's origin, and only with the ceremony bundle", () => {
-		const own = testnetTarget(FIXTURE, {}, FPC)
-		expect(testnetTarget(POOL1, {}, FPC)).toEqual(own)
+		const entrypoint = base(POOL1).pool?.entrypoint
+		expect(testnetTarget(POOL1, {}, FPC)).toEqual(
+			testnetTarget(
+				file((d) => (d.pool = { ...d.pool, entrypoint })),
+				{},
+				FPC,
+			),
+		)
 		const preCeremony = join(dir, `deployment-${n++}.json`)
 		writeFileSync(preCeremony, JSON.stringify({ ...JSON.parse(readFileSync(POOL1, "utf8")), bundle: "pre-ceremony" }))
 		expect(() => testnetTarget(preCeremony, {}, FPC)).toThrow(/ceremony bundle the app pins/)

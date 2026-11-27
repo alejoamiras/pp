@@ -87,21 +87,36 @@ describe("the operator's ASP allowance", () => {
 		expect(r.calls[URL.leaves]).toBe(2)
 	})
 
-	test("an answer without the leaves' or the root's shape lasts only its window", async () => {
+	test("a root or leaves 200 of another shape, or over the SDK's leaves, is a failure for its window", async () => {
+		const r = rig()
+		r.answers[URL.root] = async () => ok("<html>try later</html>")
+		expect(await text(r.ask(URL.root, "root"))).toBe("the root answer is not JSON")
+		r.answers[URL.root] = async () => rootOf("1")
+		r.answers[URL.leaves] = async () => ok(JSON.stringify({ leaves: Array(2 ** 18 + 1).fill("1") }))
+		r.at(5 * MIN)
+		expect(await text(r.ask(URL.leaves, "leaves"))).toBe(`more than ${2 ** 18} leaves`)
+		r.answers[URL.leaves] = async () => leavesOf("1")
+		r.at(10 * MIN)
+		expect(await text(r.ask(URL.leaves, "leaves")), "not kept under an unchanged root").toBe(await text(Promise.resolve(leavesOf("1"))))
+		expect(r.calls).toEqual({ [URL.root]: 3, [URL.leaves]: 2 })
+	})
+
+	test("binds leaves only to a root whose latest ask succeeded", async () => {
 		const r = rig()
 		r.answers[URL.root] = async () => rootOf("1")
-		r.answers[URL.leaves] = async () => ok("<html>try later</html>")
+		r.answers[URL.leaves] = async () => ({ ok: false, reason: "timeout" })
 		await r.ask(URL.leaves, "leaves")
 		r.at(5 * MIN)
-		r.answers[URL.root] = async () => ok("<html>try later</html>")
-		r.answers[URL.leaves] = async () => leavesOf("1")
-		expect(await text(r.ask(URL.leaves, "leaves")), "malformed leaves are not kept under an unchanged root").toBe(
-			await text(Promise.resolve(leavesOf("1"))),
-		)
+		r.answers[URL.root] = async () => ({ ok: false, reason: "timeout" })
+		r.answers[URL.leaves] = async () => leavesOf("2")
+		await r.ask(URL.leaves, "leaves")
 		r.at(10 * MIN)
 		r.answers[URL.root] = async () => rootOf("1")
-		await r.ask(URL.leaves, "leaves")
-		expect(r.calls, "a malformed root does not replace root 1, so these leaves stand").toEqual({ [URL.root]: 3, [URL.leaves]: 2 })
+		r.answers[URL.leaves] = async () => leavesOf("1")
+		expect(await text(r.ask(URL.leaves, "leaves")), "leaves fetched while the root failed stand for no root").toBe(
+			await text(Promise.resolve(leavesOf("1"))),
+		)
+		expect(r.calls).toEqual({ [URL.root]: 3, [URL.leaves]: 3 })
 	})
 
 	test("a failure or a timeout uses its window, and every caller in it shares one request", async () => {
@@ -122,11 +137,16 @@ describe("the operator's ASP allowance", () => {
 
 	test("asks for the public key once an hour", async () => {
 		const r = rig()
-		for (const t of [0, 5 * MIN, 60 * MIN - 1, 60 * MIN]) {
-			r.at(t)
+		for (const [t, calls] of [
+			[0, 1],
+			[5 * MIN, 1],
+			[60 * MIN - 1, 1],
+			[60 * MIN, 2],
+		]) {
+			r.at(t as number)
 			await r.ask(URL.key, "public-key")
+			expect(r.calls[URL.key], `at ${t} ms`).toBe(calls)
 		}
-		expect(r.calls[URL.key]).toBe(2)
 	})
 
 	test("refuses a URL past its fixed number without asking", async () => {

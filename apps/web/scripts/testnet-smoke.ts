@@ -17,7 +17,8 @@ import { claimPort } from "./ports"
 import { APP_ROOT, bunRun, envWithout, scratchDir } from "./proc"
 import { type Upstream, UPSTREAM_DOWN } from "./proxy"
 import { releaseAll, untilUp } from "./served"
-import { assertProxyHonored, listen, withUpstreams } from "./test-headers-testnet"
+import { assertProxyHonored, type Fake, listen, withUpstreams } from "./test-headers-testnet"
+import { PINNED_URLS } from "@pp/testnet/schema"
 
 const SEPOLIA = "0xaa36a7"
 const SETTLE_MS = 15_000
@@ -123,6 +124,14 @@ async function assertReads(page: Page, d: Deployment, offline: boolean): Promise
 	}
 }
 
+/** Offline, the page's pool1 ASP reads reached the operator only as CONNECTs to its pinned host, which the proxy refused. */
+function assertOperatorProxied(proxy: Fake): void {
+	const host = `${new URL(PINNED_URLS.aspApi[0]).host}:443`
+	if (proxy.connects.length === 0 || proxy.connects.some((c) => c !== host))
+		throw new Error(`serve sent [${proxy.connects}] through the proxy; want one or more CONNECTs to ${host} and nothing else`)
+	console.log(`ok   serve asked ${host} ${proxy.connects.length} times, each through the refusing proxy`)
+}
+
 async function smoke(port: number, d: Deployment, offline: boolean): Promise<void> {
 	const origin = `http://localhost:${port}`
 	const browser = await chromium.launch({ headless: true })
@@ -175,14 +184,16 @@ async function main(): Promise<void> {
 		let deployment = resolve(values.target)
 		let circuits = process.env.PP_CIRCUITS_DIR
 		let proxied: NodeJS.ProcessEnv = {}
+		let proxy: Fake | undefined
 		if (offline) {
 			deployment = withUpstreams(deployment, work, await claim("smoke-bot"), await claim("smoke-asp"))
-			const proxy = await listen(await claim("smoke-proxy"), (_, res) => res.writeHead(502).end())
-			undo.push(() => proxy.close())
-			const url = `http://127.0.0.1:${proxy.port}`
+			const p = await listen(await claim("smoke-proxy"), (_, res) => res.writeHead(502).end())
+			proxy = p
+			undo.push(() => p.close())
+			const url = `http://127.0.0.1:${p.port}`
 			// No inherited exemption either: a NO_PROXY naming the operator would let an offline run reach it.
 			proxied = { HTTPS_PROXY: url, https_proxy: url, NO_PROXY: "", no_proxy: "" }
-			await assertProxyHonored(proxy, { ...envWithout(), ...proxied })
+			await assertProxyHonored(p, { ...envWithout(), ...proxied })
 			circuits = join(work, "circuits")
 			mkdirSync(circuits)
 		}
@@ -202,10 +213,12 @@ async function main(): Promise<void> {
 		const g = bunRun(args, { env: { ...envWithout(), ...proxied, PP_CIRCUITS_DIR: circuits }, capture: true })
 		undo.push(() => g.stop())
 		await untilUp("serve --deployment", port, g)
-		await smoke(port, readTestnetDeployment(deployment), offline).catch((err: unknown) => {
+		const d = readTestnetDeployment(deployment)
+		await smoke(port, d, offline).catch((err: unknown) => {
 			// A 502's cause is in the server's log alone.
 			throw new Error(`${err instanceof Error ? err.message : String(err)}\nserve's log:\n${g.output()}`)
 		})
+		if (proxy && d.target !== "own") assertOperatorProxied(proxy)
 	} finally {
 		clean = await releaseAll(undo)
 	}

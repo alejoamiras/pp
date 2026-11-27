@@ -69,12 +69,14 @@ export function listen(port: number, answer: RequestListener): Promise<Fake> {
 const CANARY = "proxy-canary.invalid"
 
 /**
- * Fails unless a Bun child with `env` sends https through `proxy`. Run before a server that would ask the
- * operator: one that ignored the variables would reach it directly, and a count could only notice after.
+ * Fails unless serve's own forward path (its proxy bypass, then `forward`) in a Bun child with `env` sends
+ * https through `proxy`. Run before a server that would ask the operator: one that went around the proxy
+ * would reach it directly, and a count could only notice after.
  */
 export async function assertProxyHonored(proxy: Fake, env: NodeJS.ProcessEnv): Promise<void> {
 	const before = proxy.connects.length
-	const child = spawn(process.execPath, ["-e", `await fetch("https://${CANARY}/").catch(() => {})`], { env, stdio: "ignore" })
+	const code = `const p = await import(${JSON.stringify(join(import.meta.dirname, "proxy.ts"))}); p.bypassProxyForLoopback(); await p.forward("https://${CANARY}/")`
+	const child = spawn(process.execPath, ["-e", code], { env, stdio: "ignore" })
 	await new Promise((resolve) => child.once("exit", resolve))
 	const got = proxy.connects.splice(before)
 	if (got.join() !== `${CANARY}:443`)
@@ -226,16 +228,20 @@ async function assertForwarded(port: number, h: SecurityHeaders, up: Upstreams, 
 
 /**
  * The operator's ASP behind its allowance, reached only as a CONNECT through the fake proxy, which
- * refuses it. Each request's CONNECT count: one per URL and window whatever the entrypoint's spelling,
- * none for a root already in its window when the leaves refresh it, and none for note events.
+ * refuses it. Each request's CONNECT count: cold leaves ask the root first, then nothing is asked again
+ * within its window whatever the entrypoint's spelling, and note events are never asked.
  */
 async function assertOperator(port: number, proxy: Fake, chain: number, e: string): Promise<void> {
 	const host = `${new URL(PINNED_URLS.aspApi[0]).host}:443`
 	const flipped = e.slice(0, 2) + [...e.slice(2)].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join("")
+	if (flipped === e) throw new Error(`${NAME}: the fixture's entrypoint ${e} has no letter to flip`)
+	const scope = (entrypoint: string) => `chainId=${chain}&entrypoint=${entrypoint}`
 	const asked: [string, number, string, number][] = [
-		[`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`, 502, UPSTREAM_DOWN.asp, 1],
-		[`/asp/association-set/root?chainId=${chain}&entrypoint=${flipped}`, 502, UPSTREAM_DOWN.asp, 0],
-		[`/asp/association-set/leaves?chainId=${chain}&entrypoint=${e}`, 502, UPSTREAM_DOWN.asp, 1],
+		[`/asp/association-set/leaves?${scope(e)}`, 502, UPSTREAM_DOWN.asp, 2],
+		[`/asp/association-set/leaves?${scope(flipped)}`, 502, UPSTREAM_DOWN.asp, 0],
+		[`/asp/association-set/root?${scope(flipped)}`, 502, UPSTREAM_DOWN.asp, 0],
+		[`/asp/${chain}/public/event-snapshot/payload?entrypoint=${e}`, 502, UPSTREAM_DOWN.asp, 1],
+		[`/asp/${chain}/public/event-snapshot/payload?entrypoint=${flipped}`, 502, UPSTREAM_DOWN.asp, 0],
 		["/asp/public-key", 502, UPSTREAM_DOWN.asp, 1],
 		["/asp/public-key", 502, UPSTREAM_DOWN.asp, 0],
 		[`/asp/${chain}/public/note-events?since=5&entrypoint=${e}`, 501, "note events are read from the chain", 0],

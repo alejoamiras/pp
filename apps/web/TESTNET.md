@@ -58,8 +58,12 @@ file path it is given is absolute.
    bun run --cwd apps/web test:testnet-smoke -- --target "$DEPLOYMENT"
    ```
 
-   For pool1, add `--no-upstreams` to the smoke. A live smoke runs a server of its own, which would ask
-   the operator again within the 5 minutes that `serve` in step 4 also counts.
+   For pool1, run the smoke offline instead. A live smoke runs a server of its own, which would ask the
+   operator again within the 5 minutes that `serve` in step 4 also counts:
+
+   ```sh
+   bun run --cwd apps/web test:testnet-smoke -- --target "$DEPLOYMENT" --no-upstreams
+   ```
 
    Each ends with a `passed` line. In the smoke, a `502` on a `GET /bot/…` or `GET /asp/…` line means
    that service gave no usable answer, and the error ends with `serve`'s log, which names why. A `404`
@@ -125,15 +129,15 @@ The same steps serve the operator's poolId 1 from a `pool1` deployment file. Onl
   operator's ASP.
 - `serve` asks the operator's ASP API (`https://api-dev.0xbow.io`) itself, within the limits the
   operator set for automated clients:
-  - each ASP request goes out at most once every 5 minutes (the public key once an hour), and every
-    tab shares the answer;
-  - the leaves are fetched again only once the root has changed, and asking for them refreshes the
-    root first;
-  - note events are never asked of it; the page reads them from Sepolia.
-  - The limits are kept per `serve` process: a restart starts them over.
-- So a deposit shows as approved only once `serve` has fetched a new root and then the leaves under it,
-  each at most once every 5 minutes: up to about 10 minutes after the operator approves it. A `502`
-  on an `/asp/` route lasts until that route's next fetch, up to 5 minutes.
+  - each ASP request goes out at most once every 5 minutes (the public key once an hour), whatever
+    its answer, and every tab shares that answer;
+  - once their 5 minutes are up, the leaves are asked for again only if the root has changed, or if
+    the last leaves or root request failed; asking for them refreshes the root first;
+  - note events are never asked of it; the page reads them from Sepolia;
+  - the limits are kept per `serve` process: a restart starts them over.
+- So a deposit shows as approved only once `serve` has fetched a new root and then the leaves under it:
+  up to about 10 minutes after the operator approves it. A `502` on an `/asp/` route lasts until that
+  route's next request, up to 5 minutes (an hour for the public key).
 
 ## Leave the pool
 
