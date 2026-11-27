@@ -13,7 +13,8 @@ const own: OwnRegistration = { authDigest: 11n, nullifyingKeyHash: 22n, viewingK
 const UNSET = toHex(0n, { size: 32 })
 const OTHER = "0x00000000000000000000000000000000000000d1"
 
-type Chain = { keystore?: Address; nullifying: bigint; viewing: Hex }
+/** `silent`: the configured keystore has no code, so its reads fail. */
+type Chain = { keystore?: Address; nullifying: bigint; viewing: Hex; silent?: true }
 
 function reader(chain: Chain, head = 50n) {
 	const reads: { functionName: string; blockNumber: bigint; address: Address; args?: readonly unknown[] }[] = []
@@ -21,6 +22,7 @@ function reader(chain: Chain, head = 50n) {
 		head: async () => head,
 		readContract: async ({ functionName, blockNumber, address, args }) => {
 			reads.push({ functionName, blockNumber, address, ...(args ? { args } : {}) })
+			if (chain.silent && address === pool.keystore) throw new Error("execution reverted")
 			return { keystore: chain.keystore ?? pool.keystore, nullifyingKeys: chain.nullifying, viewingKeys: chain.viewing }[functionName]
 		},
 	}
@@ -53,6 +55,11 @@ describe("registrationStep", () => {
 
 	it.each([
 		["the vault reads another keystore", { keystore: OTHER, nullifying: 0n, viewing: UNSET }, "KEYSTORE_MISMATCH"],
+		[
+			"the vault reads another keystore, and the configured one has no code",
+			{ keystore: OTHER, nullifying: 0n, viewing: UNSET, silent: true },
+			"KEYSTORE_MISMATCH",
+		],
 		["another nullifying key is registered", { nullifying: 23n, viewing: UNSET }, "REGISTERED_TO_OTHER_KEYS"],
 		["another viewing key is set", { nullifying: 22n, viewing: toHex(34n, { size: 32 }) }, "REGISTERED_TO_OTHER_KEYS"],
 		[

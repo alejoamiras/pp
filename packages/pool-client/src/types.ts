@@ -72,9 +72,11 @@ export interface PoolClient {
 	/** Throws a stale-root code if the vault would refuse `s`'s roots at the latest block. Call right before broadcasting. */
 	assertFresh(s: PreparedSpend): Promise<void>
 	/**
-	 * `registered` once the keystore holds this client's auth policy and viewing key, else the one call that
-	 * sets the next of them. Never sends: send the call, wait for its successful receipt, and ask again with
-	 * the receipt's block as `after`. @throws PoolClientError `KEYSTORE_MISMATCH`, `REGISTERED_TO_OTHER_KEYS`
+	 * `registered` once the keystore holds this client's nullifying-key hash and viewing key for the owner,
+	 * else the one call that sets the next of them. The auth policy itself is not readable: one the owner
+	 * rotated with `updateAuthPolicy` still reads `registered`, and this client's spends then fail to prove.
+	 * Never sends: send the call, wait for its successful receipt, and ask again with the receipt's block
+	 * as `after`. @throws PoolClientError `KEYSTORE_MISMATCH`, `REGISTERED_TO_OTHER_KEYS`
 	 */
 	registrationStep(after?: bigint): Promise<RegistrationStep>
 }

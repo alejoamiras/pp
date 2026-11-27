@@ -44,13 +44,16 @@ export async function registrationStep(
 	const head = await r.head()
 	const at = { blockNumber: head > after ? head : after }
 	const keys = { ...at, address: pool.keystore, abi: KEYSTORE_REGISTRATION_ABI, args: [owner] } as const
-	const [keystore, nullifying, viewing] = await Promise.all([
-		r.readContract({ ...at, address: pool.poolVault, abi: POOL_VAULT_VIEWS_ABI, functionName: "keystore" }),
+	const keystore = r.readContract({ ...at, address: pool.poolVault, abi: POOL_VAULT_VIEWS_ABI, functionName: "keystore" })
+	const held = Promise.all([
 		r.readContract({ ...keys, functionName: "nullifyingKeys" }),
 		r.readContract({ ...keys, functionName: "viewingKeys" }),
 	])
-	if (!isAddressEqual(keystore as Address, pool.keystore))
+	// A configured keystore that is not the vault's may not answer at all: the mismatch is the error then.
+	held.catch(() => {})
+	if (!isAddressEqual((await keystore) as Address, pool.keystore))
 		throw new PoolClientError("KEYSTORE_MISMATCH", "the pool vault reads another keystore than this client's")
+	const [nullifying, viewing] = await held
 	const nullifyingKeyHash = nullifying as bigint
 	const viewingKey = (viewing as Hex).toLowerCase()
 	const viewingSet = viewingKey !== UNSET_VIEWING_KEY

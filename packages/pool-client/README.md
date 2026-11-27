@@ -37,15 +37,17 @@ Choosing a trusted processor is the caller's job: the proof binds the processor 
 
 ## Registration
 
-A spend needs the owner's auth policy in the keystore, and senders need its viewing key. `registrationStep()` reads both, and
-the vault's keystore address, at one block, and returns `{ status: "registered" }` or `{ status: "send", call }`: one
+A spend needs the owner's auth policy in the keystore, and senders need its viewing key. `registrationStep()` reads the
+owner's nullifying-key hash and viewing key, and the vault's keystore address, at one block, and returns `{ status: "registered" }` or `{ status: "send", call }`: one
 deep-frozen `{ function, from, to, data, value: 0n }`, `setAuthPolicy` first, then `setViewingKey`, each built from this
 client's own keys. Send `call` from `call.from` only, since the keystore registers its sender. Wait for a successful receipt,
 then ask again with the receipt's block (`registrationStep(receipt.blockNumber)`), so the next read never sees the chain from
 before it. Nothing is held between calls, so a reload resumes where the chain is. It refuses with `KEYSTORE_MISMATCH` when the
 vault reads another keystore than `pool.keystore`, and with `REGISTERED_TO_OTHER_KEYS` when the keystore holds another key
-for this owner. It never overwrites that key, though the keystore would let the owner replace a viewing key. A resent
-`setAuthPolicy` reverts with `Keystore_AuthPolicyAlreadySet`.
+for this owner. It never prepares a call over a key it read, though the keystore would let the owner replace a viewing
+key; one set from elsewhere while the wallet holds the call is replaced if the owner confirms it. The auth policy itself
+cannot be read, so one rotated with `updateAuthPolicy` still reads `registered`, and this client's spends then fail to
+prove. A resent `setAuthPolicy` reverts with `Keystore_AuthPolicyAlreadySet`.
 
 ## Circuit files
 
