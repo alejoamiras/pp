@@ -28,14 +28,15 @@ const expectedShape = (n: number, i: number) => {
 	return { index, depth }
 }
 
-const failsMembership = (leaf: bigint, path: LabelPath, root: bigint) => {
+/** The rejection's code, or undefined when the path is accepted; the properties' paths are well formed, so only NotMember counts. */
+const rejection = (leaf: bigint, path: LabelPath, root: bigint) => {
 	try {
 		assertLeanImtMember(leaf, path, root)
 	} catch (e) {
-		if (e instanceof SpecRangeError) return true
+		if (e instanceof SpecRangeError) return e.code
 		throw e
 	}
-	return false
+	return undefined
 }
 
 describe("LeanIMT properties (the TS tree against its own paths; Noir agreement is the shared vectors)", () => {
@@ -73,7 +74,7 @@ describe("LeanIMT properties (the TS tree against its own paths; Noir agreement 
 			fc.assert(
 				fc.property(input, ({ leaves, index, outsider }) => {
 					const tree = buildLeanImt(leaves)
-					expect(failsMembership(outsider, tree.path(index), tree.root)).toBe(true)
+					expect(rejection(outsider, tree.path(index), tree.root)).toBe("NotMember")
 				}),
 				outsiders.fc,
 			)
@@ -119,7 +120,7 @@ describe("LeanIMT properties (the TS tree against its own paths; Noir agreement 
 						siblings[depth] = 0n
 						at &= (1 << depth) - 1
 					}
-					expect(failsMembership(leaves[index] as bigint, { index: at, depth, siblings }, tree.root)).toBe(true)
+					expect(rejection(leaves[index] as bigint, { index: at, depth, siblings }, tree.root)).toBe("NotMember")
 				}),
 				tampered.fc,
 			)

@@ -227,7 +227,7 @@ function nargoSuite(): Suite {
 
 export const SUITES = { ts: vitestSuite, sol: forgeSuite, nr: nargoSuite } satisfies Record<Lang, () => Suite>
 
-/** Problems with a run on unchanged vectors; empty means it passed in full. */
+/** Runner, test and required-section failures of a run on unchanged vectors. */
 export function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	if (outcome.error) return [`control: ${outcome.error}`]
 	if (outcome.exitCode !== 0) return [`control: runner exited ${outcome.exitCode}`]
