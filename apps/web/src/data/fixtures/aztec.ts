@@ -217,5 +217,16 @@ export function fixtureAztec(w: World): AztecPort {
 				checkedSpend(w, from, label, origin, amount, () => addExit(w, { kind: "public", payee, amount, label: 0n })),
 			)
 		},
+		async exitPrivate(from, { payee, amount, label, origin }, on) {
+			checkPayee(w, payee)
+			assertListed(w, label, origin)
+			assertSpendable(noteValues(w, from, label), amount)
+			on.handoff()
+			return send(
+				w,
+				"exitPrivate",
+				checkedSpend(w, from, label, origin, amount, () => addExit(w, { kind: "public", payee, amount, label: 0n })),
+			)
+		},
 	}
 }

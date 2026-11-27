@@ -49,6 +49,7 @@ const PORT_ACTIONS: Record<keyof AztecPort, readonly AztecAction[]> = {
 	ragequit: ["ragequit", "notes"],
 	exitPublic: ["exitPublic", "publicBalance"],
 	unshieldAndExit: ["unshield", "exitPublic", "notes"],
+	exitPrivate: ["exitPrivate", "notes"],
 }
 
 /** `port` behind the dispatch check; `allowed` is read at each call, so a new grant applies at once. */
@@ -69,5 +70,6 @@ export function guardAztec(port: AztecPort, allowed: (action: AztecAction) => bo
 		ragequit: guard("ragequit"),
 		exitPublic: guard("exitPublic"),
 		unshieldAndExit: guard("unshieldAndExit"),
+		exitPrivate: guard("exitPrivate"),
 	}
 }

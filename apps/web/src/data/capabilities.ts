@@ -43,6 +43,7 @@ export type AztecAction =
 	| "transferPrivate"
 	| "unshield"
 	| "exitPublic"
+	| "exitPrivate"
 	| "shield"
 
 type Contract = "hub" | "token"
@@ -64,9 +65,10 @@ const ACTIONS: Record<AztecAction, ActionSpec> = {
 	unshield: { stage: "2b", contract: "token", fn: "unshield", kind: "send" },
 	shield: { stage: "2c", contract: "token", fn: "shield", kind: "send" },
 	exitPublic: { stage: "2d", contract: "hub", fn: "exit_public", kind: "send" },
+	exitPrivate: { stage: "2e", contract: "hub", fn: "exit_private", kind: "send" },
 }
 
-const STAGE_ORDER: Record<Stage, number> = { "2a": 0, "2b": 1, "2c": 2, "2d": 3 }
+const STAGE_ORDER: Record<Stage, number> = { "2a": 0, "2b": 1, "2c": 2, "2d": 3, "2e": 4 }
 const SPONSOR = "sponsor_unconditionally"
 
 export const inStage = (action: AztecAction, stage: Stage): boolean => STAGE_ORDER[ACTIONS[action].stage] <= STAGE_ORDER[stage]

@@ -26,6 +26,7 @@ export const FIXTURE_OPS = [
 	"ragequit",
 	"exitPublic",
 	"unshieldAndExit",
+	"exitPrivate",
 	"settle",
 	"register",
 ] as const

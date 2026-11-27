@@ -2,8 +2,9 @@
  * Withdrawals to Ethereum for a stack build. The public row's withdraw is the hub's `exit_public`
  * alone. The label row's screened exit is `[sponsor, unshield, exit_public]` in one transaction: the
  * unshield's public credit, which checks the label's roots again, runs before the exit burns it, so a
- * revert of the check leaves neither. Both go out like every other Aztec send, through
- * `sendThroughWallet`, and only after the payload is checked call by call against what was confirmed.
+ * revert of the check leaves neither. The private exit is the hub's `exit_private` alone, whose public
+ * calls name no account. All go out like every other Aztec send, through `sendThroughWallet`, and only
+ * after the payload is checked call by call against what was confirmed.
  */
 import { AztecAddress as SdkAddress, EthAddress } from "@aztec-labs/aztec.js/addresses"
 import {
@@ -28,8 +29,8 @@ import { type AztecDeps, boundTo, sendThroughWallet } from "./aztec"
 import { checkedPath, pathArg, spendPayloads, type TokenSendDeps } from "./token-sends"
 
 export interface WithdrawDeps extends TokenSendDeps {
-	/** Builds `exit_public` with bridge-core's payee and amount refusals; nothing on it writes. */
-	client: Pick<BridgeClient, "exitPublicPayload">
+	/** Builds `exit_public` and `exit_private` with bridge-core's refusals; nothing on it writes. */
+	client: Pick<BridgeClient, "exitPublicPayload" | "exitPrivatePayload">
 }
 
 /** What the user confirmed; every call in the payload must carry exactly these values. */
@@ -75,7 +76,7 @@ async function expectPayload(p: ExecutionPayload, fpc: AztecAddress, calls: Expe
 	for (const [i, e] of calls.entries()) await expectCall(p.calls[i + 1], e)
 }
 
-export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "unshieldAndExit"> {
+export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "unshieldAndExit" | "exitPrivate"> {
 	const { hub, token } = d.aztec.deployment
 	const exitCall = (payee: Address, amount: bigint): Expected => ({
 		to: hub,
@@ -119,6 +120,21 @@ export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "
 				exitCall(x.payee, x.amount),
 			])
 			// The notes as they are now: one spend takes at most the label's 8 largest.
+			assertSpendable(await d.notes(from, x.label), x.amount)
+			return send(d.aztec, from, payload, on)
+		},
+		async exitPrivate(from, a, on) {
+			const x: ScreenedExit = { payee: a.payee, amount: a.amount, label: a.label, origin: a.origin }
+			const path = await checkedPath(d.allowList, x.label, x.origin)
+			const payload = await d.client.exitPrivatePayload({ payee: x.payee, amount: x.amount, label: x.label, path })
+			await expectPayload(payload, d.sponsoredFpc, [
+				{
+					to: hub,
+					artifact: tokenBridgeHubArtifact,
+					name: "exit_private",
+					args: [SdkAddress.fromStringUnsafe(token), EthAddress.fromString(x.payee), x.amount, new Fr(x.label), pathArg(path)],
+				},
+			])
 			assertSpendable(await d.notes(from, x.label), x.amount)
 			return send(d.aztec, from, payload, on)
 		},

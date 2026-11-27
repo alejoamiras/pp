@@ -234,6 +234,12 @@ export interface AztecPort {
 		a: { payee: Address; amount: bigint; label: bigint; origin: Origin },
 		on: AztecSendHooks,
 	): Promise<Sent>
+	/**
+	 * The hub's `exit_private` of `amount` of the label to `payee`, a checked spend whose public calls
+	 * name no Aztec account. Reverts whole if the label's roots changed before its public step.
+	 * @throws `OVER_NOTE_CAP` before the handoff when the label's 8 largest notes, read again, cannot cover `amount`
+	 */
+	exitPrivate(from: AztecAddress, a: { payee: Address; amount: bigint; label: bigint; origin: Origin }, on: AztecSendHooks): Promise<Sent>
 }
 
 /** Identical exits in one transaction differ only by their message index. */
@@ -315,7 +321,7 @@ export interface Timer {
 }
 
 /** Which functions a deployment has: the labelled token's stages A to C, then the hub's public exit (2d). */
-export type Stage = "2a" | "2b" | "2c" | "2d"
+export type Stage = "2a" | "2b" | "2c" | "2d" | "2e"
 
 export interface Deployment {
 	/** `chainId:portal:hub`, lower case. */

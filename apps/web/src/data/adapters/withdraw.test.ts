@@ -10,7 +10,7 @@ import type { Address } from "viem"
 import { describe, expect, test, vi } from "vitest"
 import { stageManifest } from "../capabilities"
 import type { AllowListPort, AztecSendHooks } from "../ports"
-import type { AztecAddress, LabelCheck } from "../stack-types"
+import type { AztecAddress, LabelCheck, LabelPath } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
 import { parseGrant } from "../wallet/grant"
 import type { AztecDeps } from "./aztec"
@@ -37,7 +37,7 @@ const at = (n: string) => `0x${n.repeat(32)}` as AztecAddress
 const [HUB, TOKEN, FPC, ME, OTHER] = [at("08"), at("09"), at("0c"), at("1c"), at("2a")]
 const PAYEE = `0x${"ab".repeat(20)}` as Address
 const T = { hub: HUB, token: TOKEN, sponsoredFpc: FPC }
-const MANIFEST = stageManifest("2d", T)
+const MANIFEST = stageManifest("2e", T)
 const GRANT = parseGrant(MANIFEST, {
 	granted: MANIFEST.capabilities.map((c) => (c.type === "accounts" ? { ...c, accounts: [{ item: ME }] } : c)),
 })
@@ -49,9 +49,10 @@ type Exit = {
 	token?: AztecAddress
 	payee?: Address
 	amount?: bigint
+	label?: bigint
 	fpc?: AztecAddress
 	extra?: boolean
-	/** Fields to change on the sponsor's call, or on exit_public's. */
+	/** Fields to change on the sponsor's call, or on the exit's. */
 	sponsor?: Partial<FunctionCall>
 	exit?: Partial<FunctionCall>
 	/** An input no call takes, added to the payload. */
@@ -63,13 +64,19 @@ type Exit = {
 const changed = (c: FunctionCall, patch: Partial<FunctionCall>): FunctionCall =>
 	Object.assign(Object.create(Object.getPrototypeOf(c)), c, patch)
 
-/** `exit_public` as bridge-core builds it, with any field a test wants wrong. */
-async function exitPayload(wallet: Wallet, a: { payee: Address; amount: bigint }, w: Exit = {}): Promise<ExecutionPayload> {
+/** The hub's exit `fn` as bridge-core builds it, with any field a test wants wrong. */
+async function hubExit(
+	wallet: Wallet,
+	fn: "exit_public" | "exit_private",
+	a: { payee: Address; amount: bigint; label?: bigint; path?: LabelPath },
+	w: Exit,
+): Promise<ExecutionPayload> {
 	const hub = Contract.at(sdk(w.hub ?? HUB), tokenBridgeHubArtifact, wallet)
 	const fee = { paymentMethod: new SponsoredFeePaymentMethod(sdk(w.fpc ?? FPC)) }
-	const p = await hub.methods
-		.exit_public(sdk(w.token ?? TOKEN), EthAddress.fromString(w.payee ?? a.payee), w.amount ?? a.amount)
-		.request({ fee })
+	const args: unknown[] = [sdk(w.token ?? TOKEN), EthAddress.fromString(w.payee ?? a.payee), w.amount ?? a.amount]
+	if (fn === "exit_private" && a.path)
+		args.push(new Fr(w.label ?? a.label ?? 0n), { index: a.path.index, depth: a.path.depth, siblings: [...a.path.siblings] })
+	const p = await hub.methods[fn](...args).request({ fee })
 	const [sponsor, exit] = p.calls as [FunctionCall, FunctionCall]
 	const calls = [changed(sponsor, w.sponsor ?? {}), changed(exit, w.exit ?? {}), ...(w.extra ? [exit] : [])]
 	const one = (add: boolean | undefined, xs: unknown[]) => (add ? [{} as never] : (xs as never[]))
@@ -109,7 +116,12 @@ function rig(check: LabelCheck = ACTIVE, wrong?: Exit) {
 		})),
 		check: vi.fn<AllowListPort["check"]>(async () => check),
 	}
-	const client = { exitPublicPayload: vi.fn((a: { payee: Address; amount: bigint }) => exitPayload(live.wallet, a, wrong)) }
+	const client = {
+		exitPublicPayload: vi.fn((a: { payee: Address; amount: bigint }) => hubExit(live.wallet, "exit_public", a, wrong ?? {})),
+		exitPrivatePayload: vi.fn((a: { payee: Address; amount: bigint; label: bigint; path: LabelPath }) =>
+			hubExit(live.wallet, "exit_private", a, wrong ?? {}),
+		),
+	}
 	const notes = vi.fn(async (_owner: AztecAddress, _label: bigint) => [5n])
 	const publicBalance = vi.fn(async (_owner: AztecAddress) => 5n)
 	const port = stackWithdraw({ aztec, allowList, sponsoredFpc: FPC, client, notes, publicBalance })
@@ -146,22 +158,24 @@ describe("withdrawals to Ethereum", () => {
 			["another fee payer", { fpc: OTHER }],
 			["an extra call", { extra: true }],
 			["the sponsor routed as a public call", { sponsor: { type: FunctionType.PUBLIC } }],
-			["another function name on the exit's selector", { exit: { name: "exit_private" } }],
+			["another function name on the exit's selector", { exit: { name: "exit" } }],
 			["a static exit call", { exit: { isStatic: true } }],
 			["an exit call that hides its sender", { exit: { hideMsgSender: true } }],
 			["a witness no call takes", { witness: true }],
 			["a capsule no call takes", { capsule: true }],
 			["hashed arguments no call takes", { hashedArgs: true }],
 		]
-		for (const [what, wrong] of wrongs)
-			for (const send of ["exitPublic", "unshieldAndExit"] as const) {
+		const all: [string, Exit][] = [...wrongs, ["another label", { label: 78n }]]
+		for (const [what, wrong] of all)
+			for (const send of ["exitPublic", "unshieldAndExit", "exitPrivate"] as const) {
+				// Only the private exit carries a label, and only it needs the checked path before it builds.
+				if (wrong.label !== undefined && send !== "exitPrivate") continue
 				const r = rig(ACTIVE, wrong)
 				const hooks = on()
-				const sent = send === "exitPublic" ? r.port.exitPublic(ME, screened, hooks) : r.port.unshieldAndExit(ME, screened, hooks)
-				await expect(sent, `${send}: ${what}`).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
+				await expect(r.port[send](ME, screened, hooks), `${send}: ${what}`).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
 				expect(hooks.handoff, `${send}: ${what}`).not.toHaveBeenCalled()
 				expect(r.wallet.sendTx, `${send}: ${what}`).not.toHaveBeenCalled()
-				expect(r.allowList.check, `${send}: ${what}`).not.toHaveBeenCalled()
+				if (send !== "exitPrivate") expect(r.allowList.check, `${send}: ${what}`).not.toHaveBeenCalled()
 			}
 		// An exit the client built right, merged with an unshield of another amount: only the merged check sees it.
 		unshieldOff.by = 1n
@@ -199,6 +213,34 @@ describe("withdrawals to Ethereum", () => {
 		)
 		await expect(moved.port.unshieldAndExit(ME, screened, hooks)).rejects.toThrow("the page's account changed")
 		for (const r of [refused, absent, spent, moved]) expect(r.wallet.sendTx).not.toHaveBeenCalled()
+	})
+
+	test("the private exit is the sponsor then exit_private, with the confirmed payee, amount, label and checked path", async () => {
+		const r = rig()
+		const hooks = on()
+		await expect(r.port.exitPrivate(ME, screened, hooks)).resolves.toMatchObject({ status: "success" })
+		expect(r.client.exitPrivatePayload).toHaveBeenCalledWith({ payee: PAYEE, amount: 5n, label: 77n, path: ACTIVE.path })
+		const p = sentPayload(r)
+		expect(p.feePayer?.toString()).toBe(FPC)
+		expect(p.calls.map((c) => [c.to.toString(), c.name])).toEqual([
+			[FPC, "sponsor_unconditionally"],
+			[HUB, "exit_private"],
+		])
+		expect(p.calls[1]?.args.slice(0, 7).map((a) => a.toBigInt())).toEqual([BigInt(TOKEN), BigInt(PAYEE), 5n, 77n, 1n, 1n, 7n])
+		expect(hooks.handoff).toHaveBeenCalledOnce()
+	})
+
+	test("the private exit builds nothing for a label the list does not hold, and sends nothing once its notes no longer cover it", async () => {
+		const absent = rig({ state: "ABSENT" })
+		await expect(absent.port.exitPrivate(ME, screened, on())).rejects.toMatchObject({ code: "LABEL_ABSENT" })
+		expect(absent.client.exitPrivatePayload).not.toHaveBeenCalled()
+		const spent = rig()
+		spent.notes.mockResolvedValue([4n])
+		const late = on()
+		await expect(spent.port.exitPrivate(ME, screened, late)).rejects.toMatchObject({ code: "OVER_NOTE_CAP" })
+		expect(spent.notes).toHaveBeenCalledWith(ME, screened.label)
+		expect(late.handoff).not.toHaveBeenCalled()
+		for (const r of [absent, spent]) expect(r.wallet.sendTx).not.toHaveBeenCalled()
 	})
 
 	test("the public row's withdraw is exit_public alone, paid by the SponsoredFPC, and refuses a public balance spent since the form", async () => {

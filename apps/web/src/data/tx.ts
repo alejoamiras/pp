@@ -6,10 +6,14 @@ import { codeOf, isUserRejection, type UiCode } from "./errors"
 import type { Hex } from "viem"
 import type { Sent } from "./ports"
 
-export type TxAction = "transferPrivate" | "unshield" | "shield" | "ragequit" | "exitPublic" | "unshieldAndExit"
+export type TxAction = "transferPrivate" | "unshield" | "shield" | "ragequit" | "exitPublic" | "unshieldAndExit" | "exitPrivate"
 
 /** What a reverted send of each action says; any other action reads `TX_REVERTED`. */
-const REVERTED: Partial<Record<TxAction, UiCode>> = { unshield: "UNSHIELD_REVERTED", unshieldAndExit: "WITHDRAW_REVERTED" }
+const REVERTED: Partial<Record<TxAction, UiCode>> = {
+	unshield: "UNSHIELD_REVERTED",
+	unshieldAndExit: "WITHDRAW_REVERTED",
+	exitPrivate: "WITHDRAW_REVERTED",
+}
 
 /** `reason` is untrusted chain text: it reaches the screen only through `revertCopy`. */
 export type TxOutcome = { ok: true } | { ok: false; code: UiCode; reason?: string; txHash?: Hex }
@@ -37,10 +41,10 @@ export function thrownOutcome(err: unknown): TxOutcome {
 export const isFinal = (revertBlock: number, proven: number | undefined): boolean => proven !== undefined && proven >= revertBlock
 
 /** Actions that spend notes and make change; an exact-chunk ragequit leaves none. */
-export const MAKES_CHANGE: ReadonlySet<TxAction> = new Set(["transferPrivate", "unshield", "unshieldAndExit"])
+export const MAKES_CHANGE: ReadonlySet<TxAction> = new Set(["transferPrivate", "unshield", "unshieldAndExit", "exitPrivate"])
 
 /**
  * Change-making spends whose public step re-checks the label's roots, so they can land reverted after
  * the wallet proved them; such a revert holds `MAKES_CHANGE` until its block is final.
  */
-export const REVERT_WAITS_FINALITY: ReadonlySet<TxAction> = new Set(["unshield", "unshieldAndExit"])
+export const REVERT_WAITS_FINALITY: ReadonlySet<TxAction> = new Set(["unshield", "unshieldAndExit", "exitPrivate"])

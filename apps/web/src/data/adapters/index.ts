@@ -83,7 +83,7 @@ const loadSessions = (): Promise<SessionPort> =>
 
 type ExitSide = {
 	exits: Pick<AztecPort, "ragequit"> & ExitPort
-	withdraw: Pick<AztecPort, "exitPublic" | "unshieldAndExit">
+	withdraw: Pick<AztecPort, "exitPublic" | "unshieldAndExit" | "exitPrivate">
 }
 let exitsLoad: Promise<ExitSide> | undefined
 /** The exits and the withdrawals share one bridge client, in the chunk the build lets carry it. */
@@ -132,6 +132,7 @@ const aztec: AztecPort = {
 	ragequit: async (from, a, on) => (await loadExits()).exits.ragequit(from, a, on),
 	exitPublic: async (from, a, on) => (await loadExits()).withdraw.exitPublic(from, a, on),
 	unshieldAndExit: async (from, a, on) => (await loadExits()).withdraw.unshieldAndExit(from, a, on),
+	exitPrivate: async (from, a, on) => (await loadExits()).withdraw.exitPrivate(from, a, on),
 }
 const exits: ExitPort = {
 	tickets: async (payee) => (await loadExits()).exits.tickets(payee),
