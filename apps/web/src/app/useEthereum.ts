@@ -7,6 +7,11 @@ import type { LiveStore } from "./live"
 
 export type EthStatus = { kind: "out" } | { kind: "signing" } | { kind: "in"; session: Session } | { kind: "error"; code: UiCode }
 
+const signInFailure = (err: unknown): EthStatus => ({
+	kind: "error",
+	code: isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED"),
+})
+
 /**
  * The selected Ethereum account and chain, kept current from wallet events, and the owner's session.
  * The session stays bound to the owner while the user switches to a separate sender account.
@@ -14,6 +19,8 @@ export type EthStatus = { kind: "out" } | { kind: "signing" } | { kind: "in"; se
 export function useEthereum(source: DataSource, live: LiveStore) {
 	const [status, setStatus] = useState<EthStatus>({ kind: "out" })
 	const session = useRef<Session | null>(null)
+	/** Advanced by each sign-in and sign-out: a sign-in that settles under a newer value is dropped. */
+	const run = useRef(0)
 
 	useEffect(() => {
 		// A first read can resolve after a wallet event; the event is newer and wins.
@@ -45,6 +52,7 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 	useEffect(() => () => session.current?.close(), [])
 
 	const signOut = useCallback(() => {
+		run.current++
 		session.current?.close()
 		session.current = null
 		live.set({ owner: null })
@@ -53,15 +61,17 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 
 	const signIn = useCallback(async () => {
 		signOut()
+		const mine = run.current
 		setStatus({ kind: "signing" })
 		try {
 			const opened = await openOwnerSession({ l1: source.l1, sessions: source.sessions, chainId: source.deployment.chainId })
+			if (mine !== run.current) return opened.ok ? opened.session.close() : undefined
 			if (!opened.ok) return setStatus({ kind: "error", code: opened.code })
 			session.current = opened.session
 			live.set({ owner: opened.session.owner })
 			setStatus({ kind: "in", session: opened.session })
 		} catch (err) {
-			setStatus({ kind: "error", code: isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED") })
+			if (mine === run.current) setStatus(signInFailure(err))
 		}
 	}, [source, live, signOut])
 

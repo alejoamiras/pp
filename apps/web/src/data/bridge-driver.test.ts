@@ -1,4 +1,4 @@
-import type { Address } from "viem"
+import type { Address, Hex, TypedDataDefinition } from "viem"
 import { describe, expect, test, vi } from "vitest"
 import type { AztecAddress, BridgeRecordView, PoolNoteView, StaleRootCode } from "./a7"
 import { createBridgeDriver, type LiveContext, PREFLIGHT_FRESH_MS, PROVE_DEADLINE_MS, type SubmitInput } from "./bridge-driver"
@@ -200,6 +200,20 @@ describe("each refusal sends nothing", () => {
 		})
 		expect(signTypedData).not.toHaveBeenCalled()
 		expect(open).not.toHaveBeenCalled()
+	})
+
+	test("a chain switched after the check but before the session asks to sign is never signed on", async () => {
+		const chains = [31337, 1]
+		const signTypedData = vi.fn(async () => "0x00" as const)
+		const l1 = { accounts: async () => [OWNER], chainId: async () => chains.shift() ?? 1, signTypedData } as unknown as L1Port
+		const sessions = {
+			open: async (a: { sign(td: TypedDataDefinition): Promise<Hex> }) => {
+				await a.sign({} as TypedDataDefinition)
+				return {} as Session
+			},
+		} as unknown as SessionPort
+		expect(await openOwnerSession({ l1, sessions, chainId: 31337 })).toEqual({ ok: false, code: "CHAIN_MISMATCH" })
+		expect(signTypedData).not.toHaveBeenCalled()
 	})
 
 	test("a second Submit for the note is ignored", async () => {

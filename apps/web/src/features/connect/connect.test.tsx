@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
+import type { Hex } from "viem"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { RECOVERY_PLAIN, RECOVERY_PRECISE } from "../../app/copy"
 import { messageOf } from "../../data/errors"
+import { FAKE_SIGNATURE } from "../../data/fixtures/l1"
 import { clickSignIn, connectAztec, renderApp } from "../../test-utils/app"
 
 afterEach(cleanup)
@@ -65,5 +67,21 @@ describe("the shell", () => {
 		await waitFor(() => expect(app.source.sessions.forget).toHaveBeenCalledOnce())
 		await app.user.keyboard("{Escape}")
 		await screen.findByRole("button", { name: "Sign in with Ethereum" })
+	})
+
+	test("a sign-in the wallet answers after Forget this device stays signed out", async () => {
+		let answer: (signature: Hex) => void = () => {}
+		const signTypedData = () => new Promise<Hex>((resolve) => (answer = resolve))
+		const app = renderApp({ patch: (s) => ({ ...s, l1: { ...s.l1, signTypedData } }) })
+		await clickSignIn(app.user)
+		await screen.findByText("Approve the signature in your Ethereum wallet")
+		await app.user.click(button("Details"))
+		await app.user.click(button("Forget this device"))
+		await app.user.click(button("Forget"))
+		await app.user.keyboard("{Escape}")
+		await screen.findByRole("button", { name: "Sign in with Ethereum" })
+		await act(async () => answer(FAKE_SIGNATURE))
+		expect(screen.queryByText("Notes by label")).toBeNull()
+		screen.getByRole("button", { name: "Sign in with Ethereum" })
 	})
 })
