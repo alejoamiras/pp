@@ -231,6 +231,47 @@ describe("the action dialogs", () => {
 		expect(reads).toBe(0)
 	})
 
+	test.each([
+		["Send privately", "Send"],
+		["Unshield", "Unshield"],
+	])("%s takes at most the label's 8 largest notes, read again under the send lock", async (row, submit) => {
+		const nine = [5, 5, 5, 5, 5, 5, 5, 4, 1].map((n) => BigInt(n) * 10n ** BigInt(6))
+		let notes = nine
+		const sent: string[] = []
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				aztec: {
+					...s.aztec,
+					notesByLabel: async (owner, label) => (label === LABELS.active ? notes : s.aztec.notesByLabel(owner, label)),
+					transferPrivate: (from, a, on) => {
+						sent.push("send")
+						return s.aztec.transferPrivate(from, a, on)
+					},
+					unshield: (from, a, on) => {
+						sent.push("unshield")
+						return s.aztec.unshield(from, a, on)
+					},
+				},
+			}),
+		})
+		await signIn(app.user)
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		const dialog = await openDialog(app, LABELS.active, row)
+		await dialog.findByText(/^One transaction spends at most this label's 8 largest notes: up to 39 USDC\. Move the rest/)
+		if (row === "Send privately") await app.user.type(dialog.getByLabelText("Recipient on Aztec"), OTHER)
+		const amount = dialog.getByLabelText(/Amount/)
+		await app.user.type(amount, "40")
+		expect(disabled(dialog.getByRole("button", { name: submit }))).toBe(true)
+		await app.user.clear(amount)
+		await app.user.type(amount, "39")
+		notes = nine.slice(0, 3)
+		await app.user.click(dialog.getByRole("button", { name: submit }))
+		await dialog.findByText(messageOf("OVER_NOTE_CAP"))
+		expect(sent).toEqual([])
+	})
+
 	test("a ragequit whose outcome was not read still lists its payee's exits", async () => {
 		const asked: string[] = []
 		const app = renderApp({

@@ -6,7 +6,7 @@ import { isAztecPoint, parseAztecAddress } from "../../data/parse"
 import type { AztecSendHooks, LabelBalance } from "../../data/ports"
 import { bindAztecSend } from "../../data/sends"
 import { ActionButton, Callout, Field, LabelChip } from "../../ui"
-import { ActionShell, AmountField, useAction, useAmount } from "./shared"
+import { ActionShell, AmountField, assertWithinSpendCap, SpendCapNote, useAction, useAmount, useSpendCap } from "./shared"
 
 interface Props {
 	account: AztecAddress
@@ -33,15 +33,25 @@ export function SendDialog({ account, balance, onClose }: Props) {
 	const typed = parseAztecAddress(to)
 	const recipient = typed !== null && isAztecPoint(typed) ? typed : null
 	const toError = to === "" || recipient ? undefined : typed === null ? RECIPIENT_MESSAGE : messageOf("RECIPIENT_INVALID")
-	const amount = useAmount(balance.balance)
+	const spend = useSpendCap(account, balance)
+	const amount = useAmount(spend.cap ?? balance.balance)
 	const act = useAction(account)
 	const send = () => {
 		if (!recipient || amount.amount === null) return
 		const a = { to: recipient, amount: amount.amount, label: balance.label, origin: balance.origin }
 		const on = bound(live, account, act)
-		if (on) void act.send("transferPrivate", (guard) => aztec.transferPrivate(account, a, guard(on)), recipient)
+		if (on)
+			void act.send(
+				"transferPrivate",
+				async (guard) => {
+					await assertWithinSpendCap(aztec, account, a.label, a.amount)
+					return aztec.transferPrivate(account, a, guard(on))
+				},
+				recipient,
+			)
 	}
-	const missing = recipient === null ? "Enter the recipient first." : amount.amount === null ? "Enter an amount first." : null
+	const missing =
+		spend.blocked ?? (recipient === null ? "Enter the recipient first." : amount.amount === null ? "Enter an amount first." : null)
 	return (
 		<ActionShell
 			title="Send privately"
@@ -54,6 +64,7 @@ export function SendDialog({ account, balance, onClose }: Props) {
 			<LabelChip label={balance.label} />
 			<Field label="Recipient on Aztec" value={to} onValue={setTo} error={toError} />
 			<AmountField field={amount} />
+			<SpendCapNote spend={spend} />
 			{recipient && tx.isNewRecipient(recipient) ? (
 				<Callout tone="wait" title="First send to this recipient">
 					It goes alone in its own transaction. Send more once it lands.
@@ -69,13 +80,18 @@ export function SendDialog({ account, balance, onClose }: Props) {
 /** Moves part of a label's balance to the account's public balance, which carries no label. */
 export function UnshieldDialog({ account, balance, onClose }: Props) {
 	const { aztec, live } = useApp()
-	const amount = useAmount(balance.balance)
+	const spend = useSpendCap(account, balance)
+	const amount = useAmount(spend.cap ?? balance.balance)
 	const act = useAction(account)
 	const send = () => {
 		if (amount.amount === null) return
 		const a = { amount: amount.amount, label: balance.label, origin: balance.origin }
 		const on = bound(live, account, act)
-		if (on) void act.send("unshield", (guard) => aztec.unshield(account, a, guard(on)))
+		if (on)
+			void act.send("unshield", async (guard) => {
+				await assertWithinSpendCap(aztec, account, a.label, a.amount)
+				return aztec.unshield(account, a, guard(on))
+			})
 	}
 	return (
 		<ActionShell
@@ -88,9 +104,13 @@ export function UnshieldDialog({ account, balance, onClose }: Props) {
 		>
 			<LabelChip label={balance.label} />
 			<AmountField field={amount} />
+			<SpendCapNote spend={spend} />
 			<ActionButton
 				variant="primary"
-				disabledReason={submitReason(act.state.kind === "sending", amount.amount === null ? "Enter an amount first." : null)}
+				disabledReason={submitReason(
+					act.state.kind === "sending",
+					spend.blocked ?? (amount.amount === null ? "Enter an amount first." : null),
+				)}
 				onClick={send}
 			>
 				Unshield
