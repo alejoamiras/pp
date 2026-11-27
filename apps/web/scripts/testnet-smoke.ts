@@ -2,8 +2,8 @@
  * A testnet build in Chromium behind `serve --deployment`, opened at `http://localhost:<port>/` as the
  * owner opens it, reading the node, the L1 RPC and the proxied services from the page. Under
  * `--no-upstreams` the file's upstream ports are claimed ones nothing serves, pool1's operator API is
- * reached only through an `HTTPS_PROXY` on one of them, and `PP_CIRCUITS_DIR` is an empty scratch
- * directory; live, they come from the host.
+ * reached only through an `HTTPS_PROXY` that refuses every CONNECT, and `PP_CIRCUITS_DIR` is an empty
+ * scratch directory; live, they come from the host.
  *
  * Usage: [PP_CIRCUITS_DIR=<dir>] bun scripts/testnet-smoke.ts --target <file> [--outDir dist-testnet] [--no-upstreams]
  */
@@ -17,7 +17,7 @@ import { claimPort } from "./ports"
 import { APP_ROOT, bunRun, envWithout, scratchDir } from "./proc"
 import { type Upstream, UPSTREAM_DOWN } from "./proxy"
 import { releaseAll, untilUp } from "./served"
-import { withUpstreams } from "./test-headers-testnet"
+import { assertProxyHonored, listen, withUpstreams } from "./test-headers-testnet"
 
 const SEPOLIA = "0xaa36a7"
 const SETTLE_MS = 15_000
@@ -174,12 +174,15 @@ async function main(): Promise<void> {
 		undo.push(() => rmSync(work, { recursive: true, force: true }))
 		let deployment = resolve(values.target)
 		let circuits = process.env.PP_CIRCUITS_DIR
-		let dead: NodeJS.ProcessEnv = {}
+		let proxied: NodeJS.ProcessEnv = {}
 		if (offline) {
-			const asp = await claim("smoke-asp")
-			deployment = withUpstreams(deployment, work, await claim("smoke-bot"), asp)
+			deployment = withUpstreams(deployment, work, await claim("smoke-bot"), await claim("smoke-asp"))
+			const proxy = await listen(await claim("smoke-proxy"), (_, res) => res.writeHead(502).end())
+			undo.push(() => proxy.close())
+			const url = `http://127.0.0.1:${proxy.port}`
 			// No inherited exemption either: a NO_PROXY naming the operator would let an offline run reach it.
-			dead = { HTTPS_PROXY: `http://127.0.0.1:${asp}`, https_proxy: `http://127.0.0.1:${asp}`, NO_PROXY: "", no_proxy: "" }
+			proxied = { HTTPS_PROXY: url, https_proxy: url, NO_PROXY: "", no_proxy: "" }
+			await assertProxyHonored(proxy, { ...envWithout(), ...proxied })
 			circuits = join(work, "circuits")
 			mkdirSync(circuits)
 		}
@@ -196,7 +199,7 @@ async function main(): Promise<void> {
 			"--deployment",
 			deployment,
 		]
-		const g = bunRun(args, { env: { ...envWithout(), ...dead, PP_CIRCUITS_DIR: circuits }, capture: true })
+		const g = bunRun(args, { env: { ...envWithout(), ...proxied, PP_CIRCUITS_DIR: circuits }, capture: true })
 		undo.push(() => g.stop())
 		await untilUp("serve --deployment", port, g)
 		await smoke(port, readTestnetDeployment(deployment), offline).catch((err: unknown) => {

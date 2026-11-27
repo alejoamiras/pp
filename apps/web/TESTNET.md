@@ -16,8 +16,8 @@ URLs.
 - **The deployment file:** the own pool's (or pool1's) testnet deployment file, with its `pool` and
   `bridge` sections. Use it only if `verify-deployment` passed on it before the factory was opened
   with `open`.
-- **The testnet services:** the deployment's operator runs `bot` and `asp --owner <canary owner>` on
-  the host.
+- **The testnet services:** the deployment's operator runs `bot` on the host, and for the own pool
+  also `asp --owner <canary owner>`.
 - **Not in this repository yet:** the deployment file and the commands named here (`verify-deployment`,
   `open`, `bot`, `asp --owner`, `seed`); see `packages/testnet/README.md`. Until they land, step 3's
   checks run on the fixture file `apps/web/src/build/fixtures/testnet-own.json` in place of
@@ -57,6 +57,9 @@ file path it is given is absolute.
    bun run --cwd apps/web test:headers -- --target "$DEPLOYMENT"
    bun run --cwd apps/web test:testnet-smoke -- --target "$DEPLOYMENT"
    ```
+
+   For pool1, add `--no-upstreams` to the smoke. A live smoke runs a server of its own, which would ask
+   the operator again within the 5 minutes that `serve` in step 4 also counts.
 
    Each ends with a `passed` line. In the smoke, a `502` on a `GET /bot/…` or `GET /asp/…` line means
    that service gave no usable answer, and the error ends with `serve`'s log, which names why. A `404`
@@ -124,10 +127,19 @@ The same steps serve the operator's poolId 1 from a `pool1` deployment file. Onl
   operator set for automated clients:
   - each ASP request goes out at most once every 5 minutes (the public key once an hour), and every
     tab shares the answer;
-  - the leaves are fetched again only after the root has changed;
+  - the leaves are fetched again only once the root has changed, and asking for them refreshes the
+    root first;
   - note events are never asked of it; the page reads them from Sepolia.
-- So the pool view can lag the operator's API by up to 5 minutes, and a deposit shows as approved only
-  after the next fetch that follows its approval. A `502` on an `/asp/` route also lasts until then.
+  - The limits are kept per `serve` process: a restart starts them over.
+- So a deposit shows as approved only once `serve` has fetched a new root and then the leaves under it,
+  each at most once every 5 minutes: up to about 10 minutes after the operator approves it. A `502`
+  on an `/asp/` route lasts until that route's next fetch, up to 5 minutes.
+
+## Leave the pool
+
+In the pinned Nulo release, a ragequit asked for after a private exit never opens; the page waits
+until it is reloaded. When testing by hand, do the ragequit before any private exit, or exit the
+whole label privately.
 
 ## When something fails
 
@@ -139,8 +151,9 @@ The same steps serve the operator's poolId 1 from a `pool1` deployment file. Onl
 | "Switch your Ethereum wallet to a separate account: …" | The owner is selected to pay for a bridge | Select the sender account in MetaMask |
 | "Select your signed-in account in your Ethereum wallet: the keystore registers …" | Another account is selected while registering | Select the owner account in MetaMask, then press **Register** |
 | "The pool's keystore holds other keys for this account, …" | The owner registered with another app's keys | Sign in with an owner this app registered, or a fresh one |
-| On pool1, a deposit the operator approved still shows as unapproved | `serve` asks the operator's ASP at most once every 5 minutes | Wait up to 5 minutes, then press Refresh |
+| On pool1, a deposit the operator approved still shows as unapproved | `serve` asks the operator's ASP for the root and the leaves at most once every 5 minutes each | Wait up to 10 minutes, then press Refresh |
 | "Allow list #… being reset: wait for its next post" | The registry's poster was replaced, which clears the list until the new poster posts | Wait for the next post, then press Refresh; leaving to Ethereum still works |
+| A ragequit after a private exit never opens | The pinned Nulo release does not open it ("Leave the pool") | Reload the page |
 | "The Aztec node does not answer. …" | The public testnet node is unreachable | Wait, then try again |
 | "The Aztec node serves L1 chain …; this app is built for …" | The node is on another network or rollup | Report it: the deployment file is out of date |
 | "That wallet is no longer available. Search again." | Nulo is closed or locked | Open Nulo, unlock it, search again |

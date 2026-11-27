@@ -39,12 +39,12 @@ describe("proxyRoute", () => {
 				return r?.upstream === "asp" ? r.kind : r?.upstream
 			}),
 		).toEqual(["bot", "bot", "root", "leaves", "public-key", "snapshot", "note-events", "note-events"])
-		// The entrypoint compares without case; the value that goes up is the request's, once checked.
+		// The entrypoint compares without case and goes up spelled as configured, so every spelling is one upstream URL.
 		const mixed = { ...C, entrypoint: `0x${"aB".repeat(20)}` }
-		const lower = `0x${"ab".repeat(20)}`
-		expect(proxyRoute(`/asp/association-set/root?chainId=11155111&entrypoint=${lower}`, mixed)?.url).toBe(
-			`http://127.0.0.1:1/association-set/root?chainId=11155111&entrypoint=${lower}`,
-		)
+		for (const spelling of [`0x${"ab".repeat(20)}`, `0x${"AB".repeat(20)}`, `0x${"Ab".repeat(20)}`])
+			expect(proxyRoute(`/asp/association-set/root?chainId=11155111&entrypoint=${spelling}`, mixed)?.url).toBe(
+				`http://127.0.0.1:1/association-set/root?chainId=11155111&entrypoint=0x${"aB".repeat(20)}`,
+			)
 	})
 
 	test("refuses every other target without decoding it", () => {
@@ -146,6 +146,27 @@ describe("forward", () => {
 			expect(Date.now() - started).toBeLessThan(1_500)
 		}
 		expect(await forward("http://127.0.0.1:1/")).toMatchObject({ ok: false, reason: expect.stringMatching(/^unreachable/) })
+	})
+
+	test("sends one request per call: a dropped connection is not retried", async () => {
+		let drop = false
+		let requests = 0
+		const flaky = createServer((req, res) => {
+			requests++
+			if (drop) req.socket.destroy()
+			else res.writeHead(200, { "content-type": "application/json" }).end("{}")
+		})
+		await new Promise<void>((resolve) => flaky.listen(0, "127.0.0.1", resolve))
+		const url = `http://127.0.0.1:${(flaky.address() as AddressInfo).port}/`
+		try {
+			expect(await forward(url)).toMatchObject({ ok: true })
+			drop = true
+			expect(await forward(url)).toMatchObject({ ok: false })
+			expect(requests).toBe(2)
+		} finally {
+			flaky.closeAllConnections()
+			flaky.close()
+		}
 	})
 })
 

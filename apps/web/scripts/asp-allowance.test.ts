@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import { aspAllowance, MAX_URLS, PUBLIC_KEY_MS, WINDOW_MS } from "./asp-allowance"
+import { aspAllowance, MAX_URLS } from "./asp-allowance"
 import type { Forwarded } from "./proxy"
 
 const ASP = "https://asp.example"
@@ -10,8 +10,11 @@ const URL = {
 	key: `${ASP}/public-key`,
 	snapshot: `${ASP}/11155111/public/event-snapshot/payload?entrypoint=0x${"11".repeat(20)}`,
 }
+const MIN = 60_000
 
 const ok = (text: string): Forwarded => ({ ok: true, status: 200, body: new TextEncoder().encode(text) })
+const rootOf = (r: string) => ok(`{"root":"${r}"}`)
+const leavesOf = (r: string) => ok(`{"leaves":["${r}0"]}`)
 
 /** A counting upstream answering `answers[url]` (a 200 `{}` by default), behind a clock the test moves. */
 function rig() {
@@ -23,6 +26,7 @@ function rig() {
 			calls[url] = (calls[url] ?? 0) + 1
 			return answers[url]?.() ?? Promise.resolve(ok("{}"))
 		},
+		URL.root,
 		() => now,
 	)
 	return { ask, calls, answers, at: (ms: number) => (now = ms) }
@@ -36,35 +40,68 @@ const text = async (r: Promise<Forwarded>) => {
 describe("the operator's ASP allowance", () => {
 	test("tabs polling every 6 s for 10 minutes cost at most two requests per URL, and the leaves one under an unchanged root", async () => {
 		const r = rig()
-		r.answers[URL.root] = async () => ok('{"root":"7"}')
+		r.answers[URL.root] = async () => rootOf("7")
+		r.answers[URL.leaves] = async () => leavesOf("7")
 		const poll = async () => {
 			await r.ask(URL.root, "root")
 			await r.ask(URL.leaves, "leaves")
 			await r.ask(URL.key, "public-key")
 			await r.ask(URL.snapshot, "snapshot")
 		}
-		for (let t = 0; t < 10 * 60_000; t += 6_000) {
+		for (let t = 0; t < 10 * MIN; t += 6_000) {
 			r.at(t)
 			await Promise.all(Array.from({ length: 5 }, poll))
 		}
 		expect(r.calls).toEqual({ [URL.root]: 2, [URL.leaves]: 1, [URL.key]: 1, [URL.snapshot]: 2 })
 	})
 
+	test("leaves follow the root for a page that only asks for the leaves", async () => {
+		const r = rig()
+		let root = "1"
+		r.answers[URL.root] = async () => rootOf(root)
+		r.answers[URL.leaves] = async () => leavesOf(root)
+		await r.ask(URL.root, "root")
+		const served: string[] = []
+		for (let t = 0; t < 12 * MIN; t += 6_000) {
+			r.at(t)
+			if (t === 4 * MIN) root = "2"
+			served.push(...(await Promise.all(Array.from({ length: 3 }, () => text(r.ask(URL.leaves, "leaves"))))))
+		}
+		expect(served.at(-1)).toBe(await text(Promise.resolve(leavesOf("2"))))
+		expect(r.calls).toEqual({ [URL.root]: 3, [URL.leaves]: 2 })
+	})
+
 	test("asks for the leaves again once the root answer changes, but not within five minutes of the last ask", async () => {
 		const r = rig()
-		let root = "A"
-		r.answers[URL.root] = async () => ok(root)
-		r.answers[URL.leaves] = async () => ok(`leaves under ${root}`)
+		let root = "1"
+		r.answers[URL.root] = async () => rootOf(root)
+		r.answers[URL.leaves] = async () => leavesOf(root)
+		r.at(1 * MIN)
+		expect(await text(r.ask(URL.leaves, "leaves"))).toBe(await text(Promise.resolve(leavesOf("1"))))
+		root = "2"
+		r.at(6 * MIN - 1)
 		await r.ask(URL.root, "root")
-		r.at(60_000)
-		expect(await text(r.ask(URL.leaves, "leaves"))).toBe("leaves under A")
-		root = "B"
-		r.at(WINDOW_MS)
-		await r.ask(URL.root, "root")
-		expect(await text(r.ask(URL.leaves, "leaves")), "inside the leaves' window").toBe("leaves under A")
-		r.at(60_000 + WINDOW_MS)
-		expect(await text(r.ask(URL.leaves, "leaves"))).toBe("leaves under B")
+		expect(await text(r.ask(URL.leaves, "leaves")), "inside the leaves' window").toBe(await text(Promise.resolve(leavesOf("1"))))
+		r.at(6 * MIN)
+		expect(await text(r.ask(URL.leaves, "leaves"))).toBe(await text(Promise.resolve(leavesOf("2"))))
 		expect(r.calls[URL.leaves]).toBe(2)
+	})
+
+	test("an answer without the leaves' or the root's shape lasts only its window", async () => {
+		const r = rig()
+		r.answers[URL.root] = async () => rootOf("1")
+		r.answers[URL.leaves] = async () => ok("<html>try later</html>")
+		await r.ask(URL.leaves, "leaves")
+		r.at(5 * MIN)
+		r.answers[URL.root] = async () => ok("<html>try later</html>")
+		r.answers[URL.leaves] = async () => leavesOf("1")
+		expect(await text(r.ask(URL.leaves, "leaves")), "malformed leaves are not kept under an unchanged root").toBe(
+			await text(Promise.resolve(leavesOf("1"))),
+		)
+		r.at(10 * MIN)
+		r.answers[URL.root] = async () => rootOf("1")
+		await r.ask(URL.leaves, "leaves")
+		expect(r.calls, "a malformed root does not replace root 1, so these leaves stand").toEqual({ [URL.root]: 3, [URL.leaves]: 2 })
 	})
 
 	test("a failure or a timeout uses its window, and every caller in it shares one request", async () => {
@@ -74,18 +111,18 @@ describe("the operator's ASP allowance", () => {
 		const waiting = Array.from({ length: 10 }, () => text(r.ask(URL.root, "root")))
 		release()
 		expect(await Promise.all(waiting)).toEqual(Array(10).fill("timeout"))
-		r.at(WINDOW_MS - 1)
+		r.at(5 * MIN - 1)
 		expect(await text(r.ask(URL.root, "root"))).toBe("timeout")
 		expect(r.calls[URL.root]).toBe(1)
 		r.answers[URL.root] = () => Promise.reject(new Error("socket hang up"))
-		r.at(WINDOW_MS)
+		r.at(5 * MIN)
 		expect(await text(r.ask(URL.root, "root"))).toBe("socket hang up")
 		expect(r.calls[URL.root]).toBe(2)
 	})
 
 	test("asks for the public key once an hour", async () => {
 		const r = rig()
-		for (const t of [0, WINDOW_MS, PUBLIC_KEY_MS - 1, PUBLIC_KEY_MS]) {
+		for (const t of [0, 5 * MIN, 60 * MIN - 1, 60 * MIN]) {
 			r.at(t)
 			await r.ask(URL.key, "public-key")
 		}

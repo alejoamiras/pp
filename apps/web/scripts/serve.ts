@@ -146,7 +146,7 @@ async function proxied(method: string | undefined, rawTarget: string, testnet: T
 	if (route === null) return text(404, "not found")
 	let r: Forwarded
 	if (route.upstream === "bot" || testnet.ask === null) r = await forward(route.url, { capBytes: CAPS[route.upstream] })
-	// Their window and range move with every block, so no allowance could bound them; the SDK scans the chain instead, as on the mock's 501.
+	// Their block range changes with every read, so no per-URL window could reuse an answer; the 501 hands note discovery to the chain, as the mock's does.
 	else if (route.kind === "note-events") return text(501, "note events are read from the chain")
 	else r = await testnet.ask(route.url, route.kind)
 	if (r.ok) return { status: r.status, type: TYPES[".json"] as string, body: r.body, headers: { "Cache-Control": "no-store" } }
@@ -195,6 +195,12 @@ async function reply(req: IncomingMessage, outDir: string, circuits: string, tes
 	return text(404, "not found")
 }
 
+function rootUrl(proxy: ProxyConfig): string {
+	const route = proxyRoute(`/asp/association-set/root?chainId=${proxy.chainId}&entrypoint=${proxy.entrypoint}`, proxy)
+	if (route === null) throw new Error("serve: the deployment's ASP scope names no root route")
+	return route.url
+}
+
 async function testnetFor(file: string | undefined, outDir: string, host: string, port: number): Promise<Testnet | null> {
 	if (file === undefined) {
 		if (existsSync(join(outDir, TARGET_FILE))) throw new Error(`serve: ${outDir} is a testnet build; serve it with --deployment <file>`)
@@ -203,7 +209,7 @@ async function testnetFor(file: string | undefined, outDir: string, host: string
 	if (host !== "127.0.0.1") throw new Error(`serve: --deployment binds 127.0.0.1 only, got --host ${host}`)
 	const { proxy, headers } = await loadTestnetServing(resolve(file), outDir)
 	bypassProxyForLoopback()
-	const ask = proxy.operator ? aspAllowance((url) => forward(url, { capBytes: CAPS.asp })) : null
+	const ask = proxy.operator ? aspAllowance((url) => forward(url, { capBytes: CAPS.asp }), rootUrl(proxy)) : null
 	return { proxy, ask, headers, hosts: new Set([`localhost:${port}`, `127.0.0.1:${port}`]) }
 }
 

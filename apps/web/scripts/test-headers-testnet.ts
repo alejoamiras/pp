@@ -4,6 +4,7 @@
  * whose ASP is the operator's pinned https API, that proxy records the CONNECT each upstream request
  * makes and refuses it, so the check counts requests to the operator and never sends one.
  */
+import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer, type IncomingHttpHeaders, type RequestListener } from "node:http"
@@ -27,7 +28,7 @@ const BODY = '{"fake":true}'
 /** Sent by the client on a proxied route; none may reach an upstream. */
 const CLIENT_HEADERS = { cookie: "s=1", authorization: "Bearer t", "x-forwarded-for": "203.0.113.1", origin: "http://evil.example" }
 
-interface Fake {
+export interface Fake {
 	readonly port: number
 	/** Each request's target and headers, in order. */
 	readonly seen: { url: string; headers: IncomingHttpHeaders }[]
@@ -36,7 +37,7 @@ interface Fake {
 	close(): Promise<void>
 }
 
-function listen(port: number, answer: RequestListener): Promise<Fake> {
+export function listen(port: number, answer: RequestListener): Promise<Fake> {
 	const seen: Fake["seen"] = []
 	const connects: string[] = []
 	const server = createServer((req, res) => {
@@ -62,6 +63,24 @@ function listen(port: number, answer: RequestListener): Promise<Fake> {
 			}),
 		)
 	})
+}
+
+/** Never resolves, so the canary reaches nothing when the proxy variables are ignored. */
+const CANARY = "proxy-canary.invalid"
+
+/**
+ * Fails unless a Bun child with `env` sends https through `proxy`. Run before a server that would ask the
+ * operator: one that ignored the variables would reach it directly, and a count could only notice after.
+ */
+export async function assertProxyHonored(proxy: Fake, env: NodeJS.ProcessEnv): Promise<void> {
+	const before = proxy.connects.length
+	const child = spawn(process.execPath, ["-e", `await fetch("https://${CANARY}/").catch(() => {})`], { env, stdio: "ignore" })
+	await new Promise((resolve) => child.once("exit", resolve))
+	const got = proxy.connects.splice(before)
+	if (got.join() !== `${CANARY}:443`)
+		throw new Error(
+			`a Bun child with the proxy variables sent [${got}] through it; want ${CANARY}:443, so the operator would be reached directly`,
+		)
 }
 
 /** Answers JSON with headers that must not cross the proxy; 501 on note events, as the mock does. */
@@ -207,25 +226,31 @@ async function assertForwarded(port: number, h: SecurityHeaders, up: Upstreams, 
 
 /**
  * The operator's ASP behind its allowance, reached only as a CONNECT through the fake proxy, which
- * refuses it: each URL is one CONNECT however often it is asked, the answer is the ASP's fixed 502, and
- * note events are answered here without one.
+ * refuses it. Each request's CONNECT count: one per URL and window whatever the entrypoint's spelling,
+ * none for a root already in its window when the leaves refresh it, and none for note events.
  */
 async function assertOperator(port: number, proxy: Fake, chain: number, e: string): Promise<void> {
-	const host = new URL(PINNED_URLS.aspApi[0]).host
-	const asked: [string, number, string][] = [
-		[`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`, 502, UPSTREAM_DOWN.asp],
-		[`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`, 502, UPSTREAM_DOWN.asp],
-		["/asp/public-key", 502, UPSTREAM_DOWN.asp],
-		[`/asp/${chain}/public/note-events?since=5&entrypoint=${e}`, 501, "note events are read from the chain"],
+	const host = `${new URL(PINNED_URLS.aspApi[0]).host}:443`
+	const flipped = e.slice(0, 2) + [...e.slice(2)].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join("")
+	const asked: [string, number, string, number][] = [
+		[`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`, 502, UPSTREAM_DOWN.asp, 1],
+		[`/asp/association-set/root?chainId=${chain}&entrypoint=${flipped}`, 502, UPSTREAM_DOWN.asp, 0],
+		[`/asp/association-set/leaves?chainId=${chain}&entrypoint=${e}`, 502, UPSTREAM_DOWN.asp, 1],
+		["/asp/public-key", 502, UPSTREAM_DOWN.asp, 1],
+		["/asp/public-key", 502, UPSTREAM_DOWN.asp, 0],
+		[`/asp/${chain}/public/note-events?since=5&entrypoint=${e}`, 501, "note events are read from the chain", 0],
 	]
-	for (const [path, status, body] of asked) {
+	for (const [path, status, body, connects] of asked) {
+		const before = proxy.connects.length
 		const res = await fetch(`http://127.0.0.1:${port}${path}`)
 		const text = await res.text()
-		if (res.status !== status || text !== body) throw new Error(`${NAME} ${path}: HTTP ${res.status} ${text}; want ${status} ${body}`)
+		const made = proxy.connects.slice(before)
+		if (res.status !== status || text !== body || made.length !== connects || made.some((c) => c !== host))
+			throw new Error(
+				`${NAME} ${path}: HTTP ${res.status} ${text}, CONNECTs [${made}]; want ${status} ${body} and ${connects} to ${host}`,
+			)
 	}
-	if (proxy.connects.join() !== [`${host}:443`, `${host}:443`].join())
-		throw new Error(`${NAME}: the operator's ASP was asked [${proxy.connects}]; want the root once and the public key once`)
-	console.log(`ok   ${NAME}: pool1's ASP is ${host}, asked once per URL, and never for note events`)
+	console.log(`ok   ${NAME}: pool1's ASP is ${host}, asked once per URL and window, and never for note events`)
 }
 
 /** No client header goes up, the app's User-Agent does, and no upstream header comes back. */
@@ -308,6 +333,7 @@ async function assertServing(outDir: string, port: number, deployment: string, u
 	const d = readTestnetDeployment(deployment)
 	const [chain, e] = [d.network.l1ChainId, d.pool.entrypoint]
 	const headers = JSON.parse(readFileSync(join(outDir, HEADER_FILE), "utf8")) as SecurityHeaders
+	if (!up.asp) await assertProxyHonored(proxy, { ...envWithout(), ...viaProxy(proxy.port) })
 	const g = startServe(outDir, port, { deployment, env: { ...viaProxy(proxy.port) } })
 	try {
 		await untilUp(NAME, port, g)

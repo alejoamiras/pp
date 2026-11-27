@@ -19,7 +19,7 @@ type Draft = {
 	bridge?: unknown
 	expected: Record<string, unknown>
 }
-const base = (): Draft => JSON.parse(readFileSync(FIXTURE, "utf8"))
+const base = (from = FIXTURE): Draft => JSON.parse(readFileSync(from, "utf8"))
 /** Every string under `v`, hex without its prefix: each is a value the fixture makes distinct. */
 const leaves = (v: unknown): string[] =>
 	typeof v === "string" ? [v.replace(/^0x/, "")] : typeof v === "object" && v !== null ? Object.values(v).flatMap(leaves) : []
@@ -27,8 +27,8 @@ const leaves = (v: unknown): string[] =>
 const dir = scratchDir("testnet-target")
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 let n = 0
-function file(edit: (d: Draft) => void): string {
-	const d = base()
+function file(edit: (d: Draft) => void, from = FIXTURE): string {
+	const d = base(from)
 	edit(d)
 	const path = join(dir, `deployment-${n++}.json`)
 	writeFileSync(path, JSON.stringify(d))
@@ -90,7 +90,6 @@ describe("testnetTarget", () => {
 
 	test("refuses any other target, chain, endpoint or fee contract, and an incomplete file", () => {
 		const refusals: [string, (d: Draft) => void, RegExp][] = [
-			["the v9 target", (d) => (d.target = "v9"), /not this target's ASP URL|own pool or pool1/],
 			["operator section", (d) => (d.operator = {}), /operator/],
 			["local chain", (d) => (d.network.l1ChainId = 31337), /Sepolia/],
 			["unpinned L1 RPC", (d) => (d.network.l1Rpc = "https://rpc.example"), /pinned Sepolia RPC/],
@@ -102,6 +101,14 @@ describe("testnetTarget", () => {
 		]
 		for (const [what, edit, message] of refusals) expect(() => testnetTarget(file(edit), {}, FPC), what).toThrow(message)
 		expect(() => testnetTarget(join(dir, "absent.json"), {}, FPC)).toThrow(/cannot be read/)
+		// From pool1, whose pinned ASP URL the schema takes for v9 too, so only the build's own target rule refuses it.
+		expect(() =>
+			testnetTarget(
+				file((d) => (d.target = "v9"), POOL1),
+				{},
+				FPC,
+			),
+		).toThrow(/own pool or pool1/)
 	})
 
 	test("takes pool1 with its ASP behind the page's origin, and only with the ceremony bundle", () => {

@@ -8,7 +8,7 @@
 export interface ProxyConfig {
 	/** The pool's L1 chain, as the SDK puts it in ASP paths and queries. */
 	readonly chainId: number
-	/** The pool's entrypoint; a query must name it (compared without case). */
+	/** The pool's entrypoint; a query must name it (compared without case), and it goes up spelled as here. */
 	readonly entrypoint: string
 	/** The own pool's mock ASP on loopback, or the operator's pinned API. */
 	readonly asp: string
@@ -36,9 +36,14 @@ const DIGITS = /^[0-9]{1,78}$/
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 const SEQUENCE = /^\/bot\/v1\/snapshots\/(latest|[1-9][0-9]{0,19})$/
 
-type Rule = { required: boolean; check(value: string, c: ProxyConfig): boolean }
+/** `canonical` is the one spelling forwarded, so case variants of a value share one upstream URL. */
+type Rule = { required: boolean; check(value: string, c: ProxyConfig): boolean; canonical?(c: ProxyConfig): string }
 const chainRule: Rule = { required: true, check: (v, c) => v === String(c.chainId) }
-const entrypointRule: Rule = { required: true, check: (v, c) => ADDRESS.test(v) && v.toLowerCase() === c.entrypoint.toLowerCase() }
+const entrypointRule: Rule = {
+	required: true,
+	check: (v, c) => ADDRESS.test(v) && v.toLowerCase() === c.entrypoint.toLowerCase(),
+	canonical: (c) => c.entrypoint,
+}
 const blockRule: Rule = { required: false, check: (v) => DIGITS.test(v) }
 
 export type AspKind = "root" | "leaves" | "public-key" | "snapshot" | "note-events"
@@ -99,7 +104,7 @@ function rebuild(query: string, rules: ReadonlyArray<readonly [string, Rule]>, c
 			continue
 		}
 		if (!rule.check(value, c)) return null
-		kept.push(`${name}=${value}`)
+		kept.push(`${name}=${rule.canonical?.(c) ?? value}`)
 	}
 	return kept.length > 0 ? `?${kept.join("&")}` : ""
 }
@@ -178,6 +183,8 @@ export async function forward(url: string, o: { deadlineMs?: number; capBytes?: 
 			method: "GET",
 			headers: { accept: "application/json", "accept-encoding": "identity", "user-agent": USER_AGENT },
 			redirect: "manual",
+			// Bun resends a request whose reused connection drops, which would make one allowed request two.
+			keepalive: false,
 			signal: AbortSignal.timeout(o.deadlineMs ?? DEADLINE_MS),
 			decompress: false,
 		}
