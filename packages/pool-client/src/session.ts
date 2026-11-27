@@ -38,6 +38,7 @@ export type Session = {
 	orchestrator: TransactOrchestrator
 	noteManager: NoteManager
 	notes: NoteComputationService
+	hash: PoseidonHashService
 }
 
 /** This package never relays, but the SDK asks for relayers before some flows. */
@@ -144,5 +145,5 @@ export async function createSession(d: {
 		addressEqualityComparator: new EvmAddressEqualityComparator(),
 		addressSchema: AddressSchema,
 	})
-	return { session, orchestrator, noteManager, notes }
+	return { session, orchestrator, noteManager, notes, hash: hashService }
 }

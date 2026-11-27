@@ -30,6 +30,8 @@ export type {
 	PoolConfig,
 	PoolNoteView,
 	PreparedSpend,
+	RegistrationCall,
+	RegistrationStep,
 	SpendRequest,
 	StaleRoot,
 	TransactProof,

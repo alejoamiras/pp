@@ -1,6 +1,6 @@
 /**
  * `@pp/pool-client/testing`: test support, not product surface. It seeds users, notes, labels and stub
- * processors on a running `pp-env up` over viem; the client itself never registers or deposits.
+ * processors on a running `pp-env up` over viem; the client itself never sends a registration call or deposits.
  * Node and Bun only: it reads pp-env's fetched circuits and compiled fixtures from disk.
  */
 export { poolConfig, type UpEnv } from "./env.ts"

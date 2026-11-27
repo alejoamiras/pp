@@ -7,9 +7,9 @@ import { BridgeClientError } from "./errors"
 import { deriveJournalKeys, type JournalKeys } from "./journal"
 import { deploymentId } from "./types"
 
-/** The pool-client methods the bridge relies on, bound once at open. */
+/** The pool-client methods the bridge and its app rely on, bound once at open. */
 export type SessionPool = Readonly<
-	Pick<PoolClient, "notes" | "prepareSpend" | "changeOpening" | "nullifierOf" | "assertRecoverable" | "assertFresh">
+	Pick<PoolClient, "notes" | "prepareSpend" | "changeOpening" | "nullifierOf" | "assertRecoverable" | "assertFresh" | "registrationStep">
 >
 
 export type SessionSecrets = { readonly claimKey: Uint8Array; readonly journal: JournalKeys }
@@ -40,6 +40,7 @@ function bindPool(p: SessionPool): SessionPool {
 		nullifierOf: p.nullifierOf.bind(p),
 		assertRecoverable: p.assertRecoverable.bind(p),
 		assertFresh: p.assertFresh.bind(p),
+		registrationStep: p.registrationStep.bind(p),
 	})
 }
 

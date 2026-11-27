@@ -86,6 +86,7 @@ export function fakePool() {
 		nullifierOf: vi.fn(async () => NULLIFIER),
 		assertRecoverable: vi.fn(async (_s: unknown) => {}),
 		assertFresh: vi.fn(async (_s: unknown) => {}),
+		registrationStep: vi.fn(async (_after?: bigint) => ({ status: "registered" as const })),
 	} satisfies SessionPool
 }
 

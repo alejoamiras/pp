@@ -47,6 +47,17 @@ export type SpendRequest = { note: bigint; amount: bigint; processor: Address; d
 
 export type StaleRoot = "STATE_ROOT_STALE" | "KEYSTORE_ROOT_STALE" | "ASP_ROOT_STALE"
 
+/** One keystore call, deep-frozen. Send it only from `from`: the keystore registers the sender, never an argument. */
+export type RegistrationCall = {
+	readonly function: "setAuthPolicy" | "setViewingKey"
+	readonly from: Address
+	readonly to: Address
+	readonly data: Hex
+	readonly value: 0n
+}
+
+export type RegistrationStep = { readonly status: "registered" } | { readonly status: "send"; readonly call: RegistrationCall }
+
 export interface PoolClient {
 	/** Syncs, then lists this client's notes, zero-value change included. */
 	notes(): Promise<PoolNoteView[]>
@@ -60,4 +71,12 @@ export interface PoolClient {
 	assertRecoverable(s: PreparedSpend): Promise<void>
 	/** Throws a stale-root code if the vault would refuse `s`'s roots at the latest block. Call right before broadcasting. */
 	assertFresh(s: PreparedSpend): Promise<void>
+	/**
+	 * `registered` once the keystore holds this client's nullifying-key hash and viewing key for the owner,
+	 * else the one call that sets the next of them. The auth policy itself is not readable: one the owner
+	 * rotated with `updateAuthPolicy` still reads `registered`, and this client's spends then fail to prove.
+	 * Never sends: send the call, wait for its successful receipt, and ask again with the receipt's block
+	 * as `after`. @throws PoolClientError `KEYSTORE_MISMATCH`, `REGISTERED_TO_OTHER_KEYS`
+	 */
+	registrationStep(after?: bigint): Promise<RegistrationStep>
 }

@@ -21,6 +21,8 @@ const MAPPED: Record<PoolClientErrorCode, object> = {
 	ARTIFACT_MISMATCH: { code: "SPEND_MISMATCH", source: "ARTIFACT_MISMATCH" },
 	SPEND_CHECK_FAILED: { code: "SPEND_MISMATCH", check: "context" },
 	NULLIFIER_NOT_FOUND: { code: "NOTE_NOT_FOUND" },
+	KEYSTORE_MISMATCH: { code: "DEPLOYMENT_MISMATCH" },
+	REGISTERED_TO_OTHER_KEYS: { code: "SPEND_MISMATCH", source: "REGISTERED_TO_OTHER_KEYS" },
 }
 
 // Values that must never surface: the signature, the claim key, a salt and an opening, in hex and decimal.

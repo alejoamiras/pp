@@ -31,7 +31,10 @@ async function shareAccount(l1: L1Port, live: LiveStore, current: () => boolean)
 	try {
 		const listed = await l1.accounts()
 		if (!current()) return false
-		if (listed.length === 0) await l1.requestAccounts()
+		if (listed.length === 0) {
+			await l1.requestAccounts()
+			if (!current()) return false
+		}
 		const [[account], chainId] = await Promise.all([l1.accounts(), l1.chainId()])
 		if (!current()) return false
 		live.set({ ...(heard.account ? {} : { account: account ?? null }), ...(heard.chain ? {} : { chainId }) })
