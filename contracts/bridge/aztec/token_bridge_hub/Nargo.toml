@@ -8,6 +8,7 @@ type = "contract"
 aztec = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", directory = "aztec" }
 compressed_string = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", directory = "compressed-string" }
 labelled_token = { path = "../labelled_token" }
+asp_registry = { path = "../asp_registry" }
 bridge_message = { path = "../bridge_message" }
 pp_hash = { path = "../pp_hash" }
 claim_secret_lib = { path = "../claim_secret" }

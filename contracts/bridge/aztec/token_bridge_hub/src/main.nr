@@ -27,7 +27,7 @@ pub contract TokenBridgeHub {
         publish_contract_instance::publish_contract_instance_for_public_execution,
         state_vars::{Map, PublicImmutable},
     };
-    use bridge_message::{bridge_content_v1, ragequit_content_v1};
+    use bridge_message::{bridge_content_v1, exit_content_v1, ragequit_content_v1};
     use claim_secret_lib::derive_claim_secret;
     use compressed_string::FieldCompressedString;
     use labelled_token::LabelledToken;
@@ -42,6 +42,14 @@ pub contract TokenBridgeHub {
         payee: EthAddress,
         amount: u128,
         label: Field,
+    }
+
+    // The public exit's settlement preimage, so the exit settles on Ethereum from chain data alone.
+    #[event]
+    pub struct PublicExitTicket {
+        token: AztecAddress,
+        payee: EthAddress,
+        amount: u128,
     }
 
     #[storage]
@@ -207,9 +215,23 @@ pub contract TokenBridgeHub {
         self.emit(RagequitTicket { token, payee, amount, label });
     }
 
+    // ── Public exit ────────────────────────────────────────────────────────────────────────
+
+    // The hub's refusals come before the burn, so a refused exit names its own cause, not the token's.
+    #[external("public")]
+    fn exit_public(token: AztecAddress, payee: EthAddress, amount: u128) {
+        let portal = self.storage.portal_of.at(token).read();
+        // The portal refuses to pay itself (`PayeeIsPortal`), so this exit would burn and never settle.
+        assert(payee != portal, "exit payee is the portal");
+        let content = exit_content_v1(payee, amount);
+        self.call(LabelledToken::at(token).burn_public_for_exit(self.msg_sender(), amount));
+        self.context.message_portal(portal, content);
+        self.emit(PublicExitTicket { token, payee, amount });
+    }
+
     // ── Discovery ──────────────────────────────────────────────────────────────────────────
 
-    // Zero when unregistered — discovery must not revert. The claim and the ragequit use the
+    // Zero when unregistered — discovery must not revert. The claim and both exits use the
     // hard-reverting read.
     #[external("public")]
     #[view]
