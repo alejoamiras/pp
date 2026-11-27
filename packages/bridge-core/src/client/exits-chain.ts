@@ -14,11 +14,17 @@ import {
 	type Account,
 	type Address,
 	bytesToHex,
+	type ContractFunctionArgs,
+	type ContractFunctionReturnType,
+	decodeFunctionResult,
+	encodeFunctionData,
 	getAbiItem,
 	getAddress,
 	type Hash,
 	type Hex,
+	hexToBigInt,
 	isAddressEqual,
+	numberToHex,
 	type PublicClient,
 	type WalletClient,
 } from "viem"
@@ -27,9 +33,11 @@ import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { guarded, walletRefusal } from "./boundary"
 import type { ClientDeployment } from "./deployment"
 import { BridgeClientError } from "./errors"
-import { allPages, type ExitReads, type ExitWitness, messageIndices, settleWith } from "./exits"
+import { allPages, type ExitPin, type ExitReads, type ExitWitness, messageIndices, settledAt, settleWith } from "./exits"
+import { BlockNotServedError, retryLagging } from "./lagging"
 import { callPayload, sponsored } from "./payload"
-import { freshHead, windowedLogs } from "./resolve"
+import { windowedLogs } from "./resolve"
+import type { ClientTiming } from "./timing"
 import type { ExitTicket } from "./types"
 
 const EXIT_SETTLED = getAbiItem({ abi: PROCESSOR_PORTAL_ABI, name: "ExitSettled" })
@@ -42,9 +50,10 @@ export type ExitProof = ExitWitness & { numCheckpointsInEpoch: bigint; leafIndex
 
 export type ExitNode = Pick<AztecNode, "getPublicLogsByTags" | "getTxReceipt" | "getL2ToL1Messages" | "getBlock" | "getCheckpointsData">
 
-export type ExitReader = Pick<PublicClient, "readContract" | "getLogs" | "request" | "simulateContract" | "waitForTransactionReceipt">
+export type ExitReader = Pick<PublicClient, "getLogs" | "request" | "simulateContract" | "waitForTransactionReceipt">
 
-export type ExitContext = { deployment: ClientDeployment; reader: ExitReader; node: ExitNode; receiptTimeoutMs: number }
+/** `timing` bounds the settle's receipt wait and spaces the retries of a lagging backend. */
+export type ExitContext = { deployment: ClientDeployment; reader: ExitReader; node: ExitNode; timing: ClientTiming }
 
 const TICKET_EVENTS = { ragequit: "RagequitTicket", public: "PublicExitTicket" } as const
 
@@ -164,30 +173,49 @@ export async function exitTickets(c: ExitContext, a: { payee?: Address; fromBloc
 	return out
 }
 
-/** The Outbox's roots for an epoch, read through the client's own L1 reader. */
-const rootsOf = (c: ExitContext): OutboxRootsReader => ({
-	getRoots: async (epoch: EpochNumber) => {
-		const roots = await c.reader.readContract({
-			address: c.deployment.outbox,
-			abi: OutboxAbi,
-			functionName: "getRoots",
-			args: [BigInt(epoch)],
-		})
-		return roots.map((r) => Fr.fromString(r))
-	},
+type OutboxView = "getRoots" | "hasMessageBeenConsumedAtEpoch"
+
+/** An Outbox view at `at`'s hash (EIP-1898), so the state read is that header's whichever backend serves it. */
+async function outboxAt<const fn extends OutboxView>(
+	c: ExitContext,
+	at: ExitPin,
+	functionName: fn,
+	args: ContractFunctionArgs<typeof OutboxAbi, "view", fn>,
+): Promise<ContractFunctionReturnType<typeof OutboxAbi, "view", fn>> {
+	const data = encodeFunctionData({ abi: OutboxAbi, functionName, args } as never)
+	const out = await c.reader.request({ method: "eth_call", params: [{ to: c.deployment.outbox, data }, { blockHash: at.hash }] })
+	return decodeFunctionResult({ abi: OutboxAbi, functionName, data: out } as never) as never
+}
+
+/** The header at `block`; a backend that does not serve it yet throws {@link BlockNotServedError}. */
+async function headerAt(c: ExitContext, block: bigint | "latest"): Promise<ExitPin> {
+	const h = await c.reader.request({ method: "eth_getBlockByNumber", params: [block === "latest" ? block : numberToHex(block), false] })
+	if (!h?.hash || h.number === null) throw new BlockNotServedError(block)
+	return { number: hexToBigInt(h.number), hash: h.hash }
+}
+
+/** The header at `block`, retried while the backend lags; `RPC_INCONSISTENT` unless its hash is `hash`. */
+async function assertCanonical(c: ExitContext, block: bigint, hash: Hash | null): Promise<void> {
+	const h = await retryLagging(c.timing.pollingIntervalMs, () => headerAt(c, block))
+	if (!hash || h.hash.toLowerCase() !== hash.toLowerCase()) throw new BridgeClientError("RPC_INCONSISTENT")
+}
+
+/** The Outbox's roots for an epoch at `at`, read through the client's own L1 reader. */
+const rootsOf = (c: ExitContext, at: ExitPin): OutboxRootsReader => ({
+	getRoots: async (epoch: EpochNumber) => (await outboxAt(c, at, "getRoots", [BigInt(epoch)])).map((r) => Fr.fromString(r)),
 })
 
 /**
- * The ticket's witness once the Outbox holds a root covering it. A ticket whose transaction the node
- * dropped, or whose message index names another message, is not this deployment's exit.
+ * The ticket's witness once the Outbox holds a root covering it at `at`. A ticket whose transaction
+ * the node dropped, or whose message index names another message, is not this deployment's exit.
  */
-async function proofOf(c: ExitContext, t: ExitTicket): Promise<ExitProof | undefined> {
+async function proofOf(c: ExitContext, t: ExitTicket, at: ExitPin): Promise<ExitProof | undefined> {
 	const receipt = await c.node.getTxReceipt(TxHash.fromString(t.l2TxHash), { includeTxEffect: true })
 	if (receipt.status === TxStatus.DROPPED) throw new BridgeClientError("TICKET_NOT_FOUND")
 	if (!receipt.txEffect) return undefined
 	const hash = exitMessageHash(c.deployment, t)
 	if (!receipt.txEffect.l2ToL1Msgs[t.messageIndexInTx]?.equals(hash)) throw new BridgeClientError("TICKET_NOT_FOUND")
-	const w = await computeL2ToL1MembershipWitness(c.node, rootsOf(c), hash, receipt, t.messageIndexInTx)
+	const w = await computeL2ToL1MembershipWitness(c.node, rootsOf(c, at), hash, receipt, t.messageIndexInTx)
 	if (!w) return undefined
 	return {
 		epoch: BigInt(w.epochNumber),
@@ -198,15 +226,24 @@ async function proofOf(c: ExitContext, t: ExitTicket): Promise<ExitProof | undef
 	}
 }
 
+/** Whether a settle event pays what the ticket's message carries; a public exit settles under label 0. */
+const paysTicket = (t: ExitTicket, e: { payee?: Address; amount?: bigint; label?: bigint }): boolean =>
+	e.payee !== undefined && isAddressEqual(e.payee, t.payee) && e.amount === t.amount && e.label === (t.kind === "ragequit" ? t.label : 0n)
+
 /** The chain reads `exitState` and `settleWith` run on, keyed by the witness's `(epoch, leafId)`. */
 export function exitReads(c: ExitContext): ExitReads<ExitProof> {
 	const d = c.deployment
 	return {
-		witness: (t) => proofOf(c, t),
-		settledTx: async (w, floor = 0n) => {
-			const latest = await freshHead(c.reader)
-			const head = latest > floor ? latest : floor
-			const logs = await windowedLogs(d.deployBlock, head, true, async (fromBlock, toBlock) => {
+		pin: (floor = 0n) =>
+			retryLagging(c.timing.pollingIntervalMs, async () => {
+				const h = await headerAt(c, "latest")
+				if (h.number < floor) throw new BlockNotServedError(floor)
+				return h
+			}),
+		holds: (at) => assertCanonical(c, at.number, at.hash),
+		witness: (t, at) => proofOf(c, t, at),
+		settledTx: async (t, w, at) => {
+			const [log] = await windowedLogs(d.deployBlock, at.number, true, async (fromBlock, toBlock) => {
 				const window = await c.reader.getLogs({
 					address: d.portal,
 					event: EXIT_SETTLED,
@@ -216,15 +253,13 @@ export function exitReads(c: ExitContext): ExitReads<ExitProof> {
 				})
 				return window.filter((l) => l.args.leafId === w.leafId)
 			})
-			return logs[0]?.transactionHash ?? null
+			if (!log) return null
+			// The pair is the Outbox leaf of this ticket's message, which commits to payee, amount and label.
+			if (!paysTicket(t, log.args)) throw new BridgeClientError("RPC_INCONSISTENT")
+			await assertCanonical(c, log.blockNumber, log.blockHash)
+			return log.transactionHash
 		},
-		consumed: (w) =>
-			c.reader.readContract({
-				address: d.outbox,
-				abi: OutboxAbi,
-				functionName: "hasMessageBeenConsumedAtEpoch",
-				args: [w.epoch, w.leafId],
-			}),
+		consumed: (w, at) => outboxAt(c, at, "hasMessageBeenConsumedAtEpoch", [w.epoch, w.leafId]),
 	}
 }
 
@@ -266,9 +301,9 @@ export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): P
 	const io = exitReads(c)
 	return settleWith(io, t, async (w) => {
 		const hash = await sendSettle(c, l1, account, t, w)
-		const receipt = await c.reader.waitForTransactionReceipt({ hash, timeout: c.receiptTimeoutMs }).catch(() => null)
+		const receipt = await c.reader.waitForTransactionReceipt({ hash, timeout: c.timing.receiptTimeoutMs }).catch(() => null)
 		// A failed read after the broadcast must not lose its hash; the caller re-reads the ticket later.
-		const settled = await io.settledTx(w, receipt?.blockNumber).catch(() => undefined)
+		const settled = await settledAt(io, t, w, receipt?.blockNumber).catch(() => undefined)
 		if (settled) return settled
 		if (!receipt || settled === undefined) throw new BridgeClientError("UNCERTAIN", { l1TxHash: hash })
 		throw new BridgeClientError(receipt.status === "success" ? "RPC_INCONSISTENT" : "REVERTED", { l1TxHash: hash })

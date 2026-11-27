@@ -57,7 +57,7 @@ describe("journal", () => {
 		const o = await owner(m, seed, [100n])
 		const { store, values } = recordingStore()
 		const holder = await account(dev)
-		const first = bridgeClientOver(m, clientIo(m, store), { receiptTimeoutMs: 3_000 })
+		const first = bridgeClientOver(m, clientIo(m, store), { timing: { receiptTimeoutMs: 3_000, pollingIntervalMs: 1_000 } })
 		await first.preflight({ recipient: holder.address, wallet: dev.wallet })
 		const s1 = await sessionOf(m, o)
 		const spend = await prepare(s1, o, 0, 70n, holder.address)

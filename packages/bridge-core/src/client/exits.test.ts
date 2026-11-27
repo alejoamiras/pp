@@ -1,6 +1,7 @@
 import type { Hash, Hex } from "viem"
 import { describe, expect, it, vi } from "vitest"
-import { allPages, type ExitReads, exitState, messageIndices, settleWith } from "./exits"
+import { BridgeClientError } from "./errors"
+import { allPages, type ExitPin, type ExitReads, exitState, messageIndices, settleWith } from "./exits"
 import type { ExitTicket } from "./types"
 
 const T: ExitTicket = {
@@ -16,13 +17,27 @@ const W = { epoch: 4n, leafId: 9n }
 const TX = `0x${"aa".repeat(32)}` as Hash
 const h = (n: number) => `0x${n.toString(16).padStart(64, "0")}` as Hex
 
-const reads = (o: Partial<{ witness: boolean; settled: (Hash | null)[]; consumed: boolean }>): ExitReads => {
+/** Headers at heights 10, 11, …; `moved` makes a header no longer canonical once a read has used it. */
+const reads = (o: Partial<{ witness: boolean; settled: (Hash | null)[]; consumed: boolean; moved: boolean }>) => {
 	const settled = [...(o.settled ?? [null])]
-	return {
-		witness: async () => (o.witness === false ? undefined : W),
-		settledTx: async () => (settled.length > 1 ? (settled.shift() ?? null) : (settled[0] ?? null)),
-		consumed: async () => o.consumed ?? false,
+	let height = 10n
+	const pinned: { floor: bigint | undefined; at: ExitPin }[] = []
+	const used: ExitPin[] = []
+	const use = (at: ExitPin) => used.push(at)
+	const io: ExitReads = {
+		pin: vi.fn(async (floor?: bigint) => {
+			const at = { number: height++, hash: h(Number(height)) }
+			pinned.push({ floor, at })
+			return at
+		}),
+		holds: vi.fn(async () => {
+			if (o.moved) throw new BridgeClientError("RPC_INCONSISTENT")
+		}),
+		witness: async (_, at) => (use(at), o.witness === false ? undefined : W),
+		settledTx: async (_, __, at) => (use(at), settled.length > 1 ? (settled.shift() ?? null) : (settled[0] ?? null)),
+		consumed: async (_, at) => (use(at), o.consumed ?? false),
 	}
+	return Object.assign(io, { pinned, used })
 }
 
 describe("exit tickets", () => {
@@ -46,9 +61,21 @@ describe("exitState", () => {
 		expect(await exitState(reads({ settled: [TX] }), T)).toEqual({ status: "settled", tx: TX })
 	})
 
-	it("re-reads once when the leaf is consumed but its event is missing, then reports the inconsistency", async () => {
-		expect(await exitState(reads({ consumed: true, settled: [null, TX] }), T)).toEqual({ status: "settled", tx: TX })
+	it("re-reads once, at a header no lower than the first, when the leaf is consumed but its event is missing, then reports the inconsistency", async () => {
+		const io = reads({ consumed: true, settled: [null, TX] })
+		expect(await exitState(io, T)).toEqual({ status: "settled", tx: TX })
+		const [first, second] = io.pinned
+		expect(second?.floor).toBe(first?.at.number)
 		await expect(exitState(reads({ consumed: true }), T)).rejects.toThrow(/RPC_INCONSISTENT/)
+	})
+
+	it("reads one decision at one header, and refuses it when that header moved during the reads", async () => {
+		const io = reads({})
+		await exitState(io, T)
+		expect(io.used).toEqual([io.pinned[0]?.at, io.pinned[0]?.at, io.pinned[0]?.at])
+		expect(io.holds).toHaveBeenCalledWith(io.pinned[0]?.at)
+		for (const o of [{ witness: false }, {}, { settled: [TX] }])
+			await expect(exitState(reads({ ...o, moved: true }), T)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
 	})
 })
 

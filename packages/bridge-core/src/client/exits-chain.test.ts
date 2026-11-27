@@ -7,10 +7,22 @@ import { computeL2ToL1MessageHash, computeLogTag } from "@aztec-labs/stdlib/hash
 import { Tag } from "@aztec-labs/stdlib/logs"
 import { computeL2ToL1MembershipWitnessFromMessagesInEpoch } from "@aztec-labs/stdlib/messaging"
 import { TxHash, TxStatus } from "@aztec-labs/stdlib/tx"
+import { OutboxAbi } from "@aztec-foundation/l1-artifacts/OutboxAbi"
 import vectors from "@pp/bridge-spec/vectors/v1.json" with { type: "json" }
-import { type Address, type Hash, type Hex, getAddress, toHex, UserRejectedRequestError } from "viem"
+import {
+	type Address,
+	decodeFunctionData,
+	encodeFunctionResult,
+	getAddress,
+	type Hash,
+	type Hex,
+	hexToBigInt,
+	numberToHex,
+	toHex,
+	UserRejectedRequestError,
+} from "viem"
 import { describe, expect, it, vi } from "vitest"
-import { DEPLOYMENT, HUB, headRequest, PORTAL, SENDER } from "../test/client-fakes"
+import { DEPLOYMENT, HUB, PORTAL, SENDER } from "../test/client-fakes"
 import type { ClientDeployment } from "./deployment"
 import { exitStatusOf, exitState } from "./exits"
 import { assertExitPayee, type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
@@ -37,6 +49,29 @@ const toPortal = (content: string) =>
 		rollupVersion: new Fr(D.rollupVersion),
 		chainId: new Fr(D.chainId),
 	})
+
+/** One `ExitSettled`; `blockHash` defaults to the canonical header's at `block`. */
+type Settled = {
+	epoch: bigint
+	leafId: bigint
+	tx: Hash
+	block: bigint
+	blockHash?: Hash
+	payee: Address
+	amount: bigint
+	label: bigint
+}
+
+/** The event the portal emits when it settles `t` at `w`. */
+const settledFor = (t: ExitTicket, w: { epoch: bigint; leafId: bigint }, tx: Hash, block: bigint): Settled => ({
+	epoch: w.epoch,
+	leafId: w.leafId,
+	tx,
+	block,
+	payee: t.payee,
+	amount: t.amount,
+	label: t.kind === "ragequit" ? t.label : 0n,
+})
 
 const TX_A = toHex(0xaan, { size: 32 })
 const TX_B = toHex(0xbbn, { size: 32 })
@@ -75,11 +110,20 @@ async function world() {
 		posted: false,
 		head: 300n,
 		cachedHead: undefined as bigint | undefined,
-		/** How far the reader's node trails the one that serves receipts. */
-		lag: 0n,
+		/** How far the reader's backend trails the one that serves receipts, at each next latest-header read; then 0. */
+		lags: [] as bigint[],
+		/** The head each latest-header read answered. */
+		latest: [] as bigint[],
+		/** Bumping it replaces every header: a reorg. */
+		fork: 0n,
+		/** Reorg as an Outbox read is answered, between a decision's pin and its re-check. */
+		reorgOnCall: false,
+		/** The block each Outbox read named. */
+		calls: [] as unknown[],
 		consumed: new Set<string>(),
-		settled: [] as { epoch: bigint; leafId: bigint; tx: Hash; block: bigint }[],
+		settled: [] as Settled[],
 	}
+	const hashOf = (n: bigint) => toHex(n + (state.fork << 64n), { size: 32 })
 	const node = {
 		getPublicLogsByTags: vi.fn(async (q: { tags: Tag[]; fromBlock?: number }) => [
 			logs.filter((l) => l.tag.equals(q.tags[0]!) && l.blockNumber >= (q.fromBlock ?? 0)),
@@ -102,6 +146,23 @@ async function world() {
 		getCheckpointsData: vi.fn(async () => [{ checkpointNumber: 1 }]),
 	}
 	const zero = toHex(0n, { size: 32 })
+	const header = ([tag]: readonly unknown[]) => {
+		const n = tag === "latest" ? state.head - (state.lags.shift() ?? 0n) : hexToBigInt(tag as Hex)
+		if (tag === "latest") state.latest.push(n)
+		return n > state.head ? null : { number: numberToHex(n), hash: hashOf(n) }
+	}
+	const outbox = ([{ to, data }, block]: readonly unknown[] & [{ to: Address; data: Hex }, unknown]) => {
+		state.calls.push(block)
+		if (state.reorgOnCall) state.fork += 1n
+		if (to !== D.outbox) throw new Error(`unexpected call to ${to}`)
+		const { functionName, args } = decodeFunctionData({ abi: OutboxAbi, data })
+		if (functionName === "getRoots") {
+			const roots = Array.from({ length: 32 }, (_, i) => (i === 0 && state.posted ? root.toString() : zero)) as Hex[]
+			return encodeFunctionResult({ abi: OutboxAbi, functionName, result: roots as never })
+		}
+		if (functionName !== "hasMessageBeenConsumedAtEpoch") throw new Error(`unexpected ${functionName}`)
+		return encodeFunctionResult({ abi: OutboxAbi, functionName, result: state.consumed.has(`${args[0]}:${args[1]}`) })
+	}
 	const reader = {
 		// viem's `getBlockNumber` can serve an older head at any `cacheTime` (its cache, or another
 		// caller's request in flight); here the first head it saw never moves.
@@ -109,16 +170,21 @@ async function world() {
 			state.cachedHead ??= state.head
 			return state.cachedHead
 		},
-		request: headRequest(() => state.head - state.lag),
-		readContract: vi.fn(async (q: { functionName: string; args: bigint[] }) => {
-			if (q.functionName === "getRoots")
-				return Array.from({ length: 32 }, (_, i) => (i === 0 && state.posted ? root.toString() : zero))
-			return state.consumed.has(`${q.args[0]}:${q.args[1]}`)
+		request: vi.fn(async ({ method, params }: { method: string; params: readonly unknown[] }) => {
+			if (method === "eth_getBlockByNumber") return header(params)
+			if (method === "eth_call") return outbox(params as Parameters<typeof outbox>[0])
+			throw new Error(`unexpected ${method}`)
 		}),
 		getLogs: vi.fn(async (q: { address: Address; args: { epoch: bigint }; fromBlock: bigint; toBlock: bigint }) =>
 			state.settled
 				.filter((s) => q.address === PORTAL && s.epoch === q.args.epoch && s.block >= q.fromBlock && s.block <= q.toBlock)
-				.map((s) => ({ args: { epoch: s.epoch, leafId: s.leafId }, transactionHash: s.tx, blockNumber: s.block, removed: false })),
+				.map((s) => ({
+					args: { payee: s.payee, amount: s.amount, label: s.label, epoch: s.epoch, leafId: s.leafId },
+					transactionHash: s.tx,
+					blockNumber: s.block,
+					blockHash: s.blockHash ?? hashOf(s.block),
+					removed: false,
+				})),
 		),
 		simulateContract: vi.fn(async (_call: unknown) => ({})),
 		waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: Hash }) => ({
@@ -128,18 +194,20 @@ async function world() {
 		})),
 	}
 	// The portal settles a leaf once: consume at (epoch, 2^|path| + leafIndex), then ExitSettled.
-	const writeContract = vi.fn(async (call: { args: readonly unknown[] }) => {
+	const writeContract = vi.fn(async (call: { functionName: string; args: readonly unknown[] }) => {
 		const path = call.args.at(-1) as Hex[]
 		const leafId = 2n ** BigInt(path.length) + (call.args.at(-2) as bigint)
 		const epochOf = call.args.at(-4) as bigint
+		const [payee, amount, label] = call.args as [Address, bigint, bigint]
 		const tx = toHex(0xe0n + BigInt(state.settled.length), { size: 32 })
 		state.head += 1n
 		state.consumed.add(`${epochOf}:${leafId}`)
-		state.settled.push({ epoch: epochOf, leafId, tx, block: state.head })
+		const paid = { payee, amount, label: call.functionName === "settleRagequit" ? label : 0n }
+		state.settled.push({ epoch: epochOf, leafId, tx, block: state.head, ...paid })
 		return tx
 	})
 	const l1 = { account: { address: SENDER, type: "json-rpc" }, chain: undefined, getChainId: vi.fn(async () => 31337), writeContract }
-	const c = { deployment: D, reader, node, receiptTimeoutMs: 1_000 } as unknown as ExitContext
+	const c = { deployment: D, reader, node, timing: { receiptTimeoutMs: 1_000, pollingIntervalMs: 1 } } as unknown as ExitContext
 	return { c, state, node, reader, l1: l1 as never, writeContract }
 }
 
@@ -150,6 +218,11 @@ const payeeOf = (word: string): Address => {
 }
 
 const status = async (c: ExitContext, t: ExitTicket) => exitStatusOf(await exitState(exitReads(c), t))
+
+const witnessOf = async (c: ExitContext, t: ExitTicket) => {
+	const reads = exitReads(c)
+	return reads.witness(t, await reads.pin())
+}
 
 describe("exit tickets", () => {
 	it("decodes both ticket events as the hub emits them, keeps the deployment's token, and gives each identical exit its own message", async () => {
@@ -181,11 +254,38 @@ describe("exit tickets", () => {
 		expect(await status(c, ragequit!)).toBe("proving")
 		state.posted = true
 		expect(await status(c, ragequit!)).toBe("ready")
-		const w = await exitReads(c).witness(ragequit!)
-		state.settled.push({ epoch: w!.epoch, leafId: w!.leafId + 1n, tx: toHex(0xf1n, { size: 32 }), block: 250n })
+		const w = await witnessOf(c, ragequit!)
+		state.settled.push(settledFor(ragequit!, { ...w!, leafId: w!.leafId + 1n }, toHex(0xf1n, { size: 32 }), 250n))
 		expect(await status(c, ragequit!)).toBe("ready")
-		state.settled.push({ epoch: w!.epoch, leafId: w!.leafId, tx: toHex(0xf2n, { size: 32 }), block: 250n })
+		state.settled.push(settledFor(ragequit!, w!, toHex(0xf2n, { size: 32 }), 250n))
 		expect(await status(c, ragequit!)).toBe("settled")
+	})
+
+	it("reads the Outbox at one pinned header's hash, scans no further than it, and refuses the decision once that header moved", async () => {
+		const { c, state, reader } = await world()
+		state.posted = true
+		const [ragequit] = await exitTickets(c, {})
+		expect(await status(c, ragequit!)).toBe("ready")
+		expect(state.latest).toEqual([300n])
+		expect(state.calls.length).toBeGreaterThan(1)
+		expect(state.calls).toEqual(state.calls.map(() => ({ blockHash: toHex(300n, { size: 32 }) })))
+		expect(reader.getLogs.mock.calls.map(([q]) => q.toBlock)).toEqual([300n])
+		state.reorgOnCall = true
+		await expect(status(c, ragequit!)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
+	})
+
+	it.each([
+		["payee", { payee: SENDER }],
+		["amount", { amount: BigInt(RQ.amount) + 1n }],
+		["label", { label: 0n }],
+		["block hash than the canonical header's", { blockHash: toHex(1n, { size: 32 }) }],
+	])("refuses the exact pair's ExitSettled with another %s", async (_, change) => {
+		const { c, state } = await world()
+		state.posted = true
+		const [ragequit] = await exitTickets(c, {})
+		const w = await witnessOf(c, ragequit!)
+		state.settled.push({ ...settledFor(ragequit!, w!, toHex(0xf2n, { size: 32 }), 250n), ...change })
+		await expect(status(c, ragequit!)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
 	})
 
 	it("refuses a ticket whose message index names another message, and one whose transaction the node dropped", async () => {
@@ -206,11 +306,12 @@ describe("settle", () => {
 			const { c, state, reader, l1, writeContract } = await world()
 			state.posted = true
 			const t = (await exitTickets(c, {}))[i]!
-			const w = await exitReads(c).witness(t)
+			const w = await witnessOf(c, t)
 			const tx = await settle(c, t, l1)
 			const args = [...head(t), w!.epoch, w!.numCheckpointsInEpoch, w!.leafIndex, w!.path]
 			expect(reader.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: PORTAL, functionName: fn, args }))
 			expect(writeContract).toHaveBeenCalledOnce()
+			expect(reader.waitForTransactionReceipt).toHaveBeenCalledWith(expect.objectContaining({ timeout: c.timing.receiptTimeoutMs }))
 			expect(tx).toBe(state.settled[0]?.tx)
 			expect(await status(c, t)).toBe("settled")
 			expect(await settle(c, t, l1)).toBe(tx)
@@ -218,12 +319,32 @@ describe("settle", () => {
 		},
 	)
 
-	it("returns its own settle's transaction when the reader's node lags the receipt", async () => {
-		const { c, state, l1 } = await world()
+	// Past the check's four reads, the race re-read after a failed send pins without a floor: a fifth
+	// lagging read makes it miss the event too.
+	it.each([
+		[2, "returns its own transaction once the backend catches up"],
+		[5, "keeps the hash as UNCERTAIN when the backend still lags after three retries"],
+	])("checks its settle at a header no lower than the receipt's block: lagging %i reads, it %s", async (lagging) => {
+		const { c, state, l1, writeContract } = await world()
 		state.posted = true
 		const [t] = await exitTickets(c, {})
-		state.lag = 1n
-		expect(await settle(c, t!, l1)).toBe(state.settled[0]?.tx)
+		const send = writeContract.getMockImplementation()!
+		writeContract.mockImplementationOnce(async (call) => {
+			const tx = await send(call)
+			state.lags = Array.from({ length: lagging }, () => 1n)
+			state.latest = []
+			return tx
+		})
+		const result = await settle(c, t!, l1).catch((e: unknown) => e)
+		const { tx, block } = state.settled[0]!
+		const behind = Array.from({ length: lagging }, () => block - 1n)
+		if (lagging < 4) {
+			expect(result).toBe(tx)
+			expect(state.latest).toEqual([...behind, block])
+		} else {
+			expect(result).toMatchObject({ code: "UNCERTAIN", l1TxHash: tx })
+			expect(state.latest).toEqual(behind)
+		}
 	})
 
 	it("keeps a broadcast settle's hash as UNCERTAIN when the event lookup after it fails", async () => {

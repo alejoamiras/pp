@@ -10,11 +10,13 @@ import { exitPublicPayload } from "./exit-public"
 import { exitStatusOf, exitState } from "./exits"
 import { type ExitContext, type ExitNode, type ExitReader, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
 import type { KeyValueStore } from "./journal"
+import { laggingTolerant } from "./lagging"
 import { type PreflightNode, type PreflightWallet, Preflights, preflight } from "./preflight"
 import { prepareBridgeSpend } from "./prepare"
 import { type RecordsContext, records, recover } from "./records"
 import type { BridgeSession } from "./session"
 import { type SubmitContext, type SubmitOptions, type SubmitReader, submit } from "./submit"
+import { type ClientTiming, clientTiming, LOCAL_TIMING } from "./timing"
 import type { BridgeReceipt, BridgeRecordView, ExitStatus, ExitTicket, PreparedBridgeSpend } from "./types"
 
 /**
@@ -64,33 +66,40 @@ export type ClientIo = {
 	store: KeyValueStore
 }
 
-/** Past this a sent bridge with no receipt is reported `UNCERTAIN`, never sent again by itself. */
-const RECEIPT_TIMEOUT_MS = 120_000
-
 /**
  * A client for the bridge `manifest` names, over its L1 RPC and Aztec node, keeping bridge records in
  * `journal` (sealed; the app passes `localStorage`). Builds no connection and reads nothing until a
- * method is called.
+ * method is called. `timing` (default {@link LOCAL_TIMING}) bounds the submit and settle receipt
+ * waits, past which a sent transaction is reported `UNCERTAIN` and never sent again by itself, and
+ * sets the L1 polling interval; it is copied here.
+ * @throws RangeError when a `timing` value is not a positive finite number
  * @throws BridgeClientError `DEPLOYMENT_MISMATCH` when the manifest carries no bridge
  */
-export function createBridgeClient(a: { manifest: StackManifest; journal: KeyValueStore }): BridgeClient {
+export function createBridgeClient(a: { manifest: StackManifest; journal: KeyValueStore; timing?: ClientTiming }): BridgeClient {
+	const timing = clientTiming(a.timing)
 	try {
-		return bridgeClientOver(a.manifest, clientIo(a.manifest, a.journal))
+		return bridgeClientOver(a.manifest, clientIo(a.manifest, a.journal, timing), { timing })
 	} catch (e) {
 		throw translate(e)
 	}
 }
 
-export function clientIo(manifest: StackManifest, store: KeyValueStore): ClientIo {
-	const reader = createPublicClient({ transport: http(manifest.l1Rpc), pollingInterval: 1_000 })
+/** The L1 reader polls at `timing`'s interval, and its block-naming reads outlast a lagging backend. */
+export function clientIo(manifest: StackManifest, store: KeyValueStore, timing: ClientTiming = LOCAL_TIMING): ClientIo {
+	const reader = createPublicClient({
+		transport: laggingTolerant(http(manifest.l1Rpc), timing.pollingIntervalMs),
+		pollingInterval: timing.pollingIntervalMs,
+	})
 	return { reader, node: createAztecNodeClient(manifest.aztecNode), store }
 }
 
 /**
  * `createBridgeClient` over given IO. The manifest's fields are copied here; later changes to it are
- * ignored. `receiptTimeoutMs` is for tests that need a send to end before its transaction mines.
+ * ignored. Tests pass a short `timing` when a send must end before its transaction mines.
+ * @throws RangeError when a `timing` value is not a positive finite number
  */
-export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { receiptTimeoutMs?: number } = {}): BridgeClient {
+export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { timing?: ClientTiming } = {}): BridgeClient {
+	const timing = clientTiming(o.timing)
 	const named = namedDeployment(manifest)
 	const { reader, node, store } = io
 	const preflights = new Preflights()
@@ -103,7 +112,7 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		})
 		return verified
 	}
-	const receiptTimeoutMs = o.receiptTimeoutMs ?? RECEIPT_TIMEOUT_MS
+	const { receiptTimeoutMs } = timing
 	const submitContext = async (): Promise<SubmitContext> => ({
 		deployment: await deployment(),
 		reader,
@@ -114,7 +123,7 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		receiptTimeoutMs,
 	})
 	const recordsContext = async (): Promise<RecordsContext> => ({ deployment: await deployment(), reader, node, store })
-	const exitContext = async (): Promise<ExitContext> => ({ deployment: await deployment(), reader, node, receiptTimeoutMs })
+	const exitContext = async (): Promise<ExitContext> => ({ deployment: await deployment(), reader, node, timing })
 	const exits = <T>(f: (c: ExitContext) => Promise<T>) => guarded(async () => f(await exitContext()))
 	// `read` takes the request's fields by name at the call, before anything awaits: an app that
 	// reuses a mutable form object would otherwise get a payload other than the one its user
