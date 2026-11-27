@@ -7,7 +7,7 @@ its tests and CI gates. The pool processor, labelled notes and the web app build
 | Path | What it is |
 |---|---|
 | [`contracts/bridge/evm`](contracts/bridge/evm/README.md) | L1 contracts (Foundry): `PortalFactory` and the per-token portal clones that hold deposits and pay exits. |
-| [`contracts/bridge/aztec`](contracts/bridge/aztec/README.md) | L2 contracts (Noir): `TokenBridgeHub`, which mints on a claim and burns on an exit. |
+| [`contracts/bridge/aztec`](contracts/bridge/aztec/README.md) | L2 contracts (Noir): `TokenBridgeHub` and the `LabelledToken` it derives per ERC-20, which it mints on a claim from a pool withdrawal and burns on a ragequit. |
 | [`packages/bridge-core`](packages/bridge-core/README.md) | Bridge logic over viem and aztec.js, and the local network its integration tests run on. |
 | [`packages/e2e-kit`](packages/e2e-kit/README.md) | Playwright kit for the web app: a test wallet, an injected Ethereum wallet, an egress fence. |
 | [`packages/local-stack`](packages/local-stack/README.md) | `bun run demo`: one anvil carrying the Aztec local network and the pool, booted and torn down as one stack. |
@@ -18,6 +18,7 @@ its tests and CI gates. The pool processor, labelled notes and the web app build
 bun install                                         # Bun 1.4.2
 bun run lint && bun run typecheck:all && bun run test:all
 bun run --cwd packages/bridge-core test:integration # boots and reaps its own local network
+bun run --cwd packages/bridge-core test:hub         # the hub's own network suite, likewise
 ```
 
 The contract suites need Foundry 1.7.1, halmos 0.3.3 and the Aztec 6.0.0 toolchain.

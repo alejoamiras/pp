@@ -5,9 +5,10 @@ compiler_version = ">=1.0.0"
 type = "contract"
 
 [dependencies]
-token = { git = "https://github.com/AztecProtocol/aztec-standards", tag = "v6.0.0", directory = "src/token_contract" }
-claim_secret_lib = { path = "../claim_secret" }
-register_hash_lib = { path = "../register_hash" }
 aztec = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", directory = "aztec" }
 compressed_string = { git = "https://github.com/aztec-labs-eng/aztec-nr", tag = "v6.0.0", directory = "compressed-string" }
-token_portal_content_hash_lib = { path = "../token_portal_content_hash_lib" }
+labelled_token = { path = "../labelled_token" }
+bridge_message = { path = "../bridge_message" }
+pp_hash = { path = "../pp_hash" }
+claim_secret_lib = { path = "../claim_secret" }
+register_hash_lib = { path = "../register_hash" }

@@ -1,14 +1,18 @@
 # Bridge L2 contracts (Noir)
 
 L2 contracts for the any-ERC-20 bridge: `token_bridge_hub` — one hub per generation, bound
-at construction to `[token_class_id, l1_factory, guardian]`. It consumes the factory's `register`
+at construction to `[token_class_id, l1_factory, registry]`. It consumes the factory's `register`
 message (sender-keyed to the factory, the portal inside the content), derives and publishes the
-token's L2 `Token` (aztec-standards, `deployer = hub`, `salt = erc20`, minter = hub), claims into
-it (`claim_public` / `claim_private` — the latter recipient-committed) and exits back to Ethereum
-(`exit_to_l1_public` / `exit_to_l1_private`, burn before the withdraw message). The guardian can
-pause exits only. `bind_token` / `bind_and_claim_public` are the publish-free twins the TXE drives;
-on a real network no factory leaf can be spent through them (pinned). `claim_secret` and `register_hash` are the shared derivation libraries; `keystone`
-pins them against their TypeScript and Solidity mirrors. `bridge_message` (the v1 bridge contents)
+token's L2 `LabelledToken` (`deployer = hub`, `salt = erc20`, minter = hub, the hub's ASP registry
+in its constructor) and mints into it from a pool withdrawal's bridge message (`claim_from_pool`:
+the claiming account is the recipient, and the note keeps the pool's label). `ragequit` burns a
+label's notes and sends the portal the message that pays an Ethereum address, with a public
+`RagequitTicket` that names no Aztec account; every refusal comes before the burn. A transaction's
+fee payer is public, so a ragequit paid from the holder's own Fee Juice names the holder: pay it
+through a fee-paying contract. `bind_token` is the
+publish-free twin the TXE drives; on a real network no factory leaf can be spent through it
+(pinned). `claim_secret` and `register_hash` are the shared derivation libraries; `keystone` pins
+them against their TypeScript and Solidity mirrors. `bridge_message` (the v1 bridge contents)
 and `pp_hash` (circom Poseidon, label paths, birth hashes) implement the wire format that
 [`packages/bridge-spec`](../../../packages/bridge-spec/README.md) specifies; keystone runs its
 generated `src/vectors_v1.nr` against them.
@@ -20,8 +24,7 @@ place. The TXE runner deploys the committed `target/` artifact, so compile a cra
 
 ## Toolchain — the pinned 6.0.0 nargo
 
-The crates pin aztec-nr and `compressed_string` (`aztec-labs-eng/aztec-nr`) and the standards `token`
-(`AztecProtocol/aztec-standards`) at the `v6.0.0` tags: the `@aztec-labs/*` version, which the
+The crates pin aztec-nr and `compressed_string` (`aztec-labs-eng/aztec-nr`) at the `v6.0.0` tag: the `@aztec-labs/*` version, which the
 local network runs (the `@aztec-foundation/*` packages carry their own number). Every
 manifest names aztec-nr by the identical URL, with no trailing slash: a different spelling makes
 Nargo build a second `aztec` crate. The content-hash library is vendored at
@@ -41,15 +44,20 @@ never a re-pin of a deployed hub.
 
 ## Tests
 
-- **TXE**: `scripts/run-txe-tests.sh` runs the 65 named tests in `token_bridge_hub/txe-manifest.txt`
+- **TXE**: `scripts/run-txe-tests.sh` runs every test named in `token_bridge_hub/txe-manifest.txt`
   against a TXE server whose dependencies are the committed mini-project `txe-server/` (frozen
   lockfile — never an ad-hoc `bun add`). `token_bridge_hub/txe-ts-map.md` maps every cross-boundary
   property to its L1 / TS counterpart. The TXE cannot run the protocol registry publish
-  (`publish_contract_instance_for_public_execution`) — the sandbox smoke is that gate.
-- **Sole-consumer invariant** (three named consume sites; `claim_private` derives its secret)
-  enforced statically by `scripts/check-sole-consumer.sh`.
-- **Keystone** content-hash / register-hash / claim-secret equality (Solidity ↔ Noir ↔ TS) pinned in
-  `contracts/bridge/evm/test/Keystone.t.sol` + `packages/bridge-core/src/{content-hash,register-hash,claim-secret}.test.ts`.
+  (`publish_contract_instance_for_public_execution`) and a TXE block carries no L2→L1 message, so
+  the hub network suite (`bun run --cwd packages/bridge-core test:hub`) is the gate for both.
+- **Sole-consumer invariant** (two consume sites, `_bind` and `claim_from_pool`, none in a path
+  dependency; the claim's recipient, portal, commitment, secret and content are pinned) enforced
+  statically by `scripts/check-sole-consumer.sh`.
+- **Keystone**: the register hash (Solidity ↔ Noir ↔ TS) is pinned in
+  `contracts/bridge/evm/test/Keystone.t.sol`, the `keystone` crate and
+  `packages/bridge-core/src/register-hash.test.ts`; the claim secret (Noir ↔ TS) in the `keystone`
+  crate and `packages/bridge-spec/src/claim-secret.test.ts`. The v1 bridge, exit and ragequit
+  contents are bound by `packages/bridge-spec`'s vectors.
 
 ## ASP root registry — `asp_registry`
 

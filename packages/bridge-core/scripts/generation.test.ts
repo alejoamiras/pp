@@ -42,7 +42,7 @@ vi.mock("../src/hub-l2", async (importOriginal) => {
 	}
 })
 
-const { deployGeneration, preCreateToken } = await import("./generation")
+const { deployGeneration, NO_ASP_REGISTRY, preCreateToken } = await import("./generation")
 
 /** A wallet that, like a PXE on a fresh store, knows only the instances it was taught this run. */
 function freshWallet() {
@@ -58,13 +58,13 @@ function freshWallet() {
 type FakeWallet = ReturnType<typeof freshWallet>
 
 const DEPLOYER = "0x7777777777777777777777777777777777777777" as const
-const GUARDIAN_L2 = `0x${"7".padStart(64, "0")}`
+const DEPLOYER_L2 = `0x${"7".padStart(64, "0")}`
 const inputs = {
 	registry: "0x1111111111111111111111111111111111111111",
 	pool: "0x2222222222222222222222222222222222222222",
 	lifetimeCap: 10n ** 24n,
 	guardianL1: DEPLOYER,
-	guardianL2: GUARDIAN_L2,
+	aspRegistry: NO_ASP_REGISTRY,
 } as const
 
 interface ChainOptions {
@@ -174,7 +174,7 @@ function fakeChain(startNonce: bigint, predictedAt = startNonce, opts: ChainOpti
 			})),
 			getContractClass: vi.fn(async (id: Fr) => (opts.publishedClasses?.has(id.toString()) ? {} : undefined)),
 		},
-		from: AztecAddress.fromStringUnsafe(GUARDIAN_L2),
+		from: AztecAddress.fromStringUnsafe(DEPLOYER_L2),
 		deployOpts: {},
 		sendOpts: {},
 	}
@@ -210,8 +210,28 @@ describe("deployGeneration — crash-resume at every journalled step", () => {
 		expect(record.l1.factory).toBe(chain.expected.factory())
 		expect(record.l1.implementation).toBe(chain.expected.implementation())
 		expect(record.l2.hub.salt).toBe(`0x${chain.expected.factory().slice(2).padStart(64, "0")}`)
-		expect(record.l2.hub.constructorArgs).toEqual([record.l2.tokenClassId, chain.expected.factory(), GUARDIAN_L2])
+		expect(record.l2.hub.constructorArgs).toEqual([record.l2.tokenClassId, chain.expected.factory(), NO_ASP_REGISTRY])
+		expect(record.l2.aspRegistry).toBe(`0x${"0".repeat(64)}`)
 		expect(chain.deployed).toHaveLength(1)
+	})
+
+	it("refuses a malformed ASP registry before it publishes or deploys anything", async () => {
+		const { publishContractClass } = await import("@aztec-labs/aztec.js/deployment")
+		for (const [name, aspRegistry] of [
+			["short", "0x7"],
+			["above the field", `0x${"f".repeat(64)}`],
+		]) {
+			vi.mocked(publishContractClass).mockClear()
+			const chain = fakeChain(5n)
+			const journal = openDeployJournal(join(dir, `bad-registry-${name}.jsonl`))
+			answerReads(chain)
+			await expect(deployGeneration(chain.l1, chain.l2, { ...inputs, aspRegistry }, journal), name).rejects.toThrow(
+				/aspRegistry must be a 32-byte/,
+			)
+			expect(journal.steps, name).toEqual([])
+			expect(publishContractClass, name).not.toHaveBeenCalled()
+			expect(chain.deployed, name).toHaveLength(0)
+		}
 	})
 
 	it("a class the network already carries is not re-published, and a lost publication race is a no-op", async () => {

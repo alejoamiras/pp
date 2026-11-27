@@ -57,6 +57,7 @@ with warm package and toolchain caches.
 | Wire-format vectors | `bun run --cwd packages/bridge-spec vectors:check`, then `vectors:mutate -- --suite ts\|sol\|nr` | < 1 s, then 3 s · 5 s · 45 s |
 | Sole consumer | `bash contracts/bridge/aztec/scripts/check-sole-consumer.sh` | < 1 s |
 | Integration (local network) | `bun run --cwd packages/bridge-core test:integration` | 10 min |
+| Hub network suite | `bun run --cwd packages/bridge-core test:hub` | 1.5 min |
 | Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | 7.5 min |
 | Labelled token, two devices | `bun run --cwd packages/labelled-token test:net` | 3 min |
 | Local stack | `bun run demo` (`--keep` holds it up) | 44 s (ready in 40 s) |

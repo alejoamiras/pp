@@ -20,7 +20,8 @@ package keeps a pin of its own:
 - **`@aztec-foundation/*` at `6.0.0`** (`bb.js`, `l1-artifacts`, `noir-acvm_js`,
   `noir-noirc_abi`): the version the locked `@aztec-labs/aztec.js` requires.
 - **`@aztec-foundation/aztec-standards` at `6.0.0`**, its own pin. It follows the tags of
-  `AztecProtocol/aztec-standards`, which the hub's Noir `token` dep names too.
+  `AztecProtocol/aztec-standards`. No Noir crate depends on it; `packages/labelled-token` profiles
+  its stock `Token` as a gate baseline.
 
 [`scripts/ci-cd/aztec-line.test.ts`](scripts/ci-cd/aztec-line.test.ts) holds each scope to its own
 version: labs at the aztec.js pin, foundation at the version labs' lock entry requires for
@@ -77,19 +78,21 @@ lockfile and in the TXE server's. The hub's class ids depend on these inputs.
   factory's (`salt = Fr(factory)`) and the factory's constructor takes the hub.
   `packages/bridge-core/scripts/generation.ts` predicts the factory from the deployer's pending nonce
   and refuses to broadcast if it moved.
-- **`tokenClassId` ↔ the standards `Token` artifact.** The hub's `token_class_id` is computed from the
-  installed `@aztec-foundation/aztec-standards` artifact; every L2 token derives from it
-  (`src/hub-token.ts`, class id pinned by `noir-artifact-classids.test.ts`, address vector by
-  `hub-token.test.ts`).
+- **`tokenClassId` ↔ the committed `LabelledToken` artifact.** The hub's `token_class_id` is the
+  class id of `contracts/bridge/aztec/labelled_token/target/labelled_token-LabelledToken.json`; every
+  L2 token derives from it (`src/hub-token.ts`, class id pinned by `noir-artifact-classids.test.ts`,
+  address vector by `hub-token.test.ts`). An aztec-nr bump moves both class ids, and the sandbox
+  fixture's hub and token addresses with them.
 - **Hub → the protocol's `ContractInstanceRegistry`.** `register_*` calls aztec-nr's
   `publish_contract_instance_for_public_execution`, which the running network must still route. The
-  TXE cannot exercise it; the sandbox's first-time registration flows are the only canary.
+  TXE cannot exercise it; the hub network suite (`test:hub`) and the sandbox's first-time
+  registration flows are the canaries.
 - **Two toolchain readers, one version.** `packages/bridge-core/scripts/sandbox/local-network.ts`
   boots `aztec start --local-network` from `~/.aztec/versions/<@aztec-labs/aztec.js pin>`, while
   `compile.sh`, `nargo.sh` and `run-txe-tests.sh` default `AZTEC_HOME` to a literal version. Move
   both together.
-- **Token `constructor_with_minter` arity**: five parameters since 5.0.1, the last `auth_contract`.
-  The hub's `derive_token` and `src/hub-token.ts` both pin it.
+- **`LabelledToken` constructor arity**: five parameters, the minter (the hub) and the ASP registry
+  last. The hub's `derive_token` and `register_token` and `src/hub-token.ts` all pin it.
 
 ## After you bump
 

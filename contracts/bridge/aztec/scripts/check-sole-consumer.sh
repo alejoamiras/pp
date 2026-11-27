@@ -1,368 +1,351 @@
 #!/usr/bin/env bash
-# Sole-consumer invariant for the recipient-commitment property: the bridge contract must have
-# EXACTLY its named `consume_l1_to_l2_message` call sites — three for the token_bridge_hub
-# (claim_public, claim_private, and the factory's `register` message in `_bind`, consumed from
-# the bound l1_factory with a constant secret) — and
-# claim_private must (a) NOT take a raw secret parameter and (b) DERIVE its consumption secret via a
-# `derive_claim_secret(...)` CALL inside its own body. Any of: a stray consume site, a raw-secret
-# param, or a private path that consumes without deriving, silently reintroduces the F-007 bearer
-# property. A static tripwire: the circuit cannot be TXE-tested for this.
+# Sole-consumer invariant: the hub consumes L1→L2 messages at exactly two sites, `_bind` (the
+# factory's `register` message) and `claim_from_pool` (a pool withdrawal's bridge message), and no
+# path dependency consumes at all. `claim_from_pool` must take the recipient from its caller and
+# rebuild both the content and the secret from its own arguments, so a claim is never a bearer
+# instrument: a stray consume, a raw secret, a recipient or portal from a parameter, or a content or
+# commitment built any other way would let a party holding a deposit's data redirect or forge it.
 #
-# The parameter list + function body are analysed on a NEWLINE-FLATTENED copy of the source: the
-# real `claim_private(` signature spans multiple lines and a line-oriented grep silently matches
-# nothing. Consume sites are counted as occurrences across every non-test source file of the crate,
-# not as lines of one file. Run `check-sole-consumer.sh --self-test` to verify the guard actually
-# rejects crafted regressions.
+# A static tripwire: the TXE cases prove the semantics; this pins the dataflow they rely on. Sources
+# are scanned with comments removed and string literals emptied, then flattened to one line so a
+# multi-line signature or body matches one regex. Every source counts, tests included: Noir compiles
+# a crate's test module with it. `--self-test` replays crafted regressions, each of which must fail
+# with its own reason.
+#
+# Usage: check-sole-consumer.sh [--self-test | <hub crate dir>]
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Drops block comments and line comments while leaving string literals alone, so a `//` or `/*`
-# inside a string cannot hide live code and a commented-out shape cannot pass for a live one. One
-# alternation, string literal first, so a comment opener inside a string is never seen as one.
-strip_comments() {
-	perl -0pe 's{("(?:[^"\\]|\\.)*")|/\*.*?\*/|//[^\n]*}{defined $1 ? $1 : ""}gse'
+# Removes comments (nested block comments included, as Noir nests them) and empties string literals,
+# in one string-aware pass, so neither a comment nor a string can hide or fake live code.
+clean() {
+	perl -0777 -ne '
+		my ($s, $o, $i, $d) = ($_, "", 0, 0);
+		my $n = length $s;
+		while ($i < $n) {
+			my $two = substr($s, $i, 2);
+			if ($d > 0) {
+				if ($two eq "/*") { $d++; $i += 2 } elsif ($two eq "*/") { $d--; $i += 2; $o .= " " if !$d } else { $i++ }
+				next;
+			}
+			if ($two eq "/*") { $d = 1; $i += 2; next }
+			if ($two eq "//") { my $j = index($s, "\n", $i); $i = $j < 0 ? $n : $j; next }
+			if (substr($s, $i, 1) eq "\"") {
+				my $j = $i + 1;
+				while ($j < $n && substr($s, $j, 1) ne "\"") { $j += substr($s, $j, 1) eq "\\" ? 2 : 1 }
+				$o .= "\"\""; $i = $j + 1; next;
+			}
+			$o .= substr($s, $i, 1); $i++;
+		}
+		print $o;
+	' | tr '\n\t' '  ' | tr -s ' '
 }
 
-# Returns 0 if the contract source at $1 (its `src/main.nr`; every sibling non-test source is
-# counted too) upholds the invariant with $2 consume sites (default 2), 1 (with a reason on
-# stderr) otherwise. A third site must be the register consume inside `_bind`.
-check_file() {
-	local main="$1"
-	local expected="${2:-2}"
-	[ -f "$main" ] || { echo "SOLE-CONSUMER: no such file: $main" >&2; return 1; }
-
-	# Occurrences, not lines, across every non-test source of the crate, with line comments stripped
-	# so a call site mentioned in a comment neither hides nor fakes a real one.
-	local src consumers
-	src="$(dirname "$main")"
-	consumers=$(find "$src" -name '*.nr' -not -path '*/test/*' -exec cat {} + | strip_comments | grep -o "consume_l1_to_l2_message" | wc -l | tr -d ' ')
-	if [ "$consumers" -ne "$expected" ]; then
-		echo "SOLE-CONSUMER VIOLATION: expected $expected consume_l1_to_l2_message sites, found $consumers under $src" >&2
-		echo "  A new consumption path can reintroduce the bearer property (F-007)." >&2
-		return 1
-	fi
-	# Strip line comments, then flatten newlines → spaces so a multi-line signature/body is
-	# analysable with one regex.
-	local flat after params body
-	flat=$(strip_comments < "$main" | tr '\n' ' ' | tr -s ' ')
-	if [ "$expected" = 3 ]; then
-		# The register consume lives in `_bind`, is keyed on the bound l1_factory (never a caller-
-		# supplied sender) and uses a constant secret chosen by the publish flag, never a caller secret.
-		local bind
-		bind=$(printf '%s' "$flat" | sed -E 's/.*fn _bind//; s/ fn .*//')
-		# The sender is the storage-bound factory, read in this body — not a parameter that happens
-		# to carry the name.
-		if ! printf '%s' "$bind" | grep -qE "let l1_factory = self\.storage\.l1_factory\.read\(\);"; then
-			echo "SOLE-CONSUMER VIOLATION: _bind does not read l1_factory from storage" >&2
-			return 1
-		fi
-		if ! printf '%s' "$bind" | grep -qE "let secret = if publish \{ REGISTER_SECRET \} else \{ BIND_HARNESS_SECRET \};"; then
-			echo "SOLE-CONSUMER VIOLATION: _bind does not pick its secret from the two constants by the publish flag" >&2
-			return 1
-		fi
-		if ! printf '%s' "$bind" | grep -qE "consume_l1_to_l2_message[[:space:]]*\([^,]*,[[:space:]]*\[secret\][[:space:]]*,[[:space:]]*l1_factory[[:space:]]*,"; then
-			echo "SOLE-CONSUMER VIOLATION: the third consume site is not _bind consuming [secret] from l1_factory" >&2
-			return 1
-		fi
-	fi
-
-	if ! printf '%s' "$flat" | grep -q "fn claim_private"; then
-		echo "SOLE-CONSUMER VIOLATION: no claim_private function found in $main" >&2
-		return 1
-	fi
-	after=$(printf '%s' "$flat" | sed -E 's/.*fn claim_private//')      # everything after `fn claim_private`
-	params=$(printf '%s' "$after" | sed -E 's/\).*//')                  # its parameter list (up to first `)`)
-	body=$(printf '%s' "$after" | sed -E 's/ fn .*//')                  # its body (up to the next ` fn `)
-
-	# (a) The signature must carry the recipient-committed salt and NO raw secret parameter. The legit
-	#     params are {recipient, amount, claim_salt, message_leaf_index} — none contains "secret", so any
-	#     "secret" substring here (secret, raw_secret, secretHash, …) is a bearer regression.
-	if ! printf '%s' "$params" | grep -q "claim_salt"; then
-		echo "SOLE-CONSUMER VIOLATION: claim_private no longer takes claim_salt (recipient-commitment lost)" >&2
-		return 1
-	fi
-	if printf '%s' "$params" | grep -qi "secret"; then
-		echo "SOLE-CONSUMER VIOLATION: claim_private accepts a raw secret parameter (bearer regression)" >&2
-		return 1
-	fi
-
-	# (b) The consumption secret must be DERIVED via a real call (a `(` after the name — not the bare
-	#     `use …::derive_claim_secret;` import), INSIDE claim_private's own body, alongside its consume.
-	if ! printf '%s' "$body" | grep -qE "derive_claim_secret[[:space:]]*\("; then
-		echo "SOLE-CONSUMER VIOLATION: claim_private body does not CALL derive_claim_secret(...) (import alone is not enough)" >&2
-		return 1
-	fi
-	if ! printf '%s' "$body" | grep -q "consume_l1_to_l2_message"; then
-		echo "SOLE-CONSUMER VIOLATION: claim_private body does not consume an L1→L2 message where it derives" >&2
-		return 1
-	fi
-
-	# (c) Dataflow: the secret passed to consume must be the value DERIVED from
-	#     derive_claim_secret, not a raw param. Catches "derive then ignore it" (`let _ = derive(...);
-	#     consume(.., claim_salt, ..)`) and "consume with the raw salt". Extract the var bound to
-	#     derive_claim_secret and require claim_private's consume use THAT var as its secret (2nd) arg.
-	#     (aztec 5.0.1+: consume_l1_to_l2_message takes the secret as a one-element array `[secret]`, so
-	#     accept EITHER `[secret]` or bare `secret` — but NOT a multi-element `[secret, X]` (the extra
-	#     element would change the committed hash while a lax `\[?…\]?` regex still matched).)
-	local derived_var
-	derived_var=$(printf '%s' "$body" | sed -nE 's/.*let[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*derive_claim_secret[[:space:]]*\(.*/\1/p' | head -1)
-	if [ -z "$derived_var" ] || [ "$derived_var" = "_" ]; then
-		echo "SOLE-CONSUMER VIOLATION: claim_private does not bind the derived secret to a real variable (let X = derive_claim_secret(...))" >&2
-		return 1
-	fi
-	if ! printf '%s' "$body" | grep -qE "consume_l1_to_l2_message[[:space:]]*\([^,]*,[[:space:]]*(\[${derived_var}\]|${derived_var})[[:space:]]*,"; then
-		echo "SOLE-CONSUMER VIOLATION: claim_private consume does not use the derived secret ($derived_var) as its secret arg — bearer/dataflow bypass" >&2
-		return 1
-	fi
-
-	# (d) Ban lower-level messaging/nullifier primitives: they can consume or nullify a
-	#     message WITHOUT going through consume_l1_to_l2_message, bypassing (a)-(c) entirely.
-	if printf '%s' "$flat" | grep -qE "process_l1_to_l2_message|push_nullifier"; then
-		echo "SOLE-CONSUMER VIOLATION: a lower-level messaging/nullifier primitive is present — it can bypass consume_l1_to_l2_message" >&2
-		return 1
-	fi
-
-	return 0
+violation() {
+	echo "SOLE-CONSUMER VIOLATION: $*" >&2
+	return 1
 }
 
-# --self-test: prove the guard passes on the real source AND rejects crafted bearer regressions.
-if [ "${1:-}" = "--self-test" ]; then
+# Occurrences (not lines) of the ERE $1 in $2.
+count() {
+	local n
+	n=$(printf '%s' "$2" | grep -oE -- "$1" | wc -l) || true
+	echo $((n))
+}
+
+# Every source of the crate at $1, cleaned and flattened.
+crate_source() {
+	find "$1/src" -name '*.nr' -print0 | sort -z | xargs -0 cat | clean
+}
+
+# The transitive path dependencies of the crate at $1, one directory per line.
+path_deps() {
+	local -a queue=("$1")
+	local seen=" $1 " dir rel dep
+	while [ "${#queue[@]}" -gt 0 ]; do
+		dir="${queue[0]}"
+		queue=("${queue[@]:1}")
+		while IFS= read -r rel; do
+			dep="$(cd "$dir/$rel" 2>/dev/null && pwd)" || { echo "SOLE-CONSUMER: unresolvable path dependency $rel of $dir" >&2; return 1; }
+			case "$seen" in *" $dep "*) continue ;; esac
+			seen="$seen$dep "
+			queue+=("$dep")
+			printf '%s\n' "$dep"
+		done < <(sed -nE 's/.*path[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$dir/Nargo.toml")
+	done
+}
+
+# The body of the one function named $1 in $2 (signature included, up to the next `fn`).
+fn_body() {
+	printf '%s' "$2" | sed -E "s/.*fn $1[[:space:]]*\(/(/; s/ fn .*//"
+}
+
+# Every name a `let` binds in $1 (tuple patterns included, type annotations dropped).
+bound_names() {
+	printf '%s' "$1" | perl -ne '
+		while (/\blet\s+(.*?)\s*=(?!=)/g) {
+			my $l = $1; $l =~ s/:[^,)]*//g;
+			while ($l =~ /\b([a-z_][a-z0-9_]*)\b/g) { print "$1\n" unless $1 eq "mut" }
+		}'
+}
+
+# The name bound by the single `let NAME = $2;` in $1; fails unless there is exactly one.
+bind_once() {
+	local hits
+	hits=$(printf '%s' "$1" | grep -oE -- "let [a-z][a-z0-9_]* = $2;") || true
+	[ -n "$hits" ] && [ "$(printf '%s\n' "$hits" | wc -l)" -eq 1 ] || return 1
+	printf '%s' "$hits" | sed -E 's/^let ([a-z][a-z0-9_]*) = .*/\1/'
+}
+
+# Fails with $3 if any name in $2 is bound more than once (or, with $4 = 0, at all) in $1.
+assert_bound() {
+	local body="$1" names="$2" fn="$3" want="${4:-1}" name n all
+	all=$(bound_names "$body")
+	for name in $names; do
+		n=$(printf '%s\n' "$all" | grep -cxF -- "$name") || true
+		[ "$n" -le "$want" ] || { violation "$fn rebinds $name"; return 1; }
+	done
+}
+
+check_bind() {
+	local src="$1" body
+	[ "$(count 'fn _bind ?\(' "$src")" -eq 1 ] || { violation "no single _bind function"; return 1; }
+	body=$(fn_body _bind "$src")
+	# The sender is the storage-bound factory, read in this body, not a parameter of that name.
+	printf '%s' "$body" | grep -qF "let l1_factory = self.storage.l1_factory.read();" ||
+		{ violation "_bind does not read l1_factory from storage"; return 1; }
+	printf '%s' "$body" | grep -qF "let secret = if publish { REGISTER_SECRET } else { BIND_HARNESS_SECRET };" ||
+		{ violation "_bind does not pick its secret from the two constants by the publish flag"; return 1; }
+	assert_bound "$body" "l1_factory secret" _bind || return 1
+	printf '%s' "$body" | grep -qE "consume_l1_to_l2_message\([a-z_]+, \[secret\], l1_factory, register_leaf_index\)" ||
+		{ violation "_bind does not consume [secret] from l1_factory"; return 1; }
+}
+
+# The recipient is the caller; the portal is the claimed token's; the commitment, secret and
+# content are rebuilt from the arguments; the consume and the mint use exactly those values.
+check_claim() {
+	local src="$1" body params r p k s c
+	[ "$(count 'fn claim_from_pool ?\(' "$src")" -eq 1 ] || { violation "no single claim_from_pool function"; return 1; }
+	body=$(fn_body claim_from_pool "$src")
+	params=$(printf '%s' "$body" | sed -E 's/\).*//')
+	printf '%s' "$params" | grep -qE '\bclaim_salt:' || { violation "claim_from_pool does not take claim_salt"; return 1; }
+	! printf '%s' "$params" | grep -qi secret || { violation "claim_from_pool takes a secret parameter"; return 1; }
+
+	r=$(bind_once "$body" 'self\.msg_sender\(\)') ||
+		{ violation "claim_from_pool does not bind the recipient once to self.msg_sender()"; return 1; }
+	p=$(bind_once "$body" 'self\.storage\.portal_of\.at\(token\)\.read\(\)') ||
+		{ violation "claim_from_pool does not read the portal once from portal_of.at(token)"; return 1; }
+	k=$(bind_once "$body" 'hash_2\(\[change_precommitment, label\]\)') ||
+		{ violation "claim_from_pool does not compute the commitment once as hash_2([change_precommitment, label])"; return 1; }
+	s=$(bind_once "$body" "derive_claim_secret\(claim_salt, $r\)") ||
+		{ violation "claim_from_pool does not derive the secret once from (claim_salt, recipient)"; return 1; }
+	c=$(bind_once "$body" "bridge_content_v1\(nullifier, $k, amount\)") ||
+		{ violation "claim_from_pool does not build the content once with bridge_content_v1(nullifier, commitment, amount)"; return 1; }
+
+	local args
+	args=$(printf '%s' "$params" | grep -oE '[a-z_][a-z0-9_]*:' | tr -d ':' | tr '\n' ' ')
+	assert_bound "$body" "$r $p $k $s $c" claim_from_pool || return 1
+	assert_bound "$body" "$args" claim_from_pool 0 || return 1
+
+	if [ "$(count 'consume_l1_to_l2_message\(' "$body")" -ne 1 ] ||
+		! printf '%s' "$body" | grep -qE "consume_l1_to_l2_message\($c, \[$s\], $p, message_leaf_index\)"; then
+		violation "claim_from_pool does not consume (content, [secret], portal, message_leaf_index)"
+		return 1
+	fi
+	printf '%s' "$body" | grep -qE "self\.call\(LabelledToken::at\(token\)\.mint_from_bridge\($r, amount, label\)\);" ||
+		{ violation "claim_from_pool does not mint with self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label))"; return 1; }
+}
+
+# Returns 0 if the hub crate at $1 upholds the invariant, 1 with one reason on stderr otherwise.
+check_crate() {
+	local crate="$1" src deps dep n
+	[ -f "$crate/src/main.nr" ] || { echo "SOLE-CONSUMER: no such crate: $crate" >&2; return 1; }
+	src=$(crate_source "$crate")
+	deps=$(path_deps "$crate") || return 1
+
+	n=$(count 'consume_l1_to_l2_message' "$src")
+	[ "$n" -eq 2 ] || { violation "expected 2 consume_l1_to_l2_message sites in the hub, found $n"; return 1; }
+	local all="$src"
+	while IFS= read -r dep; do
+		[ -n "$dep" ] || continue
+		local dsrc
+		dsrc=$(crate_source "$dep")
+		[ "$(count 'consume_l1_to_l2_message' "$dsrc")" -eq 0 ] ||
+			{ violation "a path dependency consumes an L1 to L2 message: $(basename "$dep")"; return 1; }
+		all="$all $dsrc"
+	done <<<"$deps"
+	# These consume or nullify a message without consume_l1_to_l2_message.
+	[ "$(count 'process_l1_to_l2_message|push_nullifier' "$all")" -eq 0 ] ||
+		{ violation "a lower-level messaging or nullifier primitive is present"; return 1; }
+	n=$(count 'mint_from_bridge[[:space:]]*\(' "$src")
+	[ "$n" -eq 1 ] || { violation "expected 1 mint_from_bridge call in the hub, found $n"; return 1; }
+
+	check_bind "$src" || return 1
+	check_claim "$src" || return 1
+}
+
+# ── Self-test ────────────────────────────────────────────────────────────────────────────────────
+
+# A minimal hub in the real one's shape. Every regression below is this source with one mutation.
+CONTROL='use claim_secret_lib::derive_claim_secret;
+contract Hub {
+    #[internal("private")]
+    fn _bind(erc20: EthAddress, portal: EthAddress, register_leaf_index: Field, publish: bool) -> AztecAddress {
+        let l1_factory = self.storage.l1_factory.read();
+        let content = get_register_content_hash(erc20, portal);
+        let secret = if publish { REGISTER_SECRET } else { BIND_HARNESS_SECRET };
+        self.context.consume_l1_to_l2_message(content, [secret], l1_factory, register_leaf_index);
+        token
+    }
+
+    #[external("private")]
+    fn claim_from_pool(
+        token: AztecAddress,
+        amount: u128,
+        nullifier: Field,
+        change_precommitment: Field,
+        label: Field,
+        claim_salt: Field,
+        message_leaf_index: Field,
+    ) {
+        let recipient = self.msg_sender();
+        assert(label != 0, "claim label is zero");
+        let portal = self.storage.portal_of.at(token).read();
+        let commitment = hash_2([change_precommitment, label]);
+        let secret = derive_claim_secret(claim_salt, recipient);
+        let content = bridge_content_v1(nullifier, commitment, amount);
+        self.context.consume_l1_to_l2_message(content, [secret], portal, message_leaf_index);
+        self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label));
+    }
+
+    #[external("public")]
+    fn token_for(erc20: EthAddress) -> AztecAddress {
+        self.storage.token_of.at(erc20).read()
+    }
+}
+'
+
+# Writes fixture $1 as CONTROL with the perl substitution $2 applied (which must change it).
+fixture() {
+	local dir="$tmp/$1/hub" base out
+	mkdir -p "$dir/src"
+	printf '[package]\nname = "hub"\ntype = "contract"\n[dependencies]\n' >"$dir/Nargo.toml"
+	base=$(printf '%s' "$CONTROL")
+	out=$(printf '%s' "$CONTROL" | perl -0777 -pe "$2")
+	[ "$out" != "$base" ] || { echo "SELF-TEST FAIL: fixture $1 does not mutate the control" >&2; fails=$((fails + 1)); }
+	printf '%s' "$out" >"$dir/src/main.nr"
+}
+
+# Fixture $1 must be rejected with exactly the reason $2.
+expect() {
+	local got
+	if got=$(check_crate "$tmp/$1/hub" 2>&1 >/dev/null); then
+		echo "SELF-TEST FAIL: $1 accepted" >&2
+		fails=$((fails + 1))
+	elif [ "$got" != "SOLE-CONSUMER VIOLATION: $2" ]; then
+		echo "SELF-TEST FAIL: $1 rejected for another reason: '$got' (expected '$2')" >&2
+		fails=$((fails + 1))
+	else
+		rejected=$((rejected + 1))
+	fi
+}
+
+# The fixtures are perl substitutions: `$1` is a capture group, never a shell expansion.
+# shellcheck disable=SC2016
+self_test() {
 	tmp=$(mktemp -d)
 	trap 'rm -rf "$tmp"' EXIT
 	fails=0
+	rejected=0
 
-	check_file "$here/token_bridge_hub/src/main.nr" 3 >/dev/null 2>&1 || { echo "SELF-TEST FAIL: real hub source rejected" >&2; fails=1; }
+	check_crate "$here/token_bridge_hub" >/dev/null 2>&1 || { echo "SELF-TEST FAIL: the real hub is rejected" >&2; fails=$((fails + 1)); }
+	fixture control 's/(\n}\n)$/\n$1/'
+	check_crate "$tmp/control/hub" >/dev/null 2>&1 || { echo "SELF-TEST FAIL: the control is rejected" >&2; fails=$((fails + 1)); }
 
-	# Regression 1: multi-line raw-secret signature + consume-with-raw-secret, derivation import kept.
-	cat >"$tmp/raw_secret.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, secret, config.portal, message_leaf_index);
-}
-fn claim_private(
-    recipient: AztecAddress,
-    amount: u128,
-    raw_secret: Field,
-    message_leaf_index: Field,
-) {
-    self.context.consume_l1_to_l2_message(content_hash, raw_secret, config.portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/raw_secret.nr" >/dev/null 2>&1 && { echo "SELF-TEST FAIL: multi-line raw-secret regression accepted" >&2; fails=1; }
+	# Counts and banned primitives.
+	fixture stray_consume 's/(\n}\n)$/\n    fn claim_bearer(raw: Field, leaf: Field) { self.context.consume_l1_to_l2_message(raw, [raw], portal, leaf); }$1/'
+	expect stray_consume "expected 2 consume_l1_to_l2_message sites in the hub, found 3"
+	fixture one_line 's/(self\.context\.consume_l1_to_l2_message\(content, \[secret\], portal, message_leaf_index\);)/$1 $1/'
+	expect one_line "expected 2 consume_l1_to_l2_message sites in the hub, found 3"
+	fixture dep_consume 's/(\n}\n)$/\n$1/'
+	printf 'evil = { path = "../evil" }\n' >>"$tmp/dep_consume/hub/Nargo.toml"
+	mkdir -p "$tmp/dep_consume/evil/src"
+	printf '[package]\nname = "evil"\ntype = "lib"\n' >"$tmp/dep_consume/evil/Nargo.toml"
+	printf 'pub fn take(context: &mut PrivateContext, c: Field, s: Field, p: EthAddress, i: Field) {\n    context.consume_l1_to_l2_message(c, [s], p, i);\n}\n' >"$tmp/dep_consume/evil/src/lib.nr"
+	expect dep_consume "a path dependency consumes an L1 to L2 message: evil"
+	fixture lowlevel 's/(\n}\n)$/\n    fn claim_bearer(raw: Field, leaf: Field) {\n        let m = self.context.process_l1_to_l2_message(raw, leaf);\n        self.context.push_nullifier(m);\n    }$1/'
+	expect lowlevel "a lower-level messaging or nullifier primitive is present"
+	fixture string_slash 's/(        let portal =)/        let url = "https:\/\/x"; let m = self.context.process_l1_to_l2_message(claim_salt, message_leaf_index);\n$1/'
+	expect string_slash "a lower-level messaging or nullifier primitive is present"
+	fixture string_block 's/(        let portal =)/        let open = "\/*";\n        let m = self.context.process_l1_to_l2_message(claim_salt, message_leaf_index);\n        let close = "*\/";\n$1/'
+	expect string_block "a lower-level messaging or nullifier primitive is present"
+	fixture second_mint 's/(\n}\n)$/\n    fn mint_more(token: AztecAddress, to: AztecAddress, amount: u128, label: Field) {\n        self.call(LabelledToken::at(token).mint_from_bridge(to, amount, label));\n    }$1/'
+	expect second_mint "expected 1 mint_from_bridge call in the hub, found 2"
+	fixture spaced_mint 's/(\n}\n)$/\n    fn mint_more(token: AztecAddress, to: AztecAddress, amount: u128, label: Field) {\n        self.call(LabelledToken::at(token).mint_from_bridge (to, amount, label));\n    }$1/'
+	expect spaced_mint "expected 1 mint_from_bridge call in the hub, found 2"
 
-	# Regression 2: import present but no derive CALL in the body (consume without deriving).
-	cat >"$tmp/no_call.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, secret, config.portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, claim_salt, config.portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/no_call.nr" >/dev/null 2>&1 && { echo "SELF-TEST FAIL: import-only (no derive call) regression accepted" >&2; fails=1; }
+	# _bind.
+	fixture bind_renamed 's/fn _bind\(/fn _attach(/'
+	expect bind_renamed "no single _bind function"
+	fixture bind_param_factory 's/        let l1_factory = self\.storage\.l1_factory\.read\(\);\n//; s/(fn _bind\(erc20: EthAddress,)/$1 l1_factory: EthAddress,/'
+	expect bind_param_factory "_bind does not read l1_factory from storage"
+	fixture bind_block_comment 's/(        )(let l1_factory = self\.storage\.l1_factory\.read\(\);)/$1\/* $2 *\//; s/(fn _bind\(erc20: EthAddress,)/$1 l1_factory: EthAddress,/'
+	expect bind_block_comment "_bind does not read l1_factory from storage"
+	fixture bind_caller_secret 's/        let secret = if publish \{ REGISTER_SECRET \} else \{ BIND_HARNESS_SECRET \};\n//; s/(fn _bind\(erc20: EthAddress,)/$1 secret: Field,/'
+	expect bind_caller_secret "_bind does not pick its secret from the two constants by the publish flag"
+	fixture bind_factory_shadowed 's/(let l1_factory = self\.storage\.l1_factory\.read\(\);\n)/$1        let l1_factory = portal;\n/'
+	expect bind_factory_shadowed "_bind rebinds l1_factory"
+	fixture bind_caller_sender 's/\[secret\], l1_factory, register_leaf_index/[secret], sender, register_leaf_index/; s/(fn _bind\(erc20: EthAddress,)/$1 sender: EthAddress,/'
+	expect bind_caller_sender "_bind does not consume [secret] from l1_factory"
 
-	# Regression 3: a third consume site added.
-	cat >"$tmp/three.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn a() { self.context.consume_l1_to_l2_message(x); }
-fn b() { self.context.consume_l1_to_l2_message(y); }
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    self.context.consume_l1_to_l2_message(content_hash, secret, config.portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/three.nr" >/dev/null 2>&1 && { echo "SELF-TEST FAIL: 3-consumer regression accepted" >&2; fails=1; }
+	# claim_from_pool.
+	fixture claim_renamed 's/fn claim_from_pool\(/fn claim_from_pool_v2(/'
+	expect claim_renamed "no single claim_from_pool function"
+	fixture no_claim_salt 's/claim_salt/salt/g'
+	expect no_claim_salt "claim_from_pool does not take claim_salt"
+	fixture raw_secret 's/(        claim_salt: Field,\n)/$1        raw_secret: Field,\n/'
+	expect raw_secret "claim_from_pool takes a secret parameter"
+	fixture recipient_param 's/        let recipient = self\.msg_sender\(\);\n//; s/(        token: AztecAddress,\n)/$1        recipient: AztecAddress,\n/'
+	expect recipient_param "claim_from_pool does not bind the recipient once to self.msg_sender()"
+	fixture portal_param 's/        let portal = self\.storage\.portal_of\.at\(token\)\.read\(\);\n//; s/(        token: AztecAddress,\n)/$1        portal: EthAddress,\n/'
+	expect portal_param "claim_from_pool does not read the portal once from portal_of.at(token)"
+	fixture commitment_raw 's/hash_2\(\[change_precommitment, label\]\)/change_precommitment/'
+	expect commitment_raw "claim_from_pool does not compute the commitment once as hash_2([change_precommitment, label])"
+	fixture no_derive 's/        let secret = derive_claim_secret\(claim_salt, recipient\);\n//; s/\[secret\], portal/[claim_salt], portal/'
+	expect no_derive "claim_from_pool does not derive the secret once from (claim_salt, recipient)"
+	fixture secret_not_salt 's/derive_claim_secret\(claim_salt, recipient\)/derive_claim_secret(nullifier, recipient)/'
+	expect secret_not_salt "claim_from_pool does not derive the secret once from (claim_salt, recipient)"
+	fixture commented 's/(        )(let secret = derive_claim_secret\(claim_salt, recipient\);)/$1\/\/ $2/; s/(        )(self\.context\.consume_l1_to_l2_message\(content, \[secret\], portal, message_leaf_index\);)/$1\/\/ $2\n$1self.context.consume_l1_to_l2_message(content, [claim_salt], portal, message_leaf_index);/'
+	expect commented "claim_from_pool does not derive the secret once from (claim_salt, recipient)"
+	fixture shapes_in_string 's/(        )(let secret = derive_claim_secret\(claim_salt, recipient\);)/${1}let doc = "$2";/; s/\[secret\], portal/[claim_salt], portal/'
+	expect shapes_in_string "claim_from_pool does not derive the secret once from (claim_salt, recipient)"
+	fixture content_not_encoder 's/bridge_content_v1\(nullifier, commitment, amount\)/poseidon2_hash([nullifier, commitment, amount as Field])/'
+	expect content_not_encoder "claim_from_pool does not build the content once with bridge_content_v1(nullifier, commitment, amount)"
+	fixture recipient_shadowed 's/(let recipient = self\.msg_sender\(\);\n)/$1        let recipient = AztecAddress::from_field(label);\n/'
+	expect recipient_shadowed "claim_from_pool rebinds recipient"
+	fixture amount_shadowed 's/(let content = bridge_content_v1\(nullifier, commitment, amount\);\n)/$1        let amount = amount + 1;\n/'
+	expect amount_shadowed "claim_from_pool rebinds amount"
+	fixture derive_ignored 's/\[secret\], portal/[claim_salt], portal/'
+	expect derive_ignored "claim_from_pool does not consume (content, [secret], portal, message_leaf_index)"
+	fixture consume_via_helper 's/self\.context\.consume_l1_to_l2_message\(content, \[secret\], portal, message_leaf_index\);/self.internal._consume(content, [secret], portal, message_leaf_index);/; s/(\n}\n)$/\n    fn _consume(c: Field, s: [Field; 1], p: EthAddress, i: Field) { self.context.consume_l1_to_l2_message(c, s, p, i); }$1/'
+	expect consume_via_helper "claim_from_pool does not consume (content, [secret], portal, message_leaf_index)"
+	fixture mint_elsewhere 's/mint_from_bridge\(recipient, amount, label\)/mint_from_bridge(beneficiary, amount, label)/; s/(        token: AztecAddress,\n)/$1        beneficiary: AztecAddress,\n/'
+	expect mint_elsewhere "claim_from_pool does not mint with self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label))"
+	fixture discarded_mint 's/self\.call\((LabelledToken::at\(token\)\.mint_from_bridge\(recipient, amount, label\))\);/let _ = $1;/'
+	expect discarded_mint "claim_from_pool does not mint with self.call(LabelledToken::at(token).mint_from_bridge(recipient, amount, label))"
 
-	# Regression 4: derive is CALLED but its result is discarded; consume uses the raw claim_salt (dataflow bypass).
-	cat >"$tmp/dataflow.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, secret, config.portal, message_leaf_index);
+	if [ "$fails" -ne 0 ]; then
+		echo "❌ check-sole-consumer self-test FAILED ($fails)" >&2
+		exit 1
+	fi
+	echo "✅ check-sole-consumer self-test passed (the hub and the control upheld; $rejected bearer regressions rejected)"
 }
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let _ = derive_claim_secret(claim_salt, recipient);
-    self.context.consume_l1_to_l2_message(content_hash, claim_salt, config.portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/dataflow.nr" >/dev/null 2>&1 && { echo "SELF-TEST FAIL: derive-but-consume-raw-salt dataflow bypass accepted" >&2; fails=1; }
 
-	# Regression 5: a lower-level primitive path (process_l1_to_l2_message + push_nullifier) that never
-	# calls consume_l1_to_l2_message, alongside a legit-looking claim_private that passes (a)-(c).
-	cat >"$tmp/lowlevel.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, secret, config.portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    self.context.consume_l1_to_l2_message(content_hash, secret, config.portal, message_leaf_index);
-}
-fn claim_bearer(raw: Field, leaf: Field) {
-    let m = self.context.process_l1_to_l2_message(raw, leaf);
-    self.context.push_nullifier(m);
-}
-EOF
-	check_file "$tmp/lowlevel.nr" >/dev/null 2>&1 && { echo "SELF-TEST FAIL: lower-level primitive bypass accepted" >&2; fails=1; }
-
-	# Regression 6 (hub shape): a fourth consume site beside the three named ones.
-	cat >"$tmp/hub_four.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn _bind(erc20: EthAddress, publish: bool) -> AztecAddress {
-    let l1_factory = self.storage.l1_factory.read();
-    let secret = if publish { REGISTER_SECRET } else { BIND_HARNESS_SECRET };
-    self.context.consume_l1_to_l2_message(content, [secret], l1_factory, register_leaf_index);
-}
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-fn claim_bearer(raw: Field, leaf: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [raw], portal, leaf);
-}
-EOF
-	check_file "$tmp/hub_four.nr" 3 >/dev/null 2>&1 && { echo "SELF-TEST FAIL: hub 4-consumer regression accepted" >&2; fails=1; }
-
-	# Regression 8 (hub shape): the register consume is keyed on a caller-supplied sender.
-	cat >"$tmp/hub_sender.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn _bind(erc20: EthAddress, sender: EthAddress, publish: bool) -> AztecAddress {
-    let l1_factory = self.storage.l1_factory.read();
-    let secret = if publish { REGISTER_SECRET } else { BIND_HARNESS_SECRET };
-    self.context.consume_l1_to_l2_message(content, [secret], sender, register_leaf_index);
-}
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/hub_sender.nr" 3 >/dev/null 2>&1 && { echo "SELF-TEST FAIL: hub caller-sender register regression accepted" >&2; fails=1; }
-
-	# Regression 9: two consume sites on ONE line (a line count would see one).
-	cat >"$tmp/one_line.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index); self.context.consume_l1_to_l2_message(other, [secret], portal, other_leaf);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/one_line.nr" >/dev/null 2>&1 && { echo "SELF-TEST FAIL: two-consumes-on-one-line regression accepted" >&2; fails=1; }
-
-	# Regression 10 (hub shape): a PARAMETER named l1_factory instead of the storage read.
-	cat >"$tmp/hub_param_factory.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn _bind(erc20: EthAddress, l1_factory: EthAddress, publish: bool) -> AztecAddress {
-    let secret = if publish { REGISTER_SECRET } else { BIND_HARNESS_SECRET };
-    self.context.consume_l1_to_l2_message(content, [secret], l1_factory, register_leaf_index);
-}
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/hub_param_factory.nr" 3 >/dev/null 2>&1 && { echo "SELF-TEST FAIL: hub parameter-named-l1_factory regression accepted" >&2; fails=1; }
-
-	# Regression 11: the expected shapes survive only inside comments; the live code is a bearer path.
-	cat >"$tmp/commented.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    // let secret = derive_claim_secret(claim_salt, recipient);
-    // self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-    self.context.consume_l1_to_l2_message(content_hash, [claim_salt], portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/commented.nr" >/dev/null 2>&1 && { echo "SELF-TEST FAIL: commented-out-shapes regression accepted" >&2; fails=1; }
-
-	# Regression 12 (hub shape): the storage read is BLOCK-commented; the live sender is a parameter.
-	cat >"$tmp/hub_block_comment.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn _bind(erc20: EthAddress, l1_factory: EthAddress, publish: bool) -> AztecAddress {
-    /* let l1_factory = self.storage.l1_factory.read(); */
-    let secret = if publish { REGISTER_SECRET } else { BIND_HARNESS_SECRET };
-    self.context.consume_l1_to_l2_message(content, [secret], l1_factory, register_leaf_index);
-}
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/hub_block_comment.nr" 3 >/dev/null 2>&1 && { echo "SELF-TEST FAIL: block-commented storage read regression accepted" >&2; fails=1; }
-
-	# Regression 13: a `//` inside a string literal must not hide the live primitive after it.
-	cat >"$tmp/string_slash.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    let url = "https://x"; let m = self.context.process_l1_to_l2_message(claim_salt, message_leaf_index);
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/string_slash.nr" >/dev/null 2>&1 && { echo "SELF-TEST FAIL: string-literal-slash regression accepted" >&2; fails=1; }
-
-	# Regression 14: a block-comment opener and closer inside two strings bracket a live bearer path.
-	cat >"$tmp/string_block.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    let open = "/*";
-    let m = self.context.process_l1_to_l2_message(claim_salt, message_leaf_index);
-    let close = "*/";
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/string_block.nr" >/dev/null 2>&1 && { echo "SELF-TEST FAIL: block-comment-in-strings regression accepted" >&2; fails=1; }
-
-	# Regression 7 (hub shape): the register consume takes a caller secret instead of REGISTER_SECRET.
-	cat >"$tmp/hub_secret_register.nr" <<'EOF'
-use claim_secret_lib::derive_claim_secret;
-fn _bind(erc20: EthAddress, secret: Field, publish: bool) -> AztecAddress {
-    let l1_factory = self.storage.l1_factory.read();
-    self.context.consume_l1_to_l2_message(content, [secret], l1_factory, register_leaf_index);
-}
-fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-fn claim_private(recipient: AztecAddress, amount: u128, claim_salt: Field, message_leaf_index: Field) {
-    let secret = derive_claim_secret(claim_salt, recipient);
-    self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
-}
-EOF
-	check_file "$tmp/hub_secret_register.nr" 3 >/dev/null 2>&1 && { echo "SELF-TEST FAIL: hub caller-secret register regression accepted" >&2; fails=1; }
-
-	if [ "$fails" -ne 0 ]; then echo "❌ check-sole-consumer self-test FAILED" >&2; exit 1; fi
-	echo "✅ check-sole-consumer self-test passed (the hub source upheld; 14 bearer regressions rejected)"
+if [ "${1:-}" = "--self-test" ]; then
+	self_test
 	exit 0
 fi
-
-if [ "$#" -gt 0 ]; then
-	check_file "$1" "${2:-2}" || exit 1
-	echo "✅ sole-consumer invariant holds for $1"
-	exit 0
-fi
-check_file "$here/token_bridge_hub/src/main.nr" 3 || exit 1
-echo "✅ sole-consumer invariant holds: token_bridge_hub 3 sites (_bind, claim_public, claim_private); claim_private derives (no raw-secret path)"
+crate="${1:-$here/token_bridge_hub}"
+check_crate "$crate" || exit 1
+echo "✅ sole-consumer invariant holds: $(basename "$crate") consumes at 2 sites (_bind, claim_from_pool) and no path dependency consumes; claim_from_pool's dataflow is pinned"
