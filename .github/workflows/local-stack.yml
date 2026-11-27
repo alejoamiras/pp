@@ -50,8 +50,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only. The stack boots bridge-core's harness and pp-env's pool, so both packages
-          # move it whole, and so do the src and manifest of @pp/pool-client, which pp-env's spends
-          # run on. Pinned by scripts/ci-cd/behavior-gating.test.ts.
+          # move it whole; what their workspace dependencies export (among them @pp/pool-client, which
+          # pp-env's spends run on) moves it too. Derived and pinned by scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             stack:
               - 'packages/local-stack/**'
@@ -59,6 +59,13 @@ jobs:
               - 'packages/pp-env/**'
               - 'packages/pool-client/src/**'
               - 'packages/pool-client/package.json'
+              - 'packages/bridge-spec/src/**'
+              - 'packages/bridge-spec/package.json'
+              - 'packages/run-isolation/src/**'
+              - 'packages/run-isolation/package.json'
+              # bridge-core's sources import these committed artifacts by relative path.
+              - 'contracts/bridge/aztec/token_bridge_hub/target/token_bridge_hub_contract-TokenBridgeHub.json'
+              - 'contracts/bridge/aztec/asp_registry/target/asp_registry-AspRootRegistry.json'
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'
