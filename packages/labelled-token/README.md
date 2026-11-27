@@ -4,7 +4,8 @@ The labelled token's artifact and its tooling. The contract lives in
 [`contracts/bridge/aztec/labelled_token`](../../contracts/bridge/aztec/labelled_token): an Aztec 6.0.0
 token whose every private note carries a deposit **label** and an **origin** (`0` pool, `1` birth).
 Stage A is the hold-and-leave surface; stage B adds spends checked against the ASP root registry
-([`asp_registry`](../../contracts/bridge/aztec/asp_registry)) and a public balance.
+([`asp_registry`](../../contracts/bridge/aztec/asp_registry)) and a public balance; stage C adds
+shields, which create labels born on Aztec.
 
 | Function | Caller | Effect |
 |---|---|---|
@@ -16,13 +17,14 @@ Stage A is the hold-and-leave surface; stage B adds spends checked against the A
 | `private_notes_by_label(owner, label, start)` | utility | One label's note values, largest first, 10 per page: the exact chunks a caller can burn. |
 | `transfer_private(to, amount, label, path)` | any holder | Spends the caller's `label` notes as `burn_for_exit` does, then proves `label` is in the registry's tree of those notes' origin at the anchor (`check_label`), which also sets the expiry to anchor + 1800 s. Writes `(label, origin, amount)` to `to` and the change to the caller. Refuses a zero or off-curve `to` and a zero amount. |
 | `unshield(amount, label, path)` | any holder | As `transfer_private`, crediting the caller's public balance instead. Refused in the setup phase. The public step `finish_unshield` (callable only by the token) reverts unless both registry roots are still the ones the spend was checked against; after such a revert the notes stay spendable, and until that tx is final any spend that returns change to the caller fails (the change's delivery must follow the dropped one), so it can leave only in exact chunks. |
+| `shield(amount)` | any holder | Moves `amount` of the caller's public balance into one note of origin birth under a new label, `label′ = birth_label(token, owner, amount, secret)` (`pp_hash::birth`; the prover draws the secret). Pushes the birth nullifier and announces `BirthAnnouncement { label, secret, owner, amount }` to the registry's birth intake, read at the anchor. The public step `debit_for_shield` (callable only by the token) debits the caller and emits `ShieldDebited { birth_id, owner, amount }`. Refused in the setup phase, for a zero amount, and while the intake is zero (shields paused) or off-curve. Sets the expiry to anchor + 1800 s. The note spends once the birth tree admits `label′`; it can be burnt for exit at any time. |
 | `transfer_public(to, amount)` | any holder | Moves public balance. Refuses a zero or off-curve `to`, the private-side sentinel address and a zero amount. |
 | `burn_public_for_exit(from, amount)` | minter only | Burns `from`'s public balance. |
 | `balance_of_public(owner)` | public view | The owner's public balance. |
 
-Every balance note is delivered constrained under a non-interactive handshake (`balance_set.nr`,
-`delivery()`), so a recipient finds it from the chain with no registered sender, unless the pair
-already shares an interactive handshake (see below).
+Every balance note and every birth announcement is delivered constrained under a non-interactive
+handshake (`balance_set.nr`, `delivery()`), so a recipient finds it from the chain with no registered
+sender, unless the pair already shares an interactive handshake (see below).
 
 ## Entries
 
