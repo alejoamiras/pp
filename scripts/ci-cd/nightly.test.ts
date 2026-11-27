@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process"
 import { expect, test } from "bun:test"
-import { boundedSuite, forgePassed, SEPOLIA_FORK_ENDPOINT, SUITES, sepoliaForkPassed, verdict, vitestPassed } from "../nightly"
+import {
+	boundedSuite,
+	expectedPassed,
+	forgePassed,
+	SEPOLIA_FORK_ENDPOINT,
+	SUITES,
+	sepoliaForkPassed,
+	verdict,
+	vitestPassed,
+} from "../nightly"
 
 const forgeSuite = SUITES[0]
 
@@ -74,4 +83,26 @@ test("the sepolia-fork suite gets a committed keyless gateway, and counts only i
 	expect(suite?.expected).toBe(4)
 	expect(sepoliaForkPassed("sepolia-fork: 4 fork cases passed\n")).toBe(4)
 	expect(sepoliaForkPassed("Suite result: ok. 4 passed; 0 failed; 0 skipped")).toBe(0)
+})
+
+test("the real-wallet suite counts only its reporter's one line, at the reporter's total", () => {
+	const suite = SUITES.find((s) => s.name === "real-wallet")
+	expect(suite).toMatchObject({ cwd: "packages/e2e-kit", command: ["bun", "run", "test:real-wallet"], expected: 3 })
+	// It starts detached process groups, which a bounded suite's kill would orphan.
+	expect(suite?.command[0]).not.toBe("bash")
+	expect(suite?.prepare?.at(-1)).toEqual(["forge", "build", "--root", "contracts/bridge/evm", "--skip", "test", "script"])
+	const count = expectedPassed("real-wallet", 3)
+	const ran = "  3 passed (2.1m)\nreal-wallet: 3/3 passed as expected\n[real-wallet] state in s; nothing of the run survives\n"
+	expect(count(ran)).toBe(3)
+	expect(count("\u001b[2mreal-wallet: 3/3 passed as expected\u001b[22m\n")).toBe(3)
+	if (suite) {
+		expect(verdict(suite, 0, ran)).toBeUndefined()
+		expect(verdict(suite, 0, "  1 skipped\n  2 passed (2.1m)\nreal-wallet: 2/3 passed as expected\n")).toBe(
+			"real-wallet: 2 tests passed, expected 3",
+		)
+	}
+	expect(count("  3 passed (2.1m)\n")).toBe(0)
+	expect(count("real-wallet: 3/3 passed as expected\nreal-wallet: 3/3 passed as expected\n")).toBe(0)
+	expect(count("real-wallet: 3/4 passed as expected\n")).toBe(0)
+	expect(count("other: 3/3 passed as expected\n")).toBe(0)
 })
