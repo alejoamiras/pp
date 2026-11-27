@@ -8,7 +8,6 @@ import { sponsoredFpcAddress } from "./payload"
 
 const TOKEN = toHex(7n, { size: 32 })
 const D: ClientDeployment = { ...DEPLOYMENT, token: TOKEN, outbox: "0x00000000000000000000000000000000000000b4" }
-// Exit contents come from the shared v1 vectors, never from this package's own encoder.
 const OUT = vectors.out[0]!
 
 const payeeOf = (word: string): Address => {
@@ -28,10 +27,15 @@ describe("exitPublicPayload", () => {
 	const refused = vectors.rejections
 		.filter((r) => r.fn === "exitContent")
 		.map((r) => [r.name, { payee: payeeOf(r.args.payee!), amount: BigInt(r.args.amount!) }, r.error] as const)
-	it.each([...refused, ["the portal as payee", { payee: PORTAL, amount: 1n }, "PayeeIsPortal"] as const])(
-		"refuses %s before building",
-		async (_, a, source) => {
-			await expect(exitPublicPayload(D, a)).rejects.toMatchObject({ code: "SPEND_MISMATCH", source })
-		},
-	)
+	it.each([
+		...refused,
+		["the portal as payee", { payee: PORTAL, amount: 1n }, "PayeeIsPortal"] as const,
+		[
+			"a mixed-case payee whose checksum fails",
+			{ payee: "0x000000000000000000000000000000000000BeeF" as Address, amount: 1n },
+			"PayeeChecksum",
+		] as const,
+	])("refuses %s before building", async (_, a, source) => {
+		await expect(exitPublicPayload(D, a)).rejects.toMatchObject({ code: "SPEND_MISMATCH", source })
+	})
 })

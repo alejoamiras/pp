@@ -1,7 +1,16 @@
 import { Contract } from "@aztec-labs/aztec.js/contracts"
 import { Fr } from "@aztec-labs/foundation/curves/bn254"
 import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
-import { type LabelPath, labelState, parseAspSnapshot, pathFor, readRootRecord } from "@pp/label-paths"
+import {
+	type Hex,
+	type LabelPath,
+	labelState,
+	parseAspSnapshot,
+	pathFor,
+	RegistryAddressError,
+	readRootRecord,
+	SnapshotError,
+} from "@pp/label-paths"
 import { describe, expect, it } from "vitest"
 import { labelledTokenArtifact } from "../../../src/artifacts"
 import { callPayload, sponsored } from "../../../src/client/payload"
@@ -12,30 +21,39 @@ const k = exitKit("public-exit")
 const POOL_ORIGIN = 0
 const POST_TIMEOUT_MS = 180_000
 
+/** One read of the latest record and the bot's snapshot of it: the label's pool path once that record admits it. */
+async function admitted(bot: string, label: bigint, deadline: number): Promise<LabelPath | null> {
+	const head = await k.dev().node.getBlockData("latest")
+	if (!head) return null
+	const { blockNumber, timestamp } = head.header.globalVariables
+	const record = await readRootRecord({ aztecNode: k.m.aztecNode, registry: k.m.bridge.registry as Hex, at: Number(blockNumber) })
+	// The signal bounds the body read too, so a stalled bot cannot outlast the deadline.
+	const res = await fetch(`${bot}/v1/snapshots/${record.sequence}`, { signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) })
+	if (!res.ok) return null
+	const snapshot = parseAspSnapshot(await res.json())
+	return labelState(record, snapshot, label, POOL_ORIGIN, timestamp) === "ACTIVE" ? pathFor(snapshot, label, POOL_ORIGIN) : null
+}
+
 /**
- * The pool tree's path for `label` from the bot's snapshot of the registry's latest record, once a
- * post holds the label and is young enough for a checked spend.
+ * The pool tree's path for `label`, once a post holds it and is young enough for a checked spend.
+ * A malformed snapshot or a bad registry address ends the wait; any other failure is retried.
  */
 async function poolPath(label: bigint): Promise<LabelPath> {
-	const { m } = k
-	if (!m.bot) throw new Error("the attached stack runs no bot")
-	const node = k.dev().node
-	for (const end = Date.now() + POST_TIMEOUT_MS; Date.now() < end; await new Promise((r) => setTimeout(r, 1_000))) {
-		const head = await node.getBlockData("latest")
-		if (!head) continue
-		const record = await readRootRecord({
-			aztecNode: m.aztecNode,
-			registry: m.bridge.registry as `0x${string}`,
-			at: Number(head.header.globalVariables.blockNumber),
-		})
-		const res = await fetch(`${m.bot.url}/v1/snapshots/${record.sequence}`)
-		if (!res.ok) continue
-		const snapshot = parseAspSnapshot(await res.json())
-		if (labelState(record, snapshot, label, POOL_ORIGIN, head.header.globalVariables.timestamp) !== "ACTIVE") continue
-		const path = pathFor(snapshot, label, POOL_ORIGIN)
-		if (path) return path
+	const bot = k.m.bot?.url
+	if (!bot) throw new Error("the attached stack runs no bot")
+	const deadline = Date.now() + POST_TIMEOUT_MS
+	let last: unknown
+	while (Date.now() < deadline) {
+		try {
+			const path = await admitted(bot, label, deadline)
+			if (path) return path
+		} catch (e) {
+			if (e instanceof SnapshotError || e instanceof RegistryAddressError) throw e
+			last = e
+		}
+		await new Promise((r) => setTimeout(r, 1_000))
 	}
-	throw new Error(`no registry post admitted label ${label} within ${POST_TIMEOUT_MS} ms`)
+	throw new Error(`no registry post admitted label ${label} within ${POST_TIMEOUT_MS} ms`, { cause: last })
 }
 
 async function publicBalance(holder: AztecAddress): Promise<bigint> {
@@ -51,6 +69,9 @@ describe("public exit", () => {
 			const { client, holder, label } = await k.claimed(100n, [40n])
 			const dev = k.dev()
 			const path = await poolPath(label)
+			// The unshield proves the path against the record at its anchor, and its public step checks
+			// those roots again: both hold only while no other label is approved. The suite runs one file
+			// at a time and every approval is an actor's own call, so none lands in between.
 			const arg = { index: path.index, depth: path.depth, siblings: [...path.siblings] }
 			const unshield = await callPayload(labelledTokenArtifact, dev.token, "unshield", [25n, new Fr(label), arg])
 			await send(dev, holder.address, await sponsored(unshield))

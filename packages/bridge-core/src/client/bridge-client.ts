@@ -128,7 +128,8 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		recover: async (s, recipient) => recover(await recordsContext(), s, recipient),
 		records: async (s) => records(await recordsContext(), s),
 		ragequitPayload: (a) => exits((c) => ragequitPayload(c.deployment, a)),
-		exitPublicPayload: (a) => exits((c) => exitPublicPayload(c.deployment, a)),
+		// Read at entry: a caller's later change to its request must not reach the payload built after the check.
+		exitPublicPayload: ({ payee, amount }) => exits((c) => exitPublicPayload(c.deployment, { payee, amount })),
 		exitTickets: (a) => exits((c) => exitTickets(c, a)),
 		exitStatus: (t) => exits(async (c) => exitStatusOf(await exitState(exitReads(c), t))),
 		settle: (t, l1) => exits((c) => settle(c, t, l1)),
