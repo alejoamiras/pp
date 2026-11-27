@@ -72,6 +72,8 @@ describe("bridge", () => {
 		)
 		const wrongLabel = await sponsored(await callPayload(tokenBridgeHubArtifact, dev.hub, "claim_from_pool", args))
 		await expect(b1Recipient.deployWith(wrongLabel)).rejects.toThrow()
+		// A failed claim send leaves no trace: the record stays claimable and the same payload claims below.
+		expect((await c.records(session)).find((v) => v.nullifier === spend.nullifier)?.step).toBe("claimable")
 
 		const fpc = await sponsoredFpcAddress()
 		expect(await feeJuice(dev, recipient)).toBe(0n)
