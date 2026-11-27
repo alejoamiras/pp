@@ -166,7 +166,10 @@ describe("the token's checked spends", () => {
 		const sends = stackTokenSends({
 			aztec: r.aztec,
 			allowList: {
-				current: async () => ({ record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n }, nowSec: 2n }),
+				current: async () => ({
+					record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n, poolSize: 1n, birthSize: 0n },
+					nowSec: 2n,
+				}),
 				check: async () => {
 					order.push("check")
 					return ACTIVE
