@@ -196,16 +196,20 @@ async function preflight(st: State, rawRecipient: string, dispatch: Dispatch, si
 async function proveWithDeadline(st: State, a: Attempt, signal: AbortSignal): Promise<Proved> {
 	const { session, timer } = st.deps
 	const stop = new AbortController()
-	const deadline = timer.sleep(PROVE_DEADLINE_MS, AbortSignal.any([signal, stop.signal])).then((elapsed) => {
+	const deadline = timer.sleep(PROVE_DEADLINE_MS, stop.signal).then((elapsed) => {
 		if (elapsed) throw new ProveTimeout()
 		return new Promise<never>(() => {})
 	})
+	// An aborted run cancels its proof too: a hung one would otherwise hold the note and the prover.
+	const cancel = () => session.cancelProve()
+	signal.addEventListener("abort", cancel, { once: true })
 	try {
 		return await Promise.race([session.prove(a), deadline])
 	} catch (err) {
 		if (err instanceof ProveTimeout) session.cancelProve()
 		throw err
 	} finally {
+		signal.removeEventListener("abort", cancel)
 		stop.abort()
 	}
 }

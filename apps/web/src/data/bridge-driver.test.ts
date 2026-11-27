@@ -308,6 +308,26 @@ describe("the bridge driver", () => {
 		expect(bridgeView(h.machine()).message).toBe("Proving took too long; nothing was sent.")
 	})
 
+	test("aborting a run whose proof hangs cancels the proof, so the note can be bridged again", async () => {
+		const h = harness()
+		let calls = 0
+		let cancel = () => {}
+		h.session.prove = vi.fn(async () => {
+			if (++calls > 1) return { note: NOTE.commitment, label: NOTE.label, amount: 70n, change: 30n } as Proved
+			return new Promise<Proved>((_, reject) => {
+				cancel = () => reject(new Error("cancelled"))
+			})
+		})
+		h.session.cancelProve = vi.fn(() => cancel())
+		const run = h.submit()
+		await vi.waitFor(() => expect(calls).toBe(1))
+		h.supersede()
+		await run
+		expect(h.session.cancelProve).toHaveBeenCalledTimes(1)
+		await h.submit()
+		expect(h.sent).toEqual(["eth_sendTransaction"])
+	})
+
 	test("an on-chain revert asks the user to prove again", async () => {
 		const h = harness({ afterSend: new BridgeFailure("REVERTED", { stale: "STATE_ROOT_STALE" }) })
 		await h.submit()
