@@ -8,7 +8,8 @@
 		"preview:test-wallet": "vite preview --config test-wallet/vite.config.mts",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "bun --bun vitest run",
-		"test:browser": "bash scripts/e2e/agent.sh"
+		"test:browser": "bash scripts/e2e/agent.sh",
+		"test:real-wallet": "bun real-wallet/run.ts"
 	},
 	"dependencies": {
 		"@aztec-foundation/bb.js": "6.0.0",
@@ -19,6 +20,7 @@
 		"@aztec-labs/constants": "6.0.0",
 		"@aztec-labs/foundation": "6.0.0",
 		"@aztec-labs/noir-contracts.js": "6.0.0",
+		"@aztec-labs/protocol-contracts": "6.0.0",
 		"@aztec-labs/pxe": "6.0.0",
 		"@aztec-labs/stdlib": "6.0.0",
 		"@aztec-labs/wallet-sdk": "6.0.0",

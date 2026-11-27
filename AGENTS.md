@@ -81,6 +81,7 @@ with warm package and toolchain caches.
 | Web stack-build guard | `bun run --cwd apps/web check:stack-build` | 1 min |
 | Web e2e (local stack, both builds, Playwright) | `bun run --cwd apps/web e2e` (after `bun run demo:prepare`) | 8.5 min (5.6 min of tests) |
 | Web e2e on the sandbox (fixture build) | `bun run --cwd packages/e2e-kit test:browser` | 5 min |
+| Real-wallet tier (the wallet's pinned release, local stack, Playwright) | `bun run --cwd packages/e2e-kit test:real-wallet` or `bun run nightly real-wallet`, either after `bun run demo:prepare` | 5.5 min |
 | Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |
 | Sepolia fork, unit | `bun run --cwd packages/sepolia-fork test` | 4 s |
 | Sepolia fork, against Sepolia | `SEPOLIA_RPC_URL=<public endpoint with archive state> bun run --cwd packages/sepolia-fork test:net`, then `run` after `forge build` in `contracts/bridge/evm` (`run --prepare-only` stops before Forge) | 14 s · 5 min 15 s (the pool user's sync 4 min 15 s) |
@@ -102,7 +103,8 @@ test fails. A failed run keeps the real-wallet tier's reports and logs as an art
 days. The L1 fuzz and invariant suites are
 `contracts/bridge/evm/scripts/nightly.sh` at that package's `nightly` Foundry profile; local-stack's
 32-minute idle case is its `test:integration:long`; the Sepolia fork suite is sepolia-fork's `run`,
-against the keyless public endpoint committed in that file.
+against the keyless public endpoint committed in that file; the real-wallet tier is e2e-kit's
+`test:real-wallet`.
 
 ## Working in this repo
 

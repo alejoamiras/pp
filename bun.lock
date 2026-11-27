@@ -143,6 +143,7 @@
         "@aztec-labs/constants": "6.0.0",
         "@aztec-labs/foundation": "6.0.0",
         "@aztec-labs/noir-contracts.js": "6.0.0",
+        "@aztec-labs/protocol-contracts": "6.0.0",
         "@aztec-labs/pxe": "6.0.0",
         "@aztec-labs/stdlib": "6.0.0",
         "@aztec-labs/wallet-sdk": "6.0.0",

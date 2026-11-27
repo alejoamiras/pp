@@ -237,9 +237,14 @@ export function portOwner(port: number): string | undefined {
 	return row?.split("|")[3]?.trim()
 }
 
-export function rowsOwnedBy(runId: string): number {
-	if (!existsSync(registryPath())) return 0
+/** Every port listed under `runId`, in registry order. */
+export function portsOwnedBy(runId: string): number[] {
+	if (!existsSync(registryPath())) return []
 	return readFileSync(registryPath(), "utf8")
 		.split("\n")
-		.filter((l) => ownedBy(l, runId)).length
+		.flatMap((l) => (ownedBy(l, runId) ? (portOf(l) ?? []) : []))
+}
+
+export function rowsOwnedBy(runId: string): number {
+	return portsOwnedBy(runId).length
 }

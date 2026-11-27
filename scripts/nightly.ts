@@ -80,20 +80,38 @@ const freshPassed = (output: string): number => Number(/^fresh vectors: (\d+) te
 export const sepoliaForkPassed = (output: string): number => Number(/^sepolia-fork: (\d+) fork cases passed/m.exec(output)?.[1] ?? 0)
 
 /**
+ * Reads the one `<suite>: N/<total> passed as expected` line a count reporter prints. A second such line,
+ * or a total other than `total`, counts 0: the reporter and the suite must agree on how many tests exist.
+ */
+export const expectedPassed =
+	(suite: string, total: number) =>
+	(output: string): number => {
+		const lines = [...Bun.stripANSI(output).matchAll(/^(.+): (\d+)\/(\d+) passed as expected$/gm)].filter((m) => m[1] === suite)
+		const only = lines.length === 1 ? lines[0] : undefined
+		return only && Number(only[3]) === total ? Number(only[2]) : 0
+	}
+
+/**
  * A public Sepolia gateway that needs no key and serves state at every age. Committed on purpose: it is
  * the one endpoint the fork suite gets, and `nightly.test.ts` holds it to a shape no keyed URL fits.
  */
 export const SEPOLIA_FORK_ENDPOINT = "https://sepolia.gateway.tenderly.co/"
+
+/** The forge libraries and remappings a build of contracts/bridge/evm needs. */
+const L1_LIBS: string[][] = [
+	["bash", "contracts/bridge/evm/scripts/install-libs.sh"],
+	["bun", "packages/bridge-core/scripts/gen-remappings.ts"],
+]
+
+/** `real-wallet/count-reporter.ts`'s total; `nightly.test.ts` holds the two equal. */
+const REAL_WALLET_TESTS = 3
 
 export const SUITES: Suite[] = [
 	// contracts/bridge/evm owns the script and the Foundry `nightly` profile it runs; the libraries and
 	// remappings it assumes are prepared here, as the pull-request job prepares them.
 	{
 		name: "bridge-l1-fuzz-invariant",
-		prepare: [
-			["bash", "contracts/bridge/evm/scripts/install-libs.sh"],
-			["bun", "packages/bridge-core/scripts/gen-remappings.ts"],
-		],
+		prepare: [...L1_LIBS],
 		cwd: ".",
 		command: ["bash", "contracts/bridge/evm/scripts/nightly.sh"],
 		passed: forgePassed,
@@ -166,16 +184,23 @@ export const SUITES: Suite[] = [
 	// group and enforces its own deadline with teardown. The workflow has fetched the pool already.
 	{
 		name: "sepolia-fork",
-		prepare: [
-			["bash", "contracts/bridge/evm/scripts/install-libs.sh"],
-			["bun", "packages/bridge-core/scripts/gen-remappings.ts"],
-			["forge", "build", "--root", "contracts/bridge/evm"],
-		],
+		prepare: [...L1_LIBS, ["forge", "build", "--root", "contracts/bridge/evm"]],
 		cwd: "packages/sepolia-fork",
 		command: ["bun", "run", "run", "--require-rpc"],
 		env: { SEPOLIA_RPC_URL: SEPOLIA_FORK_ENDPOINT },
 		passed: sepoliaForkPassed,
 		expected: 4,
+	},
+	// packages/e2e-kit owns the tier: web's screens against the wallet's pinned release, approved in its
+	// own windows, on a local stack the runner boots and reaps. Not bounded here: it starts detached
+	// groups. The stack deploys the bridge from its L1 build, which the workflow does not make.
+	{
+		name: "real-wallet",
+		prepare: [...L1_LIBS, ["forge", "build", "--root", "contracts/bridge/evm", "--skip", "test", "script"]],
+		cwd: "packages/e2e-kit",
+		command: ["bun", "run", "test:real-wallet"],
+		passed: expectedPassed("real-wallet", REAL_WALLET_TESTS),
+		expected: REAL_WALLET_TESTS,
 	},
 ]
 
