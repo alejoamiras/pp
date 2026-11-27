@@ -20,6 +20,8 @@ describe("label states", () => {
 		for (const origin of [0, 1] as const) {
 			const v = labelView(origin, "ABSENT")
 			expect(`${v.text} ${v.meaning} ${v.reason}`).not.toMatch(/revoked|removed/i)
+			// An absence is the server's claim, so it never advises a public exit.
+			expect(`${v.text} ${v.meaning} ${v.reason}`).not.toMatch(/leave|ragequit|ethereum|exit/i)
 			expect(v.tone).not.toBe("bad")
 		}
 		expect(labelView(0, "ABSENT").checkAgain).toBe(true)
