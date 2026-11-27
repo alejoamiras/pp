@@ -76,16 +76,8 @@ describe("bridge", () => {
 		const fpc = await sponsoredFpcAddress()
 		expect(await feeJuice(dev, recipient)).toBe(0n)
 		const t1 = performance.now()
-		// I10: the account's deployment and its claim in one sponsored transaction, else one after the other.
-		let receipt = await b1Recipient.deployWith(payload).catch((e: unknown) => {
-			timings.i10Failed = 1
-			console.log(`[bridge] I10: deploy plus claim in one transaction failed: ${String(e).slice(0, 300)}`)
-			return undefined
-		})
-		if (!receipt) {
-			await b1Recipient.deploy()
-			receipt = await send(dev, recipient, payload)
-		}
+		// I10: the account's deployment and its claim in one sponsored transaction.
+		const receipt = await b1Recipient.deployWith(payload)
 		timings.claim = Math.round(performance.now() - t1)
 		const block = Number(receipt.blockNumber)
 		const fees = await blockFees(dev, block)

@@ -127,7 +127,7 @@ describe("journal", () => {
 		const t0 = performance.now()
 		const o = await owner(m, seed, [987_654_321n, 987_654_321n])
 		const s = await sessionOf(m, o)
-		const { store, values } = recordingStore()
+		const { store, values, written } = recordingStore()
 		const holder = await account(dev)
 		const c = createBridgeClient({ manifest: m, journal: store })
 		const l1 = await sender(m)
@@ -139,7 +139,7 @@ describe("journal", () => {
 		}
 		const [a, b] = spends as [(typeof spends)[0], (typeof spends)[0]]
 		expect(
-			leaks(values, {
+			leaks(written, {
 				nullifierA: a.nullifier,
 				nullifierB: b.nullifier,
 				amountA: a.amount,
