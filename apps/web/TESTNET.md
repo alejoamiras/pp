@@ -102,7 +102,11 @@ file path it is given is absolute.
 ## Get a test balance
 
 A balance needs two things:
-- **The owner registered in the pool's keystore.** This app cannot register an owner yet.
+- **The owner registered in the pool's keystore.** After sign-in, an unregistered owner sees
+  **Register with the pool** on Balances, in place of its pool notes. **Register** sends two
+  Sepolia transactions from the owner, paid in its ETH, one MetaMask prompt each: the key that
+  authorises its spends, then the key senders encrypt its notes to. The notes show once both have
+  mined.
 - **A pool note deposited for the owner.** If your owner account is the canary owner, the canary
   deposit (`seed`, without `--recipient`) is that note. For any other owner, once it is registered,
   the deployment's operator runs `seed --recipient <owner address>`; `--recipient` refuses the
@@ -116,6 +120,8 @@ A balance needs two things:
 | "Connect your Ethereum wallet first." | MetaMask has shared no account with this site | Press **Sign in with Ethereum** and approve MetaMask's request ("Open it on your laptop", step 3) |
 | "Your Ethereum wallet is on another network. …" | MetaMask is not on Sepolia | Switch MetaMask to Sepolia |
 | "Switch your Ethereum wallet to a separate account: …" | The owner is selected to pay for a bridge | Select the sender account in MetaMask |
+| "Select your signed-in account in your Ethereum wallet: the keystore registers …" | Another account is selected while registering | Select the owner account in MetaMask, then press **Register** |
+| "The pool's keystore holds other keys for this account, …" | The owner registered with another app's keys | Sign in with an owner this app registered, or a fresh one |
 | "The Aztec node does not answer. …" | The public testnet node is unreachable | Wait, then try again |
 | "The Aztec node serves L1 chain …; this app is built for …" | The node is on another network or rollup | Report it: the deployment file is out of date |
 | "That wallet is no longer available. Search again." | Nulo is closed or locked | Open Nulo, unlock it, search again |
