@@ -589,7 +589,15 @@ describe("Noir crate manifest", () => {
 	})
 })
 
-type NightlyStep = { if?: string; uses?: string; run?: string; with?: Record<string, unknown> }
+type NightlyStep = {
+	id?: string
+	if?: string
+	uses?: string
+	run?: string
+	env?: Record<string, string>
+	with?: Record<string, unknown>
+	"timeout-minutes"?: number
+}
 type NightlyJob = { "timeout-minutes"?: number; "cache-mode"?: string; steps: NightlyStep[] }
 
 /** A nightly job is bounded, reads caches only, keeps no credentials and calls this commit's actions. */
@@ -606,7 +614,10 @@ function expectNightlyJobReadsOnly(name: string, job: NightlyJob): void {
 		}
 		if (uses.startsWith("foundry-rs/foundry-toolchain@")) expect(step.with?.cache, uses).toBe(false)
 	}
-	expect(job.steps.map((s) => s.run)).toContain("bun run nightly")
+	expect(
+		job.steps.some((s) => s.run?.includes("bun run nightly")),
+		`${name}: runs the nightly`,
+	).toBe(true)
 }
 
 /** Every caching step of a composite action is off, or saves nothing, when the caller passes `cache-save: false`. */
@@ -637,6 +648,66 @@ test("the nightly reads only: restore-only caches, this commit's actions, no cre
 		.filter((name): name is string => Boolean(name))
 	expect(actions).toContain("ppv2-fetch")
 	for (const action of actions) expectActionSavesNothing(action)
+})
+
+// A dispatch input interpolated into a script is shell injection; a wallet profile in an artifact
+// would hand out a live wallet's store.
+test("the nightly takes suite names as data and uploads only reports and logs, only on failure", () => {
+	const text = readFileSync(join(ROOT, ".github/workflows/nightly.yml"), "utf8")
+	const job = workflow("nightly.yml").jobs.nightly as NightlyJob
+	const steps = job.steps
+	const at = (pick: (s: NightlyStep) => boolean) => steps.findIndex(pick)
+	const runAt = at((s) => s.run?.includes("bun run nightly") === true)
+	const dropAt = at((s) => s.run?.includes("-type l -print -delete") === true)
+	const uploadAt = at((s) => s.uses?.startsWith("actions/upload-artifact@") === true)
+	const [run, drop, upload] = [steps[runAt], steps[dropAt], steps[uploadAt]]
+	expect(run?.env).toEqual({ SUITES: "${{ inputs.suites }}", PP_E2E_STATE_DIR: "${{ runner.temp }}/nightly-e2e" })
+	// Whole scripts: a guard without its exit, or a cleanup that deletes nothing, still reads alike.
+	expect(run?.run).toBe(
+		[
+			"plain='^[a-z0-9 -]*$'",
+			"name='^[a-z0-9][a-z0-9-]*$'",
+			"if [[ ! $SUITES =~ $plain ]]; then",
+			'  echo "suites: names are lowercase letters, digits and dashes, separated by spaces" >&2',
+			"  exit 1",
+			"fi",
+			'read -ra names <<< "$SUITES"',
+			'for n in "${names[@]}"; do',
+			"  if [[ ! $n =~ $name ]]; then",
+			`    echo "suites: '$n' starts with a dash" >&2`,
+			"    exit 1",
+			"  fi",
+			"done",
+			'bun run nightly "${names[@]}"',
+			"",
+		].join("\n"),
+	)
+	expect(drop?.run).toBe(
+		[
+			"shopt -s nullglob",
+			'for run in "$STATE"/real-wallet-*; do',
+			'  if [ -L "$run" ]; then rm -v -- "$run"; continue; fi',
+			"  for p in test-results playwright-report sandbox.log stack.log build-wallet.log build-app.log; do",
+			'    if [ -e "$run/$p" ] || [ -L "$run/$p" ]; then find "$run/$p" -type l -print -delete; fi',
+			"  done",
+			"done",
+			"",
+		].join("\n"),
+	)
+	// Context keys are case-insensitive, in either notation.
+	expect(text.match(/inputs\s*(\.\s*suites\b|\[\s*['"]suites['"]\s*\])/gi)).toHaveLength(1)
+	// A hang must fail the step with time left for setup before it and the upload after it.
+	expect((job["timeout-minutes"] as number) - (run?.["timeout-minutes"] as number)).toBeGreaterThanOrEqual(20)
+	expect(runAt < dropAt && dropAt < uploadAt, "run, then drop symlinks, then upload").toBe(true)
+	expect(steps.filter((s) => s.uses?.startsWith("actions/upload-artifact@"))).toHaveLength(1)
+	expect([drop?.id, drop?.if, upload?.if]).toEqual(["drop", "failure()", "failure() && steps.drop.outcome == 'success'"])
+	expect(upload?.with?.["retention-days"]).toBeGreaterThan(0)
+	expect(upload?.with?.["retention-days"]).toBeLessThanOrEqual(7)
+	const base = "${{ runner.temp }}/nightly-e2e/real-wallet-*/"
+	const paths = String(upload?.with?.path).trim().split("\n")
+	const allowed = ["test-results/", "playwright-report/", "sandbox.log", "stack.log", "build-wallet.log", "build-app.log"]
+	expect(paths.filter((p) => !p.startsWith("!"))).toEqual(allowed.map((p) => base + p))
+	expect(paths.filter((p) => p.startsWith("!"))).toEqual([`!${base}real-wallet/**`])
 })
 
 test("the unit-test workflow runs this suite", () => {
