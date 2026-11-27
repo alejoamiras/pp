@@ -161,9 +161,12 @@ export async function sendThroughWallet(d: AztecDeps, s: AztecSend): Promise<Sen
 	return settle(d.node, txHash)
 }
 
+/** A simulation's return value, whether aztec.js hands it back bare or under `result`. */
+const resultOf = (v: unknown): unknown => (v && typeof v === "object" && "result" in v ? v.result : v)
+
 /** A `BoundedVec` as aztec.js decodes it, cut to its length; a length that is no count reads as empty. */
 export function entries(v: unknown): unknown[] {
-	const page = (v && typeof v === "object" && "result" in v ? v.result : v) as { storage?: unknown; len?: unknown } | null
+	const page = resultOf(v) as { storage?: unknown; len?: unknown } | null
 	if (!page || !Array.isArray(page.storage) || (typeof page.len !== "bigint" && typeof page.len !== "number")) return []
 	const len = Number(page.len)
 	return Number.isSafeInteger(len) && len >= 0 ? page.storage.slice(0, len) : []
@@ -180,7 +183,7 @@ async function tokenAs(d: AztecDeps, owner: AztecAddress): Promise<Contract> {
 }
 
 /** The token's views over the live connection. */
-export function stackAztec(d: AztecDeps): Pick<AztecPort, "balancesByLabel" | "notesByLabel"> {
+export function stackAztec(d: AztecDeps): Pick<AztecPort, "balancesByLabel" | "notesByLabel" | "publicBalance"> {
 	return {
 		async balancesByLabel(owner) {
 			const token = await tokenAs(d, owner)
@@ -195,6 +198,13 @@ export function stackAztec(d: AztecDeps): Pick<AztecPort, "balancesByLabel" | "n
 			const page = async (start: number) => entries(await token.methods.private_notes_by_label(from, label, start).simulate({ from }))
 			const values = await readAllPages(page, NOTES_PAGE)
 			return values.map(parseU128).filter((v): v is bigint => v !== null)
+		},
+		async publicBalance(owner) {
+			const token = await tokenAs(d, owner)
+			const from = sdk(owner)
+			const balance = parseU128(resultOf(await token.methods.balance_of_public(from).simulate({ from })))
+			if (balance === null) throw new BridgeFailure("RPC_INCONSISTENT")
+			return balance
 		},
 	}
 }

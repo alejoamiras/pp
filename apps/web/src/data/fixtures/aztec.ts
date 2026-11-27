@@ -120,16 +120,18 @@ export function fixtureAztec(w: World): AztecPort {
 			return values.map(parseU128).filter((v): v is bigint => v !== null)
 		},
 		publicBalance: async (owner) => publicOf(w, owner),
-		async transferPrivate(from, { to, amount, label, origin }) {
+		async transferPrivate(from, { to, amount, label, origin }, on) {
 			// The wallet refuses an address that cannot receive notes before it proves anything.
 			if (!isAztecPoint(to)) throw new BridgeFailure("RECIPIENT_INVALID")
+			on.handoff()
 			return send(
 				w,
 				"transferPrivate",
 				checkedSpend(w, from, label, origin, amount, () => w.s.aztecNotes.push({ owner: to, label, origin, value: amount })),
 			)
 		},
-		async unshield(from, { amount, label, origin }) {
+		async unshield(from, { amount, label, origin }, on) {
+			on.handoff()
 			return send(
 				w,
 				"unshield",

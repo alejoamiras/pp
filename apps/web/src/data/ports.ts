@@ -167,8 +167,14 @@ export interface AztecPort {
 	/** Note values, largest first. */
 	notesByLabel(owner: AztecAddress, label: bigint): Promise<bigint[]>
 	publicBalance(owner: AztecAddress): Promise<bigint>
-	transferPrivate(from: AztecAddress, a: { to: AztecAddress; amount: bigint; label: bigint; origin: Origin }): Promise<Sent>
-	unshield(from: AztecAddress, a: { amount: bigint; label: bigint; origin: Origin }): Promise<Sent>
+	/** A checked spend: its label path comes from the allow list right before it is sent. */
+	transferPrivate(
+		from: AztecAddress,
+		a: { to: AztecAddress; amount: bigint; label: bigint; origin: Origin },
+		on: AztecSendHooks,
+	): Promise<Sent>
+	/** A checked spend, as `transferPrivate`. */
+	unshield(from: AztecAddress, a: { amount: bigint; label: bigint; origin: Origin }, on: AztecSendHooks): Promise<Sent>
 	shield(from: AztecAddress, amount: bigint): Promise<Sent>
 	/**
 	 * Re-derives the one exact chunk (at most 8 largest notes) equal to `amount` from the notes as they

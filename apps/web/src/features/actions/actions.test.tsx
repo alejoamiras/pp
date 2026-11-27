@@ -45,7 +45,11 @@ describe("the action dialogs", () => {
 
 		// Elsewhere, 15 leaves the label: its notes become 15 and 10, and 40 is no longer a sum of whole notes.
 		await act(() =>
-			app.source.aztec.transferPrivate(ACCOUNTS.aztec, { to: OTHER, amount: 15_000_000n, label: LABELS.active, origin: 0 }),
+			app.source.aztec.transferPrivate(
+				ACCOUNTS.aztec,
+				{ to: OTHER, amount: 15_000_000n, label: LABELS.active, origin: 0 },
+				{ epoch: 0, handoff: () => {} },
+			),
 		)
 		const sent = app.control.state().sent.aztec
 		await app.user.click(dialog.getByRole("button", { name: /Leave to Ethereum/ }))

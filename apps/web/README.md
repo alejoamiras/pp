@@ -14,11 +14,13 @@ A stack build (`build:local` with `PP_STACK_MANIFEST` from `bun run demo --keep`
 stack instead through `src/data/adapters/`: Ethereum through the injected wallet, chain time from
 both chains, the asset's decimals and symbol from the factory's registration, the pool notes by
 label through pool-client with one worker prover per page, the bridge and its claim through
-bridge-core's client, the Aztec balances by label and the ragequit through the connected wallet, and
-the exit tickets, their status and their collection through bridge-core's client. The allow list is
-the registry's record and its time read at one Aztec block, with each label checked against the
-bot's snapshot of that record's roots in one Web Worker (see below). The token actions are not wired
-yet. On the local stack (chain 31337 over a loopback
+bridge-core's client, the Aztec balances by label, the public balance, the private send, the
+unshield and the ragequit through the connected wallet, and the exit tickets, their status and their
+collection through bridge-core's client. The allow list is the registry's record and its time read
+at one Aztec block, with each label checked against the bot's snapshot of that record's roots in one
+Web Worker (see below). A private send or an unshield checks its label again right before it is
+built and sends nothing for a label the latest list does not hold; both are paid by the
+SponsoredFPC. Shield and the public balance's withdrawal are not wired yet. On the local stack (chain 31337 over a loopback
 RPC) the build can also send a bridge from anvil's dev account, so the demo needs no second wallet
 account. It is served by `serve`, which also serves the three proving files of `transact_1x1`, the
 one circuit the app proves, from `PP_CIRCUITS_DIR`, the pool checkout's circuit builds that the
