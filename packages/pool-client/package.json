@@ -8,6 +8,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./prover-worker": "./src/prover-worker.ts",
+		"./circuits": "./src/runtime/artifacts.ts",
 		"./testing": {
 			"types": "./test/support/testing.ts",
 			"bun": "./test/support/testing.ts",
