@@ -3,7 +3,7 @@
  * `deploy-pool`, `verify-deployment --pool-only`, the mock ASP (`asp --owner`), `seed` and
  * `seed --recipient`, all through the real CLIs with every guard; then each L1 key's gas against its budget.
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -14,50 +14,22 @@ import { startForkAnvil } from "@pp/sepolia-fork/src/anvil.ts"
 import { type Address, createPublicClient, createWalletClient, type Hex, http, numberToHex, parseAbi, parseEther } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { sepolia } from "viem/chains"
-import { FUNDING_GAS, type FundedRole } from "../funding"
+import type { FundedRole } from "../funding"
 import { generateKey } from "../keyfile"
 import { SEPOLIA } from "../network"
-import { committedClassIds } from "../pins"
-import { parseDeployment, serializeDeployment, type TestnetDeployment } from "../schema"
-import { type CliRun, type Event, listeningPorts, runCli, startCli, untilEvent } from "./runner"
+import { parseDeployment, type TestnetDeployment } from "../schema"
+import { budgetCheck, gasBySender } from "./gas"
+import { listeningPorts, runCli, startCli, untilEvent } from "./runner"
+import { expectedOf, loadScratch, must, promote, type Scratch, writeScratch } from "./scratch"
 
 const OWN = fileURLToPath(new URL("../../deployments/testnet-own.json", import.meta.url))
 const MINT_ABI = parseAbi(["function mint(address to, uint256 amount)"])
 const NOTE = 100n
+const AMOUNTS = { debit: NOTE, note: NOTE, bridge: NOTE }
 
 export type ForkResult = { block: bigint; gas: Partial<Record<FundedRole, bigint>>; debit: bigint }
 
-type Ctx = { dir: string; file: string; env: NodeJS.ProcessEnv; forkUrl: string; log: (line: string) => void }
-
-/** Runs `name`; anything but exit 0 fails the rehearsal with the CLI's own output. */
-async function must(c: Ctx, name: string, args: readonly string[], env = c.env): Promise<Event[]> {
-	const t0 = performance.now()
-	const r: CliRun = await runCli(name, [...args, "--rehearse-fork", c.forkUrl], env)
-	if (r.code !== 0) throw new Error(`${name} exited ${r.code}:\n${r.out.trim()}`)
-	c.log(`[fork] ${name} ${Math.round(performance.now() - t0)} ms`)
-	return r.events
-}
-
-const write = (c: Ctx, d: TestnetDeployment) => writeFileSync(c.file, serializeDeployment(d))
-const load = (c: Ctx) => parseDeployment(JSON.parse(readFileSync(c.file, "utf8")))
-
-function expectedOf(a: Record<string, string>): TestnetDeployment["expected"] {
-	const at = (name: string) => a[name] as `0x${string}`
-	return {
-		guardian: at("GUARDIAN_KEY"),
-		lifetimeCap: 1_000_000_000_000n,
-		l1Deployer: at("L1_DEPLOYER_KEY"),
-		l2Deployer: at("L2_DEPLOYER_SECRET"),
-		botPoster: at("BOT_POSTER_SECRET"),
-		aspPostman: at("ASP_POSTMAN_KEY"),
-		poolDeployer: at("POOL_DEPLOYER_KEY"),
-		canaryOwner: at("CANARY_OWNER_KEY"),
-		canarySender: at("CANARY_SENDER_KEY"),
-		birthIntake: at("BOT_INTAKE_SECRET"),
-		tokenClassId: committedClassIds().labelledToken as `0x${string}`,
-		amounts: { debit: NOTE, note: NOTE, bridge: NOTE },
-	} as unknown as TestnetDeployment["expected"]
-}
+type Ctx = Scratch & { dir: string; forkUrl: string }
 
 /** `keys` in the scratch home, then the scratch file with every address in `expected` and a free ASP port. */
 async function scratchFile(c: Ctx, scratchHome: string, runId: string): Promise<Record<string, string>> {
@@ -68,20 +40,13 @@ async function scratchFile(c: Ctx, scratchHome: string, runId: string): Promise<
 	const aspPort = await claimPort(runId, "rehearse-asp")
 	await releaseNamed([{ port: aspPort, service: "rehearse-asp", owner: runId }])
 	const own = parseDeployment(JSON.parse(readFileSync(OWN, "utf8")))
-	write(c, { ...own, network: { ...own.network, l1Rpc: c.forkUrl, aspPort }, expected: expectedOf(addresses) })
+	writeScratch(c, { ...own, network: { ...own.network, l1Rpc: c.forkUrl, aspPort }, expected: expectedOf(addresses, AMOUNTS) })
 	return addresses
-}
-
-/** Moves a candidate section a run wrote into the scratch file. */
-function promote(c: Ctx, events: Event[], event: string): void {
-	const path = events.find((e) => e.event === event)?.candidate
-	if (typeof path !== "string") throw new Error(`${event} named no candidate`)
-	write(c, { ...load(c), ...JSON.parse(readFileSync(path, "utf8")) })
 }
 
 /** The mock ASP up, answering reads only and listening on its one port. */
 async function startAsp(c: Ctx, cleanup: CleanupStack): Promise<{ asp: OwnedChild; url: string; logFile: string }> {
-	const d = load(c)
+	const d = loadScratch(c)
 	const logFile = join(c.dir, "asp.log")
 	const asp = startCli("asp", [c.file, "--owner", d.expected?.canaryOwner as string, "--rehearse-fork", c.forkUrl], c.env, logFile)
 	cleanup.push(async () => void (await killGroup(asp)))
@@ -97,7 +62,7 @@ async function startAsp(c: Ctx, cleanup: CleanupStack): Promise<{ asp: OwnedChil
 /** A depositor the ASP must not approve, holding minted test tokens, registered so it can also receive. */
 async function stranger(c: Ctx) {
 	const key = generateKey("l1")
-	const d = load(c)
+	const d = loadScratch(c)
 	const pool = d.pool as NonNullable<TestnetDeployment["pool"]>
 	const client = createPublicClient({ transport: http(c.forkUrl) })
 	const account = privateKeyToAccount(key)
@@ -135,41 +100,6 @@ async function untilLeaves(url: string, n: number, timeoutMs: number): Promise<v
 	}
 }
 
-/** Gas each sender spent in blocks after `from`, by lower-case address. */
-async function gasBySender(url: string, from: bigint): Promise<Map<string, bigint>> {
-	const client = createPublicClient({ transport: http(url) })
-	const head = await client.getBlockNumber()
-	const gas = new Map<string, bigint>()
-	for (let n = from + 1n; n <= head; n++) {
-		const receipts = (await client.request({ method: "eth_getBlockReceipts", params: [numberToHex(n)] } as never)) as {
-			from: string
-			gasUsed: Hex
-		}[]
-		for (const r of receipts) gas.set(r.from.toLowerCase(), (gas.get(r.from.toLowerCase()) ?? 0n) + BigInt(r.gasUsed))
-	}
-	return gas
-}
-
-const ROLE_KEY: Record<FundedRole, string> = {
-	l1Deployer: "L1_DEPLOYER_KEY",
-	poolDeployer: "POOL_DEPLOYER_KEY",
-	aspPostman: "ASP_POSTMAN_KEY",
-	guardian: "GUARDIAN_KEY",
-	canaryOwner: "CANARY_OWNER_KEY",
-	canarySender: "CANARY_SENDER_KEY",
-}
-
-/** Each funded role's gas in this part; any over its budget fails the rehearsal. */
-function budgetCheck(gas: Map<string, bigint>, addresses: Record<string, string>): ForkResult["gas"] {
-	const out: ForkResult["gas"] = {}
-	for (const [role, name] of Object.entries(ROLE_KEY) as [FundedRole, string][]) {
-		const used = gas.get((addresses[name] ?? "").toLowerCase()) ?? 0n
-		if (used > FUNDING_GAS[role]) throw new Error(`${role} spent ${used} gas, over its budget of ${FUNDING_GAS[role]}`)
-		out[role] = used
-	}
-	return out
-}
-
 async function approvals(c: Ctx, url: string): Promise<bigint> {
 	const seeded = await must(c, "seed", [c.file])
 	const debit = BigInt(seeded.find((e) => e.event === "seeded")?.debit as string)
@@ -197,8 +127,22 @@ export async function forkRehearsal(log: (line: string) => void): Promise<ForkRe
 		const live = createPublicClient({ transport: http(own.network.l1Rpc) })
 		const block = (await live.getBlock({ blockTag: "finalized" })).number
 		const fork = await startForkAnvil({ endpoint: own.network.l1Rpc, block, runId, dataDir: dir, cleanup })
-		const env = { PATH: process.env.PATH, HOME: homedir(), PP_TESTNET_SCRATCH_HOME: join(dir, "home") }
-		const c: Ctx = { dir, file: join(dir, "testnet-own.json"), env, forkUrl: fork.url, log }
+		const env = {
+			PATH: process.env.PATH,
+			HOME: homedir(),
+			PP_TESTNET_SCRATCH_HOME: join(dir, "home"),
+			PP_TESTNET_RUN_ROOT: join(dir, "runs"),
+		}
+		const c: Ctx = {
+			dir,
+			file: join(dir, "testnet-own.json"),
+			env,
+			forkUrl: fork.url,
+			log,
+			modeArgs: ["--rehearse-fork", fork.url],
+			tag: "fork",
+			outputs: [],
+		}
 		log(`[fork] Sepolia fork at block ${block}`)
 		const addresses = await scratchFile(c, join(dir, "home"), runId)
 		await fork.rpc("anvil_setBalance", [addresses.L1_DEPLOYER_KEY as Address, numberToHex(parseEther("10"))])

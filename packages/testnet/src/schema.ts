@@ -139,7 +139,7 @@ export const deploymentSchema = z
 type Draft = {
 	bundle: string
 	operator?: unknown
-	network: { aspPort?: number | undefined }
+	network: { l1ChainId: number; aspPort?: number | undefined }
 	expected?: { aspPostman?: string | undefined; poolDeployer?: string | undefined } | undefined
 	pool?: { aspApiUrl: string; accessRouter?: string | undefined; relay?: string | undefined } | undefined
 }
@@ -152,7 +152,9 @@ function ownIssues(d: Draft, issue: (path: (string | number)[], message: string)
 	if (d.expected && (d.expected.aspPostman === undefined || d.expected.poolDeployer === undefined))
 		issue(["expected"], "the own pool names its ASP postman and pool deployer")
 	if (!d.pool) return
-	if (d.pool.accessRouter === undefined || d.pool.relay === undefined) issue(["pool"], "the own pool names its access router and relay")
+	// They feed the runtime-code check against the build, which runs on Sepolia only.
+	if (d.network.l1ChainId === SEPOLIA && (d.pool.accessRouter === undefined || d.pool.relay === undefined))
+		issue(["pool"], "the own pool names its access router and relay")
 	if (d.network.aspPort === undefined || d.pool.aspApiUrl !== loopback(d.network.aspPort))
 		issue(["pool", "aspApiUrl"], `not this target's ASP URL: ${d.pool.aspApiUrl}`)
 }

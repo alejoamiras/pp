@@ -88,7 +88,10 @@ export async function guarded<K extends Section>(file: string, mode: Mode, secti
 /** `~/.cache/pp/testnet/<target>/<run>/`, readable by this user only: a keyed run writes its candidate and forge's logs here, never to the checkout. */
 export function runDir(d: TestnetDeployment, run: string, mode: Mode): string {
 	const target = mode.kind === "live" ? d.target : `${d.target}-${mode.kind}`
-	const dir = join(homedir(), ".cache", "pp", "testnet", target, run)
+	// A rehearsal keeps its runs under its own root, so a finished rehearsal's journal never reads as
+	// a deploy to resume and two rehearsals never share one; a live run ignores it.
+	const rehearsalRoot = mode.kind === "live" ? undefined : process.env.PP_TESTNET_RUN_ROOT
+	const dir = join(rehearsalRoot || join(homedir(), ".cache", "pp", "testnet"), target, run)
 	mkdirSync(dir, { recursive: true, mode: 0o700 })
 	chmodSync(dir, 0o700)
 	return dir
