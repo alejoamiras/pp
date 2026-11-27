@@ -188,10 +188,11 @@ describe("createBridgeClient", () => {
 		expectTypeOf<keyof Parameters<BridgeClient["exitTickets"]>[0]>().toEqualTypeOf<"payee" | "fromBlock">()
 	})
 
-	it("refuses to build a public exit, after the deployment check, with the final signature", async () => {
+	it("builds a public exit on the hub only after the deployment check", async () => {
 		const t = setup()
 		const payee: Address = "0x000000000000000000000000000000000000bEEF"
-		await expect(t.client.exitPublicPayload({ payee, amount: 1n })).rejects.toMatchObject({ code: "STAGE_UNSUPPORTED" })
+		const p = await t.client.exitPublicPayload({ payee, amount: 1n })
+		expect(p.calls.find((c) => c.name === "exit_public")?.to.toString()).toBe(HUB)
 		expect(t.bindingReads()).toBeGreaterThan(0)
 	})
 })

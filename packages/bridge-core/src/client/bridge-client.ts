@@ -6,7 +6,7 @@ import type { StackManifest } from "../stack-manifest"
 import { guarded, translate } from "./boundary"
 import { abortable, type ClaimNode, claimPayload, type WaitClaimableOptions, waitClaimable } from "./claim"
 import { type ClientDeployment, type DeploymentNode, type DeploymentReader, namedDeployment, verifyDeployment } from "./deployment"
-import { BridgeClientError } from "./errors"
+import { exitPublicPayload } from "./exit-public"
 import { exitStatusOf, exitState } from "./exits"
 import { type ExitContext, type ExitNode, type ExitReader, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
 import type { KeyValueStore } from "./journal"
@@ -45,8 +45,8 @@ export interface BridgeClient {
 	 */
 	ragequitPayload(a: { payee: Address; amount: bigint; label: bigint }): Promise<ExecutionPayload>
 	/**
-	 * The hub's `exit_public` of a public balance to `payee`.
-	 * @throws BridgeClientError `STAGE_UNSUPPORTED`: this client does not build it yet
+	 * The hub's `exit_public` of `amount` of the sender's public balance of the deployment's token to `payee`.
+	 * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`
 	 */
 	exitPublicPayload(a: { payee: Address; amount: bigint }): Promise<ExecutionPayload>
 	/** The deployment token's ragequit and public exit tickets from L2 block `fromBlock` on, from chain data alone. */
@@ -128,10 +128,7 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		recover: async (s, recipient) => recover(await recordsContext(), s, recipient),
 		records: async (s) => records(await recordsContext(), s),
 		ragequitPayload: (a) => exits((c) => ragequitPayload(c.deployment, a)),
-		exitPublicPayload: () =>
-			exits(async () => {
-				throw new BridgeClientError("STAGE_UNSUPPORTED")
-			}),
+		exitPublicPayload: (a) => exits((c) => exitPublicPayload(c.deployment, a)),
 		exitTickets: (a) => exits((c) => exitTickets(c, a)),
 		exitStatus: (t) => exits(async (c) => exitStatusOf(await exitState(exitReads(c), t))),
 		settle: (t, l1) => exits((c) => settle(c, t, l1)),

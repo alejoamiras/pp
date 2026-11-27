@@ -64,8 +64,8 @@ exists, which today means the local network and the testnet.
 Exits: `exitTickets` reads the hub's `RagequitTicket` and `PublicExitTicket` events for the
 manifest's token and matches each to its own Outbox message, so identical exits in one transaction
 settle separately. `exitStatus` and `settle` key a ticket by its witness's `(epoch, leafId)`, never
-by content. `exitPublicPayload` throws `STAGE_UNSUPPORTED`: this client does not build the hub's
-`exit_public` yet, though it reads and settles a public exit's ticket.
+by content. `ragequitPayload` and `exitPublicPayload` build the hub's `ragequit` and `exit_public`
+for the holder's wallet to send, and refuse a payee the portal would never pay before building.
 
 ## The local network
 
