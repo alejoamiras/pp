@@ -10,6 +10,7 @@ import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import { TxHash } from "@aztec-labs/aztec.js/tx"
 import { createBridgeClient, type KeyValueStore } from "@pp/bridge-core"
 import { anvilKey } from "@pp/bridge-core/sandbox"
+import type { Locator } from "@playwright/test"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
 import { createPublicClient, erc20Abi, http } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
@@ -23,6 +24,9 @@ test.skip(({ run }) => run.mode !== "stack", "the sandbox build withdraws in the
 /** The bridge's, the claim's and the collect's waits are the ragequit spec's; the label's check is the unshield spec's. */
 const WAIT = { claimable: 60_000, claimed: 90_000, active: 30_000, sent: 60_000, read: 30_000, ready: 180_000, settled: 30_000 }
 const step = stepLog("withdraw-spec")
+
+/** A row's amount, which `Amount` renders as the figure followed by the symbol in a `small`. */
+const amountOf = (row: Locator) => row.locator("span:has(> small)")
 
 function memoryJournal(): KeyValueStore {
 	const m = new Map<string, string>()
@@ -76,9 +80,11 @@ test("withdraws part of a checked label to a fresh payee in one transaction and 
 	expect(ticket.l2TxHash.toLowerCase(), "the ticket is the withdrawal's").toBe(sent[1]?.hash.toLowerCase())
 
 	await dialog.getByRole("button", { name: "Close" }).click()
-	await expect(row).toContainText(formatAmount(amount - withdrawn, s.decimals, 2), { timeout: WAIT.read })
-	// The credit and the burn cancel out: the row's amount starts at 0, which a substring match would also find in 10.
-	await expect(page.getByTestId("public-row").getByText(/^0\.00/)).toBeVisible({ timeout: WAIT.read })
+	// Whole figures: a substring match would find 0.00 in 10.00 and 0.005.
+	const shown = (v: bigint) => `${formatAmount(v, s.decimals, 2)}${s.symbol}`
+	await expect(amountOf(row)).toHaveText(shown(amount - withdrawn), { timeout: WAIT.read })
+	// The credit and the burn cancel out.
+	await expect(amountOf(page.getByTestId("public-row"))).toHaveText(shown(0n), { timeout: WAIT.read })
 	step("balances read")
 
 	await page.getByRole("button", { name: "Exits" }).click()

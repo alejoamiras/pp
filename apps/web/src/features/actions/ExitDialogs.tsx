@@ -86,6 +86,14 @@ function ExitReview({ payee, amount, label, labelPublic, exposes, confirm, state
 	)
 }
 
+/** What a review shows and its confirm sends, fixed at Review: a refetch of the cap under it changes neither. */
+interface Reviewed {
+	payee: Address
+	amount: bigint
+}
+
+const reviewed = (payee: Address | null, amount: bigint | null): Reviewed | null => (payee && amount !== null ? { payee, amount } : null)
+
 /** `on` behind the attempt's guard, with the payee joining Exits at the handoff: an exit whose outcome is never read must still be listed. */
 function listedAt(guard: Guard, on: AztecSendHooks, list: () => void): AztecSendHooks {
 	const g = guard(on)
@@ -137,21 +145,19 @@ export function RagequitDialog({ account, balance, onClose }: LabelProps) {
 	const { notes, choices } = useChunkChoices(account, balance.label)
 	const payee = usePayee()
 	const [pick, setPick] = useState<string | null>(null)
-	const [review, setReview] = useState(false)
+	const [review, setReview] = useState<Reviewed | null>(null)
 	const act = useAction(account)
 	const amount = pick === null ? null : BigInt(pick)
-	const confirm = async () => {
-		const to = payee.payee
-		if (amount === null || !to) return
+	const confirm = async ({ payee: to, amount: value }: Reviewed) => {
 		const on = bound(live, account, act)
 		if (!on) return
 		// The note read runs under the send lock, so a second click or a Back meanwhile sends nothing more.
 		await act.send("ragequit", async (guard) => {
-			if (ragequitChunks(await aztec.notesByLabel(account, balance.label), amount).length !== 1)
+			if (ragequitChunks(await aztec.notesByLabel(account, balance.label), value).length !== 1)
 				throw new BridgeFailure("NO_EXACT_CHUNKS")
 			return aztec.ragequit(
 				account,
-				{ payee: to, label: balance.label, amount },
+				{ payee: to, label: balance.label, amount: value },
 				listedAt(guard, on, () => addPayee(to)),
 			)
 		})
@@ -169,19 +175,19 @@ export function RagequitDialog({ account, balance, onClose }: LabelProps) {
 			<Callout tone="attn" title="This exit is public">
 				{PUBLIC_LABEL}
 			</Callout>
-			{review && amount !== null && payee.payee ? (
+			{review ? (
 				<ExitReview
-					payee={payee.payee}
-					amount={amount}
+					payee={review.payee}
+					amount={review.amount}
 					label={balance.label}
 					labelPublic
 					confirm="Leave to Ethereum"
 					state={act.state}
 					onBack={() => {
 						act.stop()
-						setReview(false)
+						setReview(null)
 					}}
-					onConfirm={() => void confirm()}
+					onConfirm={() => void confirm(review)}
 				/>
 			) : (
 				<>
@@ -197,7 +203,7 @@ export function RagequitDialog({ account, balance, onClose }: LabelProps) {
 						onSelect={setPick}
 					/>
 					<PayeeField field={payee} />
-					<ActionButton variant="primary" disabledReason={missing} onClick={() => setReview(true)}>
+					<ActionButton variant="primary" disabledReason={missing} onClick={() => setReview(reviewed(payee.payee, amount))}>
 						Review
 					</ActionButton>
 				</>
@@ -211,19 +217,16 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 	const { aztec, live, addPayee } = useApp()
 	const amount = useAmount(available)
 	const payee = usePayee()
-	const [review, setReview] = useState(false)
+	const [review, setReview] = useState<Reviewed | null>(null)
 	const act = useAction(account)
-	const confirm = async () => {
-		const to = payee.payee
-		if (amount.amount === null || !to) return
-		const a = { payee: to, amount: amount.amount }
+	const confirm = async (a: Reviewed) => {
 		const on = bound(live, account, act)
 		if (!on) return
 		await act.send("exitPublic", (guard) =>
 			aztec.exitPublic(
 				account,
 				a,
-				listedAt(guard, on, () => addPayee(to)),
+				listedAt(guard, on, () => addPayee(a.payee)),
 			),
 		)
 	}
@@ -237,10 +240,10 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 			onClose={onClose}
 			done={COLLECT}
 		>
-			{review && amount.amount !== null && payee.payee ? (
+			{review ? (
 				<ExitReview
-					payee={payee.payee}
-					amount={amount.amount}
+					payee={review.payee}
+					amount={review.amount}
 					label={null}
 					labelPublic={false}
 					exposes={BALANCE_PUBLIC}
@@ -248,15 +251,19 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 					state={act.state}
 					onBack={() => {
 						act.stop()
-						setReview(false)
+						setReview(null)
 					}}
-					onConfirm={() => void confirm()}
+					onConfirm={() => void confirm(review)}
 				/>
 			) : (
 				<>
 					<AmountField field={amount} />
 					<PayeeField field={payee} />
-					<ActionButton variant="primary" disabledReason={missing} onClick={() => setReview(true)}>
+					<ActionButton
+						variant="primary"
+						disabledReason={missing}
+						onClick={() => setReview(reviewed(payee.payee, amount.amount))}
+					>
 						Review
 					</ActionButton>
 				</>
@@ -275,12 +282,10 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 	const spend = useSpendCap(account, balance)
 	const amount = useAmount(spend.max)
 	const payee = usePayee()
-	const [review, setReview] = useState(false)
+	const [review, setReview] = useState<Reviewed | null>(null)
 	const act = useAction(account)
-	const confirm = async () => {
-		const to = payee.payee
-		if (amount.amount === null || !to) return
-		const a = { payee: to, amount: amount.amount, label: balance.label, origin: balance.origin }
+	const confirm = async ({ payee: to, amount: value }: Reviewed) => {
+		const a = { payee: to, amount: value, label: balance.label, origin: balance.origin }
 		const on = bound(live, account, act)
 		if (!on) return
 		// The port reads the notes again after the allow-list check.
@@ -303,10 +308,10 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 			onClose={onClose}
 			done={COLLECT}
 		>
-			{review && amount.amount !== null && payee.payee ? (
+			{review ? (
 				<ExitReview
-					payee={payee.payee}
-					amount={amount.amount}
+					payee={review.payee}
+					amount={review.amount}
 					label={balance.label}
 					labelPublic={false}
 					exposes={SCREENED_PUBLIC}
@@ -314,9 +319,9 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 					state={act.state}
 					onBack={() => {
 						act.stop()
-						setReview(false)
+						setReview(null)
 					}}
-					onConfirm={() => void confirm()}
+					onConfirm={() => void confirm(review)}
 				/>
 			) : (
 				<>
@@ -324,7 +329,11 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 					<AmountField field={amount} />
 					<SpendCapNote spend={spend} />
 					<PayeeField field={payee} />
-					<ActionButton variant="primary" disabledReason={missing ?? undefined} onClick={() => setReview(true)}>
+					<ActionButton
+						variant="primary"
+						disabledReason={missing ?? undefined}
+						onClick={() => setReview(reviewed(payee.payee, amount.amount))}
+					>
 						Review
 					</ActionButton>
 				</>

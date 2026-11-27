@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
-import { afterEach, describe, expect, test } from "vitest"
+import { afterEach, describe, expect, onTestFinished, test, vi } from "vitest"
 import { messageOf } from "../../data/errors"
 import { ACCOUNTS, LABELS } from "../../data/fixtures/seed"
 import type { AztecPort } from "../../data/ports"
@@ -75,12 +75,19 @@ describe("the label's withdrawal to Ethereum", () => {
 		await waitFor(() => expect(asked).toContain(ACCOUNTS.sender))
 	})
 
-	test("once the wallet holds the request, the review cannot go back to an editable form", async () => {
+	test("once the wallet holds the request, its review stays as sent: Back is closed, and a refetch that lowers the cap leaves it", async () => {
+		// Only intervals are faked, and they still advance with real time, so the wallet, the dialog and waitFor run as usual.
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"], shouldAdvanceTime: true })
+		onTestFinished(() => void vi.useRealTimers())
+		let low = false
 		const app = renderApp({
+			poll: 6_000,
 			patch: (s) => ({
 				...s,
 				aztec: {
 					...s.aztec,
+					notesByLabel: async (owner, label) => (low && label === LABELS.active ? [usdc(1)] : s.aztec.notesByLabel(owner, label)),
+					publicBalance: async (owner) => (low ? usdc(1) : s.aztec.publicBalance(owner)),
 					unshieldAndExit: (_from, _a, on) => {
 						on.handoff()
 						return new Promise(() => {})
@@ -94,6 +101,12 @@ describe("the label's withdrawal to Ethereum", () => {
 		expect(disabled(confirm.getByRole("button", { name: "Back" }))).toBe(false)
 		await app.user.click(confirm.getByRole("button", { name: WITHDRAW }))
 		await waitFor(() => expect(disabled(confirm.getByRole("button", { name: "Back" }))).toBe(true))
+		low = true
+		await act(() => vi.advanceTimersByTimeAsync(6_000))
+		// The public row's lowered balance shows that the refetch, the notes' included, has rendered.
+		await within(screen.getByTestId("public-row")).findByText(/^1\.00/)
+		within(dialog.getByTestId("exit-review")).getByText("5 USDC")
+		expect(dialog.queryByLabelText(/Amount/)).toBeNull()
 	})
 
 	test("the form takes at most the label's 8 largest notes, and an amount at that cap reaches the port", async () => {

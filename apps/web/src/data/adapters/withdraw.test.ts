@@ -1,4 +1,4 @@
-import { FunctionType } from "@aztec-labs/aztec.js/abi"
+import { type FunctionCall, FunctionType } from "@aztec-labs/aztec.js/abi"
 import { AztecAddress as SdkAddress, EthAddress } from "@aztec-labs/aztec.js/addresses"
 import { Contract } from "@aztec-labs/aztec.js/contracts"
 import { SponsoredFeePaymentMethod } from "@aztec-labs/aztec.js/fee"
@@ -51,9 +51,17 @@ type Exit = {
 	amount?: bigint
 	fpc?: AztecAddress
 	extra?: boolean
-	publicSponsor?: boolean
+	/** Fields to change on the sponsor's call, or on exit_public's. */
+	sponsor?: Partial<FunctionCall>
+	exit?: Partial<FunctionCall>
+	/** An input no call takes, added to the payload. */
 	witness?: boolean
+	capsule?: boolean
+	hashedArgs?: boolean
 }
+
+const changed = (c: FunctionCall, patch: Partial<FunctionCall>): FunctionCall =>
+	Object.assign(Object.create(Object.getPrototypeOf(c)), c, patch)
 
 /** `exit_public` as bridge-core builds it, with any field a test wants wrong. */
 async function exitPayload(wallet: Wallet, a: { payee: Address; amount: bigint }, w: Exit = {}): Promise<ExecutionPayload> {
@@ -62,12 +70,16 @@ async function exitPayload(wallet: Wallet, a: { payee: Address; amount: bigint }
 	const p = await hub.methods
 		.exit_public(sdk(w.token ?? TOKEN), EthAddress.fromString(w.payee ?? a.payee), w.amount ?? a.amount)
 		.request({ fee })
-	const calls = w.extra ? [...p.calls, p.calls[1] as never] : [...p.calls]
-	const [sponsor] = calls
-	if (w.publicSponsor && sponsor)
-		calls[0] = Object.assign(Object.create(Object.getPrototypeOf(sponsor)), sponsor, { type: FunctionType.PUBLIC })
-	const witnesses = w.witness ? [{} as never] : p.authWitnesses
-	return new ExecutionPayload(calls, witnesses, p.capsules, p.extraHashedArgs, p.feePayer)
+	const [sponsor, exit] = p.calls as [FunctionCall, FunctionCall]
+	const calls = [changed(sponsor, w.sponsor ?? {}), changed(exit, w.exit ?? {}), ...(w.extra ? [exit] : [])]
+	const one = (add: boolean | undefined, xs: unknown[]) => (add ? [{} as never] : (xs as never[]))
+	return new ExecutionPayload(
+		calls,
+		one(w.witness, p.authWitnesses),
+		one(w.capsule, p.capsules),
+		one(w.hashedArgs, p.extraHashedArgs),
+		p.feePayer,
+	)
 }
 
 function rig(check: LabelCheck = ACTIVE, wrong?: Exit) {
@@ -133,8 +145,13 @@ describe("withdrawals to Ethereum", () => {
 			["another amount", { amount: 6n }],
 			["another fee payer", { fpc: OTHER }],
 			["an extra call", { extra: true }],
-			["the sponsor routed as a public call", { publicSponsor: true }],
+			["the sponsor routed as a public call", { sponsor: { type: FunctionType.PUBLIC } }],
+			["another function name on the exit's selector", { exit: { name: "exit_private" } }],
+			["a static exit call", { exit: { isStatic: true } }],
+			["an exit call that hides its sender", { exit: { hideMsgSender: true } }],
 			["a witness no call takes", { witness: true }],
+			["a capsule no call takes", { capsule: true }],
+			["hashed arguments no call takes", { hashedArgs: true }],
 		]
 		for (const [what, wrong] of wrongs)
 			for (const send of ["exitPublic", "unshieldAndExit"] as const) {
