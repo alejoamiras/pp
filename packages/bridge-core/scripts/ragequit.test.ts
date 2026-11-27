@@ -1,10 +1,13 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Fr } from "@aztec-labs/foundation/curves/bn254"
+import { toHex } from "viem"
 import { afterAll, describe, expect, it, vi } from "vitest"
+import type { ExitTicket } from "../src/client/types"
 import { serializeStackManifest } from "../src/stack-manifest"
 import { manifest } from "../src/test/client-fakes"
-import { type BurnIo, burnLabel, keysFrom, main, parseRagequitArgs } from "./ragequit"
+import { type BurnIo, burnLabel, keysFrom, main, parseRagequitArgs, reason, ticketsOfBurns } from "./ragequit"
 
 const dir = mkdtempSync(join(tmpdir(), "ragequit-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -36,11 +39,25 @@ describe("ragequit arguments", () => {
 		expect(parseRagequitArgs(["--amount", "10", "--label", "0x2a"])).toMatchObject({ settleOnly: false, amount: 10n, label: 42n })
 	})
 
-	it("refuses a key of the wrong shape by its name, never echoing it", () => {
-		const short = "0x1234"
-		expect(() => keysFrom({ PP_L1_KEY: short, PP_AZTEC_SECRET: KEY }, false)).toThrow(/^PP_L1_KEY must hold a 32-byte hex key$/)
+	it("refuses a key of the wrong shape or out of its curve's range by its name, never echoing it", () => {
+		const word = (v: bigint) => toHex(v, { size: 32 })
+		const secp256k1Order = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n
+		for (const bad of ["0x1234", word(0n), word(secp256k1Order), word(2n ** 256n - 1n)])
+			expect(() => keysFrom({ PP_L1_KEY: bad, PP_AZTEC_SECRET: KEY }, false), bad).toThrow(
+				/^PP_L1_KEY must hold a valid 32-byte hex key$/,
+			)
+		for (const bad of [word(Fr.MODULUS), word(2n ** 256n - 1n)])
+			expect(() => keysFrom({ PP_L1_KEY: KEY, PP_AZTEC_SECRET: bad }, false), bad).toThrow(
+				/^PP_AZTEC_SECRET must hold a valid 32-byte hex key$/,
+			)
 		expect(() => keysFrom({ PP_L1_KEY: KEY }, false)).toThrow(/PP_AZTEC_SECRET/)
 		expect(keysFrom({ PP_L1_KEY: KEY }, true)).toEqual({ l1: KEY })
+		expect(keysFrom({ PP_L1_KEY: KEY, PP_AZTEC_SECRET: word(Fr.MODULUS - 1n) }, false).aztec).toBe(word(Fr.MODULUS - 1n))
+	})
+
+	it("cuts a key's hex and decimal forms out of a failure line", () => {
+		const line = `invalid scalar ${BigInt(KEY)} from ${KEY.toUpperCase().replace("0X", "0x")}`
+		expect(reason(new Error(line), [KEY as `0x${string}`])).toBe("invalid scalar <redacted> from 0x<redacted>")
 	})
 
 	it.each([
@@ -59,6 +76,63 @@ describe("ragequit arguments", () => {
 		expect(read).toEqual(["PP_STACK_MANIFEST"])
 		expect(err.mock.calls.flat().join(" ")).not.toContain(KEY)
 		err.mockRestore()
+	})
+
+	it.each<[string, () => Promise<readonly number[]>, number]>([
+		["an L1 RPC on another chain", async () => [1, 31337], 2],
+		["a node following another chain", async () => [31337, 1], 2],
+		["an unreachable RPC", async () => Promise.reject(new Error("connection refused")), 1],
+	])("refuses %s behind a local manifest before reading any key", async (_, chains, code) => {
+		const read: string[] = []
+		const env = new Proxy(
+			{ PP_STACK_MANIFEST: manifestFile("local.json", 31337), PP_L1_KEY: KEY } as Record<string, string | undefined>,
+			{
+				get: (t, k: string) => {
+					read.push(k)
+					return t[k]
+				},
+			},
+		)
+		const err = vi.spyOn(console, "error").mockImplementation(() => {})
+		expect(await main([], env, () => {}, chains)).toBe(code)
+		expect(read).toEqual(["PP_STACK_MANIFEST"])
+		err.mockRestore()
+	})
+})
+
+describe("ticketsOfBurns", () => {
+	const ticket = (tx: string, amount: bigint, label = 5n): ExitTicket => ({
+		kind: "ragequit",
+		token: "0x07",
+		payee: PAYEE,
+		amount,
+		label,
+		l2TxHash: tx as `0x${string}`,
+		messageIndexInTx: 0,
+	})
+	const burns = [
+		{ tx: "0xA1", amount: 80n },
+		{ tx: "0xa2", amount: 10n },
+	]
+
+	it("reads again until every burn shows its ticket, and returns them in burn order", async () => {
+		const reads = [[ticket("0xa1", 80n)], [ticket("0xa2", 10n), ticket("0xa1", 80n), ticket("0xb0", 3n)]]
+		const pause = vi.fn(async () => {})
+		const out = await ticketsOfBurns(async () => reads.shift() ?? [], burns, 5n, pause)
+		expect(out.map((t) => t.l2TxHash)).toEqual(["0xa1", "0xa2"])
+		expect(pause).toHaveBeenCalledOnce()
+	})
+
+	it("fails naming a burn that never shows a ticket, and at once on a ticket the burn did not make", async () => {
+		const pause = vi.fn(async () => {})
+		await expect(ticketsOfBurns(async () => [ticket("0xa1", 80n)], burns, 5n, pause, 3)).rejects.toThrow(
+			"no ticket shows for L2 tx 0xa2",
+		)
+		expect(pause).toHaveBeenCalledTimes(2)
+		for (const wrong of [ticket("0xa2", 11n), ticket("0xa2", 10n, 6n)])
+			await expect(ticketsOfBurns(async () => [ticket("0xa1", 80n), wrong], burns, 5n, pause)).rejects.toMatchObject({
+				code: "RPC_INCONSISTENT",
+			})
 	})
 })
 
