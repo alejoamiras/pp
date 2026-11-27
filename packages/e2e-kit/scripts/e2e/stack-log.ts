@@ -57,7 +57,7 @@ export async function untilReady(log: string, exited: () => number | null, o: Re
 	const { readyMs = 20 * 60_000, seededGraceMs = 5_000, pollMs = 1_000 } = o
 	let readyAt: number | undefined
 	for (const end = Date.now() + readyMs; Date.now() < end; await sleep(pollMs)) {
-		// Read before the log: a CLI that exited after printing ready holds no stack.
+		// Read before the log: an exited CLI never resolves ready, even one whose log already says so.
 		const code = exited()
 		const s = parseStackLog(existsSync(log) ? readFileSync(log, "utf8") : "")
 		if (code !== null) throw new Error(`stack: the CLI exited (${code}) before it was ready; see ${log}`)
