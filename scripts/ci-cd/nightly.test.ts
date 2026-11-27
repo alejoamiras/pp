@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process"
 import { expect, test } from "bun:test"
-import { forgePassed, SUITES, verdict, vitestPassed } from "../nightly"
+import { boundedSuite, forgePassed, SUITES, verdict, vitestPassed } from "../nightly"
 
 const forgeSuite = SUITES[0]
 
@@ -20,4 +21,14 @@ test("a vitest suite counts only its summary's passed tests, colored or not", ()
 
 test("suite names are unique", () => {
 	expect(new Set(SUITES.map((s) => s.name)).size).toBe(SUITES.length)
+})
+
+test("a bounded suite keeps the caller's seed, prints it again on failure, and passes only at its count", () => {
+	const suite = boundedSuite({ name: "probe", cwd: ".", argv: ["bash", "-c", "exit 3"], minutes: 1, expected: 2 })
+	const run = spawnSync(suite.command[0] as string, suite.command.slice(1), { env: { ...process.env, FC_SEED: "42" }, encoding: "utf8" })
+	expect(run.status).toBe(3)
+	expect(run.stdout).toContain("probe: FC_SEED=42, bound 60s")
+	expect(run.stderr).toContain("probe: exited 3 (137: the bound or another SIGKILL); replay with FC_SEED=42")
+	expect(verdict(suite, 0, "      Tests  1 passed | 1 skipped (2)")).toBe("probe: 1 tests passed, expected 2")
+	expect(verdict(suite, 0, "      Tests  2 passed (2)")).toBeUndefined()
 })
