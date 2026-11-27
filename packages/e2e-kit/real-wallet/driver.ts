@@ -33,6 +33,8 @@ export interface WalletDriver {
 const STEP_MS = 60_000
 /** Fee estimates and authwit previews run before the execute window allows Confirm. */
 const APPROVABLE_MS = 5 * 60_000
+/** The longest `approveExecute` can wait: for the window, its first item, then Confirm. */
+export const EXECUTE_APPROVAL_MS = 2 * STEP_MS + APPROVABLE_MS
 const CELLS = 9
 
 const input = (page: Page, testId: string) => page.getByTestId(testId).locator("input")

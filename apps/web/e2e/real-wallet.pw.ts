@@ -7,6 +7,7 @@
 import type { Page } from "@playwright/test"
 import { createBridgeClient, type KeyValueStore } from "@pp/bridge-core"
 import { anvilKey } from "@pp/bridge-core/sandbox"
+import { EXECUTE_APPROVAL_MS } from "@pp/e2e-kit/real-wallet/driver.ts"
 import { expect, type RealWallet, refusals, test } from "@pp/e2e-kit/real-wallet/fixture.ts"
 import { createPublicClient, erc20Abi, http } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
@@ -29,6 +30,14 @@ const CRS_HOST = /^crs\.aztec/
 const PRESTO_PORTS = [59833, 59834]
 /** The token observation's wallet steps at their 60 s bounds, with a margin. */
 const OBSERVE_MS = 5 * 60_000
+
+/**
+ * A test's cap: its waits in sequence, plus two minutes for the steps between them. Approval ends
+ * before the proof's wait starts, so the two add.
+ */
+function capOf(...waits: number[]): number {
+	return waits.reduce((sum, wait) => sum + wait, 2 * 60_000)
+}
 
 /** What `claims` left for `ragequits`: the serial tests share this worker. */
 let claimed: { label: bigint; amount: bigint; init: bigint } | undefined
@@ -75,8 +84,7 @@ test("connects", async ({ realWallet: rw }) => {
 // Fails if the wallet cannot prove or send the claim from the app, if the claim does not also
 // initialize the wallet's account, if anyone but the SponsoredFPC pays, or if proving reached past the seeded points.
 test("claims", async ({ realWallet: rw, run }, testInfo) => {
-	// Its waits run one after another, and the cap must not cut one of them short.
-	test.setTimeout(CLAIMABLE_MS + PROVED_MS + OBSERVE_MS + 2 * 60_000)
+	test.setTimeout(capOf(CLAIMABLE_MS, EXECUTE_APPROVAL_MS, PROVED_MS, OBSERVE_MS))
 	const began = Date.now()
 	const page = rw.appPage
 	const s = await seededStack(run)
@@ -153,8 +161,7 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 // Fails if the wallet cannot prove or send the hub's ragequit from the app, if it initializes its
 // account again, or if the ticket does not collect to the payee on Ethereum for exactly the claim.
 test("ragequits", async ({ realWallet: rw, run }) => {
-	// Its waits run one after another, and the cap must not cut one of them short.
-	test.setTimeout(PROVED_MS + READY_MS + SETTLED_MS + 2 * 60_000)
+	test.setTimeout(capOf(EXECUTE_APPROVAL_MS, PROVED_MS, READY_MS, SETTLED_MS))
 	if (!claimed) throw new Error("claims left no label to leave")
 	const { label, amount, init } = claimed
 	const page = rw.appPage
