@@ -79,8 +79,11 @@ describe("the stack's bridge deploy", () => {
 			await expect(openBridgeEntries(u, stacks)).rejects.toThrow(/another generation/)
 			expect(await entriesPaused(u)).toBe(true)
 		} finally {
-			await u?.stop()
-			dir.remove()
+			try {
+				await u?.stop()
+			} finally {
+				dir.remove()
+			}
 		}
 		await expect(u?.stop()).resolves.toBeUndefined()
 	})
@@ -98,8 +101,11 @@ describe("the stack's bridge deploy", () => {
 			expect(views).toMatchObject({ poster, birthIntake })
 			expect(views.admin).not.toBe(ZERO_WORD)
 		} finally {
-			await u?.stop()
-			dir.remove()
+			try {
+				await u?.stop()
+			} finally {
+				dir.remove()
+			}
 		}
 	})
 })

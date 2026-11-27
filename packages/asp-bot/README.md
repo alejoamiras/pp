@@ -36,6 +36,7 @@ intake accounts derive from the stack's run id (`localBotAccounts`), so no key i
 ## Tests
 
 - Unit: `bun run --cwd packages/asp-bot test`.
-- Against the local stack: `bun run --cwd packages/asp-bot test:integration` boots `bun run demo`,
+- Against the local stack (after `bun run demo:prepare` once per clone):
+  `bun run --cwd packages/asp-bot test:integration` boots `bun run demo`,
   deploys a registry, approves two labels on the mock ASP and checks the first post end to end
   (about 10 minutes).
