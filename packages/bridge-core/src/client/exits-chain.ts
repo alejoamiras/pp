@@ -232,17 +232,22 @@ async function sendSettle(c: ExitContext, l1: WalletClient, account: Account, t:
 	const base = { address: c.deployment.portal, abi: PROCESSOR_PORTAL_ABI, account } as const
 	const proof = [w.epoch, w.numCheckpointsInEpoch, w.leafIndex, w.path] as const
 	const chain = l1.chain ?? null
-	const unsent = (e: unknown): never => {
-		throw unsentError(e) ?? e
+	// Awaited inside the try: a wallet client can throw before it returns a promise.
+	const send = async (write: () => Promise<Hash>): Promise<Hash> => {
+		try {
+			return await write()
+		} catch (e) {
+			throw unsentError(e) ?? e
+		}
 	}
 	if (t.kind === "ragequit") {
 		const call = { ...base, functionName: "settleRagequit", args: [t.payee, t.amount, t.label, ...proof] } as const
 		await c.reader.simulateContract(call)
-		return l1.writeContract({ ...call, chain }).catch(unsent)
+		return send(() => l1.writeContract({ ...call, chain }))
 	}
 	const call = { ...base, functionName: "settlePublicExit", args: [t.payee, t.amount, ...proof] } as const
 	await c.reader.simulateContract(call)
-	return l1.writeContract({ ...call, chain }).catch(unsent)
+	return send(() => l1.writeContract({ ...call, chain }))
 }
 
 /**

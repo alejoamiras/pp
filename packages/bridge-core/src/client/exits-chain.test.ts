@@ -257,6 +257,11 @@ describe("settle", () => {
 		const [t] = await exitTickets(c, {})
 		writeContract.mockRejectedValueOnce(refusal())
 		await expect(settle(c, t!, l1)).rejects.toMatchObject(expected)
+		// A wallet client whose writeContract throws before it returns a promise.
+		writeContract.mockImplementationOnce((() => {
+			throw refusal()
+		}) as never)
+		await expect(settle(c, t!, l1)).rejects.toMatchObject(expected)
 	})
 
 	it("refuses a wallet on another chain, and a ticket no root covers yet, before any send", async () => {
