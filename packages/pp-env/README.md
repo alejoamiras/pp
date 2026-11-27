@@ -27,6 +27,13 @@ await env.stop()
 
 `@pp/pp-env/fork` serves a fork of a live chain that the caller owns. `attachForkPoolEnv` refuses any node but an anvil on 127.0.0.1 (not `localhost` or `[::1]`), on a port registered to the caller's `runId`, reporting the exact `clientVersion` and chain the caller names. It then starts a mock ASP that publishes as the registry's real postman through anvil impersonation, and returns a `ClientConfig` for `createPoolUser`. It starts no anvil and holds no key. Its `stop()` closes the ASP and releases only the `<runId>:pool` port row.
 
+`@pp/pp-env/sepolia` deploys and serves a pool on chain 11155111, and refuses every other chain id, whether passed or served. It takes keys as values and holds no other key.
+
+- `deployPoolOn` runs the same `DeployE2ELocal` forge path as the local env, without cheat codes, so the canonical Poseidon libraries must already hold their published code. It then grants `postman` the postman role, deploys, enables and mints the test token, and runs `verifyPoolCode`.
+- `verifyPoolCode` compares the runtime code with the fetched build, at one block, for every proxy and its implementation, the relay, the access router, all 27 verifiers and every linked library, with immutables masked.
+- `startMockAsp` approves only `owner`'s deposits. It decrypts each deposit's ASP ciphertext and accepts the label only if it rebuilds the commitment the vault inserted, then posts the set's root. It serves `GET` read routes only (root, leaves, public key, event snapshot); `/admin/*` answers 404. Its X25519 key derives from the postman key, so a restart rebuilds the same set from the chain without stored state. It is Bun only.
+- `sepoliaPoolUser` builds a pool user from an L1 key, with the checkout's circuits, so a caller on another viem copy passes only plain data.
+
 How `prepareSpend` refuses:
 
 - With no active note of the asset (or none with the given `input`): a plain `Error`, before `@pp/pool-client` is reached.
@@ -37,7 +44,7 @@ How `prepareSpend` refuses:
 
 A zero spend is always refused.
 
-All three entries load under Bun and under native Node with type stripping on by default (22.18+ or 23.6+), since the SDK resolves through `package.json#imports` (`#ppv2/*`) rather than tsconfig paths. Proving and `startPoolEnv` still call Bun's APIs, so they run under Bun only.
+The `.`, `client` and `fork` entries load under Bun and under native Node with type stripping on by default (22.18+ or 23.6+), since the SDK resolves through `package.json#imports` (`#ppv2/*`) rather than tsconfig paths. Proving and `startPoolEnv` still call Bun's APIs, so they run under Bun only.
 
 Everything after `fetch` runs offline. Each start re-verifies the fetched tree against its pins.
 
@@ -46,6 +53,7 @@ Everything after `fetch` runs offline. Each start re-verifies the fetched tree a
 - `src/env/fetch/`: the pinned fetch. It checks the tarball's sha256, verifies git-LFS objects against `CEREMONY.md`, runs a frozen pnpm install, and writes a manifest of every file a later step consumes.
 - `src/env/`: anvil (started or attached), the deploy, the mock ASP, `startPoolEnv`, and the fork attach (`fork.ts`).
 - `src/env/harness/`: anvil and the JSON-RPC readiness helpers. Ports, locks and process groups come from `@pp/run-isolation`.
+- `src/sepolia/`: the Sepolia entry: deploy, code check, the mock ASP's read-only front, its approver and label recovery.
 - `src/client/`: user-side helpers. `types/` holds the hand-written public types, which need no checkout.
 - `contracts/`: the `StubProcessor` and `TestToken` fixtures. Run forge on them through `bun run forge:fixtures <build|test> …`.
 
@@ -57,6 +65,6 @@ Everything after `fetch` runs offline. Each start re-verifies the fetched tree a
 | `typecheck:full`, `test:smoke` | yes | the implementation against the SDK; proving under Bun; all three entries under native Node |
 | `test:vitest` | yes | the client under vite's module runner, as a vitest consumer loads it |
 | `test:contracts` | no (Forge) | fixture tests, fuzzed |
-| `test:integration` | yes | parallel envs, attach, teardown; a full spend through the stub and the pool's rejections; spend refusals |
+| `test:integration` | yes | parallel envs, attach, teardown; a full spend through the stub and the pool's rejections; spend refusals; the Sepolia entry on a chain-11155111 anvil (deploy, owner-only approval, restart, a tampered contract) |
 
 CI (`.github/workflows/pp-env.yml`) fetches once through `.github/actions/ppv2-fetch`, then runs every post-fetch suite in a network namespace with loopback only.

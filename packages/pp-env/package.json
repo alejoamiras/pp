@@ -17,9 +17,14 @@
 		"./fork": {
 			"types": "./types/fork.d.ts",
 			"default": "./src/env/fork.ts"
+		},
+		"./sepolia": {
+			"types": "./types/sepolia.d.ts",
+			"default": "./src/sepolia/index.ts"
 		}
 	},
 	"imports": {
+		"#ppv2/core-sdk": "./.ppv2/packages/core-sdk/dist/index.js",
 		"#ppv2/evm-sdk": "./.ppv2/packages/evm-sdk/dist/index.js",
 		"#ppv2/mock-asp/evm": "./.ppv2/packages/mock-asp/dist/evm.js"
 	},

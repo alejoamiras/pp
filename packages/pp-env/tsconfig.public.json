@@ -8,6 +8,7 @@
 		"src/client/abi.ts",
 		"src/client/types.ts",
 		"src/env/types.ts",
+		"src/sepolia/types.ts",
 		"src/env/checkout.ts",
 		"src/env/deploy.ts",
 		"src/env/pins.ts",
