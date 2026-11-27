@@ -10,7 +10,9 @@ const sum = (xs: readonly bigint[]) => xs.reduce((a, b) => a + b, 0n)
 const descending = (xs: readonly bigint[]) => [...xs].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0))
 
 const small = fc.bigInt({ min: 1n, max: 12n })
-const large = fc.bigInt({ min: 1n, max: 2n ** 80n })
+// Up to 2^123, so that 26 notes still sum within a u128, as the token's own balance does.
+const large = fc.bigInt({ min: 1n, max: 2n ** 123n })
+const U128_MAX = 2n ** 128n - 1n
 // `size: "max"`, or fast-check keeps lists near ten notes and never reaches a third chunk.
 const list = (v: fc.Arbitrary<bigint>) => fc.array(v, { maxLength: 3 * BURN_CAP + 2, size: "max" })
 /**
@@ -85,7 +87,7 @@ describe("ragequitChunks", () => {
 					expect(sum(got), "the chunks sum to the amount, or to the balance").toBe(amount ?? sum(ns))
 					expect(sum(burnAll(ns, got)), "burning every chunk leaves balance − amount").toBe(sum(ns) - (amount ?? sum(ns)))
 				}),
-				p.fc,
+				{ ...p.fc, examples: [[[[U128_MAX], undefined, [U128_MAX]]]] },
 			)
 		},
 		p.testTimeout,

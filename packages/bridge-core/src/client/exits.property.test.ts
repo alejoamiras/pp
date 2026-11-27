@@ -11,7 +11,7 @@ const pool = fc.uniqueArray(fc.stringMatching(/^[0-9a-f]{64}$/), { minLength: 1,
 const EIGHT = Array.from({ length: 8 }, (_, i) => `0x${(i + 1).toString(16).padStart(64, "0")}` as Hex)
 const drawn = (hashes: readonly string[]) =>
 	fc.array(
-		fc.tuple(fc.constantFrom(...hashes), fc.boolean()).map(([h, upper]) => `0x${upper ? h.toUpperCase() : h}` as Hex),
+		fc.mixedCase(fc.constantFrom(...hashes)).map((h) => `0x${h}` as Hex),
 		{ maxLength: 12, size: "max" },
 	)
 
@@ -39,7 +39,7 @@ const outcome = (tickets: readonly Hex[], messages: readonly Hex[]): number[] | 
 
 describe("messageIndices", () => {
 	const name = "each ticket takes its hash's next unused occurrence, or the read is inconsistent"
-	const p = propertyParams(import.meta.url, name, 300, 1_000)
+	const p = propertyParams(import.meta.url, name, 300, 1_500)
 	it(
 		name,
 		() => {
@@ -47,13 +47,15 @@ describe("messageIndices", () => {
 				fc.property(
 					pool.chain((hs) => fc.tuple(drawn(hs), drawn(hs))),
 					([tickets, messages]) => {
-						const got = outcome(tickets, messages)
+						// Before the call, so an implementation that reorders its inputs cannot move the oracle with it.
+						const expected = queued(tickets, messages)
 						const short = [...new Set(tickets.map((t) => t.toLowerCase()))].some(
 							(h) =>
 								tickets.filter((t) => t.toLowerCase() === h).length > messages.filter((m) => m.toLowerCase() === h).length,
 						)
+						const got = outcome(tickets, messages)
 						expect(got === "RPC_INCONSISTENT", "RPC_INCONSISTENT iff a hash has more tickets than occurrences").toBe(short)
-						expect(got).toEqual(queued(tickets, messages))
+						expect(got).toEqual(expected)
 						if (got === "RPC_INCONSISTENT") return
 						expect(got, "one index per ticket").toHaveLength(tickets.length)
 						expect(new Set(got).size, "distinct indices").toBe(got.length)
