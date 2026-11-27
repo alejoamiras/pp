@@ -43,13 +43,13 @@ export function toPreparedSpend(s: ClientSpend): PreparedSpend {
 }
 
 /**
- * `NOTE_NOT_FOUND` for a note this user lists as active means pool-client's note discovery (its ASP
- * events) and the checkout's disagree, not a missing deposit; the code is kept, the message says so.
+ * `NOTE_NOT_FOUND` for a note this user lists as active is a mismatch between two discoveries on
+ * their own cursors (ASP events, RPC lag), not a missing deposit; the code is kept, the message says so.
  */
 export function explainSpendError(e: unknown, commitment: bigint): unknown {
 	if (!(e instanceof PoolClientError) || e.code !== "NOTE_NOT_FOUND") return e
 	return new PoolClientError(
 		"NOTE_NOT_FOUND",
-		`note ${commitment} is ACTIVE in this user's notes, but pool-client's discovery has no such note: its note-event source (the ASP) and the chain disagree`,
+		`note ${commitment} is ACTIVE in this user's notes, but pool-client's own discovery has not found it`,
 	)
 }

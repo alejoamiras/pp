@@ -25,7 +25,7 @@ await env.stop()
 
 `@pp/pp-env/client` holds the user-side helpers alone (key derivation from a wallet signature, the SDK wiring for registration, deposits and note discovery), with no dependency on the environment. Spends are proved and checked by `@pp/pool-client`.
 
-A refused spend rejects with `@pp/pool-client`'s `PoolClientError` and its code: `AMOUNT_OUT_OF_RANGE` for an amount of zero or above the note, `ARTIFACT_MISMATCH` for a circuit file that fails its pin, `NOTE_NOT_FOUND` when pool-client's note discovery disagrees with the user's notes. A zero spend is always refused.
+With no active note of the asset (or none with the given `input`), `prepareSpend` rejects with a plain `Error` before `@pp/pool-client` is reached. Past that, a refused spend rejects with pool-client's `PoolClientError` and its code. It is `NOTE_NOT_FOUND` when pool-client's own discovery has not seen the note yet, and `NOTE_NOT_APPROVED` when the note is not approved. Once the note is found and approved, it is `AMOUNT_OUT_OF_RANGE` for an amount of zero or above the note, and `ARTIFACT_MISMATCH` for a circuit file that fails its pin. A zero spend is always refused.
 
 Both entries load under Bun and under native Node with type stripping on by default (22.18+ or 23.6+), since the SDK resolves through `package.json#imports` (`#ppv2/*`) rather than tsconfig paths. Proving and `startPoolEnv` still call Bun's APIs, so they run under Bun only.
 
