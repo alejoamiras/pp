@@ -5,7 +5,7 @@ import { type GuardianL1, type GuardianWallet, PauseError, pauseEntries } from "
 import { PUBLIC_CHAIN_TIMING } from "@pp/bridge-core"
 import { type Address, createPublicClient, http, isAddress, isAddressEqual } from "viem"
 import { l1AddressOf } from "../accounts"
-import { assertL1Chain, assertTransport, GuardError, readKeys } from "../guards"
+import { assertForkNode, assertL1Chain, assertTransport, GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { PINNED_URLS } from "../network"
 import { pendingToReplace, replaceArgs, type TxReader } from "../pending"
@@ -30,6 +30,7 @@ await main(async () => {
 	assertTransport(d, mode, false)
 	const { l1 } = clientsOf(d)
 	await assertL1Chain(l1, mode)
+	await assertForkNode(l1, mode)
 	const factory = values.factory as string | undefined
 	if (!factory || !isAddress(factory) || !isAddressEqual(factory, d.bridge.factory))
 		throw new GuardError("factory", `--factory must be the file's factory ${d.bridge.factory}`)

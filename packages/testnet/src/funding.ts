@@ -1,4 +1,5 @@
 import { type Address, type Hex, isAddressEqual } from "viem"
+import { GuardError } from "./errors"
 import type { TestnetDeployment } from "./schema"
 
 /**
@@ -35,6 +36,9 @@ export function recipientsOf(e: NonNullable<TestnetDeployment["expected"]>): Rec
 		{ role: "canaryOwner", address: e.canaryOwner },
 		{ role: "canarySender", address: e.canarySender },
 	)
+	// The schema refuses the zero address already; a top-up there would burn the deployer's ether.
+	const zero = out.find((r) => /^0x0{40}$/.test(r.address))
+	if (zero) throw new GuardError("fund", `${zero.role} is the zero address`)
 	return out
 }
 

@@ -245,6 +245,7 @@ describe("every key-reading CLI on a fork", () => {
 			["asp", [full, "--owner", addr(7)]],
 			["seed", [full]],
 			["verify-deployment", [full, "--pool-only"]],
+			["pause", [full, "--factory", addr(18)]],
 		]
 		const results = await Promise.all(
 			runs.map(async ([name, args]) => [name, await cli(name, [...args, "--rehearse-fork", rpc], home)]),

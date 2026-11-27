@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import type { Address, Hex } from "viem"
 import { describe, expect, it } from "vitest"
-import { assertTopUp, FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, needOf, TRANSFER_GAS } from "./funding"
+import { assertTopUp, FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, needOf, recipientsOf, TRANSFER_GAS } from "./funding"
 import { parseDeployment } from "./schema"
 
 const a = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address
@@ -69,5 +69,13 @@ describe("the deployment file's addresses", () => {
 		}
 		expect(parseDeployment({ ...own, expected }).expected?.guardian).toBe(a(1))
 		expect(() => parseDeployment({ ...own, expected: { ...expected, guardian: a(0) } })).toThrow(/expected.guardian: the zero address/)
+	})
+})
+
+describe("recipientsOf", () => {
+	it("refuses a zero-address role even when the file's parse was skipped", () => {
+		const expected = { guardian: a(0), canaryOwner: a(2), canarySender: a(3) } as Parameters<typeof recipientsOf>[0]
+		expect(() => recipientsOf(expected)).toThrow("guardian is the zero address")
+		expect(recipientsOf({ ...expected, guardian: a(1) }).map((r) => r.role)).toEqual(["guardian", "canaryOwner", "canarySender"])
 	})
 })
