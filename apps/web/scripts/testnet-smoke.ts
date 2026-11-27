@@ -15,7 +15,7 @@ import { readTestnetDeployment } from "../src/build/testnet.ts"
 import { claimPort } from "./ports"
 import { APP_ROOT, bunRun, envWithout, scratchDir } from "./proc"
 import { type Upstream, UPSTREAM_DOWN } from "./proxy"
-import { untilUp } from "./served"
+import { releaseAll, untilUp } from "./served"
 import { withUpstreams } from "./test-headers-testnet"
 
 const SEPOLIA = "0xaa36a7"
@@ -24,9 +24,9 @@ const RENDER_MS = 60_000
 type Deployment = ReturnType<typeof readTestnetDeployment>
 
 /**
- * Refuses any request off `allowed` (`data:` and `blob:` never leave the page) and records it in
- * `refused`; `made` counts the rest by origin. `route` sees only a request's first hop, so blocking
- * happens there and recording on `request`, which every redirect hop raises.
+ * Blocks a request off `allowed` at its first hop (`data:` and `blob:` never leave the page) and
+ * records every hop off it in `refused`; a redirect hop, which `route` never sees, is recorded only,
+ * and fails the smoke afterwards. `made` counts the allowed hops by origin.
  */
 async function fence(context: BrowserContext, allowed: ReadonlySet<string>): Promise<{ refused: string[]; made: Map<string, number> }> {
 	const refused: string[] = []
@@ -55,8 +55,9 @@ function rpcFromPage(page: Page, url: string, method: string): Promise<unknown> 
 				body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [] }),
 				redirect: "error",
 			})
+			if (!res.ok) throw new Error(`${method}: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`)
 			const body = (await res.json()) as { result?: unknown; error?: unknown }
-			if (!res.ok || body.error !== undefined) throw new Error(`${method}: HTTP ${res.status} ${JSON.stringify(body.error)}`)
+			if (body.error !== undefined) throw new Error(`${method}: ${JSON.stringify(body.error)}`)
 			return body.result
 		},
 		[url, method] as const,
@@ -197,7 +198,7 @@ async function main(): Promise<void> {
 			throw new Error(`${err instanceof Error ? err.message : String(err)}\nserve's log:\n${g.output()}`)
 		})
 	} finally {
-		for (const step of undo.reverse()) await step()
+		await releaseAll(undo)
 	}
 	console.log(`test:testnet-smoke passed${offline ? " (no upstreams)" : ""}`)
 }

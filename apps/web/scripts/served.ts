@@ -1,4 +1,4 @@
-/** Probes for a server this package starts, shared by both modes of `test:headers`. */
+/** Probes for a server this package starts, and the teardown of what a check acquired. */
 import { setTimeout as sleep } from "node:timers/promises"
 import type { Group } from "./proc"
 
@@ -53,5 +53,20 @@ export async function assertRefusal(g: Group, port: number, what: string, reason
 		console.log(`ok   ${what}: refuses to start (exit ${code})`)
 	} finally {
 		await g.stop()
+	}
+}
+
+/**
+ * Runs every step, last acquired first, even after one throws. A failed step is logged and fails the
+ * run through `process.exitCode`, so it never replaces the error that started the teardown.
+ */
+export async function releaseAll(undo: readonly (() => unknown)[]): Promise<void> {
+	for (const step of [...undo].reverse()) {
+		try {
+			await step()
+		} catch (err) {
+			console.error(`teardown: ${err instanceof Error ? err.message : String(err)}`)
+			process.exitCode = 1
+		}
 	}
 }

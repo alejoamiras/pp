@@ -50,8 +50,9 @@ file path below is absolute (`$PWD/…`).
    bun run --cwd apps/web test:testnet-smoke -- --target $PWD/packages/testnet/deployments/testnet-own.json
    ```
 
-   Each ends with a `passed` line. A smoke failure on a `GET /bot/…` or `GET /asp/…` line means that
-   service gave no usable answer: it is down, or sent what the proxy refuses (the error ends with `serve`'s log, which says what).
+   Each ends with a `passed` line. In the smoke, a `502` on a `GET /bot/…` or `GET /asp/…` line means
+   that service gave no usable answer, and the error ends with `serve`'s log, which names why. A `404`
+   on `GET /bot/v1/snapshots/latest` means the bot has posted no snapshot yet: wait for its first post.
 
 4. Start the server on port 28600:
 

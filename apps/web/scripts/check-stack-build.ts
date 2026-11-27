@@ -104,10 +104,6 @@ function checkDemoSender(kind: Kind, files: Output[]): void {
 const leaves = (v: unknown): string[] =>
 	typeof v === "string" ? [v.replace(/^0x/, "")] : typeof v === "object" && v !== null ? Object.values(v).flatMap(leaves) : []
 
-/**
- * The receipt and the header set are exactly what the file yields, connect-src names its node and L1
- * RPC alone, and no output file holds the description or any value of `expected`.
- */
 async function checkTestnetOutput(dist: string, files: Output[]): Promise<void> {
 	const d = JSON.parse(readFileSync(TESTNET_FILE, "utf8")) as { description: string; expected: unknown }
 	const target = testnetTarget(TESTNET_FILE, {}, await sponsoredFpcAddress())

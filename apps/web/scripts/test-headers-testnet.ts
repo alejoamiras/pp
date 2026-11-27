@@ -16,7 +16,7 @@ import { PROVED_CIRCUIT } from "../src/data/adapters/circuit.ts"
 import { claimPort } from "./ports"
 import { bunRun, envWithout, type Group, scratchDir } from "./proc"
 import { UPSTREAM_DOWN } from "./proxy"
-import { assertRefusal, assertServed, untilUp } from "./served"
+import { assertRefusal, assertServed, releaseAll, untilUp } from "./served"
 import { loadTestnetServing } from "./testnet-serve"
 
 const NAME = "serve --deployment"
@@ -245,10 +245,16 @@ async function assertRefusesToStart(outDir: string, port: number, deployment: st
 	await assertStale(outDir, port, deployment, HEADER_FILE, headers, "is not the header set")
 }
 
+/** Both spellings of the proxy, and no inherited exemption: only the server's own bypass may keep loopback off it. */
+const viaProxy = (port: number): NodeJS.ProcessEnv => {
+	const url = `http://127.0.0.1:${port}`
+	return { HTTP_PROXY: url, http_proxy: url, NO_PROXY: "", no_proxy: "" }
+}
+
 async function assertServing(outDir: string, port: number, deployment: string, up: { bot: Fake; asp: Fake }, proxy: Fake): Promise<void> {
 	const d = readTestnetDeployment(deployment)
 	const headers = JSON.parse(readFileSync(join(outDir, HEADER_FILE), "utf8")) as SecurityHeaders
-	const g = startServe(outDir, port, { deployment, env: { HTTP_PROXY: `http://127.0.0.1:${proxy.port}` } })
+	const g = startServe(outDir, port, { deployment, env: { ...viaProxy(proxy.port) } })
 	try {
 		await untilUp(NAME, port, g)
 		for (const path of ["/", "/no/such/route", "/asp/no/such/route"]) await assertServed(NAME, port, path, headers)
@@ -290,7 +296,7 @@ export async function checkTestnet(file: string, outDir: string): Promise<void> 
 		await assertServing(outDir, port, deployment, up, proxy)
 		await assertRefusesToStart(outDir, port, deployment)
 	} finally {
-		for (const step of undo.reverse()) await step()
+		await releaseAll(undo)
 	}
 	console.log("test:headers --target passed")
 }
