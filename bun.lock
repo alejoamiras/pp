@@ -99,6 +99,7 @@
         "zod": "^4.6.7",
       },
       "devDependencies": {
+        "@pp/label-paths": "workspace:*",
         "@types/node": "^24.13.2",
         "fast-check": "^4.10.3",
         "typescript": "^6.0.3",
