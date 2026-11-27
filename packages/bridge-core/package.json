@@ -12,6 +12,10 @@
 		"./deploy": {
 			"browser": null,
 			"default": "./scripts/deploy/index.ts"
+		},
+		"./account": {
+			"browser": null,
+			"default": "./scripts/account.ts"
 		}
 	},
 	"scripts": {
