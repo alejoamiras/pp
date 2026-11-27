@@ -52,9 +52,10 @@ export function propertyParams(fileUrl: string, name: string, numRuns: number, t
 	const replayPath = process.env.FC_REPLAY_PATH || undefined
 	const limit = timeLimitMs * scale
 	const { pkg, file } = where(fileUrl)
-	console.info(
+	// stderr directly: vitest under `bun --bun` drops console output from test files.
+	process.stderr.write(
 		`fast-check "${name}": seed=${seed} runs=${numRuns * scale}; replay: FC_SEED=${seed} FC_PATH=<path>` +
-			` [FC_REPLAY_PATH=<replayPath>] bun run --cwd ${pkg} test ${file} -t "${name}"`,
+			` [FC_REPLAY_PATH=<replayPath>] bun run --cwd ${pkg} test ${file} -t "${name}"\n`,
 	)
 	return {
 		fc: { seed, numRuns: numRuns * scale, path, interruptAfterTimeLimit: limit, markInterruptAsFailure: true },
