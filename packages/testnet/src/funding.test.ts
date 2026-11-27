@@ -78,4 +78,17 @@ describe("recipientsOf", () => {
 		expect(() => recipientsOf(expected)).toThrow("guardian is the zero address")
 		expect(recipientsOf({ ...expected, guardian: a(1) }).map((r) => r.role)).toEqual(["guardian", "canaryOwner", "canarySender"])
 	})
+
+	it("adds each demo account the file names under the same rules: no zero address, one top-up per address", () => {
+		const expected = { guardian: a(1), canaryOwner: a(2), canarySender: a(3) } as Parameters<typeof recipientsOf>[0]
+		expect(() => recipientsOf({ ...expected, demoOwner: a(4), demoSender: a(0) })).toThrow("demoSender is the zero address")
+		const fee = FEE_FLOOR_WEI
+		const recipients = recipientsOf({ ...expected, demoOwner: a(4), demoSender: a(3) }).map((r) => ({ ...r, balance: 0n }))
+		expect(fundingPlan(DEPLOYER, recipients, fee).sends.map((s) => [s.roles, s.need])).toEqual([
+			[["guardian"], needOf("guardian", fee)],
+			[["canaryOwner"], needOf("canaryOwner", fee)],
+			[["canarySender", "demoSender"], needOf("canarySender", fee) + needOf("demoSender", fee)],
+			[["demoOwner"], needOf("demoOwner", fee)],
+		])
+	})
 })

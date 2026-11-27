@@ -13,6 +13,10 @@ export const FUNDING_GAS = {
 	guardian: 500_000n,
 	canaryOwner: 5_000_000n,
 	canarySender: 5_000_000n,
+	// A canary's bridge-then-collect costs its sender about 1.05 M gas, so this is about four hand tests.
+	demoSender: 5_000_000n,
+	// Registration, then several approvals, deposits and a ragequit, all by hand.
+	demoOwner: 5_000_000n,
 } as const satisfies Record<string, bigint>
 
 export type FundedRole = keyof typeof FUNDING_GAS
@@ -36,6 +40,8 @@ export function recipientsOf(e: NonNullable<TestnetDeployment["expected"]>): Rec
 		{ role: "canaryOwner", address: e.canaryOwner },
 		{ role: "canarySender", address: e.canarySender },
 	)
+	if (e.demoOwner) out.push({ role: "demoOwner", address: e.demoOwner })
+	if (e.demoSender) out.push({ role: "demoSender", address: e.demoSender })
 	// The schema refuses the zero address already; a top-up there would burn the deployer's ether.
 	const zero = out.find((r) => /^0x0{40}$/.test(r.address))
 	if (zero) throw new GuardError("fund", `${zero.role} is the zero address`)

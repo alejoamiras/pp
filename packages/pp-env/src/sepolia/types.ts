@@ -55,8 +55,8 @@ export type StartMockAspOptions = {
 	deployment: Pick<PoolDeployment, "accessRouter" | "aspRegistry" | "pool" | "entrypoint" | "deployBlock">
 	/** A loopback port the caller already claimed. */
 	port: number
-	/** Only this depositor's deposits are approved. */
-	owner: Address
+	/** Only these depositors' deposits are approved; at least one. */
+	owners: readonly [Address, ...Address[]]
 	/** Default 12 000 ms, one Sepolia slot. */
 	pollMs?: number
 	log?: (line: string) => void
@@ -68,7 +68,7 @@ export interface MockAsp {
 	publicKey: Hex
 	/** Labels whose leaves the registry's latest root commits to, in tree order. */
 	approved(): readonly bigint[]
-	/** The last block every deposit through which has been read and, if the owner's, approved. */
+	/** The last block every deposit through which has been read and, if an owner's, approved. */
 	scanned(): bigint
 	/** Stops polling, lets a root post in flight finish, then closes the server. Idempotent. */
 	stop(): Promise<void>

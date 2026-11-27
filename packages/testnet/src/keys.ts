@@ -12,6 +12,7 @@ export const RUN_KEYS = {
 	pause: spec("GUARDIAN_KEY"),
 	bot: spec("BOT_POSTER_SECRET", "BOT_INTAKE_SECRET"),
 	seed: spec("CANARY_OWNER_KEY"),
+	"seed-demo": spec("CANARY_OWNER_KEY", "DEMO_OWNER_KEY"),
 	canary: spec("CANARY_OWNER_KEY", "CANARY_SENDER_KEY"),
 	"canary-settle": spec("CANARY_SENDER_KEY"),
 } as const satisfies Record<string, readonly KeySpec[]>

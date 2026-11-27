@@ -90,7 +90,7 @@ const addr = (n: number) => `0x${n.toString(16).padStart(40, "0")}`
 const word = (n: number) => `0x${n.toString(16).padStart(64, "0")}`
 
 /** The own target on the fake L1, with every section a key-reading CLI requires and addresses no sentinel key owns. */
-function deploymentFile(home: string, sections: { pool: boolean }, expected: Record<string, string> = {}): string {
+function deploymentFile(home: string, sections: { pool: boolean }, expected: Record<string, string | undefined> = {}): string {
 	const d = {
 		...OWN,
 		network: { ...OWN.network, l1Rpc: rpc },
@@ -104,6 +104,8 @@ function deploymentFile(home: string, sections: { pool: boolean }, expected: Rec
 			poolDeployer: addr(6),
 			canaryOwner: addr(7),
 			canarySender: addr(8),
+			demoOwner: addr(24),
+			demoSender: addr(25),
 			birthIntake: word(9),
 			tokenClassId: word(10),
 			amounts: { debit: "100", note: "100", bridge: "50" },
@@ -157,13 +159,21 @@ describe("keys", () => {
 			.map((l) => JSON.parse(l))
 		expect(events.map((e) => [e.name, e.created])).toEqual(KEY_NAMES.map((k) => [k.name, true]))
 
-		writeFileSync(path, `${lines.filter((l) => !l.startsWith("GUARDIAN_KEY=")).join("\n")}\n`)
+		// A file from before the demo accounts gains them at its end, every earlier line untouched.
+		const older = lines.filter((l) => !l.startsWith("DEMO_"))
+		writeFileSync(path, `${older.join("\n")}\n`)
 		const second = await cli("keys", [], home)
 		expect(second.code).toBe(0)
 		const after = readFileSync(path, "utf8").trim().split("\n")
-		expect(after.slice(0, -1)).toEqual(lines.filter((l) => !l.startsWith("GUARDIAN_KEY=")))
-		expect(after.at(-1)?.startsWith("GUARDIAN_KEY=")).toBe(true)
-		expect(second.out.split("\n").filter((l) => l.includes('"created":true'))).toHaveLength(1)
+		expect(after.slice(0, -2)).toEqual(older)
+		expect(after.slice(-2).map((l) => l.slice(0, l.indexOf("=")))).toEqual(["DEMO_OWNER_KEY", "DEMO_SENDER_KEY"])
+		expect(
+			leaks(
+				second.out,
+				after.map((l) => l.slice(l.indexOf("=") + 1)),
+			),
+		).toEqual([])
+		expect(second.out.split("\n").filter((l) => l.includes('"created":true'))).toHaveLength(2)
 
 		chmodSync(dirname(path), 0o750)
 		const loose = await cli("keys", [], home)
@@ -189,7 +199,9 @@ describe("every key-reading CLI on a fork", () => {
 		["fund", [full]],
 		["deploy-pool", [bare]],
 		["asp", [full, "--owner", addr(7)]],
+		["asp", [full, "--owner", addr(7), "--owner", addr(24)]],
 		["seed", [full]],
+		["seed", [full, "--demo"]],
 		["pause", [full, "--factory", addr(18)]],
 		["addresses", [full]],
 	]
@@ -214,6 +226,8 @@ describe("every key-reading CLI on a fork", () => {
 			const refusal = name === "addresses" ? r.code === 0 : r.code === 2 && /refused: account: /.test(r.out)
 			expect([name, refusal, leaks(r.out, values)]).toEqual([name, true, []])
 		}
+		// Both file owners pass the owner check, so the refusal is the postman key's.
+		expect(results.filter(([name]) => name === "asp").map(([, r]) => /the postman key is for/.test(r.out))).toEqual([true, true])
 	}, 60_000)
 
 	it("prints no value of a malformed key file, refusing each run by the variable's name", async () => {
@@ -263,24 +277,59 @@ describe("every key-reading CLI on a fork", () => {
 })
 
 describe("seed", () => {
-	it("refuses amounts the asset config would not debit before it signs or sends anything, with --recipient too", async () => {
+	it("refuses amounts the asset config would not debit before it signs or sends anything, with --recipient and --demo too", async () => {
 		const home = scratchHome()
-		const key = generatePrivateKey()
+		const [key, demoKey] = [generatePrivateKey(), generatePrivateKey()]
+		const own: Record<string, string> = { CANARY_OWNER_KEY: key, DEMO_OWNER_KEY: demoKey }
 		writeKeyFile(
 			home,
-			sentinels().map(([n, v]) => `${n}=${n === "CANARY_OWNER_KEY" ? key : v}`),
+			sentinels().map(([n, v]) => `${n}=${own[n] ?? v}`),
 		)
-		const file = deploymentFile(home, { pool: true }, { canaryOwner: privateKeyToAccount(key).address })
+		const derived = { canaryOwner: privateKeyToAccount(key).address, demoOwner: privateKeyToAccount(demoKey).address }
+		const file = deploymentFile(home, { pool: true }, derived)
 		seen.length = 0
 		const runs = await Promise.all(
-			[[], ["--recipient", addr(30)]].map((extra) => cli("seed", [file, ...extra, "--rehearse-fork", rpc], home)),
+			[[], ["--recipient", addr(30)], ["--demo"]].map((extra) => cli("seed", [file, ...extra, "--rehearse-fork", rpc], home)),
 		)
 		for (const r of runs)
-			expect([r.code, /failed: deposit amounts: a note of 100 debits 101 at 150 bps/.test(r.out), leaks(r.out, [key])]).toEqual([
-				1,
-				true,
-				[],
-			])
+			expect([
+				r.code,
+				/failed: deposit amounts: a note of 100 debits 101 at 150 bps/.test(r.out),
+				leaks(r.out, [key, demoKey]),
+			]).toEqual([1, true, []])
 		expect([seen.includes("eth_call"), seen.filter((m) => m.startsWith("eth_send"))]).toEqual([true, []])
+	}, 60_000)
+})
+
+describe("the demo accounts", () => {
+	it("seed --demo and asp refuse what the file does not commit, printing no key value", async () => {
+		const key = generatePrivateKey()
+		const keys = sentinels().map(([n, v]) => [n, n === "CANARY_OWNER_KEY" ? key : v] as const)
+		const canaryOwner = privateKeyToAccount(key).address
+		// One home per case: each writes its own variant of the deployment file.
+		const run = (name: string, args: string[], expected: Record<string, string | undefined>) => {
+			const home = scratchHome()
+			writeKeyFile(
+				home,
+				keys.map(([n, v]) => `${n}=${v}`),
+			)
+			return cli(name, [deploymentFile(home, { pool: true }, { canaryOwner, ...expected }), ...args, "--rehearse-fork", rpc], home)
+		}
+		const cases: [Promise<Run>, RegExp][] = [
+			[run("seed", ["--demo", "--recipient", addr(30)], {}), /refused: argv: --demo and --recipient exclude each other/],
+			[run("seed", ["--demo"], { demoOwner: undefined }), /refused: file: --demo needs expected.demoOwner/],
+			[run("seed", ["--demo"], { demoOwner: canaryOwner }), /refused: file: expected.demoOwner is the canary owner/],
+			[run("seed", ["--demo"], {}), /refused: account: the demo owner key is for 0x\w+, the file expects/],
+			[run("asp", ["--owner", canaryOwner, "--owner", addr(31)], {}), /refused: account: --owner 0x0+1f is neither/],
+		]
+		for (const [r, refusal] of await Promise.all(cases.map(async ([p, re]) => [await p, re] as const)))
+			expect([
+				r.code,
+				refusal.test(r.out),
+				leaks(
+					r.out,
+					keys.map(([, v]) => v),
+				),
+			]).toEqual([2, true, []])
 	}, 60_000)
 })

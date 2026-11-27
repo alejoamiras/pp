@@ -61,7 +61,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 			postmanKey,
 			deployment: pool.deployment,
 			port: aspPort,
-			owner: owner.address,
+			owners: [owner.address],
 			pollMs: 200,
 			log: (l) => console.log("[asp]", l),
 		})
@@ -145,7 +145,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 		await expect(deployPoolOn(wrong)).rejects.toThrow("chain 1 refused")
 		await expect(
 			startMockAsp({
-				...{ rpcUrl, chainId: CHAIN, deployment: pool.deployment, port: 1, owner: owner.address },
+				...{ rpcUrl, chainId: CHAIN, deployment: pool.deployment, port: 1, owners: [owner.address] },
 				postmanKey: generatePrivateKey(),
 			}),
 		).rejects.toThrow("does not hold the postman role")

@@ -69,6 +69,9 @@ const expectedSchema = z
 		poolDeployer: evmAddress.optional(),
 		canaryOwner: evmAddress,
 		canarySender: evmAddress,
+		/** The owner's hand-test accounts, which no canary step signs with. */
+		demoOwner: evmAddress.optional(),
+		demoSender: evmAddress.optional(),
 		/** Zero keeps shields paused. */
 		birthIntake: word,
 		tokenClassId: word,
