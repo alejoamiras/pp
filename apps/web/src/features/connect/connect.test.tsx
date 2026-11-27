@@ -4,6 +4,7 @@ import type { Hex } from "viem"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { RECOVERY_PLAIN, RECOVERY_PRECISE } from "../../app/copy"
 import { messageOf } from "../../data/errors"
+import { NETWORK_UNKNOWN } from "./EthereumSignIn"
 import { FAKE_SIGNATURE } from "../../data/fixtures/l1"
 import { clickSignIn, connectAztec, renderApp } from "../../test-utils/app"
 
@@ -23,6 +24,23 @@ describe("connect", () => {
 		await clickSignIn(app.user)
 		await screen.findByText(messageOf("RPC_FAILED"))
 		await clickSignIn(app.user, "Sign in again")
+		await screen.findByText("Notes by label")
+	})
+
+	test("Sign in waits for the wallet's network, and an account event re-reads one the first read missed", async () => {
+		let reads = 0
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: { ...s.l1, chainId: () => (reads++ === 0 ? Promise.reject(new Error("the wallet is locked")) : s.l1.chainId()) },
+			}),
+		})
+		await waitFor(() => expect(screen.queryByText(messageOf("NO_SENDER"))).toBeNull())
+		expect(button("Sign in with Ethereum").disabled).toBe(true)
+		screen.getByText(NETWORK_UNKNOWN)
+		act(() => app.control.selectL1Account("sender"))
+		act(() => app.control.selectL1Account("owner"))
+		await clickSignIn(app.user)
 		await screen.findByText("Notes by label")
 	})
 
