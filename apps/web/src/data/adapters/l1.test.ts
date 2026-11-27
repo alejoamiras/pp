@@ -70,6 +70,14 @@ describe("the stack's Ethereum port", () => {
 		expect(stackL1(TARGET, injected.w).demo).toBeUndefined()
 	})
 
+	test("the signature request reaches the wallet within the call, so a check made just before it still holds", async () => {
+		const on = wallet(TARGET.l1ChainId)
+		const td = { domain: { chainId: 31337 }, types: { D: [{ name: "a", type: "address" }] }, primaryType: "D", message: { a: SENDER } }
+		const signing = stackL1(TARGET, on.w).signTypedData(SENDER, td as never)
+		expect(on.methods).toEqual(["eth_signTypedData_v4"])
+		await expect(signing).rejects.toThrow()
+	})
+
 	test("without an injected wallet the page lists no account and refuses anything that needs one", async () => {
 		const l1 = stackL1(TARGET, undefined)
 		await expect(l1.accounts()).resolves.toEqual([])

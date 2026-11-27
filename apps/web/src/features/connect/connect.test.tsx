@@ -69,6 +69,27 @@ describe("the shell", () => {
 		await screen.findByRole("button", { name: "Sign in with Ethereum" })
 	})
 
+	test("a sign-in replaced by Forget this device before its signature is asked for never reaches the wallet", async () => {
+		let resume = () => {}
+		const held = new Promise<void>((r) => (resume = r))
+		const signTypedData = vi.fn(async () => FAKE_SIGNATURE)
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: { ...s.l1, signTypedData },
+				sessions: { ...s.sessions, open: (a) => held.then(() => s.sessions.open(a)) },
+			}),
+		})
+		await clickSignIn(app.user)
+		await screen.findByText("Approve the signature in your Ethereum wallet")
+		await app.user.click(button("Details"))
+		await app.user.click(button("Forget this device"))
+		await app.user.click(button("Forget"))
+		await act(async () => resume())
+		await act(() => new Promise((r) => setTimeout(r, 20)))
+		expect(signTypedData).not.toHaveBeenCalled()
+	})
+
 	test("a sign-in the wallet answers after Forget this device stays signed out", async () => {
 		let answer: (signature: Hex) => void = () => {}
 		const signTypedData = () => new Promise<Hex>((resolve) => (answer = resolve))

@@ -64,7 +64,13 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 		const mine = run.current
 		setStatus({ kind: "signing" })
 		try {
-			const opened = await openOwnerSession({ l1: source.l1, sessions: source.sessions, chainId: source.deployment.chainId })
+			const opened = await openOwnerSession({
+				l1: source.l1,
+				sessions: source.sessions,
+				chainId: source.deployment.chainId,
+				selected: () => live.get(),
+				current: () => mine === run.current,
+			})
 			if (mine !== run.current) return opened.ok ? opened.session.close() : undefined
 			if (!opened.ok) return setStatus({ kind: "error", code: opened.code })
 			session.current = opened.session

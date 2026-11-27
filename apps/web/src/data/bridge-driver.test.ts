@@ -25,6 +25,8 @@ const NOTE: PoolNoteView = { commitment: 7n, label: 3n, value: 100n, asset: OTHE
 const MINED: BridgeRecordView = { id: "r1", nullifier: 9n, recipient: RECIPIENT, amount: 70n, step: "mined" }
 const CLAIMABLE: BridgeRecordView = { ...MINED, step: "claimable" }
 const INPUT: SubmitInput = { note: NOTE, amount: 70n, recipient: RECIPIENT }
+/** A wallet whose events report the owner on 31337, under the page's latest sign-in. */
+const STEADY = { selected: () => ({ account: OWNER, chainId: 31337 }), current: () => true }
 
 type Gate = "preflight" | "prove" | "reprove" | "claim" | "wallet"
 
@@ -203,7 +205,7 @@ describe("each refusal sends nothing", () => {
 		const signTypedData = vi.fn(async () => "0x00" as const)
 		const l1 = { accounts: async () => [OWNER], chainId: async () => 1, signTypedData } as unknown as L1Port
 		const open = vi.fn()
-		expect(await openOwnerSession({ l1, sessions: { open } as unknown as SessionPort, chainId: 31337 })).toEqual({
+		expect(await openOwnerSession({ l1, sessions: { open } as unknown as SessionPort, chainId: 31337, ...STEADY })).toEqual({
 			ok: false,
 			code: "CHAIN_MISMATCH",
 		})
@@ -221,7 +223,43 @@ describe("each refusal sends nothing", () => {
 				return {} as Session
 			},
 		} as unknown as SessionPort
-		expect(await openOwnerSession({ l1, sessions, chainId: 31337 })).toEqual({ ok: false, code: "CHAIN_MISMATCH" })
+		expect(await openOwnerSession({ l1, sessions, chainId: 31337, ...STEADY })).toEqual({ ok: false, code: "CHAIN_MISMATCH" })
+		expect(signTypedData).not.toHaveBeenCalled()
+	})
+
+	test("an account switched while the session reads before signing, or a newer sign-in, never reaches the wallet", async () => {
+		const selected = { account: OWNER as Address | null, chainId: 31337 as number | null }
+		let release = () => {}
+		const reads: Promise<void>[] = [Promise.resolve(), new Promise<void>((r) => (release = r))]
+		const signTypedData = vi.fn(async () => "0x00" as const)
+		const l1 = {
+			accounts: async () => [OWNER],
+			chainId: async () => {
+				await reads.shift()
+				return 31337
+			},
+			signTypedData,
+		} as unknown as L1Port
+		const sessions = {
+			open: async (a: { sign(td: TypedDataDefinition): Promise<Hex> }) => {
+				await a.sign({} as TypedDataDefinition)
+				return {} as Session
+			},
+		} as unknown as SessionPort
+		// eth_accounts answers first; the wallet reports the switch before eth_chainId answers.
+		const opening = openOwnerSession({ l1, sessions, chainId: 31337, selected: () => selected, current: () => true })
+		await new Promise((r) => setTimeout(r, 0))
+		selected.account = OTHER
+		release()
+		expect(await opening).toEqual({ ok: false, code: "CONTEXT_CHANGED" })
+		const superseded = openOwnerSession({
+			l1,
+			sessions,
+			chainId: 31337,
+			selected: () => ({ ...selected, account: OWNER }),
+			current: () => false,
+		})
+		expect(await superseded).toEqual({ ok: false, code: "CONTEXT_CHANGED" })
 		expect(signTypedData).not.toHaveBeenCalled()
 	})
 

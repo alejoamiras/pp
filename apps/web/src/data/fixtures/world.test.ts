@@ -5,7 +5,7 @@ import { type BridgeMachine, bridgeReducer, initialBridge } from "../bridge-mach
 import { openOwnerSession } from "../chain"
 import type { Session } from "../ports"
 import { createControl } from "./control"
-import { FAKE_SIGNATURE, fixtureL1 } from "./l1"
+import { FAKE_SIGNATURE, fixtureL1, selectedAccount } from "./l1"
 import { ACCOUNTS, LABELS } from "./seed"
 import { fixtureSessions } from "./session"
 import { createWorld, type KeyValue } from "./world"
@@ -26,7 +26,13 @@ async function page(store: KeyValue) {
 	const l1 = fixtureL1(world)
 	const control = createControl(world, { remoteDisconnect: () => {} })
 	control.selectL1Account("owner")
-	const opened = await openOwnerSession({ l1, sessions: fixtureSessions(world, l1.provider), chainId: 31337 })
+	const opened = await openOwnerSession({
+		l1,
+		sessions: fixtureSessions(world, l1.provider),
+		chainId: 31337,
+		selected: () => ({ account: selectedAccount(world), chainId: world.s.walletChain }),
+		current: () => true,
+	})
 	if (!opened.ok) throw new Error(opened.code)
 	control.selectL1Account("sender")
 	const ctx = (): LiveContext => ({
