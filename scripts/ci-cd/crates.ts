@@ -170,7 +170,11 @@ export function gitDeps(root: string, crate: Crate): { alias: string; repo: stri
 	return gitDepsAt(join(root, crate.path)).map(({ alias, repo, tag }) => ({ alias, repo, tag }))
 }
 
-const repoOf = (url: unknown) => String(url).replace(/^https:\/\/github\.com\//, "").replace(/\/$/, "").replace(/\.git$/, "")
+const repoOf = (url: unknown) =>
+	String(url)
+		.replace(/^https:\/\/github\.com\//, "")
+		.replace(/\/$/, "")
+		.replace(/\.git$/, "")
 
 function gitDepsAt(dir: string): { alias: string; repo: string; tag: string; directory: string }[] {
 	const deps = (nargoToml(dir, "")?.dependencies ?? {}) as Record<string, Raw>
@@ -198,13 +202,15 @@ export function reachableTags(
 		seen.add(dir)
 		const deps = (nargoToml(dir, "")?.dependencies ?? {}) as Record<string, Raw>
 		for (const d of Object.values(deps)) if (typeof d.path === "string") walk(join(dir, d.path))
-		for (const { repo, tag, directory } of gitDepsAt(dir)) {
-			const id = `${repo}@${tag}`
-			const fetched = join(nargoHome, "github.com", repo, tag)
-			if (!tags.has(id) && !existsSync(fetched)) unfetched.push(id)
-			tags.add(id)
-			if (existsSync(fetched)) walk(join(fetched, directory))
-		}
+		for (const dep of gitDepsAt(dir)) visit(dep)
+	}
+	const visit = ({ repo, tag, directory }: ReturnType<typeof gitDepsAt>[number]) => {
+		const id = `${repo}@${tag}`
+		const fetched = join(nargoHome, "github.com", repo, tag)
+		const present = existsSync(fetched)
+		if (!tags.has(id) && !present) unfetched.push(id)
+		tags.add(id)
+		if (present) walk(join(fetched, directory))
 	}
 	for (const c of from) walk(join(root, c.path))
 	return { tags, unfetched }
@@ -212,15 +218,23 @@ export function reachableTags(
 
 /** The one aztec-nr version the crates pin; two different tags fail, since one toolchain builds them all. */
 export function aztecVersion(m: Manifest, root = ROOT): string {
-	const tags = new Set(m.crates.flatMap((c) => gitDeps(root, c).filter((d) => d.repo === "aztec-labs-eng/aztec-nr").map((d) => d.tag)))
+	const tags = new Set(
+		m.crates.flatMap((c) =>
+			gitDeps(root, c)
+				.filter((d) => d.repo === "aztec-labs-eng/aztec-nr")
+				.map((d) => d.tag),
+		),
+	)
 	if (tags.size !== 1) fail("crates", `expected one aztec-nr tag, found ${[...tags].join(", ") || "none"}`)
 	return [...tags][0].replace(/^v/, "")
 }
 
+/** Colour codes only: stripping cursor moves as well would join digits printed apart into one count. */
+const SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g")
+
 /** Sums nargo's per-package "N tests passed" lines. */
 export function passedCount(output: string): number {
-	const plain = output.replace(/\x1b\[[0-9;]*m/g, "")
-	return [...plain.matchAll(/(\d+) tests? passed/g)].reduce((n, m) => n + Number(m[1]), 0)
+	return [...output.replace(SGR, "").matchAll(/(\d+) tests? passed/g)].reduce((n, m) => n + Number(m[1]), 0)
 }
 
 function nargoTest(m: Manifest, name: string): void {
@@ -300,7 +314,10 @@ function checkPins(m: Manifest, names: string[]): void {
 		...unfetched.map((t) => `${t} is not fetched; build a crate that uses it first`),
 		...[...tags].filter((t) => !pinned.has(t)).map((t) => `${t} is reached through the crates but not pinned in ${MANIFEST}`),
 		...(names.length ? [] : [...pinned].filter((t) => !tags.has(t)).map((t) => `${t} is pinned but no crate reaches it`)),
-		...pinProblems(m.pins.filter((p) => tags.has(`${p.repo}@${p.tag}`)), home),
+		...pinProblems(
+			m.pins.filter((p) => tags.has(`${p.repo}@${p.tag}`)),
+			home,
+		),
 	]
 	for (const p of problems) console.error(`✖ ${p}`)
 	if (problems.length) process.exit(1)
@@ -314,15 +331,19 @@ function gateArg(v: string | undefined): Gate {
 function main(argv: string[]): void {
 	const m = loadManifest()
 	const [cmd, a, b, ...rest] = argv
-	if (cmd === "list") console.log(cratesWith(m, gateArg(a)).map((c) => c.name).join("\n"))
+	if (cmd === "list")
+		console.log(
+			cratesWith(m, gateArg(a))
+				.map((c) => c.name)
+				.join("\n"),
+		)
 	else if (cmd === "matrix") console.log(JSON.stringify(cratesWith(m, gateArg(a)).map((c) => c.name)))
 	else if (cmd === "get") console.log(field(m, crateNamed(m, a), b))
 	else if (cmd === "aztec-version") console.log(aztecVersion(m))
 	else if (cmd === "nargo-test") {
 		const names = a === undefined ? cratesWith(m, "nargo").map((c) => c.name) : [a, b, ...rest].filter(Boolean)
 		for (const name of names) nargoTest(m, name)
-	}
-	else if (cmd === "check-pins") checkPins(m, [a, b, ...rest].filter(Boolean))
+	} else if (cmd === "check-pins") checkPins(m, [a, b, ...rest].filter(Boolean))
 	else fail("usage", "see the header of scripts/ci-cd/crates.ts")
 }
 

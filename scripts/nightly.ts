@@ -81,7 +81,10 @@ export const SUITES: Suite[] = [
 	// remappings it assumes are prepared here, as the pull-request job prepares them.
 	{
 		name: "bridge-l1-fuzz-invariant",
-		prepare: [["bash", "contracts/bridge/evm/scripts/install-libs.sh"], ["bun", "packages/bridge-core/scripts/gen-remappings.ts"]],
+		prepare: [
+			["bash", "contracts/bridge/evm/scripts/install-libs.sh"],
+			["bun", "packages/bridge-core/scripts/gen-remappings.ts"],
+		],
 		cwd: ".",
 		command: ["bash", "contracts/bridge/evm/scripts/nightly.sh"],
 		passed: forgePassed,
