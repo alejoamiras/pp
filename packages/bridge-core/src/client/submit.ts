@@ -172,7 +172,11 @@ async function journalGuard(run: Run, s: PreparedBridgeSpend): Promise<{ receipt
 	const held: JournalRecord = record ?? { ...intent, attempts: [], evicted: true }
 	const observed = await Promise.all(held.attempts.map((a) => observe(run.ctx.reader, a)))
 	const mined = latestMined(observed)
-	const receipt = outcome(await resolveFor(run, s, mined !== undefined, mined?.block), mined?.hash)
+	const resolution = await resolveFor(run, s, mined !== undefined, mined?.block).catch((e: unknown) => {
+		if (mined) throw new BridgeClientError("UNCERTAIN", { l1TxHash: mined.hash })
+		throw e
+	})
+	const receipt = outcome(resolution, mined?.hash)
 	if (receipt) return { receipt }
 	const plan = planAttempt(
 		held,
@@ -261,11 +265,12 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
  * Sends a checked bridge spend and returns the receipt of the verified `BridgedFromPool` event for
  * its nullifier, whichever transaction carried it. Never resubmits by itself: a send whose outcome
  * is unknown ends `UNCERTAIN` and needs `acceptUncertain` to try again. A second call for the same
- * note of the same deployment while one runs in this process is `IN_FLIGHT`.
+ * note of the same pool while one runs in this process is `IN_FLIGHT`, whichever deployment it goes through.
  *
- * Known limit: the journal is authenticated, not fresh. A record deleted or rolled back in the store,
- * or a second process or tab over the same storage, can let a note be sent again while an earlier
- * send is pending; the vault lets only one land, so the cost is a reverted transaction's gas.
+ * Known limit: the journal is authenticated, not fresh, and kept per deployment. A record deleted or
+ * rolled back in the store, a second process or tab over the same storage, or a later send of the
+ * note through another generation's portal on the same vault, can let a note be sent again while an
+ * earlier send is pending; the vault lets only one land, so the cost is a reverted transaction's gas.
  */
 export function submit(
 	ctx: SubmitContext,
@@ -277,7 +282,7 @@ export function submit(
 	return guarded(async () => {
 		// Taken before the first await, so nothing the caller does afterwards changes what is checked or sent.
 		let snap = snapshotSpend(spend)
-		const release = holdNote(ctx.deployment.id, snap)
+		const release = holdNote(ctx.deployment, snap)
 		try {
 			const run = await openRun(ctx, l1, l1.account, l1.chain, s, o, snap)
 			for (let reproofs = 0; ; reproofs++) {
@@ -298,15 +303,15 @@ export function submit(
 }
 
 /**
- * Notes with a `submit` running in this process, per deployment, so two calls (one client or several,
- * over one store adapter or several over the same storage) never both reach the wallet. Separate
- * processes or tabs over one storage are not covered: the journal has no compare-and-set, so both
- * may send, and the vault lets one land.
+ * Notes with a `submit` running in this process, per pool vault, so two calls (one client or several,
+ * over any store adapters, through any generation's portal on that vault) never both reach the
+ * wallet. Separate processes or tabs are not covered: the journal has no compare-and-set and is per
+ * deployment, so both may send, and the vault lets one land.
  */
 const running = new Set<string>()
 
-function holdNote(deploymentId: string, s: PreparedBridgeSpend): () => void {
-	const key = `${deploymentId}:${s.proof.pubSignals[0]?.[0] ?? s.nullifier}`
+function holdNote(d: ResolverDeployment, s: PreparedBridgeSpend): () => void {
+	const key = `${d.chainId}:${d.poolVault.toLowerCase()}:${s.proof.pubSignals[0]?.[0] ?? s.nullifier}`
 	if (running.has(key)) throw new BridgeClientError("IN_FLIGHT")
 	running.add(key)
 	return () => running.delete(key)

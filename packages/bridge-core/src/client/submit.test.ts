@@ -152,6 +152,19 @@ describe("submit: preflight at handoff", () => {
 		expect(t.chain.writeContract).toHaveBeenCalledTimes(1)
 	})
 
+	it("holds a note across generations over one vault", async () => {
+		const t = await setup()
+		const otherGeneration = { ...DEPLOYMENT, portal: OWNER, id: "another generation" }
+		const second = { ...context(t.chain, t.store, t.preflights), deployment: otherGeneration }
+		const held = Promise.withResolvers<object>()
+		t.chain.simulate.mockReturnValueOnce(held.promise)
+		const first = submit(t.ctx, t.spend, t.chain.wallet(), t.session)
+		const rival = await code(submit(second, t.spend, t.chain.wallet(), t.session))
+		held.resolve({})
+		await first
+		expect(rival).toBe("IN_FLIGHT")
+	})
+
 	it("keeps a record another writer saved while the wallet call was out, when the user rejects", async () => {
 		const t = await setup()
 		t.chain.writeContract.mockImplementationOnce(async () => {
@@ -205,6 +218,15 @@ describe("submit: reading the outcome", () => {
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ l1TxHash: hash(1) })
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
 		expect(t.chain.simulate).not.toHaveBeenCalled()
+	})
+
+	it("is UNCERTAIN with a journaled mined send's hash when the logs cannot be read on reload", async () => {
+		const t = await setup()
+		await t.chain.land(t.spend.secretHash, hash(1), t.spend.proof.pubSignals)
+		await held(t, [{ l1TxHash: hash(1) }])
+		Object.assign(t.chain.reader, { getLogs: async () => Promise.reject(new Error("rpc down")) })
+		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).rejects.toMatchObject({ code: "UNCERTAIN", l1TxHash: hash(1) })
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
 	})
 
 	it("is UNCERTAIN with the hash, never RPC_FAILED, when the logs cannot be read after a mined send", async () => {
