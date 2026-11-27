@@ -27,19 +27,20 @@ import { type AspSnapshot, type Hex, labelState, parseAspSnapshot, pathFor, read
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { botSecret } from "../../src/accounts"
 import { type BotHandle, type BotManifest, startBot } from "../../src/index"
-import { approve, deployRegistry } from "./support"
+import { approve, deployRegistry, revoke } from "./support"
 
 // Run through `bun run test:integration`, which boots the stack and sets PP_STACK_MANIFEST.
 const MANIFEST = process.env.PP_STACK_MANIFEST
 const RUN = process.env.PP_BOT_INTEGRATION === "1" && MANIFEST !== undefined
 const POOL_LABEL = 0xb1e55n
+const ORIGIN_POOL = 0
 const ORIGIN_BIRTH = 1
 
 type Holder = { wallet: Wallet; from: AztecAddress; fee: Record<string, unknown>; stub: Contract; token: Contract }
 
 const pathArg = (p: LabelPath) => ({ index: p.index, depth: p.depth, siblings: [...p.siblings] })
 
-describe.skipIf(!RUN)("asp-bot births against the local stack", () => {
+describe.skipIf(!RUN)("asp-bot births and revocation against the local stack", () => {
 	const stackRunId = `it-${process.pid}-${randomBytes(3).toString("hex")}`
 	const runId = `${stackRunId}-bot`
 	let manifest: BotManifest
@@ -193,5 +194,57 @@ describe.skipIf(!RUN)("asp-bot births against the local stack", () => {
 			).toBe(false)
 		}
 		expect(text.includes("birth_refused"), "the bot refused a birth").toBe(false)
+	})
+
+	it("R1 after the bot posts a revocation, a transfer under the revoked label fails check_label and one under a live label lands", async () => {
+		// Fresh labels: an attached stack's mock ASP may already hold fixed ones.
+		const [revoked, live] = [0, 1].map(() => BigInt(`0x${randomBytes(16).toString("hex")}`)) as [bigint, bigint]
+		const held = (s: AspSnapshot, label: bigint) => s.poolLeaves.includes(aspLeaf(label))
+		await approve(manifest.pool.aspApiUrl, revoked)
+		await approve(manifest.pool.aspApiUrl, live)
+		for (const label of [revoked, live]) {
+			await alice.stub.methods.mint(deployed.token.address, alice.from, 20n, label).send(sendOpts(alice) as never)
+		}
+		const before = await settled(
+			() => snapshot("latest"),
+			(s) => held(s, revoked) && held(s, live),
+			"the bot's post of both labels",
+			180_000,
+		)
+		// The path an app fetched before the revocation, kept to spend after it.
+		const stale = pathFor(before, revoked, ORIGIN_POOL)
+		if (!stale) throw new Error("no path for the label to revoke")
+
+		await revoke(manifest.pool.aspApiUrl, revoked)
+		const after = await settled(
+			() => snapshot("latest"),
+			(s) => !held(s, revoked) && held(s, live),
+			"the bot's post of the revocation",
+			180_000,
+		)
+		const now = await record()
+		expect([after.poolRoot, after.birthRoot]).toEqual([now.poolRoot, now.birthRoot])
+		const tipTime = await timeAt(Number(await base.node.getBlockNumber()))
+		expect(labelState(now, after, revoked, ORIGIN_POOL, tipTime)).toBe("ABSENT")
+		expect(labelState(now, after, live, ORIGIN_POOL, tipTime)).toBe("ACTIVE")
+
+		// The PXE anchors at its synced tip, which is past the revoking post the record above shows.
+		const refused = await alice.token.methods
+			.transfer_private(bob.from, 5n, revoked, pathArg(stale))
+			.simulate({ from: alice.from } as never)
+			.then(
+				() => "simulated",
+				(e: Error) => e.message,
+			)
+		// `check_label`'s membership assertion (pp_hash's `assert_lean_imt_member`).
+		expect(refused).toMatch(/Assertion failed: NotMember\b/)
+		const path = pathFor(after, live, ORIGIN_POOL)
+		if (!path) throw new Error("no path for the live label")
+		await alice.token.methods.transfer_private(bob.from, 5n, live, pathArg(path)).send(sendOpts(alice) as never)
+		await settled(
+			() => values(bob.token, bob.from, live),
+			(v) => v.length === 1 && v[0] === 5n,
+			"bob's note under the live label",
+		)
 	})
 })
