@@ -14,7 +14,35 @@ import { downloadPinned } from "./download"
 import type { WalletPin } from "./fetch-wallet"
 
 const REPO = "nulo-sh/nulo"
+/** Any workflow of the repo can attest; only the release workflow's signature counts. */
+const SIGNER_WORKFLOW = `${REPO}/.github/workflows/release.yml`
 const MIN_AGE_MS = 7 * 86_400_000
+
+export const verifyArgs = (zip: string): string[] => [
+	"attestation",
+	"verify",
+	zip,
+	"--repo",
+	REPO,
+	"--signer-workflow",
+	SIGNER_WORKFLOW,
+	"--deny-self-hosted-runners",
+	"--format",
+	"json",
+]
+
+/**
+ * The provenance the pin records, from a certificate `gh` verified.
+ * @throws Error when it names another commit than the tag's or another workflow than the release one
+ */
+export function checkAttestation(cert: Record<string, string> | undefined, commit: string): WalletPin["attestation"] {
+	if (!cert || cert.sourceRepositoryDigest !== commit)
+		throw new Error(`the attestation names commit ${cert?.sourceRepositoryDigest}, the tag resolves to ${commit}`)
+	const signer = cert.buildSignerURI ?? ""
+	if (!signer.startsWith(`https://github.com/${SIGNER_WORKFLOW}@`))
+		throw new Error(`the attestation was signed by ${signer}, not ${SIGNER_WORKFLOW}`)
+	return { signer, run: cert.runInvocationURI ?? "" }
+}
 
 const gh = (...args: string[]) => execFileSync("gh", args, { encoding: "utf8" })
 
@@ -44,12 +72,10 @@ async function main(tag: string): Promise<void> {
 	try {
 		const zip = join(dir, asset.name)
 		writeFileSync(zip, await downloadPinned(asset.url, { size: asset.size, sha256 }))
-		const [att] = JSON.parse(gh("attestation", "verify", zip, "--repo", REPO, "--format", "json")) as {
+		const [att] = JSON.parse(gh(...verifyArgs(zip))) as {
 			verificationResult: { signature: { certificate: Record<string, string> } }
 		}[]
-		const cert = att?.verificationResult.signature.certificate
-		if (!cert || cert.sourceRepositoryDigest !== commit)
-			throw new Error(`the attestation names commit ${cert?.sourceRepositoryDigest}, the tag resolves to ${commit}`)
+		const attestation = checkAttestation(att?.verificationResult.signature.certificate, commit)
 		const pin: WalletPin = {
 			version,
 			tag,
@@ -58,7 +84,7 @@ async function main(tag: string): Promise<void> {
 			sha256,
 			size: asset.size,
 			publishedAt: release.publishedAt,
-			attestation: { signer: cert.buildSignerURI ?? "", run: cert.runInvocationURI ?? "" },
+			attestation,
 		}
 		writeFileSync(new URL("./wallet-pin.json", import.meta.url), `${JSON.stringify(pin, null, "\t")}\n`)
 		console.log(`pinned ${asset.name} sha256:${sha256} (${asset.size} B) from ${commit}`)
@@ -67,6 +93,8 @@ async function main(tag: string): Promise<void> {
 	}
 }
 
-const tag = process.argv[2]
-if (!tag) throw new Error("usage: bun real-wallet/pin-wallet.ts <tag>")
-await main(tag)
+if (import.meta.main) {
+	const tag = process.argv[2]
+	if (!tag) throw new Error("usage: bun real-wallet/pin-wallet.ts <tag>")
+	await main(tag)
+}
