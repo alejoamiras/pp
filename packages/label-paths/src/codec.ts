@@ -37,7 +37,8 @@ export function parseAspSnapshot(json: unknown): AspSnapshot {
 
 /**
  * `parseAspSnapshot` without the root checks: it builds no tree, so its roots are only declared.
- * Pass the result to `LabelPathCache.check`, which builds a tree only for a label found in it.
+ * Pass the result to `LabelPathCache.check`, which checks the origin's list against its root before an
+ * `ACTIVE` or `ABSENT`.
  */
 export function parseAspSnapshotUnverified(json: unknown): AspSnapshot {
 	const s = decode(json)

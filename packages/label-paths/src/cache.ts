@@ -2,6 +2,8 @@ import { aspLeaf, buildLeanImt, type LabelPath, type LeanImt } from "@pp/bridge-
 import { type AspSnapshot, MAX_ROOT_AGE, type Origin, type RootRecord, SnapshotError, SPEND_WINDOW, treeOf } from "./snapshot"
 
 /**
+ * `ABSENT`: the label is not in the origin's list, a list that builds to the record's root. The record
+ * binds the roots, not the lists' lengths, so this is not proof that the label is unapproved.
  * `STALE_ROOT` says what to do next. `snapshot`: its roots are not the record's, so fetch the record's
  * own sequence. `age`: the record is too old for a spend, so wait for the next post; a record newer
  * than `nowSec` instead means it was not read at the anchor block.
@@ -36,20 +38,24 @@ export class LabelPathCache {
 
 	/**
 	 * Same rules as `labelState`; `r` is the record at the anchor block and `nowSec` its time plus the
-	 * proving budget. Throws `SnapshotError("RootMismatch")` when a found label's list does not build to
-	 * the declared root; that list is not kept, and a tree already verified for the root stays.
+	 * proving budget. `ACTIVE` and `ABSENT` come only from an origin list that builds to the declared root:
+	 * it is built, or the tree kept for that root is reused while its list is the same. Throws
+	 * `SnapshotError("RootMismatch")` when the list does not build to the root, whether or not the label is
+	 * in it; that list is not kept, and a tree already verified for the root stays.
 	 */
 	check(r: RootRecord, s: AspSnapshot, label: bigint, origin: Origin, nowSec: bigint): LabelCheck {
 		for (const root of this.trees.keys()) if (root !== r.poolRoot && root !== r.birthRoot) this.trees.delete(root)
 		if (s.poolRoot !== r.poolRoot || s.birthRoot !== r.birthRoot) return { state: "STALE_ROOT", reason: "snapshot" }
 		if (r.rootTime > nowSec || r.rootTime + MAX_ROOT_AGE < nowSec + SPEND_WINDOW) return { state: "STALE_ROOT", reason: "age" }
 		const { leaves, root, field } = treeOf(s, origin)
-		if (root === 0n) return { state: "ABSENT" }
-		const index = leaves.indexOf(aspLeaf(label))
-		if (index < 0) return { state: "ABSENT" }
+		if (root === 0n) {
+			if (leaves.length > 0) throw new SnapshotError("RootMismatch", field)
+			return { state: "ABSENT" }
+		}
 		const cached = this.trees.get(root)
 		const entry = cached && sameList(cached.leaves, leaves) ? cached : this.build(leaves, root, field)
-		return { state: "ACTIVE", path: entry.tree.path(index) }
+		const index = entry.leaves.indexOf(aspLeaf(label))
+		return index < 0 ? { state: "ABSENT" } : { state: "ACTIVE", path: entry.tree.path(index) }
 	}
 
 	private build(leaves: readonly bigint[], root: bigint, field: string): Entry {

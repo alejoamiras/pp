@@ -12,9 +12,10 @@ Browser-safe helpers for checking a label against the ASP registry on Aztec. The
    sequence: read the latest record and retry.
 3. `parseAspSnapshot(await res.json())` recomputes both roots, so a path verifies against the
    snapshot's own roots, whoever served it; step 4 checks those roots against the record. A matching
-   root does not prove the leaves are complete: a subtree
-   collapsed into one node keeps the root. `ABSENT` means not found in the snapshot this server gave
-   you; it is never proof that a label was revoked.
+   root proves each path, not that a list is complete: a subtree collapsed into one node keeps the
+   root, and the record binds the roots, not the lists' lengths. `ABSENT` means not in the list this
+   server gave you, a list that builds to the record's roots; it is never proof that a label is
+   unapproved or was revoked.
 4. `labelState(record, snapshot, label, origin, anchorTime)` gives `ACTIVE`, `ABSENT` or `STALE_ROOT`,
    by the same rules as the registry's `check_label`. Pass the anchor time plus your proving budget:
    `ACTIVE` at the exact age limit fails a proof anchored one block later.
@@ -35,9 +36,9 @@ such as a browser, should use these instead:
    - The snapshot's roots are compared with the record's before anything is hashed. A mismatch is
      `{ state: "STALE_ROOT", reason: "snapshot" }`: fetch the record's own sequence. A record too old
      for a spend is `reason: "age"`: wait for the next post.
-   - A label not in its origin's list is `ABSENT` after one leaf hash, with no tree built.
-   - A found label builds only its origin's tree, once. The answer is `ACTIVE` with the path from that
-     tree, or `SnapshotError("RootMismatch")` if the list does not build to the declared root.
+   - Otherwise only the origin's tree is built. The answer is `ACTIVE` with the path from that tree or
+     `ABSENT`, or `SnapshotError("RootMismatch")` if the list does not build to the declared root,
+     whether or not the label is in it.
    - Verified trees are kept by root. A later snapshot with the same root and the same list (a
      heartbeat) costs no rebuild; a different list is built on its own, because a root does not
      prove a list complete. A tree is dropped once the record's roots move on.
