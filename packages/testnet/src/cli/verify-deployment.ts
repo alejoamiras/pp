@@ -6,7 +6,6 @@
 import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import { checkBeforeOpen } from "@pp/bridge-core/deploy"
 import { labelState, parseAspSnapshot, readRootRecord } from "@pp/label-paths"
-import { verifyPoolCode } from "@pp/pp-env/sepolia"
 import { GuardError } from "../guards"
 import { loopback, SEPOLIA } from "../network"
 import type { TestnetDeployment } from "../schema"
@@ -30,6 +29,7 @@ async function checkPool(d: WithPool, l1: Parameters<typeof checkPoolBindings>[0
 	if (d.target === "own" && d.network.l1ChainId === SEPOLIA) {
 		if (!p.accessRouter || !p.relay) throw new VerifyError("pool", "the own pool's section names no access router or relay")
 		const deployment = { ...p, pool: p.poolVault, accessRouter: p.accessRouter, relay: p.relay }
+		const { verifyPoolCode } = await import("@pp/pp-env/sepolia")
 		const matched = await verifyPoolCode({ rpcUrl: d.network.l1Rpc, chainId: SEPOLIA, deployment })
 		report("pool-code", { matched: matched.length })
 	}
