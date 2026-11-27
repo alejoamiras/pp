@@ -29,7 +29,7 @@ const MAX_BODY = 4 * 1024 * 1024
 /** Seconds a connection may wait on its answer: above forge's 45 s request timeout and every budget here. */
 const IDLE_TIMEOUT_S = 60
 
-export type SendRelayOptions = SendPathOptions & {
+export type RelayTuning = {
 	/** The registry owner of the relay's port row; default one per process. */
 	owner?: string
 	/** How long after a served receipt an estimate error is asked again; default 30 s. */
@@ -37,6 +37,12 @@ export type SendRelayOptions = SendPathOptions & {
 	/** One read's budget for asking again; default 35 s, under forge's 45 s request timeout. */
 	readBudgetMs?: number
 }
+
+/**
+ * The relay's own path, or a caller's `path` that its other sends share, so its nonce claims and floor
+ * span both; the relay closes only a path it made.
+ */
+export type SendRelayOptions = RelayTuning & ({ path: SendPath } | SendPathOptions)
 
 export type SendRelay = {
 	/** `http://127.0.0.1:<port>`, listening from the moment the relay is returned. */
@@ -49,7 +55,7 @@ export type SendRelay = {
 	/** Every send the path did not admit, in order. */
 	failures(): readonly SendPathError[]
 	/**
-	 * Closes the listener, ends the path's watches and sends, and drops the port row. Idempotent.
+	 * Closes the listener, ends the watches and sends of a path the relay made, and drops the port row. Idempotent.
 	 * @throws Error when the registry did not drop the row; the row's liveness reaping still frees it
 	 */
 	stop(): Promise<void>
@@ -201,7 +207,8 @@ async function handle(relay: Relay, req: Request): Promise<Response> {
  * @throws Error when no port could be claimed or bound; nothing is left listening or registered
  */
 export async function startSendRelay(o: SendRelayOptions): Promise<SendRelay> {
-	const path = new SendPath(o)
+	const owned = !("path" in o)
+	const path = "path" in o ? o.path : new SendPath(o)
 	const relay = new Relay(path, o.freshMs ?? 30_000, o.readBudgetMs ?? 35_000)
 	const owner = o.owner ?? `pp-send-relay-${process.pid}`
 	const port = await claimPort(owner, SERVICE)
@@ -229,7 +236,7 @@ export async function startSendRelay(o: SendRelayOptions): Promise<SendRelay> {
 		async stop() {
 			if (stopped) return
 			stopped = true
-			path.close()
+			if (owned) path.close()
 			await server.stop(true)
 			if (!(await release())) throw new Error(`the port registry did not drop the send relay's row for port ${port}`)
 		},

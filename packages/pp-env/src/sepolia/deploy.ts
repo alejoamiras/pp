@@ -30,24 +30,26 @@ export async function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool>
 	const account = privateKeyToAccount(o.deployerKey)
 	const before = await client.getBalance({ address: account.address })
 	const journalPath = join(o.runDir, "send-path.jsonl")
-	const deployment = await deployPool({
-		rpcUrl: o.rpcUrl,
-		co,
-		deployerKey: o.deployerKey,
-		deployer: account.address,
-		workDir: o.runDir,
-		client,
-		checkBuild: o.checkBuild,
-		// Sepolia runs a later fork than the pool's `prague`, which charges far more for state creation.
-		skipSimulation: true,
-		// forge 1.7.1 under `--skip-simulation` re-sends a failed send without its gas limit and waits forever
-		// on a sent transaction the read endpoint never shows, so the relay owns every re-send and read.
-		relay: { sendUrl: o.sendRpcUrl, chainId: o.chainId, senders: [account.address], journalPath },
-		...(o.fees && { fees: o.fees }),
-	})
-	log(`pool deployed: entrypoint ${deployment.entrypoint}, vault ${deployment.pool}, from block ${deployment.deployBlock}`)
+	// One path for forge's sends and the wallet's after them: a lagging read endpoint cannot hand the
+	// wallet a nonce forge already used, since the path floors the count and refuses a second hash at it.
 	const { wallet, path } = sepoliaWallet({ account, rpcUrl: o.rpcUrl, sendRpcUrl: o.sendRpcUrl, journal: journalTo(journalPath) })
 	try {
+		const deployment = await deployPool({
+			rpcUrl: o.rpcUrl,
+			co,
+			deployerKey: o.deployerKey,
+			deployer: account.address,
+			workDir: o.runDir,
+			client,
+			checkBuild: o.checkBuild,
+			// Sepolia runs a later fork than the pool's `prague`, which charges far more for state creation.
+			skipSimulation: true,
+			// forge 1.7.1 under `--skip-simulation` re-sends a failed send without its gas limit and waits forever
+			// on a sent transaction the read endpoint never shows, so the relay owns every re-send and read.
+			relay: { path, journalPath },
+			...(o.fees && { fees: o.fees }),
+		})
+		log(`pool deployed: entrypoint ${deployment.entrypoint}, vault ${deployment.pool}, from block ${deployment.deployBlock}`)
 		return await finish(o, client, wallet, deployment, before, log)
 	} finally {
 		path.close()

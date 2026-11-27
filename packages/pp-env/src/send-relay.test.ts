@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { keccak256 } from "viem"
-import { SENDER, signed, stub } from "./send-path.fixtures.ts"
+import { SendPath } from "./send-path.ts"
+import { SENDER, STRANGER, signed, stub } from "./send-path.fixtures.ts"
 import { type SendRelay, startSendRelay } from "./send-relay.ts"
 
 const read = stub()
@@ -40,8 +41,8 @@ afterAll(async () => {
 	await rm(dir, { recursive: true, force: true })
 })
 
-async function call(method: string, params: unknown[]) {
-	const res = await fetch(relay.url, {
+async function call(method: string, params: unknown[], url = relay.url) {
+	const res = await fetch(url, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ jsonrpc: "2.0", id: 7, method, params }),
@@ -147,5 +148,25 @@ describe("the send relay", () => {
 		await other.stop()
 		expect(await readFile(join(dir, "ports.md"), "utf8")).not.toContain("send-relay-test-2")
 		await expect(fetch(other.url, { method: "POST", body: "{}" })).rejects.toThrow()
+	})
+
+	it("leaves a caller's path open when stopped, and its claims span the relay's sends and the caller's", async () => {
+		admitAll()
+		const path = new SendPath({ readUrl: read.url, sendUrl: send.url, chainId: 11155111, senders: [SENDER.address], delayMs: 10 })
+		const shared = await startSendRelay({ path, owner: "send-relay-test-3" })
+		expect((await call("eth_sendRawTransaction", [await signed(30)], shared.url)).result).toBe(keccak256(await signed(30)))
+		await shared.stop()
+		const other = await SENDER.signTransaction({
+			chainId: 11155111,
+			type: "eip1559",
+			nonce: 30,
+			gas: 21_000n,
+			maxFeePerGas: 3n,
+			maxPriorityFeePerGas: 1n,
+			to: STRANGER.address,
+		})
+		await expect(path.send(other)).rejects.toThrow(/would reuse nonce 30/)
+		expect(await path.send(await signed(31))).toBe(keccak256(await signed(31)))
+		path.close()
 	})
 })

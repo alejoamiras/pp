@@ -30,9 +30,10 @@ case "$1" in
 	build) if [ -e '${dir}/stale' ]; then echo "Compiling 3 files with Solc 0.8.32"; fi ;;
 	script)
 		case " $* " in *" --skip-simulation "*) echo skip-simulation >> '${dir}/forge.log' ;; esac
-		# With \`probe\` present, one send to the script's --rpc-url, its answer logged.
+		# With \`probe\` present, its parent's pid, then one send to the script's --rpc-url, its answer logged.
 		prev=""; for a in "$@"; do [ "$prev" = "--rpc-url" ] && url="$a"; prev="$a"; done
 		if [ -e '${dir}/probe' ]; then
+			echo "parent=$PPID" >> '${dir}/forge.log'
 			curl -s -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["${RAW}"]}' "$url" >> '${dir}/forge.log'
 			echo >> '${dir}/forge.log'
 		fi ;;
@@ -101,7 +102,7 @@ test.each([
 	expect(await calls()).toEqual(want)
 })
 
-test("the keyed script sends through the relay, which listens before the script runs and is gone after", async () => {
+test("the keyed script, a direct child that alone holds the key, sends through the relay, which is gone after", async () => {
 	const sends: unknown[] = []
 	const upstream = Bun.serve({
 		hostname: "127.0.0.1",
@@ -121,6 +122,7 @@ test("the keyed script sends through the relay, which listens before the script 
 		// The fake script prints no deployment, so the deploy fails after its one send.
 		await expect(deploy(() => {}, true, relay)).rejects.toThrow()
 		expect(await calls()).toContain(JSON.stringify({ jsonrpc: "2.0", id: 1, result: keccak256(RAW) }))
+		expect(await calls()).toContain(`parent=${process.pid}`)
 		expect(sends).toEqual([RAW])
 		expect(await readFile(journalPath, "utf8")).toContain(
 			`"hash":"${keccak256(RAW)}","nonce":0,"endpoint":"send","event":"attempt 1: admitted"`,
