@@ -130,6 +130,23 @@ export const SUITES: Suite[] = [
 		expected: 34,
 		count: freshPassed,
 	}),
+	// The bridge client's model test and properties. The model test's coverage floor runs at the pull-request seed only.
+	boundedSuite({
+		name: "bridge-client-model",
+		cwd: "packages/bridge-core",
+		argv: [
+			"bun",
+			"run",
+			"test",
+			"src/client/submit.model.test.ts",
+			"src/client/attempts.property.test.ts",
+			"src/client/boundary.property.test.ts",
+			"src/l1-gas.property.test.ts",
+		],
+		minutes: 10,
+		expected: 19,
+		env: { FC_RUNS_SCALE: "10" },
+	}),
 ]
 
 /** Why a finished suite failed, or undefined when it passed. */
