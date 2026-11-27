@@ -14,7 +14,7 @@ import { createServer, type IncomingMessage } from "node:http"
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path"
 import { parseArgs } from "node:util"
 import { createArtifacts, PINNED_CIRCUITS } from "@pp/pool-client/circuits"
-import { checkout } from "@pp/pp-env/checkout"
+import { checkout } from "../../../packages/pp-env/src/env/checkout.ts"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build/headers.ts"
 import { APP_ROOT } from "./proc"
 
