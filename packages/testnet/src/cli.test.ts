@@ -6,7 +6,8 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import { ANVIL_CLIENT_VERSION } from "@pp/sepolia-fork/src/anvil.ts"
-import { generatePrivateKey } from "viem/accounts"
+import { encodeAbiParameters, maxUint256, toFunctionSelector } from "viem"
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest"
 import { isKeyValue, KEY_NAMES, keyFilePath } from "./keyfile"
 import { loopback } from "./network"
@@ -38,10 +39,17 @@ function script(path: string, args: string[], home: string, extra: Record<string
 const leaks = (out: string, values: readonly string[]) =>
 	values.filter((v) => out.toLowerCase().includes(v.toLowerCase().replace(/^0x/, "")))
 
-// A loopback L1 that answers what the guards and `fund` read before a key is used; anything else errors.
+// A loopback L1 that answers what the guards and `fund` read before a key is used, and the entrypoint's
+// asset config at a vetting fee of 1.5%; anything else errors. `seen` records every method asked.
 let server: Server
 let rpc: string
 const answers: Record<string, unknown> = {}
+const seen: string[] = []
+const ASSETS = toFunctionSelector("assets(address)")
+const ASSET_CONFIG = encodeAbiParameters(
+	[{ type: "bool" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }],
+	[true, 1n, 150n, maxUint256],
+)
 beforeAll(async () => {
 	Object.assign(answers, {
 		web3_clientVersion: ANVIL_CLIENT_VERSION,
@@ -62,8 +70,9 @@ beforeAll(async () => {
 		let body = ""
 		req.on("data", (b) => (body += b))
 		req.on("end", () => {
-			const { id, method } = JSON.parse(body) as { id: number; method: string }
-			const result = answers[method]
+			const { id, method, params } = JSON.parse(body) as { id: number; method: string; params?: [{ data?: string }] }
+			seen.push(method)
+			const result = method === "eth_call" && params?.[0].data?.startsWith(ASSETS) ? ASSET_CONFIG : answers[method]
 			res.setHeader("content-type", "application/json")
 			res.end(
 				JSON.stringify(
@@ -81,7 +90,7 @@ const addr = (n: number) => `0x${n.toString(16).padStart(40, "0")}`
 const word = (n: number) => `0x${n.toString(16).padStart(64, "0")}`
 
 /** The own target on the fake L1, with every section a key-reading CLI requires and addresses no sentinel key owns. */
-function deploymentFile(home: string, sections: { pool: boolean }): string {
+function deploymentFile(home: string, sections: { pool: boolean }, expected: Record<string, string> = {}): string {
 	const d = {
 		...OWN,
 		network: { ...OWN.network, l1Rpc: rpc },
@@ -98,6 +107,7 @@ function deploymentFile(home: string, sections: { pool: boolean }): string {
 			birthIntake: word(9),
 			tokenClassId: word(10),
 			amounts: { debit: "100", note: "100", bridge: "50" },
+			...expected,
 		},
 		...(sections.pool && {
 			pool: {
@@ -248,5 +258,28 @@ describe("every key-reading CLI on a fork", () => {
 		const r = await cli("fund", [deploymentFile(home, { pool: false }), "--quote", "--rehearse-fork", rpc], home)
 		expect(r.code).toBe(0)
 		expect(JSON.parse(r.out.trim())).toMatchObject({ event: "funding-quote", deployer: addr(2), short: "0" })
+	}, 60_000)
+})
+
+describe("seed", () => {
+	it("refuses amounts the asset config would not debit before it signs or sends anything, with --recipient too", async () => {
+		const home = scratchHome()
+		const key = generatePrivateKey()
+		writeKeyFile(
+			home,
+			sentinels().map(([n, v]) => `${n}=${n === "CANARY_OWNER_KEY" ? key : v}`),
+		)
+		const file = deploymentFile(home, { pool: true }, { canaryOwner: privateKeyToAccount(key).address })
+		seen.length = 0
+		const runs = await Promise.all(
+			[[], ["--recipient", addr(30)]].map((extra) => cli("seed", [file, ...extra, "--rehearse-fork", rpc], home)),
+		)
+		for (const r of runs)
+			expect([r.code, /failed: deposit amounts: a note of 100 debits 101 at 150 bps/.test(r.out), leaks(r.out, [key])]).toEqual([
+				1,
+				true,
+				[],
+			])
+		expect([seen.includes("eth_call"), seen.filter((m) => m.startsWith("eth_send"))]).toEqual([true, []])
 	}, 60_000)
 })

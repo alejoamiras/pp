@@ -10,7 +10,7 @@ vi.mock("./creation", async (actual) => {
 	return { ...real, CREATION_CODES: { PortalFactory: { hash: real.creationCodeHash(code), size: size(code) } } }
 })
 
-const { checkDeployBlock, checkFactoryCreation } = await import("./verify")
+const { checkDeployBlock, checkDepositDebit, checkFactoryCreation } = await import("./verify")
 
 const a = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address
 const CREATED_AT = 100n
@@ -85,5 +85,18 @@ describe("the deploy block", () => {
 		await expect(checkDeployBlock(chain({ pruned: true }), pool)).rejects.toThrow(/serves no state at block 4999999/)
 		await expect(checkDeployBlock(chain(), pool)).rejects.toThrow(/no Initialized log in blocks 5000000 to 5009999/)
 		await expect(checkDeployBlock(chain({ logsAt: 1n }), { ...pool, deployBlock: 0n })).rejects.toThrow(/scan from genesis/)
+	})
+})
+
+describe("the deposit's debit", () => {
+	const config = (o: { enabled?: boolean; minAmount?: bigint; vettingFeeBPS: bigint }) =>
+		({ readContract: async () => ({ enabled: true, minAmount: 1n, maxRelayFee: 0n, ...o }) }) as unknown as PublicClient
+	const check = (client: PublicClient, note: bigint, debit: bigint) => checkDepositDebit(client, a(1), a(2), { note, debit })
+
+	it("is the note plus the vetting fee rounded down, on an enabled asset at or above its minimum", async () => {
+		await expect(check(config({ vettingFeeBPS: 150n }), 100n, 101n)).resolves.toBeUndefined()
+		await expect(check(config({ vettingFeeBPS: 150n }), 100n, 102n)).rejects.toThrow(/^deposit amounts: a note of 100 debits 101/)
+		await expect(check(config({ vettingFeeBPS: 0n, enabled: false }), 100n, 100n)).rejects.toThrow(/enabled false/)
+		await expect(check(config({ vettingFeeBPS: 0n, minAmount: 101n }), 100n, 100n)).rejects.toThrow(/minimum 101/)
 	})
 })

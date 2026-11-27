@@ -1,5 +1,5 @@
 /**
- * The read-only checks `verify-deployment` runs. Each returns what it compared, or throws a
+ * The read-only checks `verify-deployment` and `seed` run. Each returns what it compared, or throws a
  * `VerifyError` naming the first disagreement; none signs or writes.
  */
 import {
@@ -88,6 +88,30 @@ export async function checkPoolBindings(
 		throw new VerifyError(
 			"asset config",
 			`${p.asset}: enabled ${config.enabled}, minimum ${config.minAmount}, vetting fee ${config.vettingFeeBPS} bps, relay-fee cap ${config.maxRelayFee}`,
+		)
+}
+
+/** FeeCalculator.MAX_FEE_BPS. */
+const MAX_FEE_BPS = 10_000n
+
+/**
+ * A deposit of a note worth `amounts.note` is accepted and debits exactly `amounts.debit`.
+ * `Entrypoint.deposit` refuses a disabled asset or a value below `minAmount`, then pulls the value
+ * plus `FeeCalculator.calcFee(value, vettingFeeBPS)`, which is `value * bps / 10_000` rounded down.
+ * @throws VerifyError `deposit amounts` when the asset config refuses the note or debits another amount
+ */
+export async function checkDepositDebit(
+	l1: PublicClient,
+	entrypoint: Address,
+	asset: Address,
+	amounts: { note: bigint; debit: bigint },
+): Promise<void> {
+	const c = await l1.readContract({ address: entrypoint, abi: POOL_ABI, functionName: "assets", args: [asset] })
+	const pulled = amounts.note + (amounts.note * c.vettingFeeBPS) / MAX_FEE_BPS
+	if (!c.enabled || amounts.note < c.minAmount || pulled !== amounts.debit)
+		throw new VerifyError(
+			"deposit amounts",
+			`a note of ${amounts.note} debits ${pulled} at ${c.vettingFeeBPS} bps (enabled ${c.enabled}, minimum ${c.minAmount}); the file expects ${amounts.debit}`,
 		)
 }
 

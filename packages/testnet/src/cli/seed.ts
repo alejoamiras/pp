@@ -1,14 +1,16 @@
 // seed <deployment file> [--recipient <address>] [--rehearse-fork <url>]
 // Registers the canary owner's keystore and makes the canary deposit: a note of `amounts.note` whose
-// wallet debit must equal `amounts.debit`. With `--recipient`, the owner deposits that note for another
-// address instead, which must already hold a registered viewing key; the owner's keystore is left as it
-// is. Prints the label the ASP approves: the depositor is the canary owner either way. The own pool's
-// ASP must already be running: the deposit encrypts its label to the key the ASP serves.
+// wallet debit must equal `amounts.debit`, checked against the entrypoint's asset config before anything
+// is signed and as the balance change after. With `--recipient`, the owner deposits that note for
+// another address instead, which must already hold a registered viewing key; the owner's keystore is
+// left as it is. Prints the label the ASP approves: the depositor is the canary owner either way. The
+// own pool's ASP must already be running: the deposit encrypts its label to the key the ASP serves.
 import { type Address, erc20Abi, getAddress, isAddress, isAddressEqual } from "viem"
 import { l1AddressOf } from "../accounts"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { SEPOLIA } from "../network"
+import { checkDepositDebit } from "../verify"
 import { cliArgs, guarded, logLine, main, report } from "./common"
 import { assertOwnTarget } from "./context"
 
@@ -37,6 +39,7 @@ await main(async () => {
 	if (!isAddressEqual(owner, d.expected.canaryOwner))
 		throw new GuardError("account", `the owner key is for ${owner}, the file expects ${d.expected.canaryOwner}`)
 	const { poolVault, entrypoint, keystore, aspRegistry, deployBlock, asset, aspApiUrl } = d.pool
+	await checkDepositDebit(l1, entrypoint, asset, d.expected.amounts)
 	// Past the guards: this entry loads the pool checkout, which a refusal must not need.
 	const { sepoliaPoolUser } = await import("@pp/pp-env/sepolia")
 	const user = await sepoliaPoolUser({
