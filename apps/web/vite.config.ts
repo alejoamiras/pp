@@ -23,7 +23,7 @@ const root = dirname(fileURLToPath(import.meta.url))
 
 /** Build-time values a stack target needs; only addresses leave this process, and only for stack builds. */
 async function stackDerivations(): Promise<{ sponsoredFpc: string; demoSender: string }> {
-	const [sponsoredFpc, { DEMO_SENDER_ADDRESS }] = await Promise.all([sponsoredFpcAddress(), import("@pp/local-stack/seed")])
+	const [sponsoredFpc, { DEMO_SENDER_ADDRESS }] = await Promise.all([sponsoredFpcAddress(), import("@pp/local-stack/accounts")])
 	return { sponsoredFpc, demoSender: DEMO_SENDER_ADDRESS }
 }
 

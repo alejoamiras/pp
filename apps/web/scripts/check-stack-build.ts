@@ -10,7 +10,7 @@
 import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { ANVIL_MNEMONIC, anvilKey } from "@pp/bridge-core/sandbox"
-import { DEMO_SENDER_ADDRESS, DEMO_SENDER_INDEX } from "@pp/local-stack/seed"
+import { DEMO_SENDER_ADDRESS, DEMO_SENDER_INDEX } from "@pp/local-stack/accounts"
 import { GUARD_PASSED } from "../src/build/plugins.ts"
 import { DEMO_SENDER_SENTINEL } from "../src/data/adapters/demo-sender.ts"
 import { bunRun, envWithout, scratchDir } from "./proc"
