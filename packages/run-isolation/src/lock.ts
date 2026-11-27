@@ -23,14 +23,18 @@ const isStale = (path: string, staleMs: number, fs: LockFs) => Date.now() - fs.s
 /**
  * Removes a dead holder's lock. Another reclaimer may replace the lock between the stat and the
  * removal, so the lock is moved to a name only this call uses and judged again there; one that turns
- * out live goes back under its name, unless an acquirer took the name in that gap.
+ * out live, or cannot be judged, goes back under its name, unless an acquirer took the name in that gap.
  */
 function reclaim(lock: string, staleMs: number, token: string, fs: LockFs): void {
 	if (!isStale(lock, staleMs, fs)) return
 	const aside = `${lock}.${token.replace(":", "-")}.reclaim`
 	fs.rename(lock, aside)
+	let stale = false
 	try {
-		if (!isStale(aside, staleMs, fs)) fs.link(aside, lock)
+		stale = isStale(aside, staleMs, fs)
+	} catch {}
+	try {
+		if (!stale) fs.link(aside, lock)
 	} finally {
 		fs.unlink(aside)
 	}

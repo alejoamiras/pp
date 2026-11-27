@@ -1,10 +1,23 @@
 // Port claims in the host registry (~/.agents/ports.md), shared with every other agent run on the machine.
 // Same row format, lock and window as the bridge sandbox, so either harness picks around the other's ports.
 import { randomBytes } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+	closeSync,
+	existsSync,
+	fchmodSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	readlinkSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { withFileLock } from "./lock.ts"
 
@@ -67,18 +80,39 @@ const REGISTRY_HEADER = [
 	"|---|---|---|---|---|---|",
 ]
 
+/** The file a registry path names through its symlinks; a dangling link names the file it would create. */
+function registryFile(path: string): string {
+	let file = path
+	for (let hops = 0; hops < 40; hops++) {
+		let target: string
+		try {
+			target = readlinkSync(file)
+		} catch {
+			return file
+		}
+		// From the link's real directory: the kernel follows `..` after the directory's own symlinks, not lexically.
+		file = resolve(realpathSync(dirname(file)), target)
+	}
+	throw new Error(`${path}: too many levels of symbolic links`)
+}
+
 /**
- * Replaces the registry by renaming a complete file over it: the readers take no lock, and a writer
- * that dies mid-write must leave the old rows, not a truncated file. A symlinked registry keeps its
- * link, and the file keeps its mode.
+ * Replaces the registry file by renaming a complete copy over it: the readers take no lock, and a
+ * writer that dies mid-write must leave the old rows, not a truncated file. The copy takes the old
+ * file's exact mode, umask aside; a new registry starts private.
  */
-function replaceRegistry(registry: string, text: string): void {
-	const target = existsSync(registry) ? realpathSync(registry) : registry
-	const mode = existsSync(target) ? statSync(target).mode & 0o777 : 0o600
-	const next = `${target}.${process.pid}-${randomBytes(4).toString("hex")}.tmp`
+function replaceRegistry(file: string, text: string): void {
+	const mode = existsSync(file) ? statSync(file).mode & 0o7777 : 0o600
+	const next = `${file}.${process.pid}-${randomBytes(4).toString("hex")}.tmp`
+	const fd = openSync(next, "wx", mode)
 	try {
-		writeFileSync(next, text, { flag: "wx", mode })
-		renameSync(next, target)
+		try {
+			fchmodSync(fd, mode)
+			writeFileSync(fd, text)
+		} finally {
+			closeSync(fd)
+		}
+		renameSync(next, file)
 	} catch (err) {
 		rmSync(next, { force: true })
 		throw err
@@ -88,8 +122,9 @@ function replaceRegistry(registry: string, text: string): void {
 async function withRegistry(mutate: (lines: string[]) => string[], registry = registryPath()): Promise<boolean> {
 	mkdirSync(dirname(registry), { recursive: true })
 	const done = await withFileLock(`${registry}.lock`, { staleMs: LOCK_STALE_MS, waitMs: LOCK_WAIT_MS }, () => {
-		const current = existsSync(registry) ? readFileSync(registry, "utf8") : `${REGISTRY_HEADER.join("\n")}\n`
-		replaceRegistry(registry, mutate(current.split("\n")).join("\n"))
+		const file = registryFile(registry)
+		const current = existsSync(file) ? readFileSync(file, "utf8") : `${REGISTRY_HEADER.join("\n")}\n`
+		replaceRegistry(file, mutate(current.split("\n")).join("\n"))
 	})
 	return done !== undefined
 }

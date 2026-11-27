@@ -5,6 +5,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
+	readFileSync,
 	renameSync,
 	rmSync,
 	statSync,
@@ -67,25 +68,28 @@ test("a holder whose lock was reclaimed neither renews nor removes the new one",
 
 test("of two processes reclaiming one stale lock, only one holds the lock at a time", async () => {
 	const lock = join(dir, "e.lock")
-	const [aIn, aOut] = ["e.a-in", "e.a-out"].map((f) => join(dir, f))
+	const [aIn, aOut, go] = ["e.a-in", "e.a-out", "e.go"].map((f) => join(dir, f))
 	writeFileSync(lock, "a dead holder")
 	const old = (Date.now() - 120_000) / 1000
 	utimesSync(lock, old, old)
-	// A takes the lock with the real calls and holds it for 1.5 s.
-	const holder = `import { writeFileSync } from "node:fs"
+	// A takes the lock with the real calls and holds it until B has put it back (or for 5 s).
+	const holder = `import { existsSync, writeFileSync } from "node:fs"
 	import { withFileLock } from ${JSON.stringify(join(import.meta.dir, "lock.ts"))}
 	await withFileLock(${JSON.stringify(lock)}, { staleMs: 60_000, waitMs: 10_000 }, async () => {
 		writeFileSync(${JSON.stringify(aIn)}, "")
-		await Bun.sleep(1_500)
+		for (const end = Date.now() + 5_000; !existsSync(${JSON.stringify(go)}) && Date.now() < end; ) await Bun.sleep(10)
 		writeFileSync(${JSON.stringify(aOut)}, "")
 	})`
 	let a: ReturnType<typeof Bun.spawn> | undefined
-	// B judges the dead holder's lock stale, then stalls before its first change to it, long enough for A
-	// to reclaim the lock and take it (or for 3 s, if A cannot).
+	let aHeld = false
+	let restored: string | undefined
+	// B judges the dead holder's lock stale, then stalls before its first change to it until A has
+	// reclaimed the lock and holds it (or for 5 s, which fails the test).
 	const stall = () => {
 		if (a !== undefined) return
 		a = Bun.spawn(["bun", "-e", holder], { stdout: "inherit", stderr: "inherit" })
-		for (const end = Date.now() + 3_000; !existsSync(aIn) && Date.now() < end; ) Bun.sleepSync(10)
+		for (const end = Date.now() + 5_000; !existsSync(aIn) && Date.now() < end; ) Bun.sleepSync(10)
+		aHeld = existsSync(aIn)
 	}
 	const stalls: LockFs = {
 		stat: (path) => statSync(path),
@@ -93,7 +97,11 @@ test("of two processes reclaiming one stale lock, only one holds the lock at a t
 			stall()
 			renameSync(from, to)
 		},
-		link: (existing, path) => linkSync(existing, path),
+		link: (existing, path) => {
+			linkSync(existing, path)
+			restored = readFileSync(path, "utf8")
+			writeFileSync(go, "")
+		},
 		unlink: (path) => {
 			stall()
 			unlinkSync(path)
@@ -102,7 +110,7 @@ test("of two processes reclaiming one stale lock, only one holds the lock at a t
 	let overlapped = false
 	const b = await withFileLock(
 		lock,
-		{ staleMs: 60_000, waitMs: 10_000 },
+		{ staleMs: 60_000, waitMs: 15_000 },
 		() => {
 			overlapped = existsSync(aIn) && !existsSync(aOut)
 		},
@@ -110,9 +118,29 @@ test("of two processes reclaiming one stale lock, only one holds the lock at a t
 	)
 	expect(b).toBeDefined()
 	expect(await a?.exited).toBe(0)
-	expect(overlapped).toBe(false)
+	expect({ aHeld, overlapped }).toEqual({ aHeld: true, overlapped: false })
+	// B found A's live lock where the dead one had been and put it back, token and all.
+	expect(restored?.startsWith(`${a?.pid}:`)).toBe(true)
 	expect(readdirSync(dir).filter((f) => f.startsWith("e.lock"))).toEqual([])
 }, 30_000)
+
+test("a reclaimer that cannot judge the lock it moved aside puts it back", async () => {
+	const lock = join(dir, "f.lock")
+	writeFileSync(lock, "a holder")
+	const old = (Date.now() - 120_000) / 1000
+	utimesSync(lock, old, old)
+	const blind: LockFs = {
+		stat: (path) => {
+			if (path !== lock) throw new Error("EIO")
+			return statSync(path)
+		},
+		rename: (from, to) => renameSync(from, to),
+		link: (existing, path) => linkSync(existing, path),
+		unlink: (path) => unlinkSync(path),
+	}
+	expect(await withFileLock(lock, { staleMs: 60_000, waitMs: 300 }, () => 1, blind)).toBeUndefined()
+	expect(readFileSync(lock, "utf8")).toBe("a holder")
+})
 
 test("a lock older than staleMs is reclaimed", async () => {
 	const lock = join(dir, "b.lock")
