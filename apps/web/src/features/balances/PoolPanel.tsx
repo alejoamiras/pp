@@ -32,6 +32,15 @@ function InFlightNote({ record }: { record: BridgeRecordView }) {
 	)
 }
 
+/** This page's own send, still waiting on the wallet: its bridge screen follows it, so nothing is offered here. */
+function SendingNote() {
+	return (
+		<Callout tone="wait" title="Bridge in progress" role="status">
+			<p>This page is sending this note's bridge. Follow it on the bridge screen.</p>
+		</Callout>
+	)
+}
+
 /** A record the chain shows nothing for: Check again asks the session without the override; Send again passes it. */
 function UncertainNote({ note, record }: { note: PoolNoteView; record: BridgeRecordView }) {
 	const { bridge, go } = useApp()
@@ -62,6 +71,7 @@ function NoteItem({ row, pool }: { row: NoteRow; pool: PoolState }) {
 	const { note } = row
 	const inFlight = pool.inFlight.get(note.commitment)
 	const uncertain = pool.uncertain.get(note.commitment)
+	const sending = pool.sending.has(note.commitment)
 	const open = (n: PoolNoteView) => {
 		bridge.open(n)
 		go("bridge")
@@ -82,6 +92,8 @@ function NoteItem({ row, pool }: { row: NoteRow; pool: PoolState }) {
 			</div>
 			{inFlight ? (
 				<InFlightNote record={inFlight} />
+			) : sending ? (
+				<SendingNote />
 			) : uncertain ? (
 				<UncertainNote note={note} record={uncertain} />
 			) : row.blocked ? (
@@ -148,8 +160,8 @@ function NoNotes() {
 }
 
 function PoolNotes({ session }: { session: Session }) {
-	const { connection } = useApp()
-	const pool = usePool(session, connection?.accounts ?? [])
+	const { connection, bridge } = useApp()
+	const pool = usePool(session, connection?.accounts ?? [], bridge.submitting)
 	if (pool.isPending) return <Callout tone="wait" busy role="status" title="Reading your pool notes…" />
 	if (pool.isError)
 		return (
@@ -181,8 +193,8 @@ function PoolNotes({ session }: { session: Session }) {
 }
 
 function PoolTotal({ session }: { session: Session }) {
-	const { source, connection } = useApp()
-	const notes = usePool(session, connection?.accounts ?? []).data?.notes
+	const { source, connection, bridge } = useApp()
+	const notes = usePool(session, connection?.accounts ?? [], bridge.submitting).data?.notes
 	if (!notes) return null
 	const total = poolNotesView(notes).rows.reduce((sum, r) => sum + r.note.value, 0n)
 	return <Amount value={total} decimals={source.deployment.decimals} symbol={source.deployment.symbol} size="total" />

@@ -144,6 +144,7 @@ export function useBridgeFlow({ settled, ...deps }: Deps) {
 			setSubject(null)
 		}, [fresh]),
 		hold: useCallback((notes: ReadonlySet<bigint>) => driver?.hold(notes), [driver]),
+		submitting: useCallback((): ReadonlySet<bigint> => driver?.submitting() ?? new Set(), [driver]),
 	}
 }
 

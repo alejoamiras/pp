@@ -53,5 +53,8 @@ describe("reconciling bridge records", () => {
 			["forgotten", "mined"],
 		])
 		expect(r.consumed.map((b) => b.id)).toEqual(["gone"])
+		// A note this page is sending owns its hashless record; one pending at the RPC stays in flight.
+		const live = reconcile(records, recovered, unspent, txs, new Set([11n, 13n]))
+		expect([[...live.sending.keys()], [...live.uncertain.keys()], [...live.inFlight.keys()]]).toEqual([[11n], [12n], [13n]])
 	})
 })

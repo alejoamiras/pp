@@ -82,7 +82,7 @@ export function AppProvider({ source, frame, children }: Props) {
 	const tx = useTx(source, refresh)
 	const session = eth.status.kind === "in" ? eth.status.session : null
 	const bridge = useBridgeFlow({ source, live, session, canClaim: () => side.refusal("claim") === null, frame, settled: refresh })
-	const pool = usePool(session, side.connection?.accounts ?? []).data
+	const pool = usePool(session, side.connection?.accounts ?? [], bridge.submitting).data
 	const { hold } = bridge
 
 	useEffect(() => {

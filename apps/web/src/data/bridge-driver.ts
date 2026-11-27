@@ -437,6 +437,8 @@ export function createBridgeDriver(deps: DriverDeps) {
 			submit(st, input, dispatch, signal, flags),
 		follow: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => follow(st, record, dispatch, signal),
 		claim: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => claim(st, record, dispatch, signal),
+		/** The notes with a Submit under way here, which reconciliation must not take for unconfirmed. */
+		submitting: (): ReadonlySet<bigint> => new Set(st.active),
 		/** The notes reconciliation found pending at the RPC; each refuses a Submit until it leaves the set. */
 		hold: (notes: ReadonlySet<bigint>) => {
 			st.inFlight = notes

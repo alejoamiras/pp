@@ -196,6 +196,19 @@ describe("the bridge screen", () => {
 		expect(screen.queryByRole("button", { name: "Claim on Aztec" })).toBeNull()
 	})
 
+	test("this page's own send waiting on the wallet shows on Balances as in progress with no action, and keeps its screen", async () => {
+		const app = await openBridge()
+		app.control.hangNext("send")
+		await submit(app)
+		await screen.findByText("Sent: waiting for the Ethereum transaction to be mined")
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		await waitFor(() => noteRow(NOTE).getByText("Bridge in progress"))
+		expect(noteRow(NOTE).queryByText("We can't see your transaction yet")).toBeNull()
+		expect(noteRow(NOTE).queryAllByRole("button")).toEqual([])
+		await app.user.click(screen.getByRole("button", { name: "Back to the bridge in progress" }))
+		screen.getByText("Sent: waiting for the Ethereum transaction to be mined")
+	})
+
 	test("a send pending at the RPC shows its hash on the bridge screen while it waits, with no send offered", async () => {
 		const app = await openBridge()
 		app.control.failNext("send", "PENDING")

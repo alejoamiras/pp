@@ -11,11 +11,14 @@ import type { DataSource } from "../data/source"
 
 export const POOL_KEY = "pool"
 
-/** `recipients`: the connected Aztec accounts, whose bridges `recover` finds even with no journal here. */
-export function usePool(session: Session | null, recipients: readonly AztecAddress[]) {
+/**
+ * `recipients`: the connected Aztec accounts, whose bridges `recover` finds even with no journal here;
+ * `submitting`: the notes this page is sending, read at each fetch.
+ */
+export function usePool(session: Session | null, recipients: readonly AztecAddress[], submitting: () => ReadonlySet<bigint>) {
 	return useQuery({
 		queryKey: [POOL_KEY, session?.owner ?? null, ...recipients],
-		queryFn: () => readPool(session as Session, recipients),
+		queryFn: () => readPool(session as Session, recipients, submitting),
 		enabled: session !== null,
 	})
 }

@@ -19,6 +19,8 @@ export interface PoolState {
 	inFlight: ReadonlyMap<bigint, BridgeRecordView>
 	/** Records the chain shows nothing for while their note is unspent, by commitment: check or send again. */
 	uncertain: ReadonlyMap<bigint, BridgeRecordView>
+	/** The same, for a note this page is sending now, by commitment: its bridge screen follows it, nothing else is sent. */
+	sending: ReadonlyMap<bigint, BridgeRecordView>
 	/** Records whose note was spent without this bridge's event. */
 	consumed: BridgeRecordView[]
 	/** Each bridge's or open record's note (spent once mined), by record id: where its label and value come from. */
@@ -41,17 +43,20 @@ function classify(seen: boolean, tx: L1TxState | undefined, unspent: boolean): P
 
 /**
  * `recovered` is `recover` for the recipients, `unspent` maps each unspent note's nullifier to the note,
- * and `txs` holds the RPC's answer for each open record's hash.
+ * `txs` holds the RPC's answer for each open record's hash, and `submitting` lists the notes this page
+ * is sending now. A send waiting on its wallet has a record with no hash, which is unconfirmed only once
+ * no live Submit owns it.
  */
 export function reconcile(
 	records: readonly BridgeRecordView[],
 	recovered: readonly BridgeRecordView[],
 	unspent: ReadonlyMap<bigint, PoolNoteView>,
 	txs: ReadonlyMap<Hash, L1TxState>,
-): Pick<PoolState, "bridges" | "inFlight" | "uncertain" | "consumed"> {
+	submitting: ReadonlySet<bigint> = new Set(),
+): Pick<PoolState, "bridges" | "inFlight" | "uncertain" | "sending" | "consumed"> {
 	const bridges: BridgeRecordView[] = []
-	const inFlight = new Map<bigint, BridgeRecordView>()
-	const uncertain = new Map<bigint, BridgeRecordView>()
+	const open = { "in-flight": new Map<bigint, BridgeRecordView>(), uncertain: new Map<bigint, BridgeRecordView>() }
+	const sending = new Map<bigint, BridgeRecordView>()
 	const consumed: BridgeRecordView[] = []
 	for (const r of records.filter(isOpen)) {
 		const seen = recovered.find((x) => x.id === r.id)
@@ -59,11 +64,11 @@ export function reconcile(
 		const kind = classify(seen !== undefined, r.l1TxHash ? txs.get(r.l1TxHash) : undefined, note !== undefined)
 		if (kind === "bridge") bridges.push(seen ?? r)
 		else if (kind === "consumed" || note === undefined) consumed.push(r)
-		else (kind === "in-flight" ? inFlight : uncertain).set(note.commitment, r)
+		else (kind === "uncertain" && submitting.has(note.commitment) ? sending : open[kind]).set(note.commitment, r)
 	}
 	const known = new Set(records.map((r) => r.id))
 	bridges.push(...recovered.filter((x) => !known.has(x.id)))
-	return { bridges, inFlight, uncertain, consumed }
+	return { bridges, inFlight: open["in-flight"], uncertain: open.uncertain, sending, consumed }
 }
 
 export interface Prior {
@@ -83,12 +88,21 @@ export async function priorAttempt(session: Session, commitment: bigint): Promis
 	return { kind: classify(seen !== undefined, tx, note !== undefined && !GONE.has(note.status)), record: seen ?? r }
 }
 
-/** Reads notes, records and what the chain shows for them; `connected` are the Aztec accounts to recover for. */
-export async function readPool(session: Session, connected: readonly AztecAddress[]): Promise<PoolState> {
+/**
+ * Reads notes, records and what the chain shows for them; `connected` are the Aztec accounts to recover
+ * for, and `submitting` the notes this page is sending now (read after the records, so a send that
+ * settles meanwhile is not taken for a live one).
+ */
+export async function readPool(
+	session: Session,
+	connected: readonly AztecAddress[],
+	submitting: () => ReadonlySet<bigint> = () => new Set(),
+): Promise<PoolState> {
 	const [notes, records] = await Promise.all([session.notes(), session.records()])
 	const open = records.filter(isOpen)
 	const recipients = [...new Set([...connected, ...open.map((r) => r.recipient)])]
-	if (recipients.length === 0) return { notes, bridges: [], inFlight: new Map(), uncertain: new Map(), consumed: [], noteOf: new Map() }
+	if (recipients.length === 0)
+		return { notes, bridges: [], inFlight: new Map(), uncertain: new Map(), sending: new Map(), consumed: [], noteOf: new Map() }
 	const hashes = [...new Set(open.flatMap((r) => (r.l1TxHash ? [r.l1TxHash] : [])))]
 	const [nullifiers, recovered, states] = await Promise.all([
 		Promise.all(notes.map((n) => session.nullifierOf(n.commitment))),
@@ -97,7 +111,8 @@ export async function readPool(session: Session, connected: readonly AztecAddres
 	])
 	const byNullifier = new Map(notes.map((n, i) => [nullifiers[i] as bigint, n]))
 	const unspent = new Map([...byNullifier].filter(([, n]) => !GONE.has(n.status)))
-	const found = reconcile(records, recovered.flat(), unspent, new Map(hashes.map((h, i) => [h, states[i] as L1TxState])))
+	const txs = new Map(hashes.map((h, i) => [h, states[i] as L1TxState]))
+	const found = reconcile(records, recovered.flat(), unspent, txs, submitting())
 	const noteOf = new Map(
 		[...open, ...found.bridges].flatMap((r) => {
 			const note = byNullifier.get(r.nullifier)
