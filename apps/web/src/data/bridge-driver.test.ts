@@ -199,9 +199,30 @@ describe("each refusal sends nothing", () => {
 			throw new Error("the node's socket closed")
 		}
 		await h.preflight()
-		expect(h.machine().failure).toMatchObject({ code: "NOT_SENT", during: "preparing", offer: "prove-again" })
+		expect(h.machine().failure).toMatchObject({ code: "NOT_SENT", during: "preparing", offer: "prepare-again" })
 		expect(h.session.prove).not.toHaveBeenCalled()
 		expect(h.sent).toEqual([])
+	})
+
+	// Before an amount is chosen there is no attempt to submit again: an offer that would starts the form over.
+	test.each([
+		["NOT_SENT", "prepare-again"],
+		["PROVING_FILES_FAILED", "prepare-again"],
+		["RPC_FAILED", "prepare-again"],
+		["RPC_INCONSISTENT", "prepare-again"],
+		["DEPLOYMENT_MISMATCH", "prepare-again"],
+		["CHAIN_MISMATCH", "prepare-again"],
+		["SENDER_IS_OWNER", "prepare-again"],
+		["FEE_PATH_FAILED", "prepare-again"],
+		["NOT_GRANTED", "none"],
+		["UNKNOWN", "none"],
+	] as const)("a preflight that fails with %s offers %s", async (code, offer) => {
+		const h = harness()
+		h.session.preflight = async () => {
+			throw code === "NOT_SENT" ? new Error("the node's socket closed") : new BridgeFailure(code)
+		}
+		await h.preflight()
+		expect(h.machine().failure).toMatchObject({ code, during: "preparing", offer })
 	})
 
 	test.each([

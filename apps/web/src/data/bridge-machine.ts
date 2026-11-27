@@ -110,6 +110,9 @@ const OFFERS: Partial<Record<UiCode, Offer>> = {
 
 export const offerFor = (code: UiCode): Offer => OFFERS[code] ?? "prove-again"
 
+/** Offers whose button submits the attempt again, so they need the amount and recipient it was frozen with. */
+export const RESUBMITS: ReadonlySet<Offer> = new Set(["prove-again", "send-again", "switch-chain", "switch-account"])
+
 const isError = (step: UiStep): step is { error: string } => typeof step === "object"
 const at = (s: BridgeMachine, step: PlainStep, ...phases: Phase[]) => !isError(s.step) && s.step === step && phases.includes(s.phase)
 const failedWith = (s: BridgeMachine, ...offers: Offer[]) => s.phase === "failed" && s.failure !== null && offers.includes(s.failure.offer)

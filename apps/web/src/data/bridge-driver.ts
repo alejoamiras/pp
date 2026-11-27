@@ -7,7 +7,7 @@
 import { type Address, type Hex, isAddressEqual } from "viem"
 import type { AztecAddress, BridgeRecordView, PoolNoteView } from "./stack-types"
 import type { BridgeEvent, Failure } from "./bridge-machine"
-import { offerFor } from "./bridge-machine"
+import { offerFor, RESUBMITS } from "./bridge-machine"
 import { codeOf, isUserRejection, isWalletRefusal, type UiCode } from "./errors"
 import { parseAztecAddress } from "./parse"
 import type { Attempt, Deployment, Proved, Sent, Session, SubmitHooks, Timer } from "./ports"
@@ -206,9 +206,11 @@ async function preflight(st: State, rawRecipient: string, dispatch: Dispatch, si
 	try {
 		await runPreflight(st, recipient, epoch, dispatch, true)
 	} catch (err) {
+		if (signal.aborted) return
 		// The preflight and the warm-up only read and simulate: an uncoded failure still sent nothing.
-		if (!signal.aborted) dispatch(failure(codeOf(err) ?? "NOT_SENT", "preparing"))
-		return
+		const code = codeOf(err) ?? "NOT_SENT"
+		// They run before an amount is chosen, so there is no attempt to submit again: the retry starts the form over.
+		return dispatch(failure(code, "preparing", RESUBMITS.has(offerFor(code)) ? { offer: "prepare-again" } : {}))
 	}
 	const now = st.deps.context()
 	if (!signal.aborted && (now.epoch !== epoch || !now.aztecAccounts.includes(recipient))) {
