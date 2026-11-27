@@ -52,7 +52,7 @@ with warm package and toolchain caches.
 | Install | `bun install --frozen-lockfile` | 4 s |
 | Lint (Biome + complexity) | `bun run lint` | < 1 s |
 | Typecheck | `bun run typecheck:all` | 23 s |
-| Unit (every workspace) | `bun run test:all` | 16 s |
+| Unit (every workspace, one at a time) | `bun run test:all` | 2.5 min |
 | CI-gating tests | `bun run test:ci-gating` | < 1 s |
 | Workflow lint | `bun run lint:actions` | < 1 s |
 | Quality and Web build without the pool checkout | `bun run test:unfetched` | 3 min |
@@ -127,7 +127,10 @@ against the keyless public endpoint committed in that file; the real-wallet tier
   mistaking Bun's ES-module namespaces for CommonJS. `bun:test` is for files that load no
   `@aztec-labs/*` package, directly or through a workspace: on a cold transpiler cache, which every CI
   runner has, it breaks `@aztec-labs/foundation` at import. `test:all`, `test:ci-gating` and the kit's
-  runner set `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` so a local run starts cold too.
+  runner set `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` so a local run starts cold too. `test:all` runs one
+  workspace at a time: each vitest pool sizes itself to the machine's cores, and two at once on a
+  4-core runner push jsdom tests past their timeouts. It takes no arguments (Bun reads them as more
+  script names); to filter, run one workspace's `test`.
 - **Biome** lints and formats. `noExplicitAny` is an error: use `unknown` and narrow.
 - **Commits** are Conventional Commits with a lower-case subject, checked by the commit-msg hook and
   in CI. The pre-commit hook runs Biome on staged files, the absolute-path guard and the complexity

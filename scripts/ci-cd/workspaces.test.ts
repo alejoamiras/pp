@@ -11,7 +11,21 @@ const workspaces: string[] = root.workspaces
 	.map((manifest: string) => read(manifest).name)
 	.sort()
 
-// A filter that matches no workspace makes `bun run --filter` exit 0 having run nothing.
+// Each workspace's vitest pool sizes itself to the machine's cores, so two pools at once on a 4-core
+// runner push jsdom tests past their timeouts; without `--no-exit-on-error` one failure skips the rest.
+// `--filter` passes over a workspace without the script, so every workspace must declare one.
+test("test:all runs every workspace's test script, one workspace at a time", () => {
+	expect(root.scripts["test:all"]).toBe(
+		"BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun run --filter '@pp/*' --sequential --no-exit-on-error test",
+	)
+	for (const pattern of root.workspaces as string[])
+		for (const manifest of new Bun.Glob(`${pattern}/package.json`).scanSync({ cwd: ROOT })) {
+			const script = read(manifest).scripts?.test
+			expect(typeof script === "string" && script.trim() !== "", `${manifest} declares a test script`).toBe(true)
+		}
+})
+
+// `bun run --filter` passes over a workspace its pattern misses without a word.
 test("the all-workspace scripts select every workspace", () => {
 	expect(workspaces).toEqual([
 		"@pp/asp-bot",
