@@ -76,7 +76,9 @@ export function reconcile(
 		const note = notes.get(r.nullifier)
 		const kind = classify(verified(r, seen), r.l1TxHash ? txs.get(r.l1TxHash) : undefined, isUnspent(note))
 		if (kind === "bridge") bridges.push(seen ?? r)
-		else if (kind === "consumed" || note === undefined) consumed.push(r)
+		else if (kind === "consumed") consumed.push(r)
+		// Only our own mined hash gets here without its note, and nothing keys it until its event shows.
+		else if (note === undefined) continue
 		else (kind === "uncertain" && submitting.has(note.commitment) ? sending : open[kind]).set(note.commitment, r)
 	}
 	const known = new Set(records.map((r) => r.id))

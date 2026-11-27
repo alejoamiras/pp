@@ -38,6 +38,7 @@ describe("reconciling bridge records", () => {
 			{ ...verified, id: "verified", nullifier: 11n },
 			record("landed-unseen", 12n, { l1TxHash: hash(12) }),
 			record("spent-reverted", 13n, { l1TxHash: hash(13) }),
+			record("unindexed", 14n, { l1TxHash: hash(14) }),
 		]
 		const recovered = [
 			record("landed", 5n, { l1TxHash: hash(5), step: "mined" }),
@@ -54,10 +55,11 @@ describe("reconciling bridge records", () => {
 			[hash(10), "reverted"],
 			[hash(12), "mined"],
 			[hash(13), "reverted"],
+			[hash(14), "mined"],
 		])
 		const r = reconcile(records, recovered, notes, txs)
-		// A mined hash with no verified event waits, even once its note reads spent (the event read can lag);
-		// the latest hash reverting leaves the earlier attempt unconfirmed.
+		// A mined hash with no verified event waits, even once its note reads spent or the snapshot lacks it
+		// (the event read can lag); the latest hash reverting leaves the earlier attempt unconfirmed.
 		expect([...r.uncertain.keys()]).toEqual([11n, 12n, 20n])
 		expect([...r.inFlight].map(([n, x]) => [n, x.l1TxHash])).toEqual([
 			[13n, hash(3)],
