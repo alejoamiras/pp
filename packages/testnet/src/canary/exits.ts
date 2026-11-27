@@ -6,9 +6,25 @@ import { TxHash } from "@aztec-labs/stdlib/tx"
 import { type BridgeClient, type ExitStatus, type ExitTicket, PROCESSOR_PORTAL_ABI } from "@pp/bridge-core"
 import type { AztecNode } from "@aztec-labs/stdlib/interfaces/client"
 import { type Address, type Hash, type Hex, isAddressEqual, type Log, parseEventLogs } from "viem"
+import { GuardError } from "../errors"
+import type { Mode } from "../guards"
 import { CanaryError } from "../report"
 
 export const EPOCH_PROOF_BUDGET_MS = 75 * 60_000
+
+/**
+ * The epoch-proof wait's budget: 75 min, which a rehearsal shortens with
+ * `PP_TESTNET_EPOCH_PROOF_BUDGET_MS` to stage an exit 3 in minutes; a live run never reads the variable.
+ * @throws GuardError `env` when a rehearsal's value is not a positive whole number of milliseconds
+ */
+export function epochProofBudgetMs(mode: Mode, env: NodeJS.ProcessEnv): number {
+	const v = mode.kind === "live" ? undefined : env.PP_TESTNET_EPOCH_PROOF_BUDGET_MS
+	if (v === undefined || v === "") return EPOCH_PROOF_BUDGET_MS
+	if (!/^[1-9][0-9]{0,9}$/.test(v))
+		throw new GuardError("env", "PP_TESTNET_EPOCH_PROOF_BUDGET_MS takes a positive whole number of milliseconds")
+	return Number(v)
+}
+
 export const EPOCH_PROOF_POLL_MS = 15_000
 /** Consecutive failed polls the wait absorbs; the next one ends it. */
 export const MAX_FAULTS = 5

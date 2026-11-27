@@ -6,7 +6,17 @@ import { describe, expect, it } from "vitest"
 import { GuardError } from "../guards"
 import { scratchHome } from "../test-support"
 import { canaryArgs } from "./args"
-import { type ExitIo, MAX_FAULTS, nextPoll, type Observation, paysTicket, ticketsOf, waitEpochProof } from "./exits"
+import {
+	EPOCH_PROOF_BUDGET_MS,
+	epochProofBudgetMs,
+	type ExitIo,
+	MAX_FAULTS,
+	nextPoll,
+	type Observation,
+	paysTicket,
+	ticketsOf,
+	waitEpochProof,
+} from "./exits"
 
 const h = (n: number) => `0x${n.toString(16).padStart(64, "0")}` as Hex
 const a = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address
@@ -123,5 +133,17 @@ describe("the epoch-proof wait", () => {
 		await expect(wait(io(() => Promise.reject(new Error("503"))))).rejects.toThrow(/^READ_FAULT/)
 		const ready: ExitIo = { effect: async () => true, status: async () => "ready" }
 		await expect(wait(ready)).resolves.toBe("ready")
+	})
+
+	it("lasts 75 min live whatever the environment; only a rehearsal shortens it, and never to a malformed value", () => {
+		const rehearse = { kind: "rehearse", manifest: "m.json" } as const
+		const env = { PP_TESTNET_EPOCH_PROOF_BUDGET_MS: "40000" }
+		expect([epochProofBudgetMs(LIVE, env), epochProofBudgetMs(rehearse, env), epochProofBudgetMs(rehearse, {})]).toEqual([
+			EPOCH_PROOF_BUDGET_MS,
+			40_000,
+			EPOCH_PROOF_BUDGET_MS,
+		])
+		for (const bad of ["0", "-1", "1e5", "40s"])
+			expect(() => epochProofBudgetMs(rehearse, { PP_TESTNET_EPOCH_PROOF_BUDGET_MS: bad })).toThrow(GuardError)
 	})
 })

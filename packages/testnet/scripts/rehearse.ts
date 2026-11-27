@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
-// bun run --cwd packages/testnet rehearse [fork | stack | pause]
+// bun run --cwd packages/testnet rehearse [fork | stack | canary-failures | pause]
 // Rehearses the testnet commands, never against a live network and never with the key file. Part `fork`
-// runs on an anvil fork of Sepolia this run owns, with keys generated into a scratch home. Part `stack`
-// runs on the local stack at `PP_STACK_MANIFEST`, or boots one through bridge-core's with-stack, which
-// stops it and checks it left nothing behind. Part `pause` runs the guardian's failure and recovery cases
-// on bare local anvils with anvil's well-known keys.
+// runs on an anvil fork of Sepolia this run owns, with keys generated into a scratch home. Parts `stack`
+// and `canary-failures` run on the local stack at `PP_STACK_MANIFEST`, or boot one through bridge-core's
+// with-stack, which stops it and checks it left nothing behind. Part `pause` runs the guardian's failure
+// and recovery cases on bare local anvils with anvil's well-known keys.
 import { spawnSync } from "node:child_process"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -12,12 +12,18 @@ import { fileURLToPath } from "node:url"
 type Part = (log: (line: string) => void) => Promise<object>
 
 const manifest = process.env.PP_STACK_MANIFEST
-// Loaded on demand: parts `fork` and `stack` import pp-env's entries, which need the pool checkout; `pause` does not.
+const ON_STACK = new Set(["stack", "canary-failures"])
+// Loaded on demand: parts `fork`, `stack` and `canary-failures` import pp-env's entries, which need the
+// pool checkout; `pause` does not.
 const PARTS: Record<string, () => Promise<Part>> = {
 	fork: async () => (await import("../src/rehearse/fork")).forkRehearsal,
 	stack: async () => {
 		const { stackRehearsal } = await import("../src/rehearse/stack")
 		return (log) => stackRehearsal(manifest as string, log)
+	},
+	"canary-failures": async () => {
+		const { canaryFailuresRehearsal } = await import("../src/rehearse/canary-failures")
+		return (log) => canaryFailuresRehearsal(manifest as string, log)
 	},
 	pause: async () => (await import("../src/rehearse/pause")).pauseRehearsal,
 }
@@ -33,10 +39,10 @@ if (process.env.SEED !== undefined) {
 	console.error("refused: SEED is set, which makes Aztec's randomness predictable; unset it")
 	process.exit(2)
 }
-if (part === "stack" && !manifest) {
+if (ON_STACK.has(part) && !manifest) {
 	const withStack = join(dirname(fileURLToPath(import.meta.resolve("@pp/bridge-core"))), "..", "scripts", "with-stack.ts")
 	// with-stack runs each argument as one `sh -c` command.
-	const command = `'${process.execPath}' '${fileURLToPath(import.meta.url)}' stack`
+	const command = `'${process.execPath}' '${fileURLToPath(import.meta.url)}' ${part}`
 	const run = spawnSync(process.execPath, [withStack, command], { stdio: "inherit" })
 	process.exit(run.status ?? 1)
 }

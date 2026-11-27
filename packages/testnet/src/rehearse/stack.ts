@@ -38,7 +38,7 @@ const L1_INDEX: Record<string, number> = {
 	CANARY_OWNER_KEY: 13,
 }
 const PERMISSIONED_ABI = parseAbi(["function ACCESS_ROUTER() view returns (address)"])
-const AMOUNTS = { debit: 100n, note: 100n, bridge: 10n, shield: 2n }
+export const AMOUNTS = { debit: 100n, note: 100n, bridge: 10n, shield: 2n }
 const BOT_READY_MS = 15 * 60_000
 
 export type StackResult = { gas: Partial<Record<FundedRole, bigint>>; firstPost: bigint; restartPost: bigint }
@@ -57,7 +57,7 @@ function rehearsalKeys(): Record<string, Hex> {
 }
 
 /** The scratch file's network from the stack's manifest and its node, and the stack's pool as `pool`. */
-async function stackFile(s: Scratch, manifestPath: string, runId: string): Promise<void> {
+export async function stackFile(s: Scratch, manifestPath: string, runId: string): Promise<void> {
 	const m = parseStackManifest(JSON.parse(readFileSync(manifestPath, "utf8")))
 	const info = await createAztecNodeClient(m.aztecNode).getNodeInfo()
 	const a = info.l1ContractAddresses
@@ -88,7 +88,7 @@ async function stackFile(s: Scratch, manifestPath: string, runId: string): Promi
 }
 
 /** The bot up until its first checkpointed post. */
-async function startBot(
+export async function startBot(
 	s: Scratch,
 	dir: string,
 	n: number,
@@ -98,11 +98,11 @@ async function startBot(
 	const bot = startCli("bot", [s.file, ...s.modeArgs], s.env, log)
 	cleanup.push(async () => void (await killGroup(bot)))
 	const ready = await untilEvent(log, "bot-ready", bot, BOT_READY_MS)
-	s.log(`[stack] bot ${n} posted sequence ${ready.sequence} (${ready.txHash})`)
+	s.log(`[${s.tag}] bot ${n} posted sequence ${ready.sequence} (${ready.txHash})`)
 	return { bot, ready, log }
 }
 
-async function stopBot(s: Scratch, b: { bot: OwnedChild; log: string }): Promise<void> {
+export async function stopBot(s: Scratch, b: { bot: OwnedChild; log: string }): Promise<void> {
 	const stopped = await killGroup(b.bot)
 	const out = readFileSync(b.log, "utf8")
 	s.outputs.push(out)
@@ -111,7 +111,7 @@ async function stopBot(s: Scratch, b: { bot: OwnedChild; log: string }): Promise
 }
 
 /** `deploy`, then `verify-deployment` on the promoted bridge; returns its factory. */
-async function deployBridge(s: Scratch): Promise<`0x${string}`> {
+export async function deployBridge(s: Scratch): Promise<`0x${string}`> {
 	promote(s, await must(s, "deploy", [s.file]), "deployed")
 	await must(s, "verify-deployment", [s.file])
 	return loadScratch(s).bridge?.factory as `0x${string}`
@@ -125,9 +125,11 @@ async function canary(s: Scratch, post: Event): Promise<void> {
 	s.outputs.push(readFileSync(String(report.path), "utf8"))
 }
 
-export async function stackRehearsal(manifestPath: string, log: (line: string) => void): Promise<StackResult> {
-	const cleanup = new CleanupStack()
-	const runId = `pp-testnet-rehearse-stack-${process.pid}`
+export type StackRun = { runId: string; dir: string; keys: Record<string, Hex>; s: Scratch }
+
+/** A part's run directory under `~/.cache/pp`, its keys passed as `PP_REHEARSE_<name>`, and its scratch file's path. */
+export function stackRun(tag: string, manifestPath: string, log: (line: string) => void): StackRun {
+	const runId = `pp-testnet-rehearse-${tag}-${process.pid}`
 	const dir = join(homedir(), ".cache", "pp", "testnet", "rehearse", runId)
 	mkdirSync(dir, { recursive: true, mode: 0o700 })
 	const keys = rehearsalKeys()
@@ -137,7 +139,13 @@ export async function stackRehearsal(manifestPath: string, log: (line: string) =
 		PP_TESTNET_RUN_ROOT: join(dir, "runs"),
 		...Object.fromEntries(Object.entries(keys).map(([name, v]) => [`PP_REHEARSE_${name}`, v])),
 	}
-	const s: Scratch = { file: join(dir, "testnet-own.json"), env, modeArgs: ["--rehearse", manifestPath], tag: "stack", log, outputs: [] }
+	const s: Scratch = { file: join(dir, "testnet-own.json"), env, modeArgs: ["--rehearse", manifestPath], tag, log, outputs: [] }
+	return { runId, dir, keys, s }
+}
+
+export async function stackRehearsal(manifestPath: string, log: (line: string) => void): Promise<StackResult> {
+	const cleanup = new CleanupStack()
+	const { runId, dir, keys, s } = stackRun("stack", manifestPath, log)
 	try {
 		await stackFile(s, manifestPath, runId)
 		const l1 = createPublicClient({ transport: http(loadScratch(s).network.l1Rpc) })

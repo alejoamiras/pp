@@ -12,7 +12,7 @@ import { type Hex, isAddressEqual, type PublicClient } from "viem"
 import { l1AddressOf } from "../accounts"
 import { canaryArgs, CANARY_OPTIONS, type CanaryArgs } from "../canary/args"
 import { bridgeClientOf, type CanaryContext, type ExitContext, type Full, unsettledOf } from "../canary/context"
-import type { Burn } from "../canary/exits"
+import { type Burn, epochProofBudgetMs } from "../canary/exits"
 import { DEFAULT_SHIELD, runCanary } from "../canary/run"
 import { settleListed } from "../canary/settle"
 import { liveSpendIo } from "../checked-transfer"
@@ -30,12 +30,23 @@ const SECTIONS = ["expected", "pool", "bridge"] as const
 
 function exitContext(
 	g: { d: Full; l1: PublicClient; node: AztecNode | undefined },
+	mode: Mode,
 	sender: ExitContext["sender"],
 	r: CanaryReport,
 	s: State,
 ): ExitContext {
 	if (!g.node) throw new GuardError("node", "the canary needs the Aztec node")
-	return { ...g, node: g.node, client: bridgeClientOf(g.d), sender, payee: g.d.expected.canaryOwner, report: r, ...s, log: logLine }
+	return {
+		...g,
+		node: g.node,
+		client: bridgeClientOf(g.d),
+		sender,
+		payee: g.d.expected.canaryOwner,
+		report: r,
+		...s,
+		epochProofBudgetMs: epochProofBudgetMs(mode, process.env),
+		log: logLine,
+	}
 }
 
 async function canary(file: string, mode: Mode, a: Extract<CanaryArgs, { kind: "run" }>, r: CanaryReport, s: State): Promise<void> {
@@ -52,7 +63,7 @@ async function canary(file: string, mode: Mode, a: Extract<CanaryArgs, { kind: "
 		throw new GuardError("account", `the owner key is for ${owner}, the file expects ${d.expected.canaryOwner}`)
 	const sender = l1Wallet(d, keys.CANARY_SENDER_KEY as Hex, "canary sender", d.expected.canarySender)
 	if (isAddressEqual(sender.account.address, owner)) throw new GuardError("account", "the canary sender is the owner")
-	const base = exitContext(g, sender, r, s)
+	const base = exitContext(g, mode, sender, r, s)
 	const spendIo = liveSpendIo({
 		node: base.node,
 		l1: g.l1,
@@ -70,7 +81,7 @@ async function settle(file: string, mode: Mode, r: CanaryReport, s: State): Prom
 	assertOwnTarget(g.d)
 	const key = readKeys(RUN_KEYS["canary-settle"], mode, { env: process.env }, l1AddressOf).CANARY_SENDER_KEY as Hex
 	const sender = l1Wallet(g.d, key, "canary sender", g.d.expected.canarySender)
-	await settleListed(exitContext(g, sender, r, s))
+	await settleListed(exitContext(g, mode, sender, r, s))
 }
 
 /** A failure's printable cause: the client's code, the canary's and the guards' own words, else the error's first line. */

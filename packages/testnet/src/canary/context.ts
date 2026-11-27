@@ -28,6 +28,8 @@ export type ExitContext = {
 	burns: Burn[]
 	/** Lower-case L2 hashes of the burns settled. */
 	settled: Set<string>
+	/** The one budget every burn's epoch proof shares. */
+	epochProofBudgetMs: number
 	log(line: string): void
 }
 

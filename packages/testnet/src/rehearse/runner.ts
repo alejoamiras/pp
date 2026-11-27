@@ -40,14 +40,20 @@ export function runCli(name: string, args: readonly string[], env: NodeJS.Proces
 export const startCli = (name: string, args: readonly string[], env: NodeJS.ProcessEnv, logFile: string): OwnedChild =>
 	spawnOwned(process.execPath, [`${CLI}${name}.ts`, ...args], logFile, env)
 
-/** Waits for `event` in a long-running CLI's log; fails as soon as the child exits. */
-export async function untilEvent(logFile: string, event: string, child: OwnedChild, timeoutMs: number): Promise<Event> {
+/** Waits for `event` (a name, or a test of each event with `what` naming it) in a long-running CLI's log; fails as soon as the child exits. */
+export async function untilEvent(
+	logFile: string,
+	event: string | { what: string; test: (e: Event) => boolean },
+	child: OwnedChild,
+	timeoutMs: number,
+): Promise<Event> {
 	const deadline = Date.now() + timeoutMs
+	const { what, test } = typeof event === "string" ? { what: event, test: (e: Event) => e.event === event } : event
 	for (;;) {
-		const found = eventsOf(readFileSync(logFile, "utf8")).find((e) => e.event === event)
+		const found = eventsOf(readFileSync(logFile, "utf8")).find(test)
 		if (found) return found
-		if (child.hasExited()) throw new Error(`${event} never came: the process ended (${child.exitReason()})`)
-		if (Date.now() > deadline) throw new Error(`${event} did not come within ${timeoutMs} ms`)
+		if (child.hasExited()) throw new Error(`${what} never came: the process ended (${child.exitReason()})`)
+		if (Date.now() > deadline) throw new Error(`${what} did not come within ${timeoutMs} ms`)
 		await new Promise((r) => setTimeout(r, 500))
 	}
 }

@@ -2,7 +2,7 @@ import { type ExitTicket, PUBLIC_CHAIN_TIMING } from "@pp/bridge-core"
 import { report } from "../cli/common"
 import { CanaryError } from "../report"
 import type { ExitContext } from "./context"
-import { EPOCH_PROOF_BUDGET_MS, EPOCH_PROOF_POLL_MS, exitIo, settleEach, ticketsOf, waitEpochProof } from "./exits"
+import { EPOCH_PROOF_POLL_MS, exitIo, settleEach, ticketsOf, waitEpochProof } from "./exits"
 
 /** Ticket reads after the burns before a burn without its ticket counts as a failure; the node indexes logs after the receipt. */
 const TICKET_READS = 15
@@ -35,7 +35,7 @@ export async function burnTickets(c: ExitContext, reads = TICKET_READS): Promise
 export async function epochThenSettle(c: ExitContext, tickets: readonly ExitTicket[]): Promise<void> {
 	await c.report.step("epochProof", async () => {
 		const t0 = performance.now()
-		const deadline = Date.now() + EPOCH_PROOF_BUDGET_MS
+		const deadline = Date.now() + c.epochProofBudgetMs
 		const io = exitIo(c.node, c.client)
 		for (const t of tickets) await waitEpochProof(io, t, { deadline, pollMs: EPOCH_PROOF_POLL_MS, log: c.log })
 		c.report.wait("epochProof", performance.now() - t0)
