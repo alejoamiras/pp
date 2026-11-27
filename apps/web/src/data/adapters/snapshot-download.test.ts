@@ -78,4 +78,16 @@ describe("the snapshot download", () => {
 		done.end()
 		await expect(whole).resolves.toBe("{}")
 	})
+
+	test("cancels the body of a failed answer, which would otherwise keep streaming outside the limits", async () => {
+		const failing = feed()
+		const unavailable = downloadSnapshot("http://bot/v1/snapshots/7", {
+			fetch: serving(() => new Response(failing.body, { status: 503 })),
+			timer: virtualTimer(),
+			limits: LIMITS,
+		})
+		await expect(unavailable).rejects.toMatchObject({ code: "LIST_UNAVAILABLE" })
+		await flush()
+		expect(failing.cancelled()).toBe(true)
+	})
 })

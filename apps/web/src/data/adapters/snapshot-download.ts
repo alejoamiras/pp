@@ -61,10 +61,9 @@ export async function downloadSnapshot(url: string, d: DownloadDeps): Promise<st
 		aborted.catch(() => {})
 		const request = d.fetch(url, { signal: abort.signal, cache: "no-store", redirect: "error", credentials: "omit" })
 		const res = await Promise.race([request, aborted])
-		if (res.status === 404) {
-			void res.body?.cancel().catch(() => {})
-			return null
-		}
+		// A discarded body is cancelled, or it keeps streaming past the limits that no longer watch it.
+		if (res.status === 404 || !res.ok || !res.body) void res.body?.cancel().catch(() => {})
+		if (res.status === 404) return null
 		if (!res.ok || !res.body) throw new AllowListError("LIST_UNAVAILABLE")
 		return await readCapped(res.body, limits.maxBytes, abort.signal, arm)
 	} catch (err) {
