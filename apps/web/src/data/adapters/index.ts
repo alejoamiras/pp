@@ -1,6 +1,6 @@
 /**
- * The stack behind `#data`: the deployment and endpoints from the build's stack target, Ethereum
- * through the page's injected wallet, chain time from both chains, the owner's session over
+ * The stack behind `#data`: the deployment and endpoints from the build's stack target, the asset's
+ * decimals and symbol from the factory's registration, Ethereum through the page's injected wallet, chain time from both chains, the owner's session over
  * pool-client and the bridge client, and the token's views through the connected Aztec wallet. The
  * exit and allow-list ports have no stack adapter yet and refuse.
  *
@@ -21,6 +21,7 @@ import { loadRealConnector } from "../wallet/load"
 import type { AztecDeps } from "./aztec"
 import { stackClock } from "./clock"
 import { type InjectedWallet, stackL1 } from "./l1"
+import { readToken } from "./token"
 
 const unavailable = (port: string) => (): Promise<never> => Promise.reject(new Error(`${port} has no stack adapter in this build`))
 
@@ -34,11 +35,8 @@ function aztecAddress(value: string, field: string): AztecAddress {
 	return parsed
 }
 
-/**
- * The asset's decimals and symbol are not read from chain yet: 6 is the local stack's test token's,
- * and the symbol stays empty rather than guessed.
- */
-const deployment: Deployment = {
+/** The deployment as the manifest names it; the asset's decimals and symbol come from the chain at load. */
+const deployment: Omit<Deployment, "decimals" | "symbol"> = {
 	id: `${manifest.chainId}:${manifest.bridge.portal.toLowerCase()}:${manifest.bridge.hub.toLowerCase()}`,
 	chainId: manifest.chainId,
 	stage: "2a",
@@ -46,8 +44,6 @@ const deployment: Deployment = {
 	hub: aztecAddress(manifest.bridge.hub, "bridge.hub"),
 	token: aztecAddress(manifest.bridge.token, "bridge.token"),
 	sponsoredFpc: aztecAddress(stack.sponsoredFpc, "sponsoredFpc"),
-	decimals: 6,
-	symbol: "",
 }
 
 // A local-stack build bundles the demo sender here; every other build bundles the throwing stub.
@@ -109,9 +105,8 @@ const allowList: AllowListPort = {
 	},
 }
 
-export const source: DataSource = {
+const ports: Omit<DataSource, "deployment"> = {
 	mode: "stack",
-	deployment,
 	clock: stackClock(l1.reads, target.nodeUrl),
 	timer: browserTimer,
 	l1,
@@ -121,3 +116,18 @@ export const source: DataSource = {
 	allowList,
 	wallet: loadConnector,
 }
+
+let loading: Promise<DataSource> | undefined
+/** The source once the factory's registration confirms the manifest's portal; a failed read is retried on the next call. */
+export const loadSource = (): Promise<DataSource> =>
+	(loading ??= readToken(l1.reads, {
+		factory: getAddress(manifest.bridge.factory),
+		asset: getAddress(manifest.pool.asset),
+		portal: deployment.portal,
+	}).then(
+		(token) => ({ ...ports, deployment: { ...deployment, ...token } }),
+		(err: unknown) => {
+			loading = undefined
+			throw err
+		},
+	))

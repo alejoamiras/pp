@@ -1,6 +1,7 @@
 /**
  * What a build's data layer provides. `#data` resolves to the fixture world or to the adapters at
- * build time, so screens import only this interface and a stack build cannot reach fixture code.
+ * build time, so screens import only this interface and a stack build cannot reach fixture code;
+ * either exports `loadSource(): Promise<DataSource>`, which the page awaits before it renders.
  */
 import type { AllowListPort, AztecPort, ChainClock, Deployment, ExitPort, L1Port, SessionPort, Timer, WalletPort } from "./ports"
 
