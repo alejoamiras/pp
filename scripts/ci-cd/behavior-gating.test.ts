@@ -72,20 +72,24 @@ function resolveFile(base: string): string | undefined {
   )
 }
 
-/** A workspace's entry files for a subpath: its export targets, or the whole package without `exports`. */
+/** A workspace's entry files for a subpath: its export targets, or, without `exports`, every file it holds. */
 function entriesOf(pkg: string, sub: string | undefined): string[] {
   const dir = `${dirOf(pkg)}/${pkg}`
   const exports = manifestOf(pkg).exports
-  if (exports === undefined) return sub ? [resolveFile(join(dir, sub))].filter((f): f is string => Boolean(f)) : filesUnder(dir)
+  if (exports === undefined) return filesUnder(dir)
   const hit = sub === undefined || typeof exports === "string" ? undefined : exports[`.${sub}`]
   return exportTargets(hit ?? exports).map((t) => join(dir, t))
 }
 
+const RUNS_IN = /\bbun run --cwd[= ]["']?(?:\$\{?\w+\}?\/)?packages\/([\w-]+)["']?(?:[ \t]+([\w:.-]+))?/g
+
 /**
- * Every file a package can load, transitively: relative imports, and `@pp/*` imports through the named
- * workspace's exports (Bun's own import scan; type-only imports load nothing). A declared `@pp/*`
- * dependency nothing imports by name counts through all its entries. npm packages sit outside: a bump
- * moves bun.lock, which every gate covers.
+ * Every file a package can load, transitively: relative imports, `@pp/*` imports through the named
+ * workspace's exports (Bun's own import scan; type-only imports load nothing), and the files a
+ * `bun run --cwd packages/<x> <script>` in a script or manifest names (all of `<x>` when the script is
+ * not one of its own); taking all of `<x>` for a named script would pull its tests and test config into
+ * a runner's filter. A declared `@pp/*` dependency nothing imports by name counts through all its
+ * entries. npm packages sit outside: a bump moves bun.lock, which every gate covers.
  */
 function reachedFiles(target: string): { files: Set<string>; packages: Set<string> } {
   const files = new Set<string>()
@@ -101,7 +105,21 @@ function reachedFiles(target: string): { files: Set<string>; packages: Set<strin
     packages.add(pkg)
     for (const f of entriesOf(pkg, sub)) add(f)
   }
+  const run = (pkg: string, script: string | undefined) => {
+    const dir = `${dirOf(pkg)}/${pkg}`
+    const command = manifestOf(pkg).scripts?.[script ?? ""]
+    packages.add(pkg)
+    if (typeof command !== "string") for (const f of filesUnder(dir)) add(f)
+    else for (const [token] of command.matchAll(/[\w./-]+\.(?:ts|mts|js|mjs|sh)\b/g)) {
+      const hit = resolveFile(join(dir, token))
+      if (hit) add(hit)
+    }
+  }
+  // Reach stops here: spawned binaries, computed dynamic imports and reads of another package's files by path are not followed.
   for (let file = queue.shift(); file !== undefined; file = queue.shift()) {
+    if (/(\.sh|\/package\.json)$/.test(file) || SOURCE.test(file))
+      for (const [, pkg, script] of readFileSync(join(ROOT, file), "utf8").matchAll(RUNS_IN))
+        if (pkg && existsSync(join(ROOT, dirOf(pkg), pkg, "package.json"))) run(pkg, script)
     if (!SOURCE.test(file)) continue
     const loader = file.endsWith(".tsx") ? "tsx" : /\.m?js$/.test(file) ? "js" : "ts"
     // The scan rejects a shebang line.
@@ -138,15 +156,20 @@ function closureGaps(patterns: string[]): string[] {
   return [...gaps].sort()
 }
 
-/** Filters whose verdict a job of the workflow reads through the changes job's outputs. */
+/** Filters whose verdict a job of the workflow reads through the changes job's outputs of a paths-filter step. */
 function readFilters(file: string): string[] {
   const wf = workflow(file)
   const outputs: Record<string, string> = wf.jobs.changes?.outputs ?? {}
+  const filterSteps = new Set(
+    // biome-ignore lint/suspicious/noExplicitAny: parsed-YAML shape is dynamic.
+    (wf.jobs.changes?.steps ?? []).filter((s: any) => String(s.uses).includes("dorny/paths-filter")).map((s: any) => s.id),
+  )
   const read = new Set<string>()
   for (const [name, job] of Object.entries(wf.jobs as Record<string, unknown>)) {
     if (name === "changes") continue
     for (const [, out] of JSON.stringify(job).matchAll(/needs\.changes\.outputs\.([\w-]+)/g))
-      for (const [, filter] of (outputs[out ?? ""] ?? "").matchAll(/steps\.[\w-]+\.outputs\.([\w-]+)/g)) read.add(filter ?? "")
+      for (const [, step, filter] of (outputs[out ?? ""] ?? "").matchAll(/steps\.([\w-]+)\.outputs\.([\w-]+)/g))
+        if (filterSteps.has(step)) read.add(filter ?? "")
   }
   return [...read]
 }
@@ -212,6 +235,8 @@ describe("CI behavior-gating guard", () => {
     expect(named.length).toBeGreaterThan(0)
     for (const name of named) {
       const filters = filtersOf(`${name}.yml`)
+      // A manual-dispatch override output (`full`) is not a filter, even when a filter takes its name.
+      expect(Object.keys(filters), `${name}.yml`).toEqual(expect.arrayContaining(readFilters(`${name}.yml`)))
       const read = readFilters(`${name}.yml`).flatMap((f) => filters[f] ?? [])
       expect(read, `${name}.yml`).toContain(`packages/${name}/**`)
     }
@@ -235,6 +260,9 @@ describe("CI behavior-gating guard", () => {
     expect(without((p) => p.startsWith("contracts/"))).toContain(
       "contracts/bridge/aztec/token_bridge_hub/target/token_bridge_hub_contract-TokenBridgeHub.json",
     )
+    // A package without `exports` counts whole however it is named, and `bun run --cwd` reaches what its script runs.
+    expect(entriesOf("e2e-kit", "/fixtures/egress")).toContain("packages/e2e-kit/fixtures/build-artifacts/handle.json")
+    expect(closureGaps(["packages/e2e-kit/**"])).toContain("packages/bridge-core/scripts/sandbox/cli.ts")
     // A glob that names the directory but matches no file in it.
     expect(closureGaps([...stack.filter((p) => p !== "packages/run-isolation/src/**"), "packages/run-isolation/src/*/**/*.ts"])).toContain(
       "packages/run-isolation/src/process-group.ts",
