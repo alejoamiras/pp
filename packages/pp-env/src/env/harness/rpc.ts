@@ -1,4 +1,7 @@
 const RPC_TIMEOUT_MS = 5_000
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"])
+
+export const isLoopback = (rpcUrl: string): boolean => LOOPBACK.has(new URL(rpcUrl).hostname)
 
 export async function rpc<T>(url: string, method: string, params: unknown[] = []): Promise<T> {
 	const res = await fetch(url, {

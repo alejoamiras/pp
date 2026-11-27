@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { anvilKey, LOG_DIR, USER_INDEX } from "../../src/env/harness/anvil.ts"
 import { rowsOwnedBy } from "@pp/run-isolation/ports"
 import { rpc } from "../../src/env/harness/rpc.ts"
+import { attachForkPoolEnv } from "../../src/env/fork.ts"
 import { localClients, type PoolEnv, startPoolEnv } from "../../src/env/index.ts"
 
 const ASSETS_ABI = [
@@ -112,6 +113,25 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("pool env", () => {
 
 	test("attach refuses a non-loopback RPC", async () => {
 		await expect(startPoolEnv({ rpcUrl: "http://10.255.255.1:8545" })).rejects.toThrow(/non-loopback/)
+	})
+
+	test("the fork attach publishes as the impersonated postman, and its stop frees only its own row", async () => {
+		const runId = `pp-env-fork-${process.pid}`
+		const { pool, entrypoint, keystore, aspRegistry, deployBlock, postman } = b.deployment
+		const base = { rpcUrl: b.rpcUrl, chainId: b.chainId, postman, circuitsDir: b.clientConfig.circuitsDir, runId }
+		const options = { ...base, deployment: { pool, entrypoint, keystore, aspRegistry, deployBlock } }
+		const clientVersion = await rpc<string>(b.rpcUrl, "web3_clientVersion")
+		await expect(attachForkPoolEnv({ ...options, clientVersion: `${clientVersion}-other` })).rejects.toThrow(/expected exactly/)
+		expect(rowsOwnedBy(`${runId}-pool`)).toBe(0)
+		const fork = await attachForkPoolEnv({ ...options, clientVersion })
+		const { client } = localClients(b.rpcUrl, anvilKey(USER_INDEX))
+		const root = await fork.asp.approveLabel(789n)
+		expect(await client.readContract({ address: aspRegistry, abi: ROOT_ABI, functionName: "latestASPRoot" })).toBe(root)
+		expect(fork.clientConfig.aspUrl).toBe(fork.asp.url)
+		await Promise.all([fork.stop(), fork.stop()])
+		expect(rowsOwnedBy(`${runId}-pool`)).toBe(0)
+		expect(rowsOwnedBy(b.runId)).toBe(2)
+		expect(await alive(b.rpcUrl)).toBe(true)
 	})
 
 	test("stop is idempotent and frees the run's ports and processes", async () => {

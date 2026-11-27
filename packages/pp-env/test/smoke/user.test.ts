@@ -3,10 +3,58 @@ import { createWalletClient, getAddress, http } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { foundry } from "viem/chains"
 import { secretDerivationTypedData } from "../../src/client/derivation.ts"
-import { createPoolUser } from "../../src/client/pool.ts"
+import { createPoolUser, snapshot } from "../../src/client/pool.ts"
+import { createProofService } from "../../src/client/prover.ts"
+import { poolClientOptions } from "../../src/client/spend.ts"
+import { checkout } from "../../src/env/checkout.ts"
 import { anvilKey, USER_INDEX } from "../../src/env/harness/anvil.ts"
 
 const addr = (n: number) => getAddress(`0x${n.toString(16).padStart(40, "0")}`)
+
+test("a circuit bundle survives the config snapshot into the spend and the deposit paths", async () => {
+	const rpcUrl = "http://127.0.0.1:9"
+	const wallet = createWalletClient({ chain: foundry, transport: http(rpcUrl), account: privateKeyToAccount(anvilKey(USER_INDEX)) })
+	const deployment = { pool: addr(1), entrypoint: addr(2), keystore: addr(3), aspRegistry: addr(4), deployBlock: 0n }
+	const config = {
+		rpcUrl,
+		chainId: foundry.id,
+		deployment,
+		aspUrl: rpcUrl,
+		circuitsDir: "unused",
+		circuitBundle: "pre-ceremony" as const,
+	}
+	const kept = snapshot(config)
+	expect(kept.circuitBundle).toBe("pre-ceremony")
+	expect(poolClientOptions(kept, addr(5), addr(6), "0x").artifacts).toMatchObject({ bundle: "pre-ceremony" })
+	// The deposit prover is built with the user, so a bundle refused on this chain fails the user's creation.
+	await expect(createPoolUser(config, { wallet })).rejects.toThrow(
+		"CHAIN_MISMATCH: circuit bundle pre-ceremony may not prove for chain 31337",
+	)
+})
+
+test("a named bundle makes the deposit prover hash its files against that bundle", async () => {
+	// Schema-valid, so verification gets as far as reading the verification key.
+	const unverifiable = {
+		proof: {
+			pi_a: ["0x1", "0x2", "0x1"],
+			pi_b: [
+				["0x1", "0x2"],
+				["0x3", "0x4"],
+				["0x1", "0x0"],
+			],
+			pi_c: ["0x1", "0x2", "0x1"],
+			protocol: "groth16",
+			curve: "bn128",
+		},
+		publicSignals: ["0x1"],
+	} as never
+	const circuitsDir = checkout().circuits
+	const pre = createProofService({ circuitsDir, chainId: 11_155_111, circuitBundle: "pre-ceremony" })
+	await expect(pre.verifyDeposit(unverifiable)).rejects.toThrow(/deposit verificationKey: 3741 bytes, pinned 3744/)
+	const ceremony = createProofService({ circuitsDir, chainId: foundry.id, circuitBundle: "ceremony" })
+	// The checkout's files match the ceremony pins, so verification reaches the proof and rejects it.
+	expect(await ceremony.verifyDeposit(unverifiable)).toBe(false)
+}, 60_000)
 
 test("a supplied signature is read once, so the one verified is the one keys derive from", async () => {
 	const account = privateKeyToAccount(anvilKey(USER_INDEX))

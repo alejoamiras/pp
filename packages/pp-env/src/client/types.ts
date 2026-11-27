@@ -4,8 +4,22 @@ import type { TransactArgs } from "./abi.ts"
 
 export type ClientDeployment = { pool: Address; entrypoint: Address; keystore: Address; aspRegistry: Address; deployBlock: bigint }
 
+/** pool-client's `CircuitBundleName`, spelled out so this file needs no SDK types; conformance.ts holds them equal. */
+export type CircuitBundleName = "ceremony" | "pre-ceremony"
+
 /** Everything the user side needs to reach a deployed pool; nothing here is harness-specific. */
-export type ClientConfig = { rpcUrl: string; chainId: number; deployment: ClientDeployment; aspUrl: string; circuitsDir: string }
+export type ClientConfig = {
+	rpcUrl: string
+	chainId: number
+	deployment: ClientDeployment
+	aspUrl: string
+	circuitsDir: string
+	/**
+	 * Which pinned bundle `circuitsDir` must match, for deposits and spends alike; default `ceremony`.
+	 * pool-client refuses a bundle on a chain it is not allowed on.
+	 */
+	circuitBundle?: CircuitBundleName
+}
 
 /** The SDK's `NoteStatus` values; a conformance check keeps the two in step. */
 export type NoteStatusName = "INACTIVE" | "PENDING" | "ACTIVE" | "SPENT" | "EXIT_PENDING" | "EXITED" | "REJECTED"
