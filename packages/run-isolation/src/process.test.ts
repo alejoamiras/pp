@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { killGroup, spawnOwned } from "./process.ts"
@@ -26,14 +26,6 @@ test("a command that cannot start ends with exit code 127 and says why in its lo
 	await owned.exited
 	expect(owned.exitReason()).toBe("exit code 127")
 	expect(readFileSync(log, "utf8")).toContain(`could not start ${join(dir, "no-such-anvil")}`)
-})
-
-test("a command runs in the directory it is given", async () => {
-	const where = mkdtempSync(join(dir, "cwd-"))
-	const log = join(dir, "cwd.log")
-	const owned = spawnOwned("sh", ["-c", "pwd -P"], log, { PATH: process.env.PATH ?? "" }, {}, where)
-	await owned.exited
-	expect([owned.exitReason(), readFileSync(log, "utf8").trim()]).toEqual(["exit code 0", realpathSync(where)])
 })
 
 test("a signal during stop() waits for the whole teardown, and a repeat does not cut it short", async () => {

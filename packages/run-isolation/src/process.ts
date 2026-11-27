@@ -39,7 +39,7 @@ type Stdio = [IOType | number, IOType | number, IOType | number]
 export function spawnWatched(
 	cmd: string,
 	args: string[],
-	options: { stdio: Stdio; env?: NodeJS.ProcessEnv; cwd?: string },
+	options: { stdio: Stdio; env?: NodeJS.ProcessEnv },
 	watch: Watch = {},
 ): ChildProcess {
 	const spec: WatchSpec = {
@@ -57,8 +57,6 @@ export function spawnWatched(
 		stdio: [...options.stdio, "pipe"],
 		detached: true,
 		env: options.env,
-		// `cmd` inherits it from the launcher.
-		cwd: options.cwd,
 	})
 }
 
@@ -73,22 +71,15 @@ export interface OwnedChild {
 
 /**
  * Spawns `cmd` in a watched process group (`spawnWatched`) writing both streams straight to `logFile`,
- * which no death order can leave without a reader, in `cwd` when given, else this process's directory. A
- * command that cannot start ends `exited` with exit code 127, and the log says why.
+ * which no death order can leave without a reader. A command that cannot start ends `exited` with exit
+ * code 127, and the log says why.
  */
-export function spawnOwned(
-	cmd: string,
-	args: string[],
-	logFile: string,
-	env: NodeJS.ProcessEnv,
-	watch: Watch = {},
-	cwd?: string,
-): OwnedChild {
+export function spawnOwned(cmd: string, args: string[], logFile: string, env: NodeJS.ProcessEnv, watch: Watch = {}): OwnedChild {
 	mkdirSync(dirname(logFile), { recursive: true })
 	const log = openSync(logFile, "a", 0o600)
 	let child: ChildProcess
 	try {
-		child = spawnWatched(cmd, args, { stdio: ["ignore", log, log], env, cwd }, watch)
+		child = spawnWatched(cmd, args, { stdio: ["ignore", log, log], env }, watch)
 	} finally {
 		closeSync(log)
 	}
