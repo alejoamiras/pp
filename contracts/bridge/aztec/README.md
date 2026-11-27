@@ -9,9 +9,11 @@ the claiming account is the recipient, and the note keeps the pool's label). `ra
 label's notes and sends the portal the message that pays an Ethereum address, with a public
 `RagequitTicket` that names no Aztec account; every refusal comes before the burn. A transaction's
 fee payer is public, so a ragequit paid from the holder's own Fee Juice names the holder: pay it
-through a fee-paying contract. `bind_token` is the
-publish-free twin the TXE drives; on a real network no factory leaf can be spent through it
-(pinned). `claim_secret` and `register_hash` are the shared derivation libraries; `keystone` pins
+through a fee-paying contract. `exit_public` burns the caller's public balance, which the token's
+checked `unshield` fills, and sends the portal the label-0 exit message with a public
+`PublicExitTicket`; its refusals also come before the burn, and the burn names the caller.
+`bind_token` is the publish-free twin the TXE drives; on a real network no factory leaf can be
+spent through it (pinned). `claim_secret` and `register_hash` are the shared derivation libraries; `keystone` pins
 them against their TypeScript and Solidity mirrors. `bridge_message` (the v1 bridge contents)
 and `pp_hash` (circom Poseidon, label paths, birth hashes) implement the wire format that
 [`packages/bridge-spec`](../../../packages/bridge-spec/README.md) specifies; keystone runs its

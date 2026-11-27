@@ -1,5 +1,6 @@
 /** The hub suite's world on one owned local network:
- *  - a deployer that publishes the token class, deploys the hub and registers one token;
+ *  - a deployer that publishes the token class, deploys an ASP registry it posts to, deploys the
+ *    hub over that registry and registers one token;
  *  - two anvil accounts that stand in for the factory and the portal on the Inbox and the Outbox, so
  *    no portal contract or pool is needed;
  *  - one wallet per holder.
@@ -17,10 +18,11 @@ import { OutboxContract } from "@aztec-labs/ethereum/contracts"
 import { EthAddress } from "@aztec-labs/foundation/eth-address"
 import { getContractClassFromArtifact } from "@aztec-labs/stdlib/contract"
 import { computeL2ToL1MembershipWitness } from "@aztec-labs/stdlib/messaging"
-import { bridgeContentV1, changeCommitment, claimSecretHash } from "@pp/bridge-spec"
+import { bridgeContentV1, changeCommitment, claimSecretHash, type LabelPath } from "@pp/bridge-spec"
 import { type Address, type Hex, parseEventLogs } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { labelledTokenArtifact, tokenBridgeHubArtifact } from "../../../src/artifacts"
+import { aspRootRegistryArtifact } from "../../../src/asp-registry-artifact"
 import type { L1Ctx } from "../../../src/flows"
 import { deriveHubTokenInstance } from "../../../src/hub-token"
 import { l1ToL2MessageReadiness } from "../../../src/l1-to-l2-readiness"
@@ -45,6 +47,7 @@ export interface World {
 	outbox: Address
 	rollupVersion: bigint
 	l1ChainId: number
+	registry: AztecAddress
 	hub: AztecAddress
 	token: AztecAddress
 }
@@ -131,7 +134,16 @@ async function publishClass(base: L2Base, artifact: typeof labelledTokenArtifact
 
 const deployOpts = (base: L2Base) => ({ ...base.relayerOpts, wait: { waitForStatus: TxStatus.CHECKPOINTED } })
 
-/** Deploys a hub with no registry and registers one token through a factory-sent message. */
+/** A registry whose admin, poster and birth intake are all the deployer. */
+async function deployRegistry(base: L2Base): Promise<AztecAddress> {
+	const me = base.relayer
+	const { contract } = (await Contract.deploy(base.wallet, aspRootRegistryArtifact, [me, me, me]).send(
+		deployOpts(base) as never,
+	)) as unknown as { contract: ContractBase }
+	return contract.address
+}
+
+/** Deploys a registry and a hub over it, and registers one token through a factory-sent message. */
 export async function bootWorld(net: { anvilUrl: string; nodeUrl: string }): Promise<World> {
 	const base = await connectL2(net.nodeUrl)
 	const info = await base.node.getNodeInfo()
@@ -139,7 +151,8 @@ export async function bootWorld(net: { anvilUrl: string; nodeUrl: string }): Pro
 	const portal = l1At(net.anvilUrl, PORTAL_INDEX)
 	await publishClass(base, labelledTokenArtifact)
 	const { id: tokenClassId } = await getContractClassFromArtifact(labelledTokenArtifact)
-	const args = [tokenClassId, EthAddress.fromString(factory.account.address), AztecAddress.ZERO]
+	const registry = await deployRegistry(base)
+	const args = [tokenClassId, EthAddress.fromString(factory.account.address), registry]
 	const salt = Fr.random()
 	const hubInstance = await deriveInstance(tokenBridgeHubArtifact, args, "constructor", salt, AztecAddress.ZERO)
 	await Contract.deploy(base.wallet, tokenBridgeHubArtifact, args, "constructor", { salt, universalDeploy: true } as never).send(
@@ -154,6 +167,7 @@ export async function bootWorld(net: { anvilUrl: string; nodeUrl: string }): Pro
 		outbox: info.l1ContractAddresses.outboxAddress.toString() as Address,
 		rollupVersion: BigInt(info.rollupVersion),
 		l1ChainId: info.l1ChainId,
+		registry,
 		hub: hubInstance.address,
 		token: AztecAddress.ZERO,
 	}
@@ -166,7 +180,7 @@ async function registerToken(world: World, tokenClassId: string): Promise<AztecA
 	const { leaf, index } = await sendToHub(world, world.factory, content, (await registerSecretHash()).toBigInt())
 	await untilConsumable(world, leaf)
 	// The wallet simulates the token's enqueued constructor, so it must know the instance first.
-	const instance = await deriveHubTokenInstance(world.hub, ERC20, WORDS, tokenClassId, AztecAddress.ZERO)
+	const instance = await deriveHubTokenInstance(world.hub, ERC20, WORDS, tokenClassId, world.registry)
 	await teach(world.base.wallet, instance, labelledTokenArtifact)
 	const hub = await Contract.at(world.hub, tokenBridgeHubArtifact, world.base.wallet)
 	await hub.methods
@@ -232,6 +246,31 @@ export async function labelBalance(h: Holder, label: bigint): Promise<bigint> {
 	const page = ((r as { result?: unknown }).result ?? r) as { storage?: unknown[]; len?: bigint | number } | unknown[]
 	const rows = (Array.isArray(page) ? page : (page.storage ?? []).slice(0, Number(page.len ?? 0))) as [bigint, bigint, bigint][]
 	return rows.filter(([l]) => BigInt(l) === label).reduce((sum, [, , v]) => sum + BigInt(v), 0n)
+}
+
+/**
+ * Posts both roots as the registry's poster, observed at the latest block. The post lands in a later
+ * block, so its root time precedes every anchor that sees it. The suite posts once: sequence 1.
+ */
+export async function postRoots(world: World, pool: bigint, birth: bigint): Promise<void> {
+	const head = await world.base.node.getBlockData("latest")
+	if (!head) throw new Error("the node has no latest block")
+	const registry = await Contract.at(world.registry, aspRootRegistryArtifact, world.base.wallet)
+	await registry.methods
+		.post_root(1n, new Fr(pool), new Fr(birth), 1n, head.header.globalVariables.timestamp)
+		.send(deployOpts(world.base) as never)
+}
+
+/** Moves `amount` of one label's notes to the holder's public balance, checked against `path`. */
+export function unshield(h: Holder, amount: bigint, label: bigint, path: LabelPath) {
+	const arg = { index: path.index, depth: path.depth, siblings: [...path.siblings] }
+	return h.token.methods.unshield(amount, new Fr(label), arg).send(h.opts as never)
+}
+
+/** The holder's public balance, read through its own wallet. */
+export async function publicBalance(h: Holder): Promise<bigint> {
+	const r = (await h.token.methods.balance_of_public(h.address).simulate({ from: h.address } as never)) as unknown
+	return BigInt(((r as { result?: unknown }).result ?? r) as bigint)
 }
 
 export interface OutboxAcceptance {
