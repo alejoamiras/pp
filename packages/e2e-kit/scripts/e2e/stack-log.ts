@@ -2,23 +2,18 @@
 import { existsSync, readFileSync } from "node:fs"
 import { setTimeout as sleep } from "node:timers/promises"
 
-const RUN = /^\[stack\] run \S+ pid (\d+)$/m
 const READY = /PP_STACK_MANIFEST=(\S+)/
 const SEEDED = /pool user (0x[0-9a-fA-F]{40})\b.*bridge sender (0x[0-9a-fA-F]{40})\b/
 
 export interface StackLog {
-	/** The pid the CLI logged as its own. */
-	pid?: string
 	manifestPath?: string
 	seeded?: { user: string; sender: string }
 }
 
 export function parseStackLog(text: string): StackLog {
-	const pid = text.match(RUN)?.[1]
 	const manifestPath = text.match(READY)?.[1]
 	const seeded = text.match(SEEDED)
 	return {
-		...(pid ? { pid } : {}),
 		...(manifestPath ? { manifestPath } : {}),
 		...(seeded?.[1] && seeded[2] ? { seeded: { user: seeded[1], sender: seeded[2] } } : {}),
 	}

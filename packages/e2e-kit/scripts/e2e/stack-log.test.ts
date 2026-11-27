@@ -32,9 +32,8 @@ async function cliOutput(): Promise<string> {
 	return `${lines.join("\n")}\n`
 }
 
-test("the log parser reads the CLI's pid, manifest and seeded accounts from the CLI's own output", async () => {
+test("the log parser reads the manifest and seeded accounts from the CLI's own output", async () => {
 	expect(parseStackLog(await cliOutput())).toEqual({
-		pid: String(process.pid),
 		manifestPath: MANIFEST,
 		seeded: { user: USER, sender: SENDER },
 	})

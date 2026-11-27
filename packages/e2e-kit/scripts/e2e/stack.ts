@@ -3,22 +3,24 @@
  * group of its own, logging to `<state>/stack.log`, and returns once the stack is ready, having
  * written `<state>/stack.json` (the group, the manifest, the seeded accounts' anvil indices) and
  * `<state>/wallet/handle.json` (the three fields the test wallet build reads). `down` ends that group
- * only while it is still the one this state dir started. SIGTERM makes the CLI tear down every group
+ * only while it is still the one this state dir started, which `<state>/stack.pid` records from the
+ * moment of the spawn (`scripts/e2e/stack-owner.ts`). SIGTERM makes the CLI tear down every group
  * it started itself, so the grace is long: SIGKILL would orphan them and is the last resort.
  *
  *   bun scripts/e2e/stack.ts up <state-dir>     bun scripts/e2e/stack.ts down <state-dir>
  */
 import { spawn } from "node:child_process"
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseStackManifest, type StackManifest } from "@pp/bridge-core/stack-manifest"
 import { ANVIL_ACCOUNTS, anvilKey } from "@pp/bridge-core/sandbox"
-import { endGroup, groupAlive, groupMembers } from "@pp/run-isolation/process-group"
+import { endGroup } from "@pp/run-isolation/process-group"
 import { getAddress } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { type StackRun, stackRun, stackRunFile } from "../../env"
-import { parseStackLog, untilReady } from "./stack-log"
+import { untilReady } from "./stack-log"
+import { recordGroup, stopRecorded } from "./stack-owner"
 
 const CLI = fileURLToPath(import.meta.resolve("@pp/local-stack/cli"))
 /** Longer than the CLI's slowest teardown; its boot steps also finish before a signal takes effect. */
@@ -69,12 +71,12 @@ async function up(stateDir: string): Promise<void> {
 	closeSync(out)
 	const pgid = child.pid
 	if (pgid === undefined) throw new Error("stack: the CLI did not start")
-	writeFileSync(f.pid, `${pgid}\n`)
 	let code: number | null = null
 	child.once("exit", (c, signal) => {
 		code = c ?? (signal ? 128 : 1)
 	})
 	try {
+		recordGroup(f.pid, pgid)
 		const { manifestPath, user, sender } = await untilReady(f.log, () => code)
 		const { manifest, rollupVersion } = await checkedManifest(manifestPath)
 		const account = (address: string) => ({ address: getAddress(address), index: anvilIndexOf(address) })
@@ -90,25 +92,6 @@ async function up(stateDir: string): Promise<void> {
 	console.log(`[e2e] stack up (pgid ${pgid}) — PP_STACK_MANIFEST=${stackRun({ stateDir }).manifestPath}`)
 }
 
-/** Whether `pgid` still leads the CLI this state dir started: its command and the pid the CLI logged. */
-function ownedBy(stateDir: string, pgid: number): boolean {
-	const leader = groupMembers(pgid).find((m) => m.pid === pgid)
-	const f = files(stateDir)
-	const logged = existsSync(f.log) ? parseStackLog(readFileSync(f.log, "utf8")).pid : undefined
-	return groupAlive(pgid) && leader?.args.includes(CLI) === true && logged === String(pgid)
-}
-
-async function down(stateDir: string): Promise<void> {
-	const f = files(stateDir)
-	if (!existsSync(f.pid)) return console.log("[e2e] no stack to stop")
-	const pgid = Number(readFileSync(f.pid, "utf8").trim())
-	if (Number.isSafeInteger(pgid) && pgid > 1 && ownedBy(stateDir, pgid)) {
-		console.log(`[e2e] stopping the stack (pgid ${pgid})`)
-		if (!(await endGroup(pgid, STOP_GRACE_MS))) throw new Error(`stack: pgid ${pgid} survived SIGKILL`)
-	} else console.log(`[e2e] the stack this state dir started is gone (pgid ${pgid})`)
-	rmSync(f.pid, { force: true })
-}
-
 const [command, stateDir] = process.argv.slice(2)
 if ((command !== "up" && command !== "down") || !stateDir) throw new Error("usage: bun scripts/e2e/stack.ts up|down <state-dir>")
-await (command === "up" ? up(stateDir) : down(stateDir))
+await (command === "up" ? up(stateDir) : stopRecorded(files(stateDir).pid, CLI, STOP_GRACE_MS))
