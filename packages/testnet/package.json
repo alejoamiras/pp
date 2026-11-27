@@ -5,6 +5,9 @@
 	"license": "Apache-2.0",
 	"description": "The bridge on Sepolia and Aztec testnet: the deployment file, the key file and its guarded CLIs, and the rehearsal.",
 	"type": "module",
+	"exports": {
+		"./schema": "./src/schema.ts"
+	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "bun --bun vitest run",

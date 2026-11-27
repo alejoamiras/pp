@@ -10,6 +10,7 @@ import {
 	keccak256,
 	maxUint256,
 	parseAbi,
+	parseAbiItem,
 	type PublicClient,
 	size,
 	slice,
@@ -88,6 +89,40 @@ export async function checkPoolBindings(
 			"asset config",
 			`${p.asset}: enabled ${config.enabled}, minimum ${config.minAmount}, vetting fee ${config.vettingFeeBPS} bps, relay-fee cap ${config.maxRelayFee}`,
 		)
+}
+
+const INITIALIZED = parseAbiItem("event Initialized(uint64 version)")
+/** The widest `eth_getLogs` range both pinned L1 endpoints accept. */
+const LOG_WINDOW = 10_000n
+
+const firstLine = (e: unknown) => (e instanceof Error ? e.message : String(e)).split("\n")[0]
+
+/**
+ * Discovery starts at `deployBlock`, so no pool event may precede it and the endpoint must serve logs
+ * from it. None of vault, keystore and entrypoint has code at `deployBlock − 1`, so none can have
+ * emitted an event before it; the vault's `Initialized` log comes back within a log window from it,
+ * so the endpoint holds that history and answers it rather than an empty list.
+ * @returns the block of the vault's first `Initialized` log
+ */
+export async function checkDeployBlock(l1: PublicClient, p: PoolBindings & { deployBlock: bigint }): Promise<bigint> {
+	if (p.deployBlock === 0n) throw new VerifyError("deploy block", "0, so discovery would scan from genesis")
+	const before = p.deployBlock - 1n
+	const contracts = { vault: p.poolVault, keystore: p.keystore, entrypoint: p.entrypoint }
+	for (const [name, address] of Object.entries(contracts)) {
+		const code = await l1.getCode({ address, blockNumber: before }).catch((e: unknown) => {
+			throw new VerifyError("deploy block", `the endpoint serves no state at block ${before}: ${firstLine(e)}`)
+		})
+		if (code !== undefined && code !== "0x") throw new VerifyError("deploy block", `the ${name} ${address} has code at block ${before}`)
+	}
+	const head = await l1.getBlockNumber()
+	const toBlock = p.deployBlock + LOG_WINDOW - 1n < head ? p.deployBlock + LOG_WINDOW - 1n : head
+	const logs = await l1.getLogs({ address: p.poolVault, event: INITIALIZED, fromBlock: p.deployBlock, toBlock }).catch((e: unknown) => {
+		throw new VerifyError("deploy block", `the endpoint serves no logs from block ${p.deployBlock}: ${firstLine(e)}`)
+	})
+	const at = logs[0]?.blockNumber
+	if (at === undefined || at === null)
+		throw new VerifyError("deploy block", `the vault has no Initialized log in blocks ${p.deployBlock} to ${toBlock}`)
+	return at
 }
 
 const FACTORY_ARGS = [

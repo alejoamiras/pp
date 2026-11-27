@@ -10,7 +10,15 @@ import { verifyPoolCode } from "@pp/pp-env/sepolia"
 import { GuardError } from "../guards"
 import { loopback, SEPOLIA } from "../network"
 import type { TestnetDeployment } from "../schema"
-import { checkEntriesPaused, checkFactoryCreation, checkPoolBindings, checkRecordRoot, OWN_ASSET, VerifyError } from "../verify"
+import {
+	checkDeployBlock,
+	checkEntriesPaused,
+	checkFactoryCreation,
+	checkPoolBindings,
+	checkRecordRoot,
+	OWN_ASSET,
+	VerifyError,
+} from "../verify"
 import { openContextOf } from "./context"
 import { cliArgs, guarded, main, report } from "./common"
 
@@ -29,6 +37,7 @@ async function checkPool(d: WithPool, l1: Parameters<typeof checkPoolBindings>[0
 	const asset = o ? { minAmount: o.minDeposit, vettingFeeBps: BigInt(o.vettingFeeBps) } : OWN_ASSET
 	await checkPoolBindings(l1, p, d.expected.aspPostman, asset)
 	report("pool-bindings", { entrypoint: p.entrypoint, asset: p.asset })
+	report("deploy-block", { deployBlock: p.deployBlock, initializedAt: await checkDeployBlock(l1, p) })
 }
 
 async function checkBridge(d: Full, l1: Parameters<typeof checkPoolBindings>[0], node: unknown): Promise<void> {

@@ -1,4 +1,5 @@
 {
+	"description": "l1Rpc is the Tenderly gateway because discovery reads logs from the pool's deploy block on. publicnode keeps only about 34 hours of Sepolia receipts and state (measured 2026-11-27), so do not pin it here.",
 	"network": {
 		"l1ChainId": 11155111,
 		"rollup": "0x1f435a7f2da358caf887a470faeee7d5d5f4efba",
@@ -7,7 +8,7 @@
 		"outbox": "0xa5a0f7a7bdaf280964a1922a68c83462e5f6e15b",
 		"rollupVersion": 679261766,
 		"fpc": "0x2d8fff82a3b0c15d0a89169e7d8d043e079ab94d52031f1de1e4972ebad169d3",
-		"l1Rpc": "https://ethereum-sepolia-rpc.publicnode.com",
+		"l1Rpc": "https://sepolia.gateway.tenderly.co",
 		"aztecNode": "https://aztec-testnet.drpc.org",
 		"botPort": 48601,
 		"aspPort": 48602

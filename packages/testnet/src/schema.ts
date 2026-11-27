@@ -112,10 +112,13 @@ const bridgeSchema = z
 export const POOL_FIELDS: readonly string[] = Object.keys(poolSchema.shape)
 export const BRIDGE_FIELDS: readonly string[] = Object.keys(bridgeSchema.shape)
 
-export const TARGETS = ["own", "v9", "pool1", "v8"] as const
+/** `pool1` is the operator's poolId 1, which the operator's own app calls "V8". */
+export const TARGETS = ["own", "v9", "pool1"] as const
 
 export const deploymentSchema = z
 	.object({
+		/** Free text for whoever edits the file next; no command reads it. */
+		description: z.string().max(2_000).optional(),
 		network: networkSchema,
 		target: z.enum(TARGETS),
 		bundle: z.enum(["ceremony", "pre-ceremony"]),
