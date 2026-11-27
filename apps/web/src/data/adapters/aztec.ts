@@ -27,7 +27,7 @@ const ARTIFACTS = { hub: tokenBridgeHubArtifact, token: labelledTokenArtifact } 
 const SEND_TIMEOUT_S = 180
 
 export interface AztecDeps {
-	deployment: Pick<Deployment, AppContract>
+	deployment: Pick<Deployment, AppContract | "chainId">
 	node: Pick<AztecNode, "getContract" | "getTxReceipt" | "getNodeInfo">
 	/** The live connection's wallet, or `null`. */
 	current(): HeldWallet | null
@@ -52,12 +52,15 @@ export interface AztecSend {
 
 const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
 
-/** Whether every function `p` calls was granted under `bucket`. */
+/** Whether `p` calls something, and every function it calls was granted under `bucket`. */
 export function grantedPayload(held: HeldWallet, bucket: ScopeBucket, p: Pick<ExecutionPayload, "calls">): boolean {
-	return p.calls.every((c) => {
-		const to = parseAztecAddress(c.to)
-		return to !== null && held.grant.scopes.has(scopeKey(bucket, to, c.name))
-	})
+	return (
+		p.calls.length > 0 &&
+		p.calls.every((c) => {
+			const to = parseAztecAddress(c.to)
+			return to !== null && held.grant.scopes.has(scopeKey(bucket, to, c.name))
+		})
+	)
 }
 
 /** The live connection's wallet when it is connection `epoch`'s. */
@@ -109,10 +112,23 @@ async function settle(node: AztecDeps["node"], txHash: TxHash): Promise<Sent> {
 type Accounts = Awaited<ReturnType<Wallet["getAccounts"]>>
 type Chain = Awaited<ReturnType<Wallet["getChainInfo"]>>
 
-/** Whether the wallet still lists `from` and sits on the node's chain and rollup. */
-function assertWalletStill(accounts: Accounts, chain: Chain, node: { l1ChainId: number; rollupVersion: number }, from: AztecAddress) {
-	if (!accounts.some((a) => parseAztecAddress(a.item.toString()) === from)) throw new BridgeFailure("RECIPIENT_NOT_IN_WALLET")
-	if (chain.chainId.toBigInt() !== BigInt(node.l1ChainId) || chain.version.toBigInt() !== BigInt(node.rollupVersion))
+/** An entry the wallet lists, read as untrusted: anything that is no account names none. */
+const listedAccount = (entry: unknown): AztecAddress | null => {
+	const item = entry !== null && typeof entry === "object" ? (entry as { item?: unknown }).item : undefined
+	return item === null || item === undefined ? null : parseAztecAddress(String(item))
+}
+
+/** Whether the wallet still lists `from`, and it and the node sit on the deployment's chain and the node's rollup. */
+function assertWalletStill(
+	accounts: Accounts,
+	chain: Chain,
+	node: { l1ChainId: number; rollupVersion: number },
+	d: Pick<AztecDeps, "deployment">,
+	from: AztecAddress,
+) {
+	if (!Array.isArray(accounts) || !accounts.some((a) => listedAccount(a) === from)) throw new BridgeFailure("RECIPIENT_NOT_IN_WALLET")
+	const l1 = BigInt(d.deployment.chainId)
+	if (BigInt(node.l1ChainId) !== l1 || chain.chainId.toBigInt() !== l1 || chain.version.toBigInt() !== BigInt(node.rollupVersion))
 		throw new BridgeFailure("CONTEXT_CHANGED")
 }
 
@@ -130,18 +146,19 @@ export async function sendThroughWallet(d: AztecDeps, s: AztecSend): Promise<Sen
 	const [chain, node] = await Promise.all([first.wallet.getChainInfo(), d.node.getNodeInfo()])
 	const accounts = await first.wallet.getAccounts()
 	// Nothing awaits between the last read, these checks, the handoff and the wallet call.
-	assertWalletStill(accounts, chain, node, s.from)
+	assertWalletStill(accounts, chain, node, d, s.from)
 	const held = boundTo(d, s.epoch)
 	s.handoff()
 	const { txHash } = await held.wallet.sendTx(s.payload, { from: sdk(s.from), wait: NO_WAIT })
 	return settle(d.node, txHash)
 }
 
-/** A `BoundedVec` as aztec.js decodes it, cut to its length. */
-function entries(v: unknown): unknown[] {
+/** A `BoundedVec` as aztec.js decodes it, cut to its length; a length that is no count reads as empty. */
+export function entries(v: unknown): unknown[] {
 	const page = (v && typeof v === "object" && "result" in v ? v.result : v) as { storage?: unknown; len?: unknown } | null
 	if (!page || !Array.isArray(page.storage) || (typeof page.len !== "bigint" && typeof page.len !== "number")) return []
-	return page.storage.slice(0, Number(page.len))
+	const len = Number(page.len)
+	return Number.isSafeInteger(len) && len >= 0 ? page.storage.slice(0, len) : []
 }
 
 const fields = (row: unknown): unknown[] => (row && typeof row === "object" ? Object.values(row) : [])

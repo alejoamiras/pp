@@ -164,7 +164,7 @@ function rig(o: Partial<Pick<SessionDeps, "open" | "reads">> = {}) {
 	} as unknown as BridgeClient & Record<keyof BridgeClient, ReturnType<typeof vi.fn>>
 	const spendWallet = vi.fn(() => ({ marker: "pinned client" }))
 	const aztec: AztecDeps = {
-		deployment: { hub: HUB, token: TOKEN },
+		deployment: { hub: HUB, token: TOKEN, chainId: 31337 },
 		node: {
 			getContract: vi.fn(async (a) => ({ address: a })),
 			getTxReceipt: vi.fn(async () => minedReceipt),

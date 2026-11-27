@@ -8,7 +8,7 @@ import { stageManifest } from "../capabilities"
 import type { AztecAddress } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
 import { parseGrant } from "../wallet/grant"
-import { type AztecDeps, registerScoped, sendThroughWallet } from "./aztec"
+import { type AztecDeps, entries, grantedPayload, registerScoped, sendThroughWallet } from "./aztec"
 
 const at = (n: string) => `0x${n.repeat(32)}` as AztecAddress
 const [HUB, TOKEN, FPC, ME, STRANGER] = [at("08"), at("09"), at("0c"), at("1c"), at("2d")]
@@ -44,7 +44,7 @@ function rig(o: { contracts?: AztecAddress[]; served?: (a: { toString(): string 
 		getTxReceipt: vi.fn(async () => receipt(o.ok ?? true)),
 		getNodeInfo: vi.fn(async () => ({ l1ChainId: 31337, rollupVersion: 5 })),
 	}
-	const d: AztecDeps = { deployment: { hub: HUB, token: TOKEN }, node: node as never, current: () => live }
+	const d: AztecDeps = { deployment: { hub: HUB, token: TOKEN, chainId: 31337 }, node: node as never, current: () => live }
 	return { d, wallet, node, held, drop: () => (live = null) }
 }
 
@@ -114,6 +114,29 @@ describe("the Aztec adapter", () => {
 		answer()
 		await expect(sending).rejects.toMatchObject({ code: "RECIPIENT_NOT_IN_WALLET" })
 		expect(r.wallet.sendTx).not.toHaveBeenCalled()
+	})
+
+	test("refuses a send whose node and wallet both moved off the deployment's chain, or whose wallet lists a malformed account", async () => {
+		const send = (r: ReturnType<typeof rig>) =>
+			sendThroughWallet(r.d, { epoch: 3, from: ME, payload: CLAIM, contracts: ["hub", "token"], handoff: () => {} })
+		const moved = rig()
+		moved.node.getNodeInfo.mockResolvedValue({ l1ChainId: 1, rollupVersion: 5 })
+		moved.wallet.getChainInfo.mockResolvedValue({ chainId: new Fr(1n), version: new Fr(5n) })
+		await expect(send(moved)).rejects.toMatchObject({ code: "CONTEXT_CHANGED" })
+		for (const listed of [[null], [{}], [{ alias: "x", item: null }], null]) {
+			const odd = rig()
+			odd.wallet.getAccounts.mockResolvedValue(listed as never)
+			await expect(send(odd)).rejects.toMatchObject({ code: "RECIPIENT_NOT_IN_WALLET" })
+			expect(odd.wallet.sendTx).not.toHaveBeenCalled()
+		}
+		expect(moved.wallet.sendTx).not.toHaveBeenCalled()
+	})
+
+	test("a payload with no calls is never granted, and a page with a negative length reads as empty", () => {
+		expect(grantedPayload(rig().held, "transaction", payload())).toBe(false)
+		expect(grantedPayload(rig().held, "transaction", CLAIM)).toBe(true)
+		expect(entries({ storage: [1, 2, 3], len: -1n })).toEqual([])
+		expect(entries({ storage: [1, 2, 3], len: 2n })).toEqual([1, 2])
 	})
 
 	test("answers a sent transaction's hash with its outcome", async () => {
