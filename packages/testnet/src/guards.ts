@@ -133,7 +133,7 @@ export function assertScratchKeyFile(file: string, home: string = accountHome())
 	if (real(dirname(file)) === real(dirname(keyFilePath(home))))
 		throw new GuardError(
 			"keys",
-			"a fork rehearsal reads a scratch key file; point HOME at a scratch directory, never this account's home",
+			"a fork rehearsal reads a scratch key file; set PP_TESTNET_SCRATCH_HOME to a scratch directory, never this account's home",
 		)
 }
 
@@ -157,8 +157,14 @@ export function readKeys(
 	return keys
 }
 
+/**
+ * A fork rehearsal's key file sits under `PP_TESTNET_SCRATCH_HOME`, else `$HOME`, so the command keeps the
+ * real home that its tools, port registry and compiler store live under.
+ */
+const forkKeyFile = (env: NodeJS.ProcessEnv) => keyFilePath(env.PP_TESTNET_SCRATCH_HOME || undefined)
+
 function fileKeys(specs: readonly KeySpec[], mode: Mode, sources: KeySources): Record<string, Hex> {
-	const file = sources.file ?? keyFilePath()
+	const file = sources.file ?? (mode.kind === "rehearse-fork" ? forkKeyFile(sources.env) : keyFilePath())
 	if (mode.kind === "rehearse-fork") assertScratchKeyFile(file, sources.accountHome)
 	return loadKeys(specs, file)
 }

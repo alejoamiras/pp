@@ -293,10 +293,12 @@
         "@pp/labelled-token": "workspace:*",
         "@pp/pp-env": "workspace:*",
         "@pp/run-isolation": "workspace:*",
+        "@pp/sepolia-fork": "workspace:*",
         "viem": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {
+        "@types/bun": "catalog:",
         "@types/node": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",

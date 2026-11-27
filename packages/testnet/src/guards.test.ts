@@ -135,6 +135,8 @@ describe("the guards", () => {
 		const file = writeKeyFile(home, [`GUARDIAN_KEY=${key}`])
 		expect(readKeys(spec, LIVE, { env: { PP_REHEARSE_GUARDIAN_KEY: key }, file }, addressOf)).toEqual({ GUARDIAN_KEY: key })
 		expect(readKeys(spec, FORK, { env: {}, file, accountHome: scratchHome() }, addressOf)).toEqual({ GUARDIAN_KEY: key })
+		const scratch = { PP_TESTNET_SCRATCH_HOME: home }
+		expect(readKeys(spec, FORK, { env: scratch, accountHome: scratchHome() }, addressOf)).toEqual({ GUARDIAN_KEY: key })
 		expect(() => readKeys(spec, FORK, { env: {}, file, accountHome: home }, addressOf)).toThrow(/scratch key file/)
 		expect(() => assertScratchKeyFile(keyFilePath(accountHome()))).toThrow(refusedBy("keys"))
 		const refused = (() => {

@@ -50,7 +50,7 @@ await main(async () => {
 		report("asp-stopped", { approved: asp.approved().length, scanned: asp.scanned() })
 	} finally {
 		if (!(await releaseNamed([{ port, service: SERVICE, owner: runId }])))
-			process.stderr.write(`port row ${port} (${runId}) was not released; remove it from the registry by hand\n`)
+			logLine(`port row ${port} (${runId}) was not released; remove it from the registry by hand`)
 	}
 	return 0
 })
