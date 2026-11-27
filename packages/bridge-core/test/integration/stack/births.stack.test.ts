@@ -30,6 +30,11 @@ describe("births", () => {
 		return parseAspSnapshot(await (await fetch(`${bot.url}/v1/snapshots/${at}`)).json())
 	}
 	const record = (at: number | Hex) => readRootRecord({ aztecNode: k.m.aztecNode, registry, at })
+	/** A poll miss once block `n` no longer has `hash` (a reorg dropped it before its checkpoint); any other failure stands. */
+	const unlessDropped = async (n: number, hash: Hex, e: unknown): Promise<null> => {
+		if ((await k.dev().node.getBlockData(n as never))?.blockHash.toString() === hash) throw e
+		return null
+	}
 	const timeAt = async (n: number) => (await k.dev().node.getBlockData(n as never))?.header.globalVariables.timestamp ?? 0n
 	const tokenCall = (name: string, args: unknown[]): Promise<ExecutionPayload> =>
 		callPayload(labelledTokenArtifact, AztecAddress.fromStringUnsafe(k.m.bridge.token), name, args).then(sponsored)
@@ -42,9 +47,12 @@ describe("births", () => {
 	async function activePath(label: bigint, origin: typeof POOL | typeof BIRTH, what: string): Promise<LabelPath> {
 		const read = async () => {
 			// One block, by hash: its record and its time cannot come from two blocks at the same height.
-			const tip = await k.dev().node.getBlockData(await k.dev().node.getBlockNumber())
+			const n = await k.dev().node.getBlockNumber()
+			const tip = await k.dev().node.getBlockData(n)
 			if (!tip) return null
-			const [r, s] = await Promise.all([record(tip.blockHash.toString() as Hex), snapshot("latest")])
+			const hash = tip.blockHash.toString() as Hex
+			const [r, s] = await Promise.all([record(hash).catch((e: unknown) => unlessDropped(n, hash, e)), snapshot("latest")])
+			if (!r) return null
 			const time = tip.header.globalVariables.timestamp
 			return labelState(r, s, label, origin, time + PROVING_BUDGET_SEC) === "ACTIVE" ? pathFor(s, label, origin) : null
 		}
