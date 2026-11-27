@@ -5,31 +5,37 @@
  *
  * Usage: [FC_SEED=<non-negative integer>] bun packages/bridge-spec/vectors/fresh.ts   (forge on PATH, lib/ installed)
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildCorpus } from "./corpus"
 import { type Outcome, PKG, SUITES, verifyControl } from "./mutate"
-import { REPO } from "./nargo"
 import { noirTestNames } from "./render-nr"
 
-const FORGE_TEST = join(REPO, "contracts", "bridge", "evm", "test", "BridgeMessageV1.t.sol")
+/** The forge suite's tests by full name; one added to the contract shows up as unexpected until listed here. */
+const FORGE_TESTS = [
+	"test_counts()",
+	"test_tags()",
+	"test_data()",
+	"test_in()",
+	"test_out()",
+	"test_ragequit()",
+	"test_rejections()",
+	"testFuzz_dataDecodesToItsTagAndSecretHash(uint256)",
+	"testFuzz_amountInRangeEncodes(uint256)",
+	"testFuzz_amountAboveRangeReverts(uint256)",
+].map((t) => `test/BridgeMessageV1.t.sol:BridgeMessageV1Test:${t}`)
 
 function seedFromEnv(): number {
 	const raw = process.env.FC_SEED
 	if (raw === undefined || raw === "" || raw === "random") return Math.floor(Math.random() * 2 ** 31)
-	const n = Number(raw)
-	if (!Number.isSafeInteger(n) || n < 0) throw new Error(`FC_SEED must be a non-negative integer, got ${raw}`)
+	const n = /^\d+$/.test(raw) ? Number(raw) : Number.NaN
+	if (!Number.isSafeInteger(n)) throw new Error(`FC_SEED must be a non-negative integer, got ${raw}`)
 	return n
 }
 
-/** Every test the forge suite defines, read from its source so a test added there is required here too. */
-function forgeTestNames(): string[] {
-	return [...readFileSync(FORGE_TEST, "utf8").matchAll(/function (test\w*)\(/g)].map((m) => m[1] as string)
-}
-
-/** The run must hold exactly the expected names, each once, each passed; forge's `(types)` suffix is ignored. */
+/** The run must hold exactly the expected names, each once, each passed. */
 function byName(lang: string, outcome: Outcome, expected: readonly string[]): string[] {
-	const ran = outcome.raw.map((t) => t.name.replace(/\(.*$/, "")).sort()
+	const ran = outcome.raw.map((t) => t.name).sort()
 	const want = [...expected].sort()
 	const problems = outcome.raw
 		.filter((t) => t.status !== "passed")
@@ -54,7 +60,7 @@ async function main(): Promise<number> {
 		const problems: string[] = []
 		let passed = 0
 		for (const [lang, expected] of [
-			["sol", forgeTestNames()],
+			["sol", FORGE_TESTS],
 			["nr", noirTests],
 		] as const) {
 			const suite = SUITES[lang]()

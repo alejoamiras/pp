@@ -17,7 +17,8 @@ const PR_SEED = 20261127
 function envInt(name: string, fallback: number, min: number): number {
 	const raw = process.env[name]
 	if (raw === undefined || raw === "") return fallback
-	const n = Number(raw)
+	// The pattern first: Number(" ") is 0.
+	const n = /^-?\d+$/.test(raw) ? Number(raw) : Number.NaN
 	if (!Number.isSafeInteger(n) || n < min) throw new Error(`${name} must be an integer ≥ ${min}, got ${raw}`)
 	return n
 }
@@ -54,8 +55,8 @@ export function propertyParams(fileUrl: string, name: string, numRuns: number, t
 	const { pkg, file } = where(fileUrl)
 	// stderr directly: vitest under `bun --bun` drops console output from test files.
 	process.stderr.write(
-		`fast-check "${name}": seed=${seed} runs=${numRuns * scale}; replay: FC_SEED=${seed} FC_PATH=<path>` +
-			` [FC_REPLAY_PATH=<replayPath>] bun run --cwd ${pkg} test ${file} -t "${name}"\n`,
+		`fast-check "${name}": seed=${seed} runs=${numRuns * scale}; replay: FC_SEED=${seed} FC_RUNS_SCALE=${scale}` +
+			` [FC_PATH=<path>] [FC_REPLAY_PATH=<replayPath>] bun run --cwd ${pkg} test ${file} -t "${name}"\n`,
 	)
 	return {
 		fc: { seed, numRuns: numRuns * scale, path, interruptAfterTimeLimit: limit, markInterruptAsFailure: true },

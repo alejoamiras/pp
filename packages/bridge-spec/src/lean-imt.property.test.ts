@@ -15,7 +15,18 @@ const leavesOf = (max: number) => size(max).chain((n) => fc.array(leaf, { minLen
 const sample = (n: number): number[] =>
 	n <= 32 ? [...Array(n).keys()] : [0, n - 1, ...Array.from({ length: 14 }, (_, k) => Math.floor(((k + 1) * n) / 15))]
 
-const expectedDepth = (n: number) => (n === 1 ? 0 : Math.ceil(Math.log2(n)))
+/** zk-kit's proof shape for leaf `i` of `n`: one bit per level where the node has a sibling, lowest level first. */
+const expectedShape = (n: number, i: number) => {
+	let depth = 0
+	let index = 0
+	for (let width = n, j = i; width > 1; width = Math.ceil(width / 2), j >>= 1) {
+		if ((j ^ 1) < width) {
+			index |= (j & 1) << depth
+			depth++
+		}
+	}
+	return { index, depth }
+}
 
 const failsMembership = (leaf: bigint, path: LabelPath, root: bigint) => {
 	try {
@@ -35,10 +46,10 @@ describe("LeanIMT properties (the TS tree against its own paths; Noir agreement 
 			fc.assert(
 				fc.property(leavesOf(256), (leaves) => {
 					const tree = buildLeanImt(leaves)
-					expect(tree.path(0).depth).toBe(expectedDepth(leaves.length))
 					for (const i of sample(leaves.length)) {
 						const path = tree.path(i)
-						expect(path.depth).toBeLessThanOrEqual(expectedDepth(leaves.length))
+						// Exact, so a repeated leaf cannot borrow another position's proof.
+						expect({ index: path.index, depth: path.depth }).toEqual(expectedShape(leaves.length, i))
 						assertLeanImtMember(leaves[i] as bigint, path, tree.root)
 					}
 				}),
@@ -92,19 +103,23 @@ describe("LeanIMT properties (the TS tree against its own paths; Noir agreement 
 					const path = tree.path(index)
 					const siblings = [...path.siblings]
 					let depth = path.depth
+					let at = path.index
 					if (change.kind === "sibling") {
 						fc.pre(path.depth > 0)
-						const at = change.at % path.depth
-						fc.pre(siblings[at] !== change.to)
-						siblings[at] = change.to
+						const k = change.at % path.depth
+						fc.pre(siblings[k] !== change.to)
+						siblings[k] = change.to
 					} else if (change.kind === "deeper") {
 						fc.pre(depth < MAX_DEPTH)
 						depth += 1
 					} else {
+						// Well-formed at the shorter depth, so it reaches the root comparison, not checkPath.
 						fc.pre(depth > 0)
 						depth -= 1
+						siblings[depth] = 0n
+						at &= (1 << depth) - 1
 					}
-					expect(failsMembership(leaves[index] as bigint, { index: path.index, depth, siblings }, tree.root)).toBe(true)
+					expect(failsMembership(leaves[index] as bigint, { index: at, depth, siblings }, tree.root)).toBe(true)
 				}),
 				tampered.fc,
 			)

@@ -56,7 +56,6 @@ const badDecimal = fc.oneof(
 const hostile = fc.oneof(fc.jsonValue(), badDecimal, fc.array(fc.oneof(badDecimal, fc.jsonValue()), { maxLength: 4 }))
 const KEYS = ["birthLeaves", "birthRoot", "poolLeaves", "poolRoot", "sequence"] as const
 
-/** One change to a valid wire form; `ok` marks the change the roots do not bind (a new valid sequence). */
 const mutation = fc.oneof(
 	fc.record({ kind: fc.constant("drop" as const), key: fc.constantFrom(...KEYS) }),
 	fc.record({ kind: fc.constant("extra" as const) }),
@@ -70,6 +69,9 @@ const mutation = fc.oneof(
 
 type Mutation = typeof mutation extends fc.Arbitrary<infer T> ? T : never
 type Of<K extends Mutation["kind"]> = Extract<Mutation, { kind: K }>
+
+// The roots do not bind the sequence, so any decimal in [1, 2^64) there must still parse.
+const validSequence = (v: unknown) => typeof v === "string" && /^[1-9][0-9]{0,19}$/.test(v) && BigInt(v) < 2n ** 64n
 
 // Each applier edits `json` in place and returns whether the result must parse, or null for a no-op change.
 const set = (json: Wire, key: string, value: unknown): false | null => {
@@ -92,7 +94,7 @@ const APPLY: { [K in Mutation["kind"]]: (json: Wire, m: Of<K>) => boolean | null
 		return false
 	},
 	extra: (json) => set(json, "extra", "1"),
-	hostile: (json, m) => set(json, m.key, m.value),
+	hostile: (json, m) => (set(json, m.key, m.value) === null ? null : m.key === "sequence" && validSequence(m.value)),
 	root: (json, m) => set(json, m.key, m.to.toString()),
 	leaf: (json, m) => {
 		const pool = json.poolLeaves as string[]
@@ -104,7 +106,7 @@ const APPLY: { [K in Mutation["kind"]]: (json: Wire, m: Of<K>) => boolean | null
 	},
 	swapPool: (json, m) => swap(json.poolLeaves as string[], m.at),
 	unsortBirth: (json, m) => swap(json.birthLeaves as string[], m.at),
-	sequence: (json, m) => (set(json, "sequence", m.to.toString()) === null ? null : m.to >= 1n && m.to < 2n ** 64n),
+	sequence: (json, m) => (set(json, "sequence", m.to.toString()) === null ? null : validSequence(m.to.toString())),
 }
 
 function mutate(w: Wire, m: Mutation): { json: Wire; ok: boolean } | null {

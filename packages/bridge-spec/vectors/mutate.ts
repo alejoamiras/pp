@@ -39,7 +39,8 @@ type Lang = "ts" | "sol" | "nr"
 type TestResult = { status: string; message: string }
 /**
  * `exitCode` is the runner's own status: a report saying "passed" from a process that failed is no pass.
- * `tests` is keyed by section; `raw` keeps every test the runner reported under its own name, duplicates included.
+ * `tests` is keyed by section; `raw` keeps every test the runner reported under its own name (forge's prefixed
+ * by its contract), duplicates included.
  */
 export type Outcome = {
 	tests: Map<string, TestResult>
@@ -142,11 +143,17 @@ function forgeSuite(): Suite {
 					error: `no forge report:\n${proc.stdout.slice(-2000)}\n${proc.stderr.slice(-2000)}`,
 				}
 			}
-			const raw = Object.values(report)
-				.flatMap((s) => Object.entries(s.test_results ?? {}))
-				.map(([name, r]) => ({ name, status: r.status === "Success" ? "passed" : "failed", message: r.reason ?? "" }))
+			const results = Object.entries(report).flatMap(([contract, s]) =>
+				Object.entries(s.test_results ?? {}).map(([name, r]) => ({
+					contract,
+					name,
+					status: r.status === "Success" ? "passed" : "failed",
+					message: r.reason ?? "",
+				})),
+			)
 			// `test_in()` reports section `in`; fuzz tests keep their names and must pass in the control run.
-			const tests = new Map(raw.map(({ name, ...t }) => [name.replace(/^test_(\w+)\(\)$/, "$1"), t]))
+			const tests = new Map(results.map(({ name, status, message }) => [name.replace(/^test_(\w+)\(\)$/, "$1"), { status, message }]))
+			const raw = results.map(({ contract, name, status, message }) => ({ name: `${contract}:${name}`, status, message }))
 			return {
 				tests,
 				raw,
@@ -220,7 +227,7 @@ function nargoSuite(): Suite {
 
 export const SUITES = { ts: vitestSuite, sol: forgeSuite, nr: nargoSuite } satisfies Record<Lang, () => Suite>
 
-/** Problems with a run whose vectors are unchanged: an error, a non-zero exit, a test not passing, a section without a test. */
+/** Problems with a run on unchanged vectors; empty means it passed in full. */
 export function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	if (outcome.error) return [`control: ${outcome.error}`]
 	if (outcome.exitCode !== 0) return [`control: runner exited ${outcome.exitCode}`]
