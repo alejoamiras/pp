@@ -87,4 +87,24 @@ describe("a tick", () => {
 		})
 		expect(parseAspSnapshot(JSON.parse(fresh.body("latest")!)).sequence).toBe(3n)
 	})
+
+	it("serves a post's sequence while the post awaits its checkpoint, and moves /latest only after it", async () => {
+		const { s, ports } = chain()
+		const book = new SnapshotBook()
+		const bot = new Poster(ports, book, { self: SELF, inclusionMarginSec: 144n })
+		expect((await bot.tick()).post).toBe(true)
+		s.aztecTime += 300n
+		s.l1 = { number: 30n, hash: "0x0b", timestamp: 1_150n }
+		const send = ports.post
+		const sequenceOf = (body: string | undefined) => body && parseAspSnapshot(JSON.parse(body)).sequence
+		let pending = {}
+		ports.post = async (a) => {
+			s.record = { ...a }
+			pending = { named: sequenceOf(book.body(a.sequence)), latest: sequenceOf(book.body("latest")) }
+			return send(a)
+		}
+		expect((await bot.tick()).post).toBe(true)
+		expect(pending).toEqual({ named: 2n, latest: 1n })
+		expect(sequenceOf(book.body("latest"))).toBe(2n)
+	})
 })
