@@ -512,20 +512,25 @@ describe("the bridge driver", () => {
 		else expect(h.machine().failure?.code).toBe(code)
 	})
 
-	test("a Check again answer that lands after a Submit started is dropped: the Submit owns the screen", async () => {
+	test("a Check again answer that lands after a Submit started is dropped whole: no screen change, nothing remembered", async () => {
 		const h = harness()
 		let release = () => {}
 		const held = new Promise<void>((r) => (release = r))
+		const pending = { id: "r0", nullifier: NOTE.commitment + 1n, recipient: RECIPIENT, amount: 70n, step: "submitted" as const }
 		h.session.records = async () => {
 			await held
-			return []
+			return [{ ...pending, l1TxHash: `0x${"ef".repeat(32)}` as Hex }]
 		}
+		h.session.l1TxState = async () => "pending"
 		const checking = h.check()
 		await h.submit(INPUT, { acceptUncertain: true })
 		expect(h.machine().step).toBe("mined")
 		release()
 		await expect(checking).resolves.toBeNull()
 		expect([h.machine().step, h.machine().failure]).toEqual(["mined", null])
+		// Had the stale answer been remembered, the note would refuse this as IN_FLIGHT.
+		await h.submit(INPUT, { acceptUncertain: true })
+		expect(h.session.submit).toHaveBeenCalledTimes(2)
 	})
 
 	test("a wallet rejection on claim returns to claimable", async () => {

@@ -312,7 +312,8 @@ async function priorOutcome(st: State, a: Attempt): Promise<BridgeEvent | null> 
 /**
  * Check again: what the journal and the chain show for the note, and nothing more. It never proves or
  * sends, whatever it finds; Send again is the one way to send while an attempt may be out. An answer
- * that lands after any Submit has started is dropped, since that Submit owns the screen.
+ * that lands after any Submit has started is dropped before it is remembered or shown, since that
+ * Submit owns the note and the screen.
  */
 async function check(st: State, input: CheckInput, dispatch: Dispatch, signal: AbortSignal): Promise<BridgeRecordView | null> {
 	const n = input.note.commitment
@@ -323,13 +324,16 @@ async function check(st: State, input: CheckInput, dispatch: Dispatch, signal: A
 		return null
 	}
 	const seq = st.seq
+	const stale = () => signal.aborted || st.seq !== seq
 	let event: BridgeEvent
 	try {
-		event = foundEvent(st, await checkAttempt(st.deps.session, n, recipient), n)
+		const found = await checkAttempt(st.deps.session, n, recipient)
+		if (stale()) return null
+		event = foundEvent(st, found, n)
 	} catch (err) {
+		if (stale()) return null
 		event = failure(codeOf(err) ?? "RPC_FAILED", "preparing")
 	}
-	if (signal.aborted || st.seq !== seq) return null
 	dispatch(event)
 	return event.type === "record" ? event.record : null
 }
