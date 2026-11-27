@@ -28,7 +28,7 @@ export function poolClientOptions(
 	}
 }
 
-/** pool-client's checked spend in `PoolUser`'s shape; `args` is `transact`'s arguments, to forward unchanged. */
+/** `args` goes to `transact` unchanged; its proof and note data are pool-client's deep-frozen objects. */
 export function toPreparedSpend(s: ClientSpend): PreparedSpend {
 	return {
 		args: [s.proof, { processor: s.processor, data: s.data }, s.noteData],
@@ -42,10 +42,7 @@ export function toPreparedSpend(s: ClientSpend): PreparedSpend {
 	}
 }
 
-/**
- * `NOTE_NOT_FOUND` for a note this user lists as active is a mismatch between two discoveries on
- * their own cursors (ASP events, RPC lag), not a missing deposit; the code is kept, the message says so.
- */
+/** Keeps `NOTE_NOT_FOUND`'s code; the message says the user lists the note as active (see `wireSession`). */
 export function explainSpendError(e: unknown, commitment: bigint): unknown {
 	if (!(e instanceof PoolClientError) || e.code !== "NOTE_NOT_FOUND") return e
 	return new PoolClientError(

@@ -173,13 +173,14 @@ function spender(config: ClientConfig, owner: Address, signature: Hex, prover: I
  * payload. A supplied signature must be the wallet's own: any other derives keys it cannot reproduce.
  */
 export async function createPoolUser(live: ClientConfig, o: { wallet: LocalWallet; signature?: Hex }): Promise<PoolUser> {
-	const { wallet } = o
+	// Read once: the signature that is verified must be the one both sides derive keys from.
+	const { wallet, signature: supplied } = o
 	const owner = wallet.account.address
 	const typedData = secretDerivationTypedData(owner)
-	if (o.signature && !(await verifyTypedData({ address: owner, signature: o.signature, ...typedData })))
+	if (supplied && !(await verifyTypedData({ address: owner, signature: supplied, ...typedData })))
 		throw new Error(`the signature is not ${owner}'s secret-derivation signature`)
 	const config = snapshot(live)
-	const signature = o.signature ?? (await wallet.signTypedData({ account: wallet.account, ...typedData }))
+	const signature = supplied ?? (await wallet.signTypedData({ account: wallet.account, ...typedData }))
 	const prover = createProver()
 	const cryptoService = new CryptoService()
 	const keystoreManager = KeystoreManager.fromSignature(
