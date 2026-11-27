@@ -28,11 +28,11 @@
 		"@aztec-labs/protocol-contracts": "6.0.0",
 		"@aztec-labs/standard-contracts": "6.0.0",
 		"@aztec-labs/stdlib": "6.0.0",
-		"@nulo-sh/resolve-asset": "0.3.0",
+		"@nulo-sh/resolve-asset": "catalog:",
 		"@pp/bridge-core": "workspace:*",
 		"@pp/bridge-spec": "workspace:*",
-		"@types/node": "^24.13.2",
-		"typescript": "^6.0.3",
-		"vitest": "^4.1.9"
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }

@@ -23,18 +23,18 @@
 		"@aztec-labs/stdlib": "6.0.0",
 		"@aztec-labs/wallet-sdk": "6.0.0",
 		"@aztec-labs/wallets": "6.0.0",
-		"@nulo-sh/resolve-asset": "0.3.0",
-		"@nulo-sh/wallet-crypto": "0.3.0",
+		"@nulo-sh/resolve-asset": "catalog:",
+		"@nulo-sh/wallet-crypto": "catalog:",
 		"@nulo-sh/wallet-sdk-schema-patch": "0.3.0",
 		"@pp/bridge-core": "workspace:*",
-		"viem": "2.57.1"
+		"viem": "catalog:"
 	},
 	"devDependencies": {
-		"@playwright/test": "1.63.0",
-		"@types/node": "^24.13.2",
-		"typescript": "^6.0.3",
-		"vite": "^8.3.8",
-		"vite-plugin-node-polyfills": "^0.28.0",
-		"vitest": "^4.1.12"
+		"@playwright/test": "catalog:",
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vite": "catalog:",
+		"vite-plugin-node-polyfills": "catalog:",
+		"vitest": "catalog:"
 	}
 }

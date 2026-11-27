@@ -33,14 +33,14 @@
 		"@0xbow/privacy-pools-v2-sdk": "1.0.2",
 		"buffer": "6.0.3",
 		"snarkjs": "0.7.5",
-		"viem": "2.57.1"
+		"viem": "catalog:"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.13",
-		"@playwright/test": "1.63.0",
-		"@types/bun": "1.4.4",
-		"typescript": "6.0.3",
-		"vite": "^8.3.8",
-		"vitest": "^4.1.12"
+		"@biomejs/biome": "catalog:",
+		"@playwright/test": "catalog:",
+		"@types/bun": "catalog:",
+		"typescript": "catalog:",
+		"vite": "catalog:",
+		"vitest": "catalog:"
 	}
 }

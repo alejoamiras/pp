@@ -145,6 +145,15 @@ days. The L1 fuzz and invariant suites are
   `@nulo-sh/*` packages are standing exemptions; no other name becomes one without the owner's
   decision. Details: [`SECURITY.md`](SECURITY.md).
 - **The Aztec line is exact-pinned and bumped by hand** ([`UPDATE.md`](UPDATE.md)).
+- **A dependency two workspaces share lives in a root catalog** (top-level, beside an array
+  `workspaces`), and each workspace names it `catalog:`. The named `pool` catalog holds what must
+  match the pool SDK checkout (its viem), for `catalog:pool`. The Aztec packages stay exact in each
+  manifest.
+  `scripts/ci-cd/aztec-line.test.ts` holds both rules.
+- **The Aztec line's zod range predates GHSA-mrhx-c7xc-m3w5's fix**, so the root overrides zod to the
+  catalog's version under each `@aztec-labs/*` package that declares it. Delete those overrides at the
+  bump whose Aztec zod ranges all admit the catalog's version; `scripts/ci-cd/aztec-zod.test.ts` fails
+  until you do, and also on a new declaring package or a value that drifts from the catalog.
 - `bun audit` runs in CI as an advisory step. No Renovate: dependency bumps are manual PRs.
 
 ## Security
