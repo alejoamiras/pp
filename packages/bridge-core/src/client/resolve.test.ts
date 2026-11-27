@@ -42,10 +42,13 @@ function client(o: { head: bigint; log?: Awaited<ReturnType<typeof bridgedLog>>;
 
 describe("resolveNullifier", () => {
 	it("finds a copy that landed in an earlier block than the user's own transaction, across log windows", async () => {
-		const { c, getLogs } = client({ head: 25_000n, log: await bridgedLog(150n, INTENT.secretHash) })
+		const { c, getLogs } = client({ head: 25_000n, log: await bridgedLog(12_000n, INTENT.secretHash) })
 		const r = await resolveNullifier(c, D, INTENT, false)
 		expect(r).toMatchObject({ kind: "bridged", receipt: { l1TxHash: COPY, leafIndex: 5n, amount: 70n, asset: D.asset } })
-		expect(getLogs.mock.calls[0]?.[0]).toMatchObject({ fromBlock: 100n })
+		expect(getLogs.mock.calls.map(([q]) => [q.fromBlock, q.toBlock])).toEqual([
+			[100n, 10_099n],
+			[10_100n, 20_099n],
+		])
 	})
 
 	it("reports another intent's bridge of the same note as consumed elsewhere", async () => {

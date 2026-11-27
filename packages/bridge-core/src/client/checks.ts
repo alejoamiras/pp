@@ -8,15 +8,49 @@ import type { PreparedBridgeSpend } from "./types"
 
 const fail = (check: SpendCheckName) => new BridgeClientError("SPEND_MISMATCH", { check })
 
-const pair = <T>(p: readonly [T, T]) => Object.freeze([p[0], p[1]] as const)
+// Each value is read once and must already be a primitive of its type, so neither an accessor nor a
+// caller's own `map` or iterator can make the checked copy differ from the one sent.
+const HEX = /^0x[0-9a-fA-F]*$/
+
+function big(v: unknown): bigint {
+	if (typeof v !== "bigint") throw fail("shape")
+	return v
+}
+
+function hex(v: unknown): `0x${string}` {
+	if (typeof v !== "string" || !HEX.test(v)) throw fail("shape")
+	return v as `0x${string}`
+}
+
+function list<T>(v: unknown, item: (x: unknown) => T, length?: number): readonly T[] {
+	if (!Array.isArray(v) || (length !== undefined && v.length !== length)) throw fail("shape")
+	const n = v.length
+	const out: T[] = []
+	for (let i = 0; i < n; i++) out.push(item(v[i]))
+	return Object.freeze(out)
+}
+
+const pair = (v: unknown) => list(v, big, 2) as readonly [bigint, bigint]
 
 function copyProof(p: TransactProof): TransactProof {
+	const { pA, pB, pC, pubSignals } = p
 	return Object.freeze({
-		pA: pair(p.pA),
-		pB: Object.freeze([pair(p.pB[0]), pair(p.pB[1])] as const),
-		pC: pair(p.pC),
-		pubSignals: Object.freeze(p.pubSignals.map((row) => Object.freeze([...row]))),
+		pA: pair(pA),
+		pB: list(pB, pair, 2) as readonly [readonly [bigint, bigint], readonly [bigint, bigint]],
+		pC: pair(pC),
+		pubSignals: list(pubSignals, (row) => list(row, big)),
 	})
+}
+
+function copyNote(n: unknown) {
+	if (typeof n !== "object" || n === null) throw fail("shape")
+	const { hint, data } = n as Record<string, unknown>
+	return Object.freeze({ hint: hex(hint), data: hex(data) })
+}
+
+function copyChange(c: PreparedBridgeSpend["change"]) {
+	const { commitment, precommitment, label, value } = c
+	return Object.freeze({ commitment: big(commitment), precommitment: big(precommitment), label: big(label), value: big(value) })
 }
 
 /**
@@ -27,20 +61,21 @@ function copyProof(p: TransactProof): TransactProof {
  */
 export function snapshotSpend(s: PreparedBridgeSpend): PreparedBridgeSpend {
 	try {
+		const { processor, data, nullifier, spentCommitment, amount, asset, aspRoot, secretHash, claimSalt, recipient } = s
 		return Object.freeze({
 			proof: copyProof(s.proof),
-			noteData: Object.freeze(s.noteData.map((n) => Object.freeze({ hint: n.hint, data: n.data }))),
-			processor: s.processor,
-			data: s.data,
-			nullifier: s.nullifier,
-			spentCommitment: s.spentCommitment,
-			change: Object.freeze({ ...s.change }),
-			amount: s.amount,
-			asset: s.asset,
-			aspRoot: s.aspRoot,
-			secretHash: s.secretHash,
-			claimSalt: s.claimSalt,
-			recipient: AztecAddress.fromStringUnsafe(s.recipient.toString()),
+			noteData: list(s.noteData, copyNote),
+			processor: hex(processor),
+			data: hex(data),
+			nullifier: big(nullifier),
+			spentCommitment: big(spentCommitment),
+			change: copyChange(s.change),
+			amount: big(amount),
+			asset: hex(asset),
+			aspRoot: big(aspRoot),
+			secretHash: hex(secretHash),
+			claimSalt: big(claimSalt),
+			recipient: AztecAddress.fromStringUnsafe(String(recipient.toString())),
 		})
 	} catch {
 		throw fail("shape")

@@ -165,14 +165,21 @@ export class Journal {
 		return { raw, record: record?.nullifier === nullifier ? record : null }
 	}
 
-	async write(r: JournalRecord): Promise<void> {
+	/** @returns the stored value, which `restore` uses to tell its own write from a later one */
+	async write(r: JournalRecord): Promise<string> {
 		const key = await this.#storageKey(r.nullifier)
-		this.#store.setItem(key, await sealRecord(this.#keys, key, r))
+		const sealed = await sealRecord(this.#keys, key, r)
+		this.#store.setItem(key, sealed)
+		return sealed
 	}
 
-	/** Puts back exactly what `read` returned, so a rejected attempt leaves no trace. */
-	async restore(nullifier: bigint, raw: string | null): Promise<void> {
+	/**
+	 * Puts back what `read` returned, so a rejected attempt leaves no trace, but only while the stored
+	 * value is still `written`: a record another writer saved since then is kept.
+	 */
+	async restore(nullifier: bigint, raw: string | null, written: string): Promise<void> {
 		const key = await this.#storageKey(nullifier)
+		if (this.#store.getItem(key) !== written) return
 		if (raw === null) this.#store.removeItem(key)
 		else this.#store.setItem(key, raw)
 	}

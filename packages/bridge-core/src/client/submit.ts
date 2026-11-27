@@ -73,22 +73,41 @@ const intentOf = (s: PreparedBridgeSpend): Intent => ({
 	amount: s.amount,
 })
 
+/** A re-proof refreshes roots only: the same note, amount, recipient and claim, or nothing is sent. */
+function sameSpend(was: PreparedBridgeSpend, now: PreparedBridgeSpend): PreparedBridgeSpend {
+	const a = intentOf(was)
+	const b = intentOf(now)
+	const same =
+		a.nullifier === b.nullifier &&
+		a.amount === b.amount &&
+		a.recipient === b.recipient &&
+		was.spentCommitment === now.spentCommitment &&
+		was.claimSalt === now.claimSalt &&
+		was.secretHash.toLowerCase() === now.secretHash.toLowerCase()
+	if (!same) throw new BridgeClientError("SPEND_MISMATCH", { check: "request" })
+	return now
+}
+
 const bridgeIntentOf = (s: PreparedBridgeSpend): BridgeIntent => ({
 	nullifier: s.proof.pubSignals[0]?.[0] as bigint,
 	amount: s.amount,
 	secretHash: hexToBigInt(s.secretHash),
 })
 
-/** A receipt for a verified event, a throw for another spend or an inconsistent RPC, `null` while nothing landed. */
-function outcome(r: Resolution): BridgeReceipt | null {
+/**
+ * A receipt for a verified event, a throw for another spend or an inconsistent RPC, `null` while
+ * nothing landed. `hash` is the user's own transaction, when this run sent one.
+ */
+function outcome(r: Resolution, hash?: Hash): BridgeReceipt | null {
+	const own = hash ? { l1TxHash: hash } : {}
 	if (r.kind === "bridged") return r.receipt
-	if (r.kind === "elsewhere") throw new BridgeClientError("CONSUMED_ELSEWHERE")
-	if (r.kind === "inconsistent") throw new BridgeClientError("RPC_INCONSISTENT")
+	if (r.kind === "elsewhere") throw new BridgeClientError("CONSUMED_ELSEWHERE", own)
+	if (r.kind === "inconsistent") throw new BridgeClientError("RPC_INCONSISTENT", own)
 	return null
 }
 
-const resolveFor = (run: Run, s: PreparedBridgeSpend, ownSucceeded: boolean) =>
-	resolveNullifier(run.ctx.reader, run.ctx.deployment, bridgeIntentOf(s), ownSucceeded)
+const resolveFor = (run: Run, s: PreparedBridgeSpend, ownSucceeded: boolean, minHead?: bigint) =>
+	resolveNullifier(run.ctx.reader, run.ctx.deployment, bridgeIntentOf(s), ownSucceeded, minHead)
 
 const bridgeCall = (run: Run, s: PreparedBridgeSpend) => ({
 	address: run.ctx.deployment.portal,
@@ -211,13 +230,13 @@ function withHash(r: JournalRecord, hash: Hash): JournalRecord {
 
 async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: bigint): Promise<BridgeReceipt> {
 	await run.ctx.preflights.consume(run.ctx.deployment.id, s.recipient)
-	await run.journal.write(plan.record)
+	const written = await run.journal.write(plan.record)
 	let hash: Hash
 	try {
 		hash = await run.l1.writeContract({ ...bridgeCall(run, s), chain: run.chain, gas })
 	} catch (e) {
 		if (!isUserRejection(e)) return afterSendFailure(run, s)
-		await run.journal.restore(plan.record.nullifier, plan.previous)
+		await run.journal.restore(plan.record.nullifier, plan.previous, written)
 		throw new BridgeClientError("RPC_FAILED", { source: "UserRejectedRequestError" })
 	}
 	const saved = await run.journal.write(withHash(plan.record, hash)).then(
@@ -227,7 +246,10 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
 	if (!saved) return afterSendFailure(run, s, hash)
 	const receipt = await run.ctx.reader.waitForTransactionReceipt({ hash, timeout: run.ctx.receiptTimeoutMs }).catch(() => null)
 	if (!receipt) return afterSendFailure(run, s, hash)
-	const done = outcome(await resolveFor(run, s, receipt.status === "success"))
+	// From here the transaction is mined, so a failed read is UNCERTAIN with its hash, never RPC_FAILED.
+	const resolved = await resolveFor(run, s, receipt.status === "success", receipt.blockNumber).catch(() => null)
+	if (!resolved) return afterSendFailure(run, s, hash)
+	const done = outcome(resolved, hash)
 	if (done) return done
 	const stale = await revertCause(run.ctx.reader, hash, spendRevertCode).catch(() => null)
 	throw new BridgeClientError("REVERTED", { stale, l1TxHash: hash })
@@ -236,7 +258,12 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
 /**
  * Sends a checked bridge spend and returns the receipt of the verified `BridgedFromPool` event for
  * its nullifier, whichever transaction carried it. Never resubmits by itself: a send whose outcome
- * is unknown ends `UNCERTAIN` and needs `acceptUncertain` to try again.
+ * is unknown ends `UNCERTAIN` and needs `acceptUncertain` to try again. A second call for the same
+ * note over the same store while one runs is `IN_FLIGHT`.
+ *
+ * Known limit: the journal is authenticated, not fresh. A record deleted or rolled back in the store,
+ * or a second process or tab over the same storage, can let a note be sent again while an earlier
+ * send is pending; the vault lets only one land, so the cost is a reverted transaction's gas.
  */
 export function submit(
 	ctx: SubmitContext,
@@ -248,17 +275,38 @@ export function submit(
 	return guarded(async () => {
 		// Taken before the first await, so nothing the caller does afterwards changes what is checked or sent.
 		let snap = snapshotSpend(spend)
-		const run = await openRun(ctx, l1, l1.account, l1.chain, s, o, snap)
-		for (let reproofs = 0; ; reproofs++) {
-			await assertBridgeSpend(snap, run.session.pool, run.secrets.claimKey, ctx.deployment)
-			const guard = await journalGuard(run, snap)
-			if ("receipt" in guard) return guard.receipt
-			const fresh = await freshness(run, snap)
-			if (fresh.kind === "done") return fresh.receipt
-			if (fresh.kind === "ready") return broadcast(run, snap, guard, fresh.gas)
-			if (reproofs === MAX_REPROOFS) throw new BridgeClientError("STALE", { stale: fresh.stale })
-			o.onReprove?.(fresh.stale)
-			snap = snapshotSpend(await ctx.reprove(run.session, snap))
+		const release = holdNote(ctx.store, snap)
+		try {
+			const run = await openRun(ctx, l1, l1.account, l1.chain, s, o, snap)
+			for (let reproofs = 0; ; reproofs++) {
+				await assertBridgeSpend(snap, run.session.pool, run.secrets.claimKey, ctx.deployment)
+				const guard = await journalGuard(run, snap)
+				if ("receipt" in guard) return guard.receipt
+				const fresh = await freshness(run, snap)
+				if (fresh.kind === "done") return fresh.receipt
+				if (fresh.kind === "ready") return await broadcast(run, snap, guard, fresh.gas)
+				if (reproofs === MAX_REPROOFS) throw new BridgeClientError("STALE", { stale: fresh.stale })
+				o.onReprove?.(fresh.stale)
+				snap = sameSpend(snap, snapshotSpend(await ctx.reprove(run.session, snap)))
+			}
+		} finally {
+			release()
 		}
 	})
+}
+
+/**
+ * Notes with a `submit` running in this process, per store, so two calls over one store (one client
+ * or several) never both reach the wallet. Separate processes or tabs over one storage are not
+ * covered: the journal has no compare-and-set, so both may send, and the vault lets one land.
+ */
+const running = new WeakMap<KeyValueStore, Set<bigint>>()
+
+function holdNote(store: KeyValueStore, s: PreparedBridgeSpend): () => void {
+	const nullifier = s.proof.pubSignals[0]?.[0] ?? s.nullifier
+	const held = running.get(store) ?? new Set<bigint>()
+	running.set(store, held)
+	if (held.has(nullifier)) throw new BridgeClientError("IN_FLIGHT")
+	held.add(nullifier)
+	return () => held.delete(nullifier)
 }

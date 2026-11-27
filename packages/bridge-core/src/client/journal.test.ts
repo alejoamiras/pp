@@ -80,18 +80,21 @@ describe("journal sealing", () => {
 		expect(await openRecord(keys, key, value)).toBeNull()
 	})
 
-	it("restores exactly what was there before a rejected attempt", async () => {
+	it("restores exactly what was there before a rejected attempt, unless another write came after", async () => {
 		const store = memoryStore()
 		const journal = new Journal(store, await deriveJournalKeys(KEY), DEPLOYMENT)
 		const before = await journal.read(NULLIFIER)
-		await journal.write(record())
-		await journal.restore(NULLIFIER, before.raw)
+		await journal.restore(NULLIFIER, before.raw, await journal.write(record()))
 		expect(store.map.size).toBe(0)
 		await journal.write(record())
 		const held = await journal.read(NULLIFIER)
-		await journal.write(record({ attempts: [{ l1TxHash: H(1) }, {}] }))
-		await journal.restore(NULLIFIER, held.raw)
+		await journal.restore(NULLIFIER, held.raw, await journal.write(record({ attempts: [{ l1TxHash: H(1) }, {}] })))
 		expect((await journal.read(NULLIFIER)).raw).toBe(held.raw)
+
+		const mine = await journal.write(record({ attempts: [{}] }))
+		const theirs = await journal.write(record({ attempts: [{ l1TxHash: H(2) }] }))
+		await journal.restore(NULLIFIER, held.raw, mine)
+		expect((await journal.read(NULLIFIER)).raw).toBe(theirs)
 	})
 })
 

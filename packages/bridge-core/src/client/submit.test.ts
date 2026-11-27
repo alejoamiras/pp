@@ -47,7 +47,7 @@ const code = async (p: Promise<unknown>) =>
 
 const hash = (n: number) => toHex(n, { size: 32 }) as Hash
 
-function held(t: Setup, attempts: JournalRecord["attempts"], over: Partial<JournalRecord> = {}): Promise<void> {
+function held(t: Setup, attempts: JournalRecord["attempts"], over: Partial<JournalRecord> = {}): Promise<string> {
 	return t.journal.write({ nullifier: t.spend.nullifier, recipient: t.recipient.toString(), amount: t.spend.amount, attempts, ...over })
 }
 
@@ -99,6 +99,23 @@ describe("submit: checks before anything is written or sent", () => {
 		expect(sent).toMatchObject({ chain: { id: 31337 }, gas: 125_000n })
 		expect(receipt).toMatchObject({ amount: 70n, nullifier: t.spend.nullifier })
 	})
+
+	it("copies proof values by index into primitives, never through the caller's own methods", async () => {
+		const t = await setup()
+		const rows = t.spend.proof.pubSignals.map((r) => [...r])
+		let reads = 0
+		const shifting = Object.defineProperty([] as bigint[], 0, { get: () => (reads++ === 0 ? 70n : 1n), enumerable: true })
+		const swapped = Array.prototype.map.call(rows, (r, i) => (i === 5 ? shifting : r))
+		Object.defineProperty(rows, "map", { value: () => swapped })
+		const tricky = { ...t.spend, proof: { ...t.spend.proof, pubSignals: rows } }
+		await submit(t.ctx, tricky, t.chain.wallet(), t.session)
+		expect(t.chain.writeContract.mock.calls[0]?.[0].args[0].pubSignals[5]).toEqual([70n])
+
+		const u = await setup()
+		const numeric = { ...u.spend, amount: 70 as unknown as bigint }
+		expect(await code(submit(u.ctx, numeric, u.chain.wallet(), u.session))).toBe("SPEND_MISMATCH")
+		expect(u.chain.writeContract).not.toHaveBeenCalled()
+	})
 })
 
 describe("submit: preflight at handoff", () => {
@@ -115,11 +132,75 @@ describe("submit: preflight at handoff", () => {
 		expect(t.values.size).toBe(0)
 	})
 
+	it("lets one of two concurrent submits of a note over one store reach the wallet", async () => {
+		const t = await setup()
+		const other = await randomRecipient()
+		t.preflights.record(DEPLOYMENT.id, other, aztecWallet([other]))
+		const second = context(t.chain, t.store, t.preflights)
+		const held = Promise.withResolvers<object>()
+		t.chain.simulate.mockReturnValueOnce(held.promise)
+		const first = submit(t.ctx, t.spend, t.chain.wallet(), t.session)
+		const rival = await code(submit(second, await bridgeSpend(other), t.chain.wallet(), t.session))
+		held.resolve({})
+		await first
+		expect(rival).toBe("IN_FLIGHT")
+		expect(t.chain.writeContract).toHaveBeenCalledTimes(1)
+	})
+
+	it("keeps a record another writer saved while the wallet call was out, when the user rejects", async () => {
+		const t = await setup()
+		t.chain.writeContract.mockImplementationOnce(async () => {
+			for (const k of t.values.keys()) t.store.setItem(k, "theirs")
+			throw new UserRejectedRequestError(new Error("no"))
+		})
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("RPC_FAILED")
+		expect([...t.values.values()]).toEqual(["theirs"])
+	})
+
+	it("refuses a re-proof that is a valid spend of something else, with zero sends", async () => {
+		const t = await setup()
+		t.pool.assertFresh.mockRejectedValueOnce(new PoolClientError("ASP_ROOT_STALE", "x"))
+		const smaller = await bridgeSpend(t.recipient, { amount: 60n })
+		vi.mocked(t.ctx.reprove).mockResolvedValueOnce(smaller)
+		const e = await submit(t.ctx, t.spend, t.chain.wallet(), t.session).catch((x: unknown) => x)
+		expect(e).toMatchObject({ code: "SPEND_MISMATCH", check: "request" })
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+	})
+
 	it("refuses with zero sends when the preflighted wallet no longer lists the recipient", async () => {
 		const t = await setup()
 		t.preflights.record(DEPLOYMENT.id, t.recipient, aztecWallet([]))
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("PREFLIGHT_REQUIRED")
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
+	})
+})
+
+describe("submit: reading the outcome", () => {
+	it("finds its own event on a node whose head lags the receipt, or whose cached head is old", async () => {
+		const t = await setup()
+		Object.assign(t.chain.reader, { getBlockNumber: async () => t.chain.head - 1n })
+		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ amount: 70n })
+
+		const u = await setup()
+		await u.chain.land(u.spend.secretHash, hash(1), u.spend.proof.pubSignals)
+		await held(u, [{ l1TxHash: hash(1) }])
+		const cached = u.chain.head - 1n
+		Object.assign(u.chain.reader, {
+			getBlockNumber: async (o?: { cacheTime?: number }) => (o?.cacheTime === 0 ? u.chain.head : cached),
+		})
+		await expect(submit(u.ctx, u.spend, u.chain.wallet(), u.session)).resolves.toMatchObject({ l1TxHash: hash(1) })
+		expect(u.chain.writeContract).not.toHaveBeenCalled()
+	})
+
+	it("is UNCERTAIN with the hash, never RPC_FAILED, when the logs cannot be read after a mined send", async () => {
+		const t = await setup()
+		const land = t.chain.onSend
+		t.chain.onSend = async (call, h) => {
+			await land(call, h)
+			Object.assign(t.chain.reader, { getLogs: async () => Promise.reject(new Error("rpc down")) })
+		}
+		const e = await submit(t.ctx, t.spend, t.chain.wallet(), t.session).catch((x: unknown) => x)
+		expect(e).toMatchObject({ code: "UNCERTAIN", l1TxHash: expect.stringMatching(/^0x[0-9a-f]{64}$/) })
 	})
 })
 

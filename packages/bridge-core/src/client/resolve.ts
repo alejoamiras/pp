@@ -55,14 +55,18 @@ async function findEvent(c: ResolverClient, d: ResolverDeployment, nullifier: bi
  * The log scan and the spent-nullifier read are pinned to one head block.
  *
  * @param ownSucceeded whether any of the user's own transactions for this nullifier succeeded
+ * @param minHead a block the scan must reach, such as a receipt's: a node can lag the one that served it
  */
 export async function resolveNullifier(
 	c: ResolverClient,
 	d: ResolverDeployment,
 	intent: BridgeIntent,
 	ownSucceeded: boolean,
+	minHead = 0n,
 ): Promise<Resolution> {
-	const head = await c.getBlockNumber()
+	// viem caches the block number for a polling interval; a receipt just seen can be past that cache.
+	const latest = await c.getBlockNumber({ cacheTime: 0 })
+	const head = latest > minHead ? latest : minHead
 	const log = await findEvent(c, d, intent.nullifier, head)
 	if (log) {
 		const { args } = decodeEventLog({ abi: [BRIDGED], data: log.data, topics: log.topics })
