@@ -63,6 +63,10 @@ const BROKEN: Record<string, (file: string) => void> = {
 		const { "Content-Security-Policy": _csp, ...rest } = parseHeaderFile(readFileSync(file, "utf8"))
 		writeFileSync(file, JSON.stringify(rest))
 	},
+	weakened: (file) => {
+		const headers = parseHeaderFile(readFileSync(file, "utf8"))
+		writeFileSync(file, JSON.stringify({ ...headers, "Content-Security-Policy": "default-src 'none';" }))
+	},
 }
 
 async function assertRefuses(port: number, kind: string, breakFile: (file: string) => void): Promise<void> {

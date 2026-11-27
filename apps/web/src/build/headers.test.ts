@@ -66,4 +66,26 @@ describe("security headers", () => {
 			expect(() => parseHeaderFile(bad)).toThrow(/security-headers\.json/)
 		}
 	})
+
+	test("read back only with every directive the build writes, each as the build writes it", () => {
+		const headers = securityHeaders(TARGET)
+		const csp = headers["Content-Security-Policy"]
+		const without = (name: string) =>
+			csp
+				.split("; ")
+				.filter((d) => !d.startsWith(`${name} `))
+				.join("; ")
+		const policies = [
+			"default-src 'none';",
+			without("frame-ancestors"),
+			without("connect-src"),
+			csp.replace("frame-src http://127.0.0.1:9001 http://127.0.0.1:9002", "frame-src https://*"),
+			csp.replace("script-src 'self' 'wasm-unsafe-eval'", "script-src 'self' 'unsafe-eval'"),
+			`${csp}; script-src *`,
+		]
+		for (const policy of policies)
+			expect(() => parseHeaderFile(JSON.stringify({ ...headers, "Content-Security-Policy": policy })), policy).toThrow(
+				/security-headers\.json/,
+			)
+	})
 })

@@ -4,7 +4,7 @@
  * set verbatim, so the policy is fixed at build time and never depends on the serving process's env.
  */
 import { z } from "zod"
-import type { PublicTarget } from "./target.ts"
+import { isPublicOrigin, type PublicTarget } from "./target.ts"
 
 export const HEADER_FILE = "security-headers.json"
 
@@ -21,7 +21,7 @@ const headerFile = z.strictObject({
 	"Cross-Origin-Resource-Policy": z.literal(ISOLATION_HEADERS["Cross-Origin-Resource-Policy"]),
 	"X-Content-Type-Options": z.literal("nosniff"),
 	"Referrer-Policy": z.literal("no-referrer"),
-	"Content-Security-Policy": z.string().startsWith("default-src 'none';"),
+	"Content-Security-Policy": z.string().refine((csp) => isBuiltPolicy(csp), "is not a policy this build writes"),
 })
 
 export type SecurityHeaders = z.infer<typeof headerFile>
@@ -38,25 +38,47 @@ export function frameOrigins(t: PublicTarget): string[] {
 }
 
 /**
- * `'unsafe-inline'` styles: Radix's scroll lock injects a `<style>` element and the wallet SDK's panel
- * markup carries style attributes, and a static site cannot issue per-request nonces. No style value
- * comes from untrusted data. `'wasm-unsafe-eval'` compiles wasm only; JavaScript eval stays blocked.
+ * The policy's directives in order; `connect` and `frame` stand for the target's origins. `'unsafe-inline'`
+ * styles: Radix's scroll lock injects a `<style>` element and the wallet SDK's panel markup carries style
+ * attributes, and a static site cannot issue per-request nonces. No style value comes from untrusted
+ * data. `'wasm-unsafe-eval'` compiles wasm only; JavaScript eval stays blocked.
  */
+const POLICY = [
+	["default-src", "'none'"],
+	["script-src", "'self' 'wasm-unsafe-eval'"],
+	["style-src", "'self' 'unsafe-inline'"],
+	["img-src", "'self' data:"],
+	["font-src", "'self'"],
+	["connect-src", "connect"],
+	["frame-src", "frame"],
+	["worker-src", "'self' blob:"],
+	["frame-ancestors", "'none'"],
+	["base-uri", "'none'"],
+	["form-action", "'none'"],
+] as const
+
 export function contentSecurityPolicy(t: PublicTarget): string {
 	const frames = frameOrigins(t)
-	return [
-		"default-src 'none'",
-		"script-src 'self' 'wasm-unsafe-eval'",
-		"style-src 'self' 'unsafe-inline'",
-		"img-src 'self' data:",
-		"font-src 'self'",
-		`connect-src 'self' ${connectOrigins(t).join(" ")}`,
-		`frame-src ${frames.length > 0 ? frames.join(" ") : "'none'"}`,
-		"worker-src 'self' blob:",
-		"frame-ancestors 'none'",
-		"base-uri 'none'",
-		"form-action 'none'",
-	].join("; ")
+	const lists = { connect: `'self' ${connectOrigins(t).join(" ")}`, frame: frames.length > 0 ? frames.join(" ") : "'none'" }
+	return POLICY.map(([name, value]) => `${name} ${value === "connect" || value === "frame" ? lists[value] : value}`).join("; ")
+}
+
+/**
+ * Whether `csp` is a policy `contentSecurityPolicy` writes for some target: every directive once and in
+ * order, each fixed one verbatim, and the source lists made of exact origins a target accepts.
+ */
+export function isBuiltPolicy(csp: string): boolean {
+	const parts = csp.split("; ")
+	return (
+		parts.length === POLICY.length &&
+		POLICY.every(([name, value], i) => {
+			const [head, ...sources] = (parts[i] as string).split(" ")
+			if (head !== name) return false
+			if (value === "connect") return sources[0] === "'self'" && sources.length > 1 && sources.slice(1).every(isPublicOrigin)
+			if (value === "frame") return sources.join(" ") === "'none'" || (sources.length > 0 && sources.every(isPublicOrigin))
+			return sources.join(" ") === value
+		})
+	)
 }
 
 export function securityHeaders(t: PublicTarget): SecurityHeaders {
