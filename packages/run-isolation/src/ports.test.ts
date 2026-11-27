@@ -14,7 +14,17 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { claimPort, claimRows, OwnerHoldsRows, portOwner, registeredPorts, releasePorts, releaseRows, rowsOwnedBy } from "./ports.ts"
+import {
+	claimPort,
+	claimRows,
+	OwnerHoldsRows,
+	portOwner,
+	portsOwnedBy,
+	registeredPorts,
+	releasePorts,
+	releaseRows,
+	rowsOwnedBy,
+} from "./ports.ts"
 
 const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
@@ -59,6 +69,7 @@ test("release leaves a row whose owner only contains the run id, and one that na
 	await claimRows(`${runId}-pool`, { anvil: 40_001 }, process.pid)
 	await claimRows("ports-test-neighbour", { [runId]: 40_002 }, process.pid)
 	await claimRows(runId, { anvil: 40_003 }, process.pid)
+	expect([portsOwnedBy(runId), portsOwnedBy(`${runId}-pool`)]).toEqual([[40_003], [40_001]])
 	expect(await releaseRows(runId)).toBe(true)
 	expect([rowsOwnedBy(runId), rowsOwnedBy(`${runId}-pool`), rowsOwnedBy("ports-test-neighbour")]).toEqual([0, 1, 1])
 	await releasePorts(`${runId}-pool`)
