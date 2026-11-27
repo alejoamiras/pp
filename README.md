@@ -12,6 +12,7 @@ its tests and CI gates. The pool processor, labelled notes and the web app build
 | [`packages/e2e-kit`](packages/e2e-kit/README.md) | Playwright kit for the web app: a test wallet, an injected Ethereum wallet, an egress fence. |
 | [`packages/local-stack`](packages/local-stack/README.md) | `bun run demo`: one anvil carrying the Aztec local network and the pool, booted and torn down as one stack. |
 | [`packages/pool-client`](packages/pool-client/README.md) | Privacy Pools v2 client: a user's notes and a checked spend to a processor, in Node, Bun and the browser. |
+| [`packages/run-isolation`](packages/run-isolation/README.md) | Process-group primitives every local run tears down with. |
 
 ## Run the gates
 

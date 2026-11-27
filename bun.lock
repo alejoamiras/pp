@@ -150,6 +150,7 @@
         "viem": "2.57.1",
       },
       "devDependencies": {
+        "@pp/run-isolation": "workspace:*",
         "@types/bun": "1.4.4",
         "@types/node": "^24.13.2",
         "typescript": "^6.0.3",
@@ -190,6 +191,15 @@
         "forge-std": "github:foundry-rs/forge-std#v1.14.0",
         "typescript": "6.0.3",
         "vitest": "^4.1.9",
+      },
+    },
+    "packages/run-isolation": {
+      "name": "@pp/run-isolation",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/node": "^24.13.2",
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.12",
       },
     },
   },
@@ -602,6 +612,8 @@
     "@pp/pool-client": ["@pp/pool-client@workspace:packages/pool-client"],
 
     "@pp/pp-env": ["@pp/pp-env@workspace:packages/pp-env"],
+
+    "@pp/run-isolation": ["@pp/run-isolation@workspace:packages/run-isolation"],
 
     "@protobufjs/aspromise": ["@protobufjs/aspromise@1.1.2", "", {}, "sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ=="],
 

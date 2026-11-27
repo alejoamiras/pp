@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { connect } from "node:net"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { groupAlive, groupMembers } from "@pp/run-isolation/process-group"
 
 const CACHE = join(homedir(), ".cache", "pp")
 const REGISTRY = join(homedir(), ".agents", "ports.md")
@@ -68,26 +69,6 @@ function startTime(pid: number): string | undefined {
 	}
 }
 
-/**
- * Every member of one group, zombies and exiting ones included, as `ps` lists them. Filtered by the
- * pgid column: procps reads a numeric `ps -g` as a session id.
- */
-function groupMembers(pgid: number): string {
-	const rows = execFileSync("ps", ["-eo", "pid=,ppid=,pgid=,stat=,etime=,args="], { encoding: "utf8" })
-		.split("\n")
-		.filter((l) => l.trim().split(/\s+/)[2] === String(pgid))
-	return rows.length ? ["  PID  PPID  PGID STAT  ELAPSED ARGS", ...rows].join("\n") : "(no member listed: it exited after the check)"
-}
-
-export function groupAlive(pgid: number): boolean {
-	try {
-		process.kill(-pgid, 0)
-		return true
-	} catch (err) {
-		return (err as NodeJS.ErrnoException).code !== "ESRCH"
-	}
-}
-
 export type RegistryRow = { port: number; service: string; owner: string }
 
 export function registryRows(): RegistryRow[] {
@@ -109,7 +90,16 @@ export const portRefuses = (port: number) =>
 		s.once("error", () => resolve(true))
 	})
 
-/** What a stopped run must not have left: live groups, open ports, registry rows, directories. */
+/** A live group's members with their `/proc` state, so a failure shows what kept it running. */
+const describeMembers = (pgid: number) =>
+	groupMembers(pgid)
+		.map((m) => `${m.pid} ${m.state} ${m.args}`)
+		.join("; ") || "no member listed (it exited after the check)"
+
+/**
+ * What a stopped run must not have left: running groups, open ports, registry rows, directories. A
+ * group of zombies only has stopped (its reaper has not collected them yet); any running member fails.
+ */
 export async function residueOf(r: {
 	runId: string
 	pgids: Iterable<number>
@@ -117,7 +107,7 @@ export async function residueOf(r: {
 	tmpDir?: string
 }): Promise<string[]> {
 	const left: string[] = []
-	for (const g of r.pgids) if (groupAlive(g)) left.push(`process group ${g}\n${groupMembers(g)}`)
+	for (const g of r.pgids) if (groupAlive(g)) left.push(`process group ${g}: ${describeMembers(g)}`)
 	for (const p of r.ports) if (!(await portRefuses(p))) left.push(`port ${p} accepts`)
 	for (const row of registryRows())
 		if (row.owner === r.runId || row.owner === `${r.runId}-pool`) left.push(`registry row ${row.port} ${row.owner}`)
