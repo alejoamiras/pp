@@ -65,7 +65,12 @@ jobs:
 
       - name: forge test (hermetic)
         working-directory: contracts/bridge/evm
-        run: forge test --no-match-contract Fork
+        run: forge test --no-match-contract Fork --no-match-test '^invariant_'
+
+      # Every invariant_ test runs here, not above: the script fails when a campaign never reached a
+      # replay, a forged payout, the cap, the reserve or the guard, which forge alone reports as a pass.
+      - name: invariant campaigns (reach checked)
+        run: bash contracts/bridge/evm/scripts/check-invariant.sh
 
       # BridgeMessageV1Test must fail on a flipped vector in each section it reads, after a clean
       # control run against the same override path.
