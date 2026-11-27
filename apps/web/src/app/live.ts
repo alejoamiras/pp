@@ -13,18 +13,21 @@ export interface Live {
 	chainId: number | null
 	epoch: number | null
 	aztecAccounts: readonly AztecAddress[]
+	/** A bridge sends from the local demo's dev account, not the wallet's selected one. */
+	demo: boolean
 }
 
 export interface LiveStore {
 	get(): Live
 	set(patch: Partial<Live>): void
 	subscribe(f: () => void): () => void
-	/** The driver's view: the store plus the build's deployment. */
+	/** The driver's view: the store plus the build's deployment, with the account a bridge sends from. */
 	context(): LiveContext
 }
 
-export function createLiveStore(deployment: string): LiveStore {
-	let live: Live = { owner: null, account: null, chainId: null, epoch: null, aztecAccounts: [] }
+/** `demoSender`: the local demo's dev account, which `demo` puts in the wallet's place as the sender. */
+export function createLiveStore(deployment: string, demoSender: Address | null = null): LiveStore {
+	let live: Live = { owner: null, account: null, chainId: null, epoch: null, aztecAccounts: [], demo: false }
 	const listeners = new Set<() => void>()
 	return {
 		get: () => live,
@@ -36,7 +39,10 @@ export function createLiveStore(deployment: string): LiveStore {
 			listeners.add(f)
 			return () => void listeners.delete(f)
 		},
-		context: () => ({ ...live, deployment }),
+		context: () => {
+			const { demo, ...rest } = live
+			return { ...rest, account: demo && demoSender ? demoSender : live.account, deployment }
+		},
 	}
 }
 

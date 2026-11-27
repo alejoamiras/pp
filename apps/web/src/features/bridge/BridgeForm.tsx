@@ -1,21 +1,31 @@
 import { useEffect, useState } from "react"
-import { isAddressEqual } from "viem"
+import { type Address, isAddressEqual } from "viem"
 import { useApp } from "../../app/context"
 import { type Live, useLive } from "../../app/live"
 import type { PoolNoteView } from "../../data/stack-types"
 import type { BridgeMachine } from "../../data/bridge-machine"
-import { messageOf } from "../../data/errors"
+import { codeOf, messageOf, type UiCode } from "../../data/errors"
 import { bridgeView } from "../../data/model"
 import { parseAmount } from "../../data/parse"
 import { ActionButton, Amount, Callout, Facts, Field, LabelChip, plainAmount, shortHex } from "../../ui"
 import { FailureCallout } from "./Failure"
 
+/** The account a bridge sends from: the local demo's dev account once chosen, else the wallet's selected one. */
+const senderOf = (live: Live, demo: Address | undefined): Address | null => (live.demo && demo ? demo : live.account)
+
 /** Why Submit is closed, first cause first; `undefined` when it is open. */
-function submitBlock(live: Live, m: BridgeMachine, chainId: number, recipient: string | null, amount: bigint | null): string | undefined {
+function submitBlock(
+	live: Live,
+	sender: Address | null,
+	m: BridgeMachine,
+	chainId: number,
+	recipient: string | null,
+	amount: bigint | null,
+): string | undefined {
 	if (!recipient) return "Connect your Aztec wallet first."
-	if (live.account === null) return messageOf("NO_SENDER")
+	if (sender === null) return messageOf("NO_SENDER")
 	if (live.chainId !== chainId) return messageOf("CHAIN_MISMATCH")
-	if (live.owner !== null && isAddressEqual(live.account, live.owner)) return "Switch your Ethereum wallet to a separate account first."
+	if (live.owner !== null && isAddressEqual(sender, live.owner)) return "Switch your Ethereum wallet to a separate account first."
 	if (amount === null) return "Enter an amount first."
 	if (m.phase === "preflight") return "Checking the recipient…"
 	return m.phase === "ready" ? undefined : "Waiting for the recipient check."
@@ -34,11 +44,32 @@ function useAutoPreflight(m: BridgeMachine, recipient: string | null, epoch: num
 	}, [m.binding, recipient, epoch, invalidate])
 }
 
-function SenderCheck({ live }: { live: Live }) {
-	if (live.account === null || live.owner === null || !isAddressEqual(live.account, live.owner)) return null
+/** Says who signs the spend; a local-stack build may offer its dev account in place of a second wallet account. */
+function SenderCheck({ now, sender }: { now: Live; sender: Address | null }) {
+	const { source, live } = useApp()
+	const demo = source.l1.demo
+	const [refused, setRefused] = useState<UiCode | null>(null)
+	if (now.demo && demo)
+		return (
+			<Callout tone="neutral" role="status">
+				<span data-testid="demo-sender">Local demo: signed by the dev account {demo.address}, no wallet</span>
+			</Callout>
+		)
+	if (sender === null || now.owner === null || !isAddressEqual(sender, now.owner)) return null
+	const chooseDemo = () =>
+		void demo?.ready().then(
+			() => live.set({ demo: true }),
+			(err: unknown) => setRefused(codeOf(err) ?? "RPC_FAILED"),
+		)
 	return (
 		<Callout tone="attn" title="Switch to a separate Ethereum account" role="status">
 			{messageOf("SENDER_IS_OWNER")} The page waits for your wallet to switch.
+			{demo ? (
+				<span className="mt-2 flex flex-wrap items-center gap-2">
+					<ActionButton onClick={chooseDemo}>Send from the local dev account</ActionButton>
+					{refused ? <span>{messageOf(refused)}</span> : null}
+				</span>
+			) : null}
 		</Callout>
 	)
 }
@@ -54,7 +85,8 @@ export function BridgeForm({ note }: { note: PoolNoteView }) {
 	const recipient = connection?.accounts[0] ?? null
 	useAutoPreflight(m, recipient, now.epoch)
 	const claim = refusal("claim")
-	const block = claim !== null ? messageOf(claim) : submitBlock(now, m, source.deployment.chainId, recipient, amount)
+	const sender = senderOf(now, source.l1.demo?.address)
+	const block = claim !== null ? messageOf(claim) : submitBlock(now, sender, m, source.deployment.chainId, recipient, amount)
 	const lastNotice = bridgeView(m).log.at(-1)
 	return (
 		<div className="grid gap-4" data-testid="bridge-form" data-phase={m.phase}>
@@ -67,7 +99,7 @@ export function BridgeForm({ note }: { note: PoolNoteView }) {
 				hint="What is left of the note stays in the pool under the same label."
 				aside={<ActionButton onClick={() => setText(plainAmount(note.value, decimals))}>Whole note</ActionButton>}
 			/>
-			<SenderCheck live={now} />
+			<SenderCheck now={now} sender={sender} />
 			<Facts
 				wide
 				facts={[
@@ -77,7 +109,7 @@ export function BridgeForm({ note }: { note: PoolNoteView }) {
 						term: "Stays in the pool",
 						value: <Amount value={note.value - (amount ?? 0n)} decimals={decimals} symbol={symbol} />,
 					},
-					{ key: "from", term: "Sent from (Ethereum)", value: now.account ? shortHex(now.account) : "—", mono: true },
+					{ key: "from", term: "Sent from (Ethereum)", value: sender ? shortHex(sender) : "—", mono: true },
 					{ key: "to", term: "Into (Aztec)", value: recipient ? shortHex(recipient) : "—", mono: true },
 				]}
 			/>

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
+import { getAddress } from "viem"
 import { afterEach, describe, expect, test } from "vitest"
-import { messageOf, UNCERTAIN_WORST_CASE } from "../../data/errors"
+import { BridgeFailure, messageOf, UNCERTAIN_WORST_CASE } from "../../data/errors"
+import type { Attempt } from "../../data/ports"
 import type { DataSource } from "../../data/source"
 import { connectAztec, memoryStore, noteRow, renderApp, signIn } from "../../test-utils/app"
 
@@ -65,6 +67,40 @@ async function reload(store: ReturnType<typeof memoryStore>) {
 }
 
 describe("the bridge screen", () => {
+	test("with the owner selected, a local-stack build offers its dev account, and a bridge sends from it once its check passes", async () => {
+		const DEV = getAddress("0x00000000000000000000000000000000000000aa")
+		const checks = [() => Promise.reject(new BridgeFailure("DEPLOYMENT_MISMATCH")), () => Promise.resolve()]
+		const attempts: Attempt[] = []
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				l1: { ...s.l1, demo: { address: DEV, ready: () => (checks.shift() as () => Promise<void>)() } },
+				sessions: {
+					...s.sessions,
+					open: async (a) => ({
+						...(await s.sessions.open(a)),
+						submit: (_p, attempt) => {
+							attempts.push(attempt)
+							return new Promise(() => {})
+						},
+					}),
+				},
+			}),
+		})
+		await signIn(app.user)
+		await connectAztec(app.user)
+		await app.user.click(noteRow(NOTE).getByRole("button", { name: "Bridge to Aztec" }))
+		await app.user.type(screen.getByLabelText(/Amount to bridge/), "70")
+		const offer = () => screen.getByRole("button", { name: "Send from the local dev account" })
+		await app.user.click(offer())
+		await screen.findByText(messageOf("DEPLOYMENT_MISMATCH"))
+		expect(screen.queryByTestId("demo-sender")).toBeNull()
+		await app.user.click(offer())
+		expect((await screen.findByTestId("demo-sender")).textContent).toContain(DEV)
+		await submit(app)
+		await waitFor(() => expect(attempts.map((a) => a.sender)).toEqual([DEV]))
+	})
+
 	test("bridges to claimed on the virtual clock, saying which root a re-proof followed", async () => {
 		const app = await openBridge()
 		app.control.reproveNext("ASP_ROOT_STALE")
