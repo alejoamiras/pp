@@ -14,5 +14,25 @@
 		"aspPort": 48602
 	},
 	"target": "own",
-	"bundle": "ceremony"
+	"bundle": "ceremony",
+	"expected": {
+		"guardian": "0xAD1127652b10042b5558818D6e362f54b4A4C518",
+		"lifetimeCap": "1000000000000",
+		"l1Deployer": "0x7473c0B7E59440401ec33A0b2b9263C98D92e270",
+		"l2Deployer": "0x2662ecea7b47c6b7e05fd33ba6b572ed2d613fee8e24d99bae15a341a740e365",
+		"botPoster": "0x1924ff866e94ef8e308b409f180fd3e644113ffe2b86d18ff446cb093e5c9635",
+		"aspPostman": "0xF636da69f1473be6014c14B43ce5272ACA8a1F04",
+		"poolDeployer": "0x2D03f8cB1F1DF4D5f823CDc282990fC0487Cc154",
+		"canaryOwner": "0x32f984A9561635dAb2AD48881FDd8E4782Da82D5",
+		"canarySender": "0x44c39e28726C19b19770065Cc0E70CD63930cEbB",
+		"demoOwner": "0x73546C799c99b7A0A46f1a6184b1a8274636A5eC",
+		"demoSender": "0xB30F9E7f9F33F89f5833084E5429559ed52b01A8",
+		"birthIntake": "0x2a8bf62bfd30dbe6a42a302e51d0d45bc3578d885001c3c30f1a7bc321b8ecce",
+		"tokenClassId": "0x1e897c194970e0f495ca5e73956992f131fc38243e3f5b74812a99b9e86d397f",
+		"amounts": {
+			"debit": "100",
+			"note": "100",
+			"bridge": "100"
+		}
+	}
 }

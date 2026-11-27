@@ -25,7 +25,8 @@ import { parseDeployment, serializeDeployment, type TestnetDeployment } from "./
 
 const DIR = fileURLToPath(new URL("../deployments/", import.meta.url))
 const committed = readdirSync(DIR).map((f) => [f, JSON.parse(readFileSync(`${DIR}${f}`, "utf8"))] as const)
-const own = parseDeployment(committed.find(([f]) => f === "testnet-own.json")?.[1])
+const ownJson = committed.find(([f]) => f === "testnet-own.json")?.[1]
+const own = parseDeployment(ownJson)
 const LIVE: Mode = { kind: "live" }
 const REHEARSE: Mode = { kind: "rehearse", manifest: "/m.json" }
 const FORK: Mode = { kind: "rehearse-fork", url: "http://127.0.0.1:1" }
@@ -50,9 +51,9 @@ describe("the deployment file", () => {
 	})
 
 	it("refuses an unknown key, an own pool without an ASP port, the ceremony bundle or its code-check addresses, and an ASP URL that is not the target's", () => {
-		expect(() => parseDeployment({ ...own, extra: 1 })).toThrow(/extra/)
-		const { aspPort: _, ...noPort } = own.network
-		expect(() => parseDeployment({ ...own, network: noPort })).toThrow(/aspPort/)
+		expect(() => parseDeployment({ ...ownJson, extra: 1 })).toThrow(/extra/)
+		const { aspPort: _, ...noPort } = ownJson.network
+		expect(() => parseDeployment({ ...ownJson, network: noPort })).toThrow(/aspPort/)
 		const pool = {
 			poolVault: own.network.rollup,
 			entrypoint: own.network.rollup,
@@ -76,12 +77,13 @@ describe("the deployment file", () => {
 		).toBe(loopback(own.network.aspPort as number))
 	})
 
-	it("projects a stack manifest without the factory's transaction once pool and bridge exist", () => {
+	it("projects a stack manifest without the factory's transaction once pool and bridge exist, and the bot once expected names it", () => {
 		expect(() => toStackManifest(own)).toThrow(/no pool, bridge sections/)
 		const word = `0x${"11".repeat(32)}` as Hex
 		const a = own.network.rollup
+		const { expected, ...bare } = own
 		const d: TestnetDeployment = {
-			...own,
+			...bare,
 			pool: {
 				poolVault: a,
 				entrypoint: a,
@@ -100,6 +102,11 @@ describe("the deployment file", () => {
 		expect(m.bridge).not.toHaveProperty("factoryTx")
 		expect(m.pool).not.toHaveProperty("accessRouter")
 		expect(m.bot).toBeUndefined()
+		expect(toStackManifest({ ...d, expected }).bot).toEqual({
+			url: loopback(own.network.botPort),
+			poster: expected?.botPoster,
+			birthIntake: expected?.birthIntake,
+		})
 	})
 })
 
