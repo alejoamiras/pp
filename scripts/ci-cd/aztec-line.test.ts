@@ -22,15 +22,18 @@ const STANDARDS = "@aztec-foundation/aztec-standards"
 const STANDARDS_SOURCE = "packages/labelled-token/package.json"
 
 type Specs = Record<string, string>
+type Overrides = { [selector: string]: string | Overrides }
 type Manifest = {
 	name?: string
-	workspaces?: string[]
+	workspaces?: unknown
 	optionalDependencies?: Specs
 	dependencies?: Specs
 	devDependencies?: Specs
 	peerDependencies?: Specs
 	patchedDependencies?: Specs
-	overrides?: Record<string, string | Specs>
+	overrides?: Overrides
+	catalog?: Specs
+	catalogs?: Record<string, Specs>
 }
 type Lock = { packages: Record<string, [string, string, { dependencies?: Record<string, string> }?, string?]> }
 
@@ -50,19 +53,48 @@ function expectedVersion(name: string): string | undefined {
 	return undefined
 }
 
-/** `name@version` identities of every package a lockfile resolves. */
-function resolved(lockfile: string): { name: string; version: string }[] {
-	return Object.values(lockOf(lockfile).packages).map(([id]) => {
-		const at = id.lastIndexOf("@")
-		return { name: id.slice(0, at), version: id.slice(at + 1) }
+/** The package names along a lockfile key, outermost first: `a/@s/b` is `a` then `@s/b`. */
+function keyNames(key: string): string[] {
+	const parts = key.split("/")
+	const names: string[] = []
+	for (let i = 0; i < parts.length; i++) names.push(parts[i].startsWith("@") ? `${parts[i]}/${parts[++i]}` : parts[i])
+	return names
+}
+
+/** A `name@version` identity split after the name, so a `workspace:` path holding `@` stays in the version. */
+function identity(id: string): { name: string; version: string } {
+	const at = id.indexOf("@", id.startsWith("@") ? 1 : 0)
+	return { name: id.slice(0, at), version: id.slice(at + 1) }
+}
+
+/**
+ * The entries of `lock` that leave the Aztec line: an Aztec package at another version, a key under
+ * a governed name that resolves some other package (an override alias), or anything under the
+ * retired `@aztec/*` scope.
+ */
+function lockStrays(lock: Lock): string[] {
+	return Object.entries(lock.packages).flatMap(([key, [id]]) => {
+		const { name, version } = identity(id)
+		const keyName = keyNames(key).at(-1) ?? key
+		const governed = expectedVersion(keyName) !== undefined
+		const stray =
+			name.startsWith("@aztec/") ||
+			keyName.startsWith("@aztec/") ||
+			(governed && name !== keyName) ||
+			(expectedVersion(name) !== undefined && version !== expectedVersion(name))
+		return stray ? [`${key} -> ${id} (want ${expectedVersion(name) ?? expectedVersion(keyName) ?? "none"})`] : []
 	})
 }
 
-const MANIFESTS = [
-	"package.json",
-	"contracts/bridge/aztec/txe-server/package.json",
-	...(manifest("package.json").workspaces ?? []).flatMap((glob) => [...new Bun.Glob(`${glob}/package.json`).scanSync({ cwd: ROOT })]),
-]
+/** The root's workspace globs. An object form would hide every workspace from these guards and `audit-summary.ts`. */
+function workspaceGlobs(root: Manifest = manifest("package.json")): string[] {
+	if (Array.isArray(root.workspaces) && root.workspaces.every((g) => typeof g === "string")) return root.workspaces
+	throw new Error("package.json: keep `workspaces` an array of globs; a catalog goes at the top level")
+}
+
+const workspaceManifests = () => workspaceGlobs().flatMap((glob) => [...new Bun.Glob(`${glob}/package.json`).scanSync({ cwd: ROOT })])
+
+const MANIFESTS = ["package.json", "contracts/bridge/aztec/txe-server/package.json", ...workspaceManifests()]
 
 test("every workspace the CI pin readers consult names the same exact pins", () => {
 	expect(LABS).toMatch(EXACT)
@@ -75,15 +107,111 @@ test("every workspace the CI pin readers consult names the same exact pins", () 
 /** Every manifest section a package can be installed from. */
 const SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] as const
 
+/** The package `name` at `spec` installs and its range: an `npm:` alias's target, else `name` itself. Bun trims the spec. */
+function installs(name: string, spec: string): { target: string; range: string | undefined } {
+	const trimmed = spec.trim()
+	const alias = /^npm:((?:@[^@/]+\/)?[^@]+)(?:@([\s\S]*))?$/.exec(trimmed)
+	return alias ? { target: alias[1], range: alias[2] } : { target: name, range: trimmed }
+}
+
+/**
+ * Whether `name` at `spec` leaves the line: a governed name at anything but its exact version
+ * (a `$name` reference included) or aliased to another package, or an `npm:` alias to a governed
+ * package without exactly its version.
+ */
+function specStray(name: string, spec: string): boolean {
+	const { target, range } = installs(name, spec)
+	if (expectedVersion(name) !== undefined && target !== name) return true
+	return expectedVersion(target) !== undefined && range !== expectedVersion(target)
+}
+
 /** The Aztec packages `m` declares at anything but their line version. */
 const offLine = (path: string, m: Manifest): string[] =>
 	SECTIONS.flatMap((section) => Object.entries(m[section] ?? {}))
-		.filter(([name, spec]) => expectedVersion(name) !== undefined && spec !== expectedVersion(name))
-		.map(([name, spec]) => `${path}: ${name}@${spec} (want ${expectedVersion(name)})`)
+		.filter(([name, spec]) => specStray(name, spec))
+		.map(([name, spec]) => `${path}: ${name}@${spec}`)
 
-test("every manifest declares each Aztec package at exactly its line version", () => {
+/**
+ * The package an override selector targets: the last of `a>b>c`, each a name with an optional
+ * `@range` qualifier. Any other shape is `undefined`, so a selector this cannot read fails the check.
+ */
+function selectorTarget(selector: string): string | undefined {
+	const names = selector.split(">").map((part) => /^((?:@[^@/\s>]+\/)?[^@/\s>]+)(?:@[^\s>/]+)?$/.exec(part.trim())?.[1])
+	return names.every((n) => n !== undefined) ? names.at(-1) : undefined
+}
+
+type OverrideRule = { label: string; target: string | undefined; spec: string }
+
+/** Every rule an `overrides` tree sets, at any depth, with its target (`undefined` when its selector cannot be read). */
+function overrideRules(where: string, rules: Overrides, parent?: string): OverrideRule[] {
+	return Object.entries(rules).flatMap(([selector, rule]) => {
+		const target = selector === "." ? parent : selectorTarget(selector)
+		const label = `${where} > ${selector}`
+		if (typeof rule !== "string") return target === undefined ? [{ label, target, spec: "" }] : overrideRules(label, rule, target)
+		return [{ label, target, spec: rule }]
+	})
+}
+
+/** The `overrides` rules that move an Aztec package off the line or cannot be read. */
+const overrideStrays = (where: string, rules: Overrides): string[] =>
+	overrideRules(where, rules).flatMap(({ label, target, spec }) => {
+		if (target === undefined) return [`${label}: an override selector this check cannot read`]
+		return specStray(target, spec) ? [`${label}: ${spec}`] : []
+	})
+
+/** Catalog entries of `m` that hold an Aztec package or alias one: the line stays exact in each manifest. */
+function catalogStrays(path: string, m: Manifest): string[] {
+	const nested = (m.workspaces ?? {}) as { catalog?: Specs; catalogs?: Record<string, Specs> }
+	const catalogs = [m.catalog, ...Object.values(m.catalogs ?? {}), nested.catalog, ...Object.values(nested.catalogs ?? {})]
+	return catalogs
+		.flatMap((c) => Object.entries(c ?? {}))
+		.filter(([name, spec]) => expectedVersion(name) !== undefined || expectedVersion(installs(name, spec).target) !== undefined)
+		.map(([name, spec]) => `${path}: catalog ${name}@${spec}`)
+}
+
+/** Every way a manifest can move an Aztec package off the line. */
+const manifestStrays = (path: string, m: Manifest): string[] => [
+	...offLine(path, m),
+	...overrideStrays(`${path}: overrides`, m.overrides ?? {}),
+	...catalogStrays(path, m),
+]
+
+test("every manifest declares, overrides and catalogs each Aztec package at exactly its line version", () => {
 	expect(MANIFESTS.length).toBeGreaterThan(3)
-	expect(MANIFESTS.flatMap((path) => offLine(path, manifest(path)))).toEqual([])
+	expect(MANIFESTS.flatMap((path) => manifestStrays(path, manifest(path)))).toEqual([])
+})
+
+test("an alias, an override or a catalog cannot move an Aztec package off the line", () => {
+	const labs = "@aztec-labs/aztec.js"
+	const stdlib = "@aztec-labs/stdlib"
+	const held: [Manifest, number][] = [
+		[{ optionalDependencies: { sdk: `npm:${labs}@${LABS}` } }, 0],
+		[{ optionalDependencies: { sdk: `npm:${labs}@^${LABS}` } }, 1],
+		[{ optionalDependencies: { sdk: `npm:${labs}` } }, 1],
+		[{ optionalDependencies: { sdk: ` npm:${labs}@^${LABS}` } }, 1],
+		[{ dependencies: { [labs]: `npm:left-pad@${LABS}` } }, 1],
+		[{ overrides: { [STANDARDS]: "npm:tslib@2.8.1" } }, 1],
+		[{ overrides: { [stdlib]: `$${labs}` } }, 1],
+		[{ overrides: { "@0xbow/sdk": { [stdlib]: `^${LABS}` } } }, 1],
+		[{ overrides: { [stdlib]: { ".": `^${LABS}` } } }, 1],
+		[{ overrides: { [`@pp/bridge-core>${stdlib}`]: `^${LABS}` } }, 1],
+		[{ overrides: { [`${stdlib}@${LABS}`]: `^${LABS}` } }, 1],
+		[{ overrides: { [`@pp/bridge-core/${stdlib}`]: LABS as string } }, 1],
+		[{ overrides: { [`@pp/bridge-core@0.1.0/${stdlib}`]: `^${LABS}` } }, 1],
+		[{ dependencies: { sdk: `npm:${stdlib}@^5.0.0\n || ^${LABS}` } }, 1],
+		[{ catalog: { sdk: `npm:${stdlib}@^5.0.0\n || ^${LABS}` } }, 1],
+		[{ overrides: { ".": LABS as string } }, 1],
+		[{ overrides: { "@0xbow/sdk": { viem: "2.57.1" }, [`${labs}>viem`]: "2.57.1", [labs]: LABS as string } }, 0],
+		[{ catalog: { [stdlib]: LABS as string } }, 1],
+		[{ catalogs: { pool: { sdk: `npm:${stdlib}@${LABS}` } } }, 1],
+		[{ catalog: { zod: "4.4.3" } }, 0],
+	]
+	for (const [m, n] of held) expect(manifestStrays("x", m), JSON.stringify(m)).toHaveLength(n)
+})
+
+test("workspace discovery refuses a workspaces field that is not an array of globs", () => {
+	expect(workspaceGlobs({ workspaces: ["packages/*"] })).toEqual(["packages/*"])
+	expect(() => workspaceGlobs({ workspaces: { packages: ["packages/*"], catalog: {} } })).toThrow(/top level/)
 })
 
 test("the manifest scan reads every section a package installs from", () => {
@@ -124,10 +252,7 @@ function workspaceOf(fromDir: string, dep: string, spec: string, workspaces: Map
 }
 
 function workspacesByName(): Map<string, Workspace> {
-	const paths = (manifest("package.json").workspaces ?? []).flatMap((glob) => [
-		...new Bun.Glob(`${glob}/package.json`).scanSync({ cwd: ROOT }),
-	])
-	return new Map(paths.map((path) => [manifest(path).name ?? path, { dir: dirname(path), manifest: manifest(path) }]))
+	return new Map(workspaceManifests().map((path) => [manifest(path).name ?? path, { dir: dirname(path), manifest: manifest(path) }]))
 }
 
 /** Workspace names reachable from the app's roots over runtime dependencies. */
@@ -153,9 +278,7 @@ const viemSpecs = (section: Specs | undefined) =>
 
 /** The lockfile key `dep` resolves to from the package at `key`: the nearest nesting first, then the hoisted copy. */
 function resolveKey(lock: ResolvedLock, key: string, dep: string): string | undefined {
-	const parts = key.split("/")
-	const names: string[] = []
-	for (let i = 0; i < parts.length; i++) names.push(parts[i].startsWith("@") ? `${parts[i]}/${parts[++i]}` : parts[i])
+	const names = keyNames(key)
 	for (let n = names.length; n >= 0; n--) {
 		const candidate = [...names.slice(0, n), dep].join("/")
 		if (candidate in lock.packages) return candidate
@@ -197,8 +320,8 @@ test("the app's dependency closure declares and resolves one exact viem", () => 
 		const m = workspaces.get(name)?.manifest
 		return SECTIONS.map((section) => m?.[section]).flatMap(viemSpecs)
 	})
-	const overridden = Object.entries(manifest("package.json").overrides ?? {}).flatMap(([name, v]) =>
-		typeof v === "string" ? viemSpecs({ [name]: v }) : viemSpecs(v),
+	const overridden = overrideRules("package.json", manifest("package.json").overrides ?? {}).flatMap(({ target, spec }) =>
+		target === undefined ? [] : viemSpecs({ [target]: spec }),
 	)
 	const specs = new Set([...declared, ...overridden])
 	expect(specs.size, [...specs].join(", ")).toBe(1)
@@ -248,14 +371,22 @@ test("the foundation version is the exact one the locked aztec.js requires", () 
 })
 
 test.each(LOCKFILES)("%s resolves a single Aztec line", (lockfile) => {
-	const strays = resolved(lockfile)
-		.filter(({ name, version }) => {
-			if (name.startsWith("@aztec/")) return true
-			const expected = expectedVersion(name)
-			return expected !== undefined && version !== expected
-		})
-		.map(({ name, version }) => `${name}@${version} (want ${expectedVersion(name) ?? "none"})`)
-	expect(strays).toEqual([])
+	expect(lockStrays(lockOf(lockfile))).toEqual([])
+})
+
+test("a lock key under a governed name must resolve that package, at its line version", () => {
+	const lock = (key: string, id: string): Lock => ({ packages: { [key]: [id, ""] } })
+	const labs = `@aztec-labs/aztec.js@${LABS}`
+	expect(lockStrays(lock("@aztec-labs/aztec.js", labs))).toEqual([])
+	expect(lockStrays(lock("sdk", labs))).toEqual([])
+	for (const [key, id] of [
+		[STANDARDS, "tslib@2.8.1"],
+		["x/@aztec-labs/stdlib", "left-pad@1.3.0"],
+		["a/b/sdk", `@aztec-foundation/bb.js@workspace:packages/bb@${FOUNDATION}`],
+		["a/b/@aztec/viem", "viem@2.57.1"],
+	]) {
+		expect(lockStrays(lock(key, id)), `${key} -> ${id}`).toHaveLength(1)
+	}
 })
 
 test("every patched dependency names the foundation version, so its patch still applies", () => {
