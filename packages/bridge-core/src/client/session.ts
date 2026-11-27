@@ -112,9 +112,10 @@ export function openBridgeSession(a: {
 	artifacts: ArtifactSource
 	prover?: IGroth16Prover
 }): Promise<BridgeSession> {
-	// Read once, before any await: the keys must derive from the very signature pool-client verified.
-	const { l1Address, signature, artifacts, prover } = a
 	return guarded(async () => {
+		// Read once, before any await and inside the boundary: the keys must derive from the very
+		// signature pool-client verified, and a throwing getter must leave as a client error.
+		const { l1Address, signature, artifacts, prover } = a
 		const manifest = structuredClone(a.manifest)
 		bridgeOf(manifest)
 		const pool = await openPoolClient({

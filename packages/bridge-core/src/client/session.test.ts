@@ -58,6 +58,23 @@ describe("BridgeSession", () => {
 		expect(chain.writeContract).not.toHaveBeenCalled()
 	})
 
+	it("rejects with a client error carrying nothing of a throwing option getter", async () => {
+		const sentinel = "sentinel-7f3a"
+		const a = { manifest: manifest(), l1Address: OWNER, signature: SIGNATURE as Hex, artifacts: {} as never }
+		Object.defineProperty(a, "signature", {
+			get: () => {
+				throw new Error(sentinel)
+			},
+		})
+		let returned: unknown
+		expect(() => {
+			returned = openBridgeSession(a)
+		}).not.toThrow()
+		const e = await (returned as Promise<unknown>).catch((x: unknown) => x)
+		expect(e).toBeInstanceOf(BridgeClientError)
+		expect(JSON.stringify(e) + String(e) + String((e as Error).cause ?? "")).not.toContain(sentinel)
+	})
+
 	it("derives its keys and deployment from the options as they were when opening began", async () => {
 		const opened = Promise.withResolvers<unknown>()
 		vi.mocked(openPoolClient).mockReturnValueOnce(opened.promise as never)
