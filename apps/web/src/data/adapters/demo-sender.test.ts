@@ -40,6 +40,11 @@ describe("the local demo's sender", () => {
 		await s.ready()
 		await expect(send(s, { from: PORTAL, to: PORTAL })).rejects.toMatchObject({ code: 4001 })
 		await expect(send(s, { from: ADDRESS, to: ADDRESS })).rejects.toMatchObject({ code: 4001 })
+		for (const odd of [
+			{ from: "0x1234" as Address, to: PORTAL },
+			{ from: ADDRESS, to: "not an address" as Address },
+		])
+			await expect(send(s, odd)).rejects.toMatchObject({ code: 4001 })
 		await expect(send(s, { from: ADDRESS, to: PORTAL })).resolves.toBe(TX)
 		expect(n.sends()).toBe(1)
 		for (const c of n.calls) expect([c.url, c.init.redirect, c.init.credentials]).toEqual([ENDPOINT, "error", "omit"])
@@ -49,6 +54,8 @@ describe("the local demo's sender", () => {
 		for (const [n, code] of [
 			[node(1), "CHAIN_MISMATCH"],
 			[node(31337, "0x"), "DEPLOYMENT_MISMATCH"],
+			[node(31337, ""), "DEPLOYMENT_MISMATCH"],
+			[node(31337, "0x60zz"), "DEPLOYMENT_MISMATCH"],
 		] as const) {
 			const s = sender(n)
 			await expect(s.ready()).rejects.toMatchObject({ code })

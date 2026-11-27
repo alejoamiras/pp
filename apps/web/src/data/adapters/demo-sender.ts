@@ -4,7 +4,7 @@
  * to the manifest's literal loopback L1 endpoint, with redirects refused; and it sends nothing until
  * its deployment check has passed, then only from its own address to the portal.
  */
-import { type Address, getAddress, isAddressEqual } from "viem"
+import { type Address, getAddress, isAddress, isAddressEqual } from "viem"
 import { BridgeFailure, ProviderError } from "../errors"
 import { type Eip1193Provider, isSendOrSign } from "../wallet/guarded-provider"
 import type { DemoSender } from "./l1"
@@ -22,6 +22,11 @@ export interface DemoSenderOptions {
 	address: Address
 	fetch?: typeof fetch
 }
+
+/** Hex bytecode with at least one non-zero digit: an empty, zero or garbled answer names no contract. */
+const CODE = /^0x[0-9a-fA-F]*[1-9a-fA-F][0-9a-fA-F]*$/
+
+const sameAddress = (value: unknown, expected: Address) => typeof value === "string" && isAddress(value) && isAddressEqual(value, expected)
 
 /** Before anything reaches the node: a caller that keeps a journal restores it, as after a wallet's no. */
 const refused = (why: string) => new ProviderError(4001, `${DEMO_SENDER_SENTINEL}: ${why}; nothing was sent`)
@@ -61,7 +66,7 @@ export function demoSender(o: DemoSenderOptions): DemoSender {
 	const check = async () => {
 		if (Number(await rpc("eth_chainId", [])) !== o.chainId) throw new BridgeFailure("CHAIN_MISMATCH")
 		const code = await rpc("eth_getCode", [o.portal, "latest"])
-		if (typeof code !== "string" || /^0x0*$/.test(code)) throw new BridgeFailure("DEPLOYMENT_MISMATCH")
+		if (typeof code !== "string" || !CODE.test(code)) throw new BridgeFailure("DEPLOYMENT_MISMATCH")
 		passed = true
 	}
 	const ready = () =>
@@ -72,9 +77,8 @@ export function demoSender(o: DemoSenderOptions): DemoSender {
 	async function send(params: unknown): Promise<unknown> {
 		const tx = (Array.isArray(params) ? params[0] : undefined) as { from?: unknown; to?: unknown } | undefined
 		if (!passed) throw refused("the deployment is not checked yet")
-		if (typeof tx?.from !== "string" || !isAddressEqual(tx.from as Address, address))
-			throw refused("it sends only from its own address")
-		if (typeof tx.to !== "string" || !isAddressEqual(tx.to as Address, o.portal)) throw refused("it sends only to the portal")
+		if (!sameAddress(tx?.from, address)) throw refused("it sends only from its own address")
+		if (!sameAddress(tx?.to, o.portal)) throw refused("it sends only to the portal")
 		return rpc("eth_sendTransaction", [tx])
 	}
 	const provider: Eip1193Provider = {
