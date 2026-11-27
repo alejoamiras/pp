@@ -1,5 +1,16 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs"
+import {
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { claimPort, claimRows, OwnerHoldsRows, portOwner, registeredPorts, releasePorts, releaseRows, rowsOwnedBy } from "./ports.ts"
@@ -91,4 +102,60 @@ test("of two concurrent sole claims by one owner, exactly one is written", async
 	expect(claims.find((c) => c.status === "rejected")?.reason).toBeInstanceOf(OwnerHoldsRows)
 	expect(rowsOwnedBy("ports-test-sole")).toBe(1)
 	await releasePorts("ports-test-sole")
+})
+
+const ROW = /^\| \d+ \| [^|]+ \| [^|]+ \| [^|]+ \| \d+ \| [^|]+ \|$/
+
+/** Every line after the header is a whole row, no port is listed twice, and the seed rows are all there. */
+function intact(text: string, seed: number): boolean {
+	const rows = text
+		.split("\n")
+		.slice(1)
+		.filter((l) => l.length > 0)
+	return rows.length >= seed && rows.every((l) => ROW.test(l)) && new Set(rows.map((l) => l.split("|")[1])).size === rows.length
+}
+
+// Node truncates before it writes; Bun writes over the old bytes and truncates after, so its tear shows
+// only when a release shortens the file and moves the rows behind the removed ones.
+test.each(["bun", "node"])(
+	"a reader never sees the registry torn while a %s process rewrites it",
+	async (runtime) => {
+		const registry = join(dir, `torn-${runtime}.md`)
+		const seed = 2_000
+		const rows = Array.from({ length: seed }, (_, i) => `| ${20_000 + i} | svc | ports-test-seed | /w | 1 | t |`)
+		writeFileSync(registry, `# header\n${rows.join("\n")}\n`)
+		const writer = `import { claimRows, releaseRows } from ${JSON.stringify(join(import.meta.dir, "ports.ts"))}
+	for (const end = Date.now() + 2_000; Date.now() < end; ) {
+		await claimRows("ports-test-x", { svc: 41_001, other: 41_002 }, 1)
+		await claimRows("ports-test-y", { svc: 41_003, other: 41_004 }, 1)
+		await releaseRows("ports-test-x")
+		await releaseRows("ports-test-y")
+	}`
+		const args = runtime === "node" ? ["node", "--input-type=module", "-e", writer] : ["bun", "-e", writer]
+		const child = Bun.spawn(args, { env: { ...process.env, PP_PORTS_REGISTRY: registry }, stderr: "inherit" })
+		let reads = 0
+		let torn = 0
+		for (const end = Date.now() + 1_800; Date.now() < end; reads++) if (!intact(readFileSync(registry, "utf8"), seed)) torn++
+		expect(await child.exited).toBe(0)
+		expect({ reads: reads > 0, torn }).toEqual({ reads: true, torn: 0 })
+	},
+	30_000,
+)
+
+test("a rewrite keeps a symlinked registry's link and its file's mode, and leaves no temporary file", async () => {
+	const home = mkdtempSync(join(dir, "linked-"))
+	const real = join(home, "real.md")
+	const link = join(home, "ports.md")
+	writeFileSync(real, "# header\n", { mode: 0o600 })
+	symlinkSync(real, link)
+	process.env.PP_PORTS_REGISTRY = link
+	try {
+		await claimRows("ports-test-linked", { anvil: 40_020 }, process.pid)
+	} finally {
+		process.env.PP_PORTS_REGISTRY = join(dir, "ports.md")
+	}
+	expect(lstatSync(link).isSymbolicLink()).toBe(true)
+	expect(statSync(real).mode & 0o777).toBe(0o600)
+	expect(readFileSync(real, "utf8")).toContain("| 40020 | anvil | ports-test-linked |")
+	expect(readdirSync(home).sort()).toEqual(["ports.md", "real.md"])
 })

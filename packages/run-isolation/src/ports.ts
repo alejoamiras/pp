@@ -1,6 +1,7 @@
 // Port claims in the host registry (~/.agents/ports.md), shared with every other agent run on the machine.
 // Same row format, lock and window as the bridge sandbox, so either harness picks around the other's ports.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { randomBytes } from "node:crypto"
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -66,11 +67,29 @@ const REGISTRY_HEADER = [
 	"|---|---|---|---|---|---|",
 ]
 
+/**
+ * Replaces the registry by renaming a complete file over it: the readers take no lock, and a writer
+ * that dies mid-write must leave the old rows, not a truncated file. A symlinked registry keeps its
+ * link, and the file keeps its mode.
+ */
+function replaceRegistry(registry: string, text: string): void {
+	const target = existsSync(registry) ? realpathSync(registry) : registry
+	const mode = existsSync(target) ? statSync(target).mode & 0o777 : 0o600
+	const next = `${target}.${process.pid}-${randomBytes(4).toString("hex")}.tmp`
+	try {
+		writeFileSync(next, text, { flag: "wx", mode })
+		renameSync(next, target)
+	} catch (err) {
+		rmSync(next, { force: true })
+		throw err
+	}
+}
+
 async function withRegistry(mutate: (lines: string[]) => string[], registry = registryPath()): Promise<boolean> {
 	mkdirSync(dirname(registry), { recursive: true })
 	const done = await withFileLock(`${registry}.lock`, { staleMs: LOCK_STALE_MS, waitMs: LOCK_WAIT_MS }, () => {
 		const current = existsSync(registry) ? readFileSync(registry, "utf8") : `${REGISTRY_HEADER.join("\n")}\n`
-		writeFileSync(registry, mutate(current.split("\n")).join("\n"))
+		replaceRegistry(registry, mutate(current.split("\n")).join("\n"))
 	})
 	return done !== undefined
 }
