@@ -12,27 +12,48 @@ const signalable = (pgid: number) => {
 	}
 }
 
-/** Whether some process in `pgid` has not exited, read from `/proc`. */
+const exited = (state: string | undefined) => state === undefined || state === "Z" || state === "X"
+
+/** State and process group from a `/proc` stat file, or undefined once it is gone. */
+function readStat(path: string): { state?: string; pgrp: number } | undefined {
+	let stat: string
+	try {
+		stat = readFileSync(path, "utf8")
+	} catch {
+		return undefined
+	}
+	// The command name may hold spaces and parentheses; after its last ")" come state, ppid, pgrp.
+	const [state, , pgrp] = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
+	return { state, pgrp: Number(pgrp) }
+}
+
+/** A leader whose own thread exited reads as a zombie while its other threads still run. */
+function anyThreadRunning(pid: string): boolean {
+	let tids: string[]
+	try {
+		tids = readdirSync(`/proc/${pid}/task`)
+	} catch {
+		return false
+	}
+	return tids.some((tid) => !exited(readStat(`/proc/${pid}/task/${tid}/stat`)?.state))
+}
+
+/** Whether some process in `pgid` has a thread that has not exited, read from `/proc`. */
 function hasRunningMember(pgid: number): boolean {
 	for (const pid of readdirSync("/proc")) {
 		if (!/^\d+$/.test(pid)) continue
-		let stat: string
-		try {
-			stat = readFileSync(`/proc/${pid}/stat`, "utf8")
-		} catch {
-			continue
-		}
-		// The command name may hold spaces and parentheses; after its last ")" come state, ppid, pgrp.
-		const [state, , pgrp] = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
-		if (Number(pgrp) === pgid && state !== "Z" && state !== "X") return true
+		const st = readStat(`/proc/${pid}/stat`)
+		if (st?.pgrp !== pgid) continue
+		if (!exited(st.state) || anyThreadRunning(pid)) return true
 	}
 	return false
 }
 
 /**
  * Whether a member of the group is still running. Where `/proc` exists, a zombie (exited, but not yet
- * reaped by whatever adopted it, which a slow subreaper can delay) counts as gone; elsewhere the
- * group counts while the kernel still lets it be signalled.
+ * reaped by whatever adopted it, which a slow subreaper can delay) counts as gone unless one of its
+ * threads still runs; elsewhere the group counts while the kernel still lets it be signalled. Known
+ * limit: a pgid is only an identity while some member, even a zombie, holds it.
  */
 export function groupAlive(pgid: number): boolean {
 	return signalable(pgid) && (!PROC || hasRunningMember(pgid))
@@ -44,7 +65,8 @@ const signalGroup = (pgid: number, s: NodeJS.Signals) => {
 	} catch {}
 }
 
-async function groupGone(pgid: number, ms: number): Promise<boolean> {
+/** Resolves once no member of `pgid` is running, or after `ms`; whether the group is gone. */
+export async function groupGone(pgid: number, ms: number): Promise<boolean> {
 	for (const end = Date.now() + ms; groupAlive(pgid) && Date.now() < end; ) await sleep(50)
 	return !groupAlive(pgid)
 }

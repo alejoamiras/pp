@@ -6,6 +6,17 @@ import { describe, expect, it } from "vitest"
 import { endGroup, groupAlive } from "./process-group"
 
 const linux = existsSync("/proc/self/stat") && spawnSync("setsid", ["--version"]).status === 0
+const python = spawnSync("python3", ["--version"]).status === 0
+
+// The main thread leaves through the raw exit syscall (not exit_group), so its worker keeps running.
+const LONE_WORKER = `
+import ctypes, os, threading, time
+ready = threading.Event()
+threading.Thread(target=lambda: (ready.set(), time.sleep(30))).start()
+ready.wait()
+print(os.getpid(), flush=True)
+ctypes.CDLL(None).syscall({"x86_64": 60, "aarch64": 93}[os.uname().machine], 0)
+`
 
 const state = (pid: number) => {
 	try {
@@ -32,6 +43,22 @@ describe.skipIf(!linux)("groupAlive", () => {
 			expect(await endGroup(pgid, 100)).toBe(true)
 		} finally {
 			parent.kill("SIGKILL")
+		}
+	})
+
+	it.skipIf(!python)("counts a process whose leader thread exited as running while a worker thread runs", async () => {
+		const child = spawn("python3", ["-c", LONE_WORKER], { detached: true, stdio: ["ignore", "pipe", "inherit"] })
+		const pgid = child.pid!
+		try {
+			await once(child.stdout, "data")
+			for (let i = 0; i < 100 && state(pgid) !== "Z"; i++) await sleep(50)
+			expect(state(pgid)).toBe("Z")
+			expect(groupAlive(pgid)).toBe(true)
+			expect(await endGroup(pgid, 2_000)).toBe(true)
+		} finally {
+			try {
+				process.kill(-pgid, "SIGKILL")
+			} catch {}
 		}
 	})
 })
