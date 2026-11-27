@@ -16,6 +16,10 @@ on:
         description: Branch, tag or commit to test; empty means bridge-v1 when it exists, else main
         required: false
         default: ""
+      suites:
+        description: Suite names to run, separated by spaces; empty runs every suite
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -28,7 +32,8 @@ jobs:
   nightly:
     name: nightly suites
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # The nightly step's own timeout plus the setup before it and the upload after it.
+    timeout-minutes: 140
     cache-mode: read
     steps:
       - name: Resolve the ref under test
@@ -99,5 +104,62 @@ jobs:
         with:
           cache-save: "false"
 
+      # Suite names come in through the environment and leave as arguments: only lowercase letters,
+      # digits, dashes and spaces pass (a newline would hide the names after it from `read`), no name
+      # starts with a dash (it would read as an option), and the script refuses an unknown name. The real-wallet tier makes a directory of its own under
+      # PP_E2E_STATE_DIR for each run. The step's timeout leaves the job time to upload after a hang.
       - name: bun run nightly
-        run: bun run nightly
+        timeout-minutes: 115
+        env:
+          SUITES: ${{ inputs.suites }}
+          PP_E2E_STATE_DIR: ${{ runner.temp }}/nightly-e2e
+        run: |
+          plain='^[a-z0-9 -]*$'
+          name='^[a-z0-9][a-z0-9-]*$'
+          if [[ ! $SUITES =~ $plain ]]; then
+            echo "suites: names are lowercase letters, digits and dashes, separated by spaces" >&2
+            exit 1
+          fi
+          read -ra names <<< "$SUITES"
+          for n in "${names[@]}"; do
+            if [[ ! $n =~ $name ]]; then
+              echo "suites: '$n' starts with a dash" >&2
+              exit 1
+            fi
+          done
+          bun run nightly "${names[@]}"
+
+      # The uploader follows symlinks, and a link could lead it into the wallet profile. Each
+      # `real-wallet-*` is a directory run.ts made, so a link in its place goes too. If this step
+      # fails, nothing is uploaded.
+      - name: Drop symlinks from the real-wallet reports
+        id: drop
+        if: failure()
+        env:
+          STATE: ${{ runner.temp }}/nightly-e2e
+        run: |
+          shopt -s nullglob
+          for run in "$STATE"/real-wallet-*; do
+            if [ -L "$run" ]; then rm -v -- "$run"; continue; fi
+            for p in test-results playwright-report sandbox.log stack.log build-wallet.log build-app.log; do
+              if [ -e "$run/$p" ] || [ -L "$run/$p" ]; then find "$run/$p" -type l -print -delete; fi
+            done
+          done
+
+      # A trace of a wallet window can show that run's password or recovery phrase, worthless outside
+      # the run, so the artifact is short-lived. Never the wallet profile (`real-wallet-*/real-wallet`).
+      - name: Upload the real-wallet reports and logs on failure
+        if: failure() && steps.drop.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-real-wallet
+          path: |
+            ${{ runner.temp }}/nightly-e2e/real-wallet-*/test-results/
+            ${{ runner.temp }}/nightly-e2e/real-wallet-*/playwright-report/
+            ${{ runner.temp }}/nightly-e2e/real-wallet-*/sandbox.log
+            ${{ runner.temp }}/nightly-e2e/real-wallet-*/stack.log
+            ${{ runner.temp }}/nightly-e2e/real-wallet-*/build-wallet.log
+            ${{ runner.temp }}/nightly-e2e/real-wallet-*/build-app.log
+            !${{ runner.temp }}/nightly-e2e/real-wallet-*/real-wallet/**
+          if-no-files-found: ignore
+          retention-days: 3
