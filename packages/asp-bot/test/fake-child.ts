@@ -17,7 +17,18 @@ createInterface({ input: process.stdin }).on("line", (text) => {
 	const { id } = JSON.parse(text)
 	const reply =
 		id % 2 === 1
-			? { ok: true, record: { sequence: "5", poolRoot: "11", birthRoot: "0", l1Block: "30", rootTime: "1150" } }
+			? {
+					ok: true,
+					record: {
+						sequence: "5",
+						poolRoot: "11",
+						birthRoot: "0",
+						l1Block: "30",
+						rootTime: "1150",
+						poolSize: "2",
+						birthSize: "0",
+					},
+				}
 			: { ok: false, reason: "no_newer_block" }
 	process.stdout.write(line({ event: "post-now", id, ...reply }))
 })

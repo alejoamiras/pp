@@ -12,7 +12,7 @@ const root = (l: bigint[]) => buildLeanImt(l).root
 
 function chain() {
 	const s = {
-		record: { sequence: 0n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n } as RootRecord,
+		record: { sequence: 0n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n } as RootRecord,
 		aztecTime: 1_000n,
 		l1: { number: 10n, hash: "0x0a", timestamp: 900n } as L1Block,
 		chainRoot: root(set1),
@@ -67,7 +67,7 @@ describe("a tick", () => {
 		// `set_poster` keeps only the sequence; the old poster must stop serving `/latest` at once.
 		const posted = s.record
 		s.poster = 0xdeadn
-		s.record = { ...posted, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n }
+		s.record = { ...posted, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
 		expect(await bot.tick()).toEqual({ post: false, reason: "not_poster" })
 		expect(book.body("latest")).toBeUndefined()
 		s.record = posted
@@ -86,6 +86,28 @@ describe("a tick", () => {
 			reason: "unchanged",
 		})
 		expect(parseAspSnapshot(JSON.parse(fresh.body("latest")!)).sequence).toBe(3n)
+	})
+
+	it("halts, serving nothing, when the feed gives a posted root a list of another length", async () => {
+		const { s, ports } = chain()
+		expect((await new Poster(ports, new SnapshotBook(), { self: SELF, inclusionMarginSec: 144n }).tick()).post).toBe(true)
+		expect(s.record).toMatchObject({ poolRoot: root(set1), poolSize: 2n, birthSize: 0n })
+		const fields: Record<string, unknown>[] = []
+		ports.log = (event, f) => {
+			s.logs.push(event)
+			fields.push(f ?? {})
+		}
+		// After a restart the feed serves the root itself as the whole list: it builds to the same root.
+		s.aspLeaves = [root(set1)]
+		s.aztecTime += 300n
+		s.l1 = { number: 30n, hash: "0x0b", timestamp: 1_150n }
+		const book = new SnapshotBook()
+		const bot = new Poster(ports, book, { self: SELF, inclusionMarginSec: 144n })
+		expect(await bot.tick(true)).toEqual({ post: false, reason: "size_mismatch" })
+		expect(s.record.sequence).toBe(1n)
+		expect(book.body("latest")).toBeUndefined()
+		expect(fields.at(-1)).toMatchObject({ list: "pool", root: root(set1), postedSize: 2n, size: 1 })
+		expect(fields.at(-1)?.next).toContain("set_poster")
 	})
 
 	it("serves a post's sequence while the post awaits its checkpoint, and moves /latest only after it", async () => {

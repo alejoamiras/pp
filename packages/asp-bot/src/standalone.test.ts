@@ -55,7 +55,7 @@ describe("the standalone bot", () => {
 		const asp = await stubAsp()
 		try {
 			await expect(fetchLeaves(asp.url)).rejects.toThrow("HTTP 404")
-			let record: RootRecord = { sequence: 0n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n }
+			let record: RootRecord = { sequence: 0n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
 			const ports: Ports = {
 				tip: async () => ({ number: 10, hash: "0x01", time: 1_000n }),
 				record: async () => record,

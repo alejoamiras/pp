@@ -23,12 +23,29 @@ export interface Ports {
 	log(event: string, fields?: Record<string, unknown>): void
 }
 
-type Halt = "not_poster" | "no_l1_block" | "empty_set" | "asp_root_mismatch"
+type Halt = "not_poster" | "no_l1_block" | "empty_set" | "asp_root_mismatch" | "size_mismatch"
 export type TickResult = Decision | { post: false; reason: Halt | "error" }
 
 type Pool = { root: bigint; leaves: bigint[] }
 
 const ascending = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0)
+
+const SIZE_MISMATCH = {
+	why: "a posted root now comes with a list of another length; one root has one honest list, so one of the two is collapsed",
+	next: "compare both lists with the ASP's published list: if the feed is wrong, fix it and restart the bot; if the posted length is wrong, the admin calls set_poster, which clears the record, and the bot posts again",
+}
+
+/** The first list whose root the record holds with another length, or `null`. */
+function sizeMismatch(record: RootRecord, pool: Pool, birthLeaves: bigint[], birthRoot: bigint): Record<string, unknown> | null {
+	const lists = [
+		{ list: "pool", root: pool.root, posted: record.poolRoot, postedSize: record.poolSize, size: pool.leaves.length },
+		{ list: "birth", root: birthRoot, posted: record.birthRoot, postedSize: record.birthSize, size: birthLeaves.length },
+	]
+	for (const { list, root, posted, postedSize, size } of lists) {
+		if (posted !== 0n && posted === root && postedSize !== BigInt(size)) return { list, root, postedSize, size, ...SIZE_MISMATCH }
+	}
+	return null
+}
 
 /** The poster's state lives in memory only: a restart rebuilds it from the chain and the ASP. */
 export class Poster {
@@ -67,6 +84,9 @@ export class Poster {
 		if (!pool) return { post: false, reason: "asp_root_mismatch" }
 		const birthLeaves = (await p.birthLeaves(tip)).sort(ascending)
 		const birthRoot = buildLeanImt(birthLeaves).root
+		// The feed must not replace a length the record already holds for its root.
+		const mismatch = sizeMismatch(record, pool, birthLeaves, birthRoot)
+		if (mismatch) return this.halt("size_mismatch", mismatch)
 		this.holdCurrent(record, pool, birthLeaves, birthRoot)
 
 		const d = decide({
@@ -75,6 +95,8 @@ export class Poster {
 			e,
 			poolRoot: root,
 			birthRoot,
+			poolSize: BigInt(pool.leaves.length),
+			birthSize: BigInt(birthLeaves.length),
 			lastReadTime: this.lastReadTime,
 			postNow,
 			inclusionMarginSec: this.opts.inclusionMarginSec,
@@ -104,9 +126,13 @@ export class Poster {
 		return this.pool
 	}
 
-	/** Serves the current record when its roots are the ones this process holds, as after a restart. */
+	/** Serves the current record when its roots and lengths are the lists this process holds, as after a restart. */
 	private holdCurrent(record: RootRecord, pool: Pool, birthLeaves: bigint[], birthRoot: bigint): void {
-		const ours = record.poolRoot === pool.root && record.birthRoot === birthRoot
+		const ours =
+			record.poolRoot === pool.root &&
+			record.birthRoot === birthRoot &&
+			record.poolSize === BigInt(pool.leaves.length) &&
+			record.birthSize === BigInt(birthLeaves.length)
 		if (record.sequence > 0n && ours && !this.book.has(record.sequence)) {
 			this.book.hold({ sequence: record.sequence, poolRoot: pool.root, birthRoot, poolLeaves: pool.leaves, birthLeaves })
 		}
