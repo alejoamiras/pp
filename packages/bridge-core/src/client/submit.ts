@@ -125,14 +125,21 @@ const orNull = (e: unknown): null => {
 	throw e
 }
 
-/** What the RPC says about one attempt; a success only matters to the resolver's precedence. */
-async function observe(c: SubmitReader, a: JournalAttempt): Promise<{ state: AttemptState; succeeded: boolean }> {
-	if (!a.l1TxHash) return { state: "hashless", succeeded: false }
+type Observed = { state: AttemptState; mined?: { hash: Hash; block: bigint } }
+
+/** What the RPC says about one attempt; a successful receipt sets the resolver's precedence and lower bound on the head. */
+async function observe(c: SubmitReader, a: JournalAttempt): Promise<Observed> {
+	if (!a.l1TxHash) return { state: "hashless" }
 	const receipt = await c.getTransactionReceipt({ hash: a.l1TxHash }).catch(orNull)
-	if (receipt) return { state: receipt.status === "success" ? "pending" : "reverted", succeeded: receipt.status === "success" }
+	if (receipt?.status === "success") return { state: "pending", mined: { hash: a.l1TxHash, block: receipt.blockNumber } }
+	if (receipt) return { state: "reverted" }
 	const tx = await c.getTransaction({ hash: a.l1TxHash }).catch(orNull)
-	return { state: tx ? "pending" : "unknown", succeeded: false }
+	return { state: tx ? "pending" : "unknown" }
 }
+
+/** The latest successful attempt, which the resolver must read up to and an error must name. */
+const latestMined = (o: Observed[]) =>
+	o.reduce<Observed["mined"]>((m, x) => (x.mined && (!m || x.mined.block >= m.block) ? x.mined : m), undefined)
 
 async function openRun(
 	ctx: SubmitContext,
@@ -164,13 +171,8 @@ async function journalGuard(run: Run, s: PreparedBridgeSpend): Promise<{ receipt
 	if (raw === null) return { record: { ...intent, attempts: [{}] }, previous: null }
 	const held: JournalRecord = record ?? { ...intent, attempts: [], evicted: true }
 	const observed = await Promise.all(held.attempts.map((a) => observe(run.ctx.reader, a)))
-	const receipt = outcome(
-		await resolveFor(
-			run,
-			s,
-			observed.some((x) => x.succeeded),
-		),
-	)
+	const mined = latestMined(observed)
+	const receipt = outcome(await resolveFor(run, s, mined !== undefined, mined?.block), mined?.hash)
 	if (receipt) return { receipt }
 	const plan = planAttempt(
 		held,

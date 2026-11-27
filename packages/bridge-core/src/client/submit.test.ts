@@ -197,6 +197,16 @@ describe("submit: reading the outcome", () => {
 		expect(u.chain.writeContract).not.toHaveBeenCalled()
 	})
 
+	it("finds a journaled send's event on reload when every head read lags its receipt, with zero wallet calls", async () => {
+		const t = await setup()
+		await t.chain.land(t.spend.secretHash, hash(1), t.spend.proof.pubSignals)
+		await held(t, [{ l1TxHash: hash(1) }])
+		Object.assign(t.chain.reader, { getBlockNumber: async () => t.chain.head - 1n })
+		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ l1TxHash: hash(1) })
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+		expect(t.chain.simulate).not.toHaveBeenCalled()
+	})
+
 	it("is UNCERTAIN with the hash, never RPC_FAILED, when the logs cannot be read after a mined send", async () => {
 		const t = await setup()
 		const land = t.chain.onSend
