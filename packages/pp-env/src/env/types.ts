@@ -60,7 +60,7 @@ export interface PoolEnv {
 }
 
 export type AttachForkOptions = {
-	/** A loopback anvil forked from a live chain; the caller owns it and keeps it running. */
+	/** An anvil on 127.0.0.1 forked from a live chain; the caller owns it and keeps it running. */
 	rpcUrl: string
 	/** That anvil's exact `web3_clientVersion`, such as `anvil/v1.7.1`: the caller spawned it, so the caller knows. */
 	clientVersion: string

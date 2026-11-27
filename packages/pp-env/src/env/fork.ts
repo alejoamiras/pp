@@ -39,7 +39,8 @@ function handle(asp: Asp, aspRun: string, clientConfig: ClientConfig): ForkPoolE
 
 /**
  * Attaches to the caller's fork and starts a mock ASP that impersonates `postman` there.
- * @throws Error when the node is not the caller's loopback anvil on `chainId`; nothing is left running
+ * @throws Error when the node is not the caller's anvil on 127.0.0.1 and `chainId`, or the run already has an
+ * attach; nothing is left running
  */
 export async function attachForkPoolEnv(o: AttachForkOptions): Promise<ForkPoolEnv> {
 	const { rpcUrl, clientVersion, chainId, postman, circuitsDir, circuitBundle, runId } = o
