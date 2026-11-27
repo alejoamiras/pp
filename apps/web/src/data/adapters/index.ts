@@ -24,8 +24,6 @@ import { stackClock } from "./clock"
 import { type InjectedWallet, stackL1 } from "./l1"
 import { readToken } from "./token"
 
-const unavailable = (port: string) => (): Promise<never> => Promise.reject(new Error(`${port} has no stack adapter in this build`))
-
 const stack = target.stack
 if (stack === null) throw new Error("a stack build was built without a stack target")
 const { manifest } = stack

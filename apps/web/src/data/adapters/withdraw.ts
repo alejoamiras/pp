@@ -23,9 +23,9 @@ import { assertSpendable } from "../chunks"
 import { BridgeFailure } from "../errors"
 import { parseAztecAddress } from "../parse"
 import type { AztecPort, AztecSendHooks, Sent } from "../ports"
-import type { AztecAddress, LabelPath, Origin } from "../stack-types"
+import type { AztecAddress, Origin } from "../stack-types"
 import { type AztecDeps, boundTo, sendThroughWallet } from "./aztec"
-import { checkedPath, spendPayloads, type TokenSendDeps } from "./token-sends"
+import { checkedPath, pathArg, spendPayloads, type TokenSendDeps } from "./token-sends"
 
 export interface WithdrawDeps extends TokenSendDeps {
 	/** Builds `exit_public` with bridge-core's payee and amount refusals; nothing on it writes. */
@@ -74,8 +74,6 @@ async function expectPayload(p: ExecutionPayload, fpc: AztecAddress, calls: Expe
 	await expectCall(p.calls[0], { to: fpc, artifact: null, name: SPONSOR, args: [] })
 	for (const [i, e] of calls.entries()) await expectCall(p.calls[i + 1], e)
 }
-
-const pathArg = (p: LabelPath) => ({ index: p.index, depth: p.depth, siblings: [...p.siblings] })
 
 export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "unshieldAndExit"> {
 	const { hub, token } = d.aztec.deployment

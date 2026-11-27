@@ -29,14 +29,14 @@ describe("the fixture Aztec port", () => {
 		expect(handoff).not.toHaveBeenCalled()
 	})
 
-	test.each(["transferPrivate", "unshield"] as const)(
+	test.each(["transferPrivate", "unshield", "unshieldAndExit"] as const)(
 		"%s refuses before the handoff a label the latest list leaves out, and a stale list, as the stack port does",
 		async (op) => {
 			const w = createWorld({ chainId: 31337, storage: null })
 			const aztec = fixtureAztec(w)
 			const owner = ACCOUNTS.aztec
 			const handoff = vi.fn()
-			const at = (label: bigint) => ({ to: owner, amount: 1n, label, origin: 0 as const })
+			const at = (label: bigint) => ({ to: owner, payee: ACCOUNTS.sender, amount: 1n, label, origin: 0 as const })
 			await expect(aztec[op](owner, at(LABELS.revoked), { epoch: 0, handoff })).rejects.toMatchObject({ code: "LABEL_ABSENT" })
 			w.update((s) => {
 				s.l1Block += 1_000_000

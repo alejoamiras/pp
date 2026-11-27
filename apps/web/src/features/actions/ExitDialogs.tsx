@@ -1,17 +1,17 @@
 import { useState } from "react"
 import type { Address } from "viem"
-import { type App, useApp } from "../../app/context"
+import { useApp } from "../../app/context"
 import { useLabelNotes } from "../../app/queries"
 import type { AztecAddress } from "../../data/stack-types"
 import { ragequitChunks, singleCallAmounts } from "../../data/chunks"
 import { BridgeFailure, codeOf, messageOf } from "../../data/errors"
 import type { AztecSendHooks, LabelBalance } from "../../data/ports"
-import { bindAztecSend } from "../../data/sends"
 import { ActionButton, Callout, Choices, Facts, formatAmount, LabelChip, plainAmount } from "../../ui"
 import {
 	type ActionState,
 	ActionShell,
 	AmountField,
+	bound,
 	type Guard,
 	OwnerWarning,
 	PayeeField,
@@ -103,16 +103,6 @@ function listedAt(guard: Guard, on: AztecSendHooks, list: () => void): AztecSend
 			g.handoff()
 			list()
 		},
-	}
-}
-
-/** The send bound to the connection that lists `account` at the click, or `null` with the dialog failed. */
-function bound(live: App["live"], account: AztecAddress, act: ReturnType<typeof useAction>): AztecSendHooks | null {
-	try {
-		return bindAztecSend(live.get, account)
-	} catch (err) {
-		act.fail(codeOf(err) ?? "CONTEXT_CHANGED")
-		return null
 	}
 }
 
