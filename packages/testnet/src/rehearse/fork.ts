@@ -28,10 +28,11 @@ const MINT_ABI = parseAbi(["function mint(address to, uint256 amount)"])
 
 export type ForkResult = { block: bigint; gas: Partial<Record<FundedRole, bigint>>; debit: bigint }
 
-type Ctx = Scratch & { dir: string; forkUrl: string }
+/** `forkUrl` is where the CLIs read, and the fork flag's value; `sendUrl` where they send. */
+export type Ctx = Scratch & { dir: string; forkUrl: string; sendUrl: string }
 
 /** `keys` in the scratch home, then the scratch file with every address in `expected` and a free ASP port. */
-async function scratchFile(c: Ctx, scratchHome: string, runId: string): Promise<Record<string, string>> {
+export async function scratchFile(c: Ctx, scratchHome: string, runId: string): Promise<Record<string, string>> {
 	const keys = await runCli("keys", [], { ...c.env, HOME: scratchHome })
 	if (keys.code !== 0) throw new Error(`keys exited ${keys.code}:\n${keys.out.trim()}`)
 	const addresses = Object.fromEntries(keys.events.map((e) => [e.name as string, e.address as string]))
@@ -43,8 +44,8 @@ async function scratchFile(c: Ctx, scratchHome: string, runId: string): Promise<
 	if (!own.expected) throw new Error(`${OWN} has no expected section; commit it from \`addresses\` first`)
 	writeScratch(c, {
 		...own,
-		// The live send endpoint would carry a fork-signed transaction to Sepolia.
-		network: { ...own.network, l1Rpc: c.forkUrl, l1SendRpc: c.forkUrl, aspPort },
+		// Never the live send endpoint, which would carry a fork-signed transaction to Sepolia.
+		network: { ...own.network, l1Rpc: c.forkUrl, l1SendRpc: c.sendUrl, aspPort },
 		expected: expectedOf(addresses, own.expected.amounts),
 	})
 	return addresses
@@ -93,7 +94,7 @@ async function stranger(c: Ctx) {
 	}
 	const user = await sepoliaPoolUser({
 		rpcUrl: c.forkUrl,
-		sendRpcUrl: c.forkUrl,
+		sendRpcUrl: c.sendUrl,
 		chainId: SEPOLIA,
 		deployment,
 		aspUrl: pool.aspApiUrl,
@@ -143,8 +144,21 @@ async function demoDeposit(c: Ctx, url: string): Promise<void> {
 	c.log("[fork] the deposit for the demo owner approved")
 }
 
-export async function forkRehearsal(log: (line: string) => void): Promise<ForkResult> {
-	const runId = `pp-testnet-rehearse-${process.pid}`
+/** What {@link onFork} hands its body: the fork at a finalized block, and the CLIs' environment. */
+export type OnFork = {
+	runId: string
+	dir: string
+	block: bigint
+	fork: Awaited<ReturnType<typeof startForkAnvil>>
+	env: NodeJS.ProcessEnv
+	cleanup: CleanupStack
+}
+
+/**
+ * Runs `body` on an anvil fork of Sepolia at its last finalized block, with a scratch home for `keys`.
+ * On success the run's directory goes; on failure only its scratch home does, and its logs stay.
+ */
+export async function onFork<T>(runId: string, tag: string, log: (line: string) => void, body: (f: OnFork) => Promise<T>): Promise<T> {
 	const cleanup = new CleanupStack()
 	cleanup.push(() => releasePorts(runId))
 	const dir = join(homedir(), ".cache", "pp", "testnet", "rehearse", runId)
@@ -160,17 +174,32 @@ export async function forkRehearsal(log: (line: string) => void): Promise<ForkRe
 			PP_TESTNET_SCRATCH_HOME: join(dir, "home"),
 			PP_TESTNET_RUN_ROOT: join(dir, "runs"),
 		}
+		log(`[${tag}] Sepolia fork at block ${block}`)
+		const out = await body({ runId, dir, block, fork, env, cleanup })
+		rmSync(dir, { recursive: true, force: true })
+		return out
+	} catch (e) {
+		rmSync(join(dir, "home"), { recursive: true, force: true })
+		log(`[${tag}] failed; its logs stay in ${dir}, and its scratch home with the scratch key file is deleted`)
+		throw e
+	} finally {
+		await cleanup.run()
+	}
+}
+
+export const forkRehearsal = (log: (line: string) => void): Promise<ForkResult> =>
+	onFork(`pp-testnet-rehearse-${process.pid}`, "fork", log, async ({ runId, dir, block, fork, env, cleanup }) => {
 		const c: Ctx = {
 			dir,
 			file: join(dir, "testnet-own.json"),
 			env,
 			forkUrl: fork.url,
+			sendUrl: fork.url,
 			log,
 			modeArgs: ["--rehearse-fork", fork.url],
 			tag: "fork",
 			outputs: [],
 		}
-		log(`[fork] Sepolia fork at block ${block}`)
 		const addresses = await scratchFile(c, join(dir, "home"), runId)
 		await fork.rpc("anvil_setBalance", [addresses.L1_DEPLOYER_KEY as Address, numberToHex(parseEther("10"))])
 		await must(c, "fund", [c.file])
@@ -182,13 +211,5 @@ export async function forkRehearsal(log: (line: string) => void): Promise<ForkRe
 			throw new Error(`the asp did not stop clean (${asp.exitReason()})`)
 		const gas = budgetCheck(await gasBySender(fork.url, block), addresses)
 		if (!gas.demoOwner) throw new Error("the demo owner spent no gas, so its keystore was not registered from its own key")
-		rmSync(dir, { recursive: true, force: true })
 		return { block, gas, debit }
-	} catch (e) {
-		rmSync(join(dir, "home"), { recursive: true, force: true })
-		log(`[fork] failed; its logs stay in ${dir}, and its scratch home with the scratch key file is deleted`)
-		throw e
-	} finally {
-		await cleanup.run()
-	}
-}
+	})
