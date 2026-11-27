@@ -54,8 +54,8 @@ export function useAllowList(source: DataSource, enabled: boolean) {
 }
 
 /**
- * One label's state under `view`, keyed by what the state depends on: the roots and both times, never
- * the sequence. Never retried: the adapter decides what a failed list costs.
+ * One label's state under `view`, keyed by what the state depends on: both lists' roots and lengths and
+ * both times, never the sequence. Never retried: the adapter decides what a failed list costs.
  */
 export function useLabelCheck(source: DataSource, view: AllowListView | undefined, label: bigint, origin: Origin) {
 	const r = view?.record
@@ -65,6 +65,8 @@ export function useLabelCheck(source: DataSource, view: AllowListView | undefine
 			"check",
 			r?.poolRoot.toString(),
 			r?.birthRoot.toString(),
+			r?.poolSize.toString(),
+			r?.birthSize.toString(),
 			r?.rootTime.toString(),
 			view?.nowSec.toString(),
 			label.toString(),

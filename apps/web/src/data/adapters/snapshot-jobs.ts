@@ -1,8 +1,8 @@
 /**
  * What the allow-list worker does with one request, apart from the worker itself so it runs in a
- * test. It holds one snapshot, for one pair of roots, and the verified trees `LabelPathCache` keeps
- * for it. A snapshot is parsed without building a tree, and its declared roots must be the record's
- * before anything is hashed; a check then builds the label's origin tree and answers only once that
+ * test. It holds one snapshot, for one record's lists, and the verified trees `LabelPathCache` keeps
+ * for it. A snapshot is parsed without building a tree, and its declared roots and its lists' lengths
+ * must be the record's before anything is hashed; a check then builds the label's origin tree and answers only once that
  * tree has its root, whether or not the list holds the label.
  */
 import { type AspSnapshot, LabelPathCache, parseAspSnapshotUnverified, SnapshotError } from "@pp/label-paths"
@@ -33,8 +33,10 @@ export function snapshotJobs(post: (reply: JobReply) => void) {
 	function load(req: Extract<JobRequest, { kind: "load" }>): JobReply {
 		held = null
 		const snapshot = parseAspSnapshotUnverified(JSON.parse(req.text))
-		if (snapshot.poolRoot !== req.roots.poolRoot || snapshot.birthRoot !== req.roots.birthRoot)
-			return { kind: "failed", failure: "MISMATCH" }
+		const { lists } = req
+		const roots = snapshot.poolRoot === lists.poolRoot && snapshot.birthRoot === lists.birthRoot
+		const lengths = BigInt(snapshot.poolLeaves.length) === lists.poolSize && BigInt(snapshot.birthLeaves.length) === lists.birthSize
+		if (!roots || !lengths) return { kind: "failed", failure: "MISMATCH" }
 		held = { key: req.key, snapshot }
 		return { kind: "loaded" }
 	}
