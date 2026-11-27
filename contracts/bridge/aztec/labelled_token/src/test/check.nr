@@ -90,7 +90,7 @@ unconstrained fn check_failure_label_only_in_other_registry() {
     mint(s, s.user, 50, L);
     let now = t0(s);
     s.env.set_next_block_timestamp(now);
-    s.env.call_public(s.poster, AspRootRegistry::at(other).post_root(1, POOL_ROOT, BIRTH_ROOT, 101, now));
+    s.env.call_public(s.poster, AspRootRegistry::at(other).post_root(1, POOL_ROOT, BIRTH_ROOT, 101, now, 1, 1));
     post(s, now + 1, 1, SOLO_ROOT, BIRTH_ROOT);
     s.env.mine_block_at(now + 2);
     transfer(s, s.user, s.admin, 20, L, POOL_PATHS[0]);

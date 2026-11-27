@@ -2,6 +2,7 @@ import { aspLeaf, buildLeanImt, circomPoseidon2 } from "@pp/bridge-spec"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import fixture from "../test/fixtures/mock-asp.json"
 import { LabelPathCache } from "./cache"
+import { parseAspSnapshotUnverified } from "./codec"
 import { type AspSnapshot, labelState, pathFor, type RootRecord, SnapshotError } from "./snapshot"
 
 const calls = vi.hoisted(() => ({ builds: 0, leafHashes: 0 }))
@@ -38,7 +39,17 @@ const record = (over: Partial<RootRecord> = {}): RootRecord => ({
 	birthRoot: snap.birthRoot,
 	l1Block: 5n,
 	rootTime: T,
+	poolSize: BigInt(poolLeaves.length),
+	birthSize: BigInt(birthLeaves.length),
 	...over,
+})
+/** The wire form of any snapshot, verified or not, as a server sends it. */
+const wire = (s: AspSnapshot) => ({
+	sequence: `${s.sequence}`,
+	poolRoot: `${s.poolRoot}`,
+	birthRoot: `${s.birthRoot}`,
+	poolLeaves: s.poolLeaves.map(String),
+	birthLeaves: s.birthLeaves.map(String),
 })
 const reset = () => {
 	calls.builds = 0
@@ -69,18 +80,23 @@ describe("LabelPathCache", () => {
 		expect(cache.check(record(), snap, 999n, 0, T)).toEqual({ state: "ABSENT" })
 		expect(cache.check(record(), snap, label(0), 1, T)).toEqual({ state: "ABSENT" })
 		expect(cache.check(record(), { ...snap, sequence: 8n }, 998n, 0, T)).toEqual({ state: "ABSENT" })
-		expect(cache.check(record({ birthRoot: 0n }), noBirths, birthLabels[0] as bigint, 1, T)).toEqual({ state: "ABSENT" })
+		const noBirthRecord = record({ birthRoot: 0n, birthSize: 0n })
+		expect(cache.check(noBirthRecord, noBirths, birthLabels[0] as bigint, 1, T)).toEqual({ state: "ABSENT" })
 		expect(calls).toEqual({ builds: 2, leafHashes: 3 })
 		const zeroRootWithLeaves = { ...noBirths, birthLeaves: [aspLeaf(birthLabels[0] as bigint)] }
-		expect(() => cache.check(record({ birthRoot: 0n }), zeroRootWithLeaves, 99n, 1, T)).toThrow("RootMismatch: birthRoot")
+		expect(() => cache.check(noBirthRecord, zeroRootWithLeaves, 99n, 1, T)).toThrow("SizeMismatch: birthLeaves")
+		// A record no registry holds (a length under a zero root) still never answers from that list.
+		expect(() => cache.check(record({ birthRoot: 0n, birthSize: 1n }), zeroRootWithLeaves, 99n, 1, T)).toThrow(
+			"RootMismatch: birthRoot",
+		)
 	})
 
 	it("does not answer ABSENT from a list that does not build to the declared root, and keeps the verified tree", () => {
-		const omitted = { ...snap, poolLeaves: poolLeaves.filter((_, i) => i !== 3) }
+		const replaced = { ...snap, poolLeaves: poolLeaves.map((l, i) => (i === 3 ? aspLeaf(4242n) : l)) }
 		const cache = new LabelPathCache()
 		expect(cache.check(record(), snap, 999n, 0, T)).toEqual({ state: "ABSENT" })
-		expect(() => cache.check(record(), omitted, label(3), 0, T)).toThrow("RootMismatch: poolRoot")
-		expect(() => cache.check(record(), omitted, 999n, 0, T)).toThrow("RootMismatch: poolRoot")
+		expect(() => cache.check(record(), replaced, label(3), 0, T)).toThrow("RootMismatch: poolRoot")
+		expect(() => cache.check(record(), replaced, 999n, 0, T)).toThrow("RootMismatch: poolRoot")
 		expect(cache.check(record(), snap, label(3), 0, T)).toEqual({ state: "ACTIVE", path: pathFor(snap, label(3), 0) })
 		expect(calls.builds).toBe(4)
 	})
@@ -99,32 +115,46 @@ describe("LabelPathCache", () => {
 		expect(cache.check(record(), snap, label(0), 0, T + 1800n).state).toBe("ACTIVE")
 	})
 
-	it("refuses a list that does not build to its root and keeps nothing; a collapsed list cannot hide labels later", () => {
+	it("refuses a same-length list that does not build to its root, and keeps nothing", () => {
 		const forged = 4242n
 		const liar = { ...snap, poolLeaves: [...poolLeaves.slice(0, -1), aspLeaf(forged)] }
-		// Five leaves collapse to their level-one nodes, which keep the root and the promoted fifth leaf.
-		const five = [1n, 2n, 3n, 4n, 5n].map(aspLeaf)
-		const [a, b, c, d, e] = five as [bigint, bigint, bigint, bigint, bigint]
-		const full = { ...snap, poolLeaves: five, poolRoot: buildLeanImt(five).root }
-		const collapsed = { ...full, poolLeaves: [circomPoseidon2(a, b), circomPoseidon2(c, d), e] }
-		const fullPath = pathFor(full, 1n, 0)
 		const cache = new LabelPathCache()
 		reset()
 		expect(() => cache.check(record(), liar, forged, 0, T)).toThrow(SnapshotError)
 		expect(() => cache.check(record(), liar, forged, 0, T)).toThrow("RootMismatch: poolRoot")
-		const r = record({ poolRoot: full.poolRoot })
-		expect(cache.check(r, collapsed, 5n, 0, T).state).toBe("ACTIVE")
-		expect(cache.check(r, collapsed, 1n, 0, T)).toEqual({ state: "ABSENT" })
-		expect(cache.check(r, full, 1n, 0, T)).toEqual({ state: "ACTIVE", path: fullPath })
-		expect(cache.check(r, full, 2n, 0, T).state).toBe("ACTIVE")
-		expect(calls.builds).toBe(4)
+		expect(cache.check(record(), snap, label(0), 0, T).state).toBe("ACTIVE")
+		expect(calls.builds).toBe(3)
+	})
+
+	it("refuses a list whose length is not the record's before any hash, collapsed, cut or in the other origin", () => {
+		// Five leaves collapse to their level-one nodes, which keep the root and the promoted fifth leaf.
+		const five = [1n, 2n, 3n, 4n, 5n].map(aspLeaf)
+		const [a, b, c, d, e] = five as [bigint, bigint, bigint, bigint, bigint]
+		const full = { ...snap, poolLeaves: five, poolRoot: buildLeanImt(five).root }
+		const served = (leaves: bigint[]) => parseAspSnapshotUnverified(wire({ ...full, poolLeaves: leaves }))
+		const r = record({ poolRoot: full.poolRoot, poolSize: 5n })
+		let hashed = 0
+		const cache = new LabelPathCache({ onProgress: () => hashed++ })
+		reset()
+		for (const leaves of [[full.poolRoot], [circomPoseidon2(a, b), circomPoseidon2(c, d), e], five.slice(0, 4)]) {
+			expect(buildLeanImt(leaves).root === full.poolRoot).toBe(leaves.length < 4)
+			reset()
+			for (const l of [1n, 5n]) expect(() => cache.check(r, served(leaves), l, 0, T)).toThrow("SizeMismatch: poolLeaves")
+			expect(calls).toEqual({ builds: 0, leafHashes: 0 })
+		}
+		expect(() => cache.check(record({ poolRoot: full.poolRoot, poolSize: 5n, birthSize: 2n }), full, 1n, 0, T)).toThrow(
+			"SizeMismatch: birthLeaves",
+		)
+		expect(() => labelState(record({ poolSize: 1n }), snap, label(0), 0, T)).toThrow("SizeMismatch: poolLeaves")
+		expect(hashed).toBe(0)
+		expect(cache.check(r, served(five), 1n, 0, T)).toEqual({ state: "ACTIVE", path: pathFor(full, 1n, 0) })
 	})
 
 	it("drops a tree once the record moves to a new root, and builds the new one once", () => {
 		const cache = new LabelPathCache()
 		expect(cache.check(record(), snap, label(0), 0, T).state).toBe("ACTIVE")
 		const moved = { ...snap, sequence: 8n, poolLeaves: poolLeaves.slice(1), poolRoot: buildLeanImt(poolLeaves.slice(1)).root }
-		const next = record({ sequence: 8n, poolRoot: moved.poolRoot })
+		const next = record({ sequence: 8n, poolRoot: moved.poolRoot, poolSize: BigInt(moved.poolLeaves.length) })
 		const p5 = pathFor(moved, label(5), 0)
 		reset()
 		expect(cache.check(next, moved, label(5), 0, T)).toEqual({ state: "ACTIVE", path: p5 })

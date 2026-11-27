@@ -33,13 +33,18 @@ describe("the runner", () => {
 
 		r.postNow(1)
 		await r.step()
-		result = { post: true, args: { sequence: 2n, poolRoot: 3n, birthRoot: 0n, l1Block: 4n, rootTime: 5n } }
+		result = { post: true, args: { sequence: 2n, poolRoot: 3n, birthRoot: 0n, l1Block: 4n, rootTime: 5n, poolSize: 6n, birthSize: 0n } }
 		r.postNow(2)
 		await r.step()
 		expect(ticks).toEqual([false, false, true, true])
 		expect(emitted.slice(1)).toEqual([
 			{ event: "post-now", id: 1, ok: false, reason: "unchanged" },
-			{ event: "post-now", id: 2, ok: true, record: { sequence: "2", poolRoot: "3", birthRoot: "0", l1Block: "4", rootTime: "5" } },
+			{
+				event: "post-now",
+				id: 2,
+				ok: true,
+				record: { sequence: "2", poolRoot: "3", birthRoot: "0", l1Block: "4", rootTime: "5", poolSize: "6", birthSize: "0" },
+			},
 		])
 
 		now += IDLE_TICK_MS

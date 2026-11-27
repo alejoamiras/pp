@@ -211,7 +211,15 @@ export async function liveFrom(s: LiveSpec, log: Ports["log"]): Promise<Live> {
 			async post(a: PostArgs) {
 				// A proof already running when the signal aborts can still broadcast: one more correct root.
 				s.signal?.throwIfAborted()
-				const call = registry.methods.post_root(a.sequence, new Fr(a.poolRoot), new Fr(a.birthRoot), a.l1Block, a.rootTime)
+				const call = registry.methods.post_root(
+					a.sequence,
+					new Fr(a.poolRoot),
+					new Fr(a.birthRoot),
+					a.l1Block,
+					a.rootTime,
+					a.poolSize,
+					a.birthSize,
+				)
 				const { receipt } = (await call.send(send as never)) as unknown as {
 					receipt: { blockNumber?: number; txHash: { toString(): string } }
 				}

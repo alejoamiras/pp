@@ -104,7 +104,7 @@ describe("a birth", () => {
 		bad.event = { ...bad.event, secret: BN254_P + 7n }
 		const out: string[] = []
 		const reader = new BirthReader(source([good, bad]).src, [token], (event, f) => out.push(line({ event, ...f })))
-		let record: RootRecord = { sequence: 0n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n }
+		let record: RootRecord = { sequence: 0n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
 		const poolLeaves = [aspLeaf(1n)]
 		const ports: Ports = {
 			tip: async () => ({ number: PIN, hash: "0x01", time: 1_000n }),

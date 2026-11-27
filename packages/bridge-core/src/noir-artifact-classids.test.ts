@@ -31,7 +31,7 @@ const PINS = [
 	{
 		name: "AspRootRegistry",
 		path: join(CONTRACTS, "asp_registry", "target", "asp_registry-AspRootRegistry.json"),
-		classId: "0x1222726dae8b2c3a611ef0ed963afcb49df70cdb296db224954f704bf11716a0",
+		classId: "0x0e2dbbcd3a89e4833f91e9d2f68ce60e4fee7e83a87ac28420962c441aea5bb4",
 	},
 	{
 		// Test-only consumer of the registry's library; committed for the network suite, never exported.

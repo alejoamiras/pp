@@ -3,13 +3,14 @@ import { join } from "node:path"
 import ts from "typescript"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import pkg from "../package.json"
-import { type Hex, RegistryAddressError, ROOT_RECORD_SLOT, readRootRecord } from "./record"
+import { type Hex, RegistryAddressError, ROOT_RECORD_SLOT, readRootRecord, SIZES_SLOT } from "./record"
 import { MAX_LEAVES, MAX_OBSERVATION_LAG, MAX_ROOT_AGE, SPEND_WINDOW } from "./snapshot"
 
 const REGISTRY_DIR = join(__dirname, "../../../contracts/bridge/aztec/asp_registry")
 const REGISTRY = `0x${"0a".repeat(32)}` as Hex
 const HASH = `0x${"bc".repeat(32)}`
-const VALUES = [7n, 111n, 222n, 99n, 1_234n]
+const VALUES = [7n, 111n, 222n, 99n, 1_234n, 5n, 3n]
+const SLOTS = [0n, 1n, 2n, 3n, 4n].map((i) => ROOT_RECORD_SLOT + i).concat([SIZES_SLOT, SIZES_SLOT + 1n])
 
 type Call = { method: string; params: unknown[] }
 
@@ -23,16 +24,17 @@ function fakeNode(reply: (c: Call) => unknown): Call[] {
 	return calls
 }
 
-const node = (c: Call) => {
+const nodeWith = (values: bigint[]) => (c: Call) => {
 	if (c.method === "node_getBlockData") return { result: { blockHash: HASH } }
 	const slot = BigInt(c.params[2] as string)
-	return { result: `0x${(VALUES[Number(slot - ROOT_RECORD_SLOT)] as bigint).toString(16)}` }
+	return { result: `0x${(values[SLOTS.indexOf(slot)] as bigint).toString(16)}` }
 }
+const node = nodeWith(VALUES)
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe("readRootRecord", () => {
-	it("reads the five fields in order at one block hash, and refuses bad input before any request", async () => {
+	it("reads the five fields and both lengths at one block hash, and refuses bad input before any request", async () => {
 		const calls = fakeNode(node)
 		expect(await readRootRecord({ aztecNode: "http://node", registry: REGISTRY, at: 12 })).toEqual({
 			sequence: 7n,
@@ -40,11 +42,13 @@ describe("readRootRecord", () => {
 			birthRoot: 222n,
 			l1Block: 99n,
 			rootTime: 1_234n,
+			poolSize: 5n,
+			birthSize: 3n,
 		})
 		expect(calls[0]).toMatchObject({ method: "node_getBlockData", params: [12] })
 		const reads = calls.slice(1)
-		expect(reads.map((c) => c.params[0])).toEqual(Array(5).fill({ hash: HASH }))
-		expect(reads.map((c) => BigInt(c.params[2] as string))).toEqual([0n, 1n, 2n, 3n, 4n].map((i) => ROOT_RECORD_SLOT + i))
+		expect(reads.map((c) => c.params[0])).toEqual(Array(7).fill({ hash: HASH }))
+		expect(reads.map((c) => BigInt(c.params[2] as string))).toEqual(SLOTS)
 
 		calls.length = 0
 		for (const bad of [
@@ -62,9 +66,13 @@ describe("readRootRecord", () => {
 		await expect(readRootRecord({ aztecNode: "http://node", registry: REGISTRY })).rejects.toThrow("node_getPublicStorageAt: pruned")
 		fakeNode((c) => (c.method === "node_getBlockData" ? node(c) : { result: `0x1${"0".repeat(16)}` }))
 		await expect(readRootRecord({ aztecNode: "http://node", registry: REGISTRY })).rejects.toThrow("sequence out of range")
+		fakeNode(nodeWith([7n, 111n, 222n, 99n, 1_234n, 2n ** 32n, 3n]))
+		await expect(readRootRecord({ aztecNode: "http://node", registry: REGISTRY })).rejects.toThrow("poolSize out of range")
+		fakeNode(nodeWith([7n, 111n, 222n, 99n, 1_234n, 0n, 0n]))
+		await expect(readRootRecord({ aztecNode: "http://node", registry: REGISTRY })).rejects.toThrow("predates list lengths")
 	})
 
-	it("is pinned to the registry's artifact slot and label_check constants", () => {
+	it("is pinned to the registry's artifact slot, its sizes slot and label_check constants", () => {
 		const artifact = JSON.parse(readFileSync(join(REGISTRY_DIR, "target/asp_registry-AspRootRegistry.json"), "utf8"))
 		const layout = artifact.outputs.globals.storage[0].value.fields[1].value.fields as {
 			name: string
@@ -72,6 +80,8 @@ describe("readRootRecord", () => {
 		}[]
 		const current = layout.find((f) => f.name === "current")!
 		expect(BigInt(`0x${current.value.fields[0]!.value.value}`)).toBe(ROOT_RECORD_SLOT)
+		const main = readFileSync(join(REGISTRY_DIR, "src/main.nr"), "utf8")
+		expect(BigInt(main.match(/pub global SIZES_SLOT: Field = (0x[0-9a-f]+);/)![1]!)).toBe(SIZES_SLOT)
 
 		const nr = readFileSync(join(REGISTRY_DIR, "src/label_check.nr"), "utf8")
 		const global = (name: string) => BigInt(nr.match(new RegExp(`pub global ${name}: u64 = (\\d+);`))![1]!)

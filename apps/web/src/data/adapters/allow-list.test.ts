@@ -1,5 +1,5 @@
 import { aspLeaf, buildLeanImt } from "@pp/bridge-spec"
-import { ROOT_RECORD_SLOT, type RootRecord, serializeAspSnapshot } from "@pp/label-paths"
+import { ROOT_RECORD_SLOT, type RootRecord, SIZES_SLOT, serializeAspSnapshot } from "@pp/label-paths"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { virtualTimer } from "../../test-utils/timer"
 import type { AllowListView } from "../ports"
@@ -14,7 +14,16 @@ const hash = (n: number) => `0x${n.toString(16).padStart(64, "0")}`
 
 const poolLeaves = [11n, 22n].map(aspLeaf)
 const poolRoot = buildLeanImt(poolLeaves).root
-const recordOf = (sequence: bigint, rootTime = 1_000n): RootRecord => ({ sequence, poolRoot, birthRoot: 0n, l1Block: 3n, rootTime })
+const recordOf = (sequence: bigint, rootTime = 1_000n): RootRecord => ({
+	sequence,
+	poolRoot,
+	birthRoot: 0n,
+	l1Block: 3n,
+	rootTime,
+	poolSize: 2n,
+	birthSize: 0n,
+})
+const SLOTS = [0n, 1n, 2n, 3n, 4n].map((i) => ROOT_RECORD_SLOT + i).concat([SIZES_SLOT, SIZES_SLOT + 1n])
 const body = (sequence: bigint, declared = poolRoot) =>
 	JSON.stringify({
 		...JSON.parse(serializeAspSnapshot({ sequence, poolRoot, birthRoot: 0n, poolLeaves, birthLeaves: [] })),
@@ -59,8 +68,8 @@ function chain() {
 			return answer
 		}
 		const r = blocks.get(at(params[0]))?.record as RootRecord
-		const slot = Number(BigInt(params[2] as string) - ROOT_RECORD_SLOT)
-		return Response.json({ result: field([r.sequence, r.poolRoot, r.birthRoot, r.l1Block, r.rootTime][slot] as bigint) })
+		const values = [r.sequence, r.poolRoot, r.birthRoot, r.l1Block, r.rootTime, r.poolSize, r.birthSize]
+		return Response.json({ result: field(values[SLOTS.indexOf(BigInt(params[2] as string))] as bigint) })
 	}) as typeof fetch
 	const post = (n: number, timestamp: number, record: RootRecord) => {
 		blocks.set(hash(n), { timestamp, record })
@@ -118,7 +127,7 @@ describe("the stack's allow list", () => {
 		const view = await r.port.current()
 		expect(view).toEqual({ record: recordOf(7n), nowSec: 1_500n })
 		const storage = r.s.rpc.filter((q) => q.method === "node_getPublicStorageAt")
-		expect(storage).toHaveLength(5)
+		expect(storage).toHaveLength(7)
 		for (const q of storage) expect(q.params[0]).toEqual({ hash: hash(40) })
 		await expect(r.port.check(view, 11n, 0)).resolves.toMatchObject({ state: "ACTIVE" })
 		expect(r.s.bot).toEqual(["/v1/snapshots/7"])

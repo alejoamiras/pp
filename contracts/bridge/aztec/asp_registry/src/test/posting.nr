@@ -1,6 +1,11 @@
-use crate::AspRootRegistry::{self, RootPosted, RootRecord};
+use crate::AspRootRegistry::{self, ListSizes, RootPosted, RootRecord};
 use crate::label_check::MAX_OBSERVATION_LAG;
-use crate::test::utils::{BIRTH_ROOT, current, POOL_ROOT, post_at, post_roots_at, event_logs, setup};
+use crate::test::utils::{
+    BIRTH_ROOT, current, event_logs, POOL_ROOT, post_at, post_roots_at, post_sized_at, raw_sizes, setup, sizes,
+};
+
+// 2^18, the deepest tree a label path proves membership in.
+global MAX_SIZE: u32 = 262144;
 
 #[test]
 unconstrained fn post_root_accepts_first_post() {
@@ -49,6 +54,60 @@ unconstrained fn post_root_accepts_zero_birth_root() {
     let s = setup();
     post_roots_at(s, s.poster, s.t0, 1, POOL_ROOT, 0, 100, s.t0);
     assert_eq(current(s).birth_root, 0);
+    assert_eq(sizes(s).birth, 0);
+}
+
+#[test]
+unconstrained fn post_root_stores_sizes() {
+    let s = setup();
+    post_sized_at(s, s.poster, s.t0, 1, POOL_ROOT, BIRTH_ROOT, 100, s.t0, 5, 4);
+    assert_eq(sizes(s), ListSizes { pool: 5, birth: 4 });
+    assert_eq(raw_sizes(s), [5, 4]);
+}
+
+#[test]
+unconstrained fn post_root_replaces_sizes() {
+    let s = setup();
+    post_sized_at(s, s.poster, s.t0, 1, POOL_ROOT, BIRTH_ROOT, 100, s.t0, 5, 4);
+    post_sized_at(s, s.poster, s.t0 + 1, 2, POOL_ROOT + 1, 0, 101, s.t0 + 1, 4, 0);
+    assert_eq(sizes(s), ListSizes { pool: 4, birth: 0 });
+}
+
+#[test]
+unconstrained fn post_root_accepts_sizes_at_limit() {
+    let s = setup();
+    post_sized_at(s, s.poster, s.t0, 1, POOL_ROOT, BIRTH_ROOT, 100, s.t0, MAX_SIZE, MAX_SIZE);
+    assert_eq(sizes(s), ListSizes { pool: MAX_SIZE, birth: MAX_SIZE });
+}
+
+#[test(should_fail_with = "zero pool size")]
+unconstrained fn post_root_rejects_zero_pool_size() {
+    let s = setup();
+    post_sized_at(s, s.poster, s.t0, 1, POOL_ROOT, BIRTH_ROOT, 100, s.t0, 0, 4);
+}
+
+#[test(should_fail_with = "birth size and root disagree")]
+unconstrained fn post_root_rejects_birth_size_without_root() {
+    let s = setup();
+    post_sized_at(s, s.poster, s.t0, 1, POOL_ROOT, 0, 100, s.t0, 5, 1);
+}
+
+#[test(should_fail_with = "birth size and root disagree")]
+unconstrained fn post_root_rejects_birth_root_without_size() {
+    let s = setup();
+    post_sized_at(s, s.poster, s.t0, 1, POOL_ROOT, BIRTH_ROOT, 100, s.t0, 5, 0);
+}
+
+#[test(should_fail_with = "size too large")]
+unconstrained fn post_root_rejects_pool_size_past_limit() {
+    let s = setup();
+    post_sized_at(s, s.poster, s.t0, 1, POOL_ROOT, BIRTH_ROOT, 100, s.t0, MAX_SIZE + 1, 4);
+}
+
+#[test(should_fail_with = "size too large")]
+unconstrained fn post_root_rejects_birth_size_past_limit() {
+    let s = setup();
+    post_sized_at(s, s.poster, s.t0, 1, POOL_ROOT, BIRTH_ROOT, 100, s.t0, 5, MAX_SIZE + 1);
 }
 
 #[test(should_fail_with = "l1 block regressed")]
@@ -122,14 +181,15 @@ unconstrained fn views_return_constructor_values() {
     assert_eq(s.env.view_public(r.get_poster()), s.poster);
     assert_eq(s.env.view_public(r.get_birth_intake()), s.intake);
     assert_eq(current(s), RootRecord { sequence: 0, pool_root: 0, birth_root: 0, l1_block: 0, root_time: 0 });
+    assert_eq(sizes(s), ListSizes { pool: 0, birth: 0 });
 }
 
 #[test]
 unconstrained fn post_root_emits_root_posted() {
     let s = setup();
-    post_roots_at(s, s.poster, s.t0, 1, 0xa1, 0xb2, 0xc3, s.t0 - 4);
-    let logs = event_logs::<RootPosted, 5>(s);
+    post_sized_at(s, s.poster, s.t0, 1, 0xa1, 0xb2, 0xc3, s.t0 - 4, 7, 6);
+    let logs = event_logs::<RootPosted, 7>(s);
     assert_eq(logs.len(), 1);
     // Literal fields, so a reordered event declaration fails here instead of changing both sides.
-    assert_eq(logs.get(0), [1, 0xa1, 0xb2, 0xc3, (s.t0 - 4) as Field]);
+    assert_eq(logs.get(0), [1, 0xa1, 0xb2, 0xc3, (s.t0 - 4) as Field, 7, 6]);
 }

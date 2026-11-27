@@ -3,7 +3,7 @@ export type { LabelCheck, LabelPathCacheOptions } from "./cache"
 export { LabelPathCache } from "./cache"
 export { parseAspSnapshot, parseAspSnapshotUnverified, serializeAspSnapshot } from "./codec"
 export type { Hex } from "./record"
-export { RegistryAddressError, ROOT_RECORD_SLOT, readRootRecord } from "./record"
+export { RegistryAddressError, ROOT_RECORD_SLOT, readRootRecord, SIZES_SLOT } from "./record"
 export type { AspSnapshot, LabelState, Origin, RootRecord, SnapshotErrorCode } from "./snapshot"
 export {
 	labelState,

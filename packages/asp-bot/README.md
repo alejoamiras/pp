@@ -10,10 +10,20 @@ build a label path. Demo grade: snapshots live in memory, and a restart serves o
 2. Reads `latestASPRoot()` at that block and the ASP's leaves, and refuses leaves that do not hash
    to that root.
 3. Rebuilds the approved birth set (see Births).
-4. Posts when the pool root or the birth root changed, or when 300 s of Aztec chain time passed since
-   the last post. Before sending, it checks the registry's `post_root` assertions itself (sequence,
-   non-zero root, monotonic block and time, observation lag ≤ 1800 s), so a refused post is a logged
-   skip, not a failed transaction.
+4. Halts with `size_mismatch` when the record holds one of these roots with a list of another length.
+   One root has one honest list, so one of the two lists is collapsed, and the feed must not replace
+   the length on chain. It drops the list it fetched and asks the feed again every tick, so it resumes
+   once the lengths agree. The log line names the list, both lengths and what to do: compare both
+   lists with the ASP's published list; if the feed is wrong, fix it or restart the bot; if the posted
+   length is wrong, fix the feed first, then the admin calls `set_poster`, which clears the record. A
+   cleared record makes the bot fetch the feed again before it posts.
+5. Posts when the pool root or the birth root changed, or when 300 s of Aztec chain time passed since
+   the last post, with the length of each list. Before sending, it checks the registry's `post_root`
+   assertions itself (sequence, non-zero root, monotonic block and time, observation lag ≤ 1800 s,
+   lengths), so a refused post is a logged skip, not a failed transaction.
+
+Each length is the one the bot built its root from, so the record commits the list the bot saw: a
+feed that lied when the bot posted is not caught by any client (see `@pp/label-paths`).
 
 ## Births
 
@@ -52,8 +62,8 @@ read. A shield proven against an older anchor still delivers to the previous int
 
 Bodies are the `@pp/label-paths` wire format. Every answer is `cache-control: no-store` with no ETag,
 because a sequence the bot no longer holds must never be served from a cache. Any method but `GET`
-gets 405. `@pp/label-paths` recomputes both roots on parse, so the server cannot forge a path. It can
-still leave a label out (see that package's README).
+gets 405. `@pp/label-paths` checks each list's length and root against the record, so the server can
+neither forge a path nor leave a label out.
 
 A post's sequence is served from the moment the bot sends it, because the record names it as soon as
 the post is in a proposed block. `/latest` moves at the checkpoint. A 404 means this process does not

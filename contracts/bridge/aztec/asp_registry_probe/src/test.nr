@@ -39,9 +39,18 @@ pub unconstrained fn setup() -> Setup {
 
 pub unconstrained fn post(s: Setup, now: u64, sequence: u64, pool_root: Field, birth_root: Field) {
     s.env.set_next_block_timestamp(now);
+    // The probe reads no list length, so any length the registry accepts will do.
     s.env.call_public(
         s.poster,
-        AspRootRegistry::at(s.registry).post_root(sequence, pool_root, birth_root, 100 + sequence, now),
+        AspRootRegistry::at(s.registry).post_root(
+            sequence,
+            pool_root,
+            birth_root,
+            100 + sequence,
+            now,
+            1,
+            (birth_root != 0) as u32,
+        ),
     );
 }
 
@@ -68,7 +77,7 @@ unconstrained fn assert_current_accepts_identical_repost() {
     s.env.set_next_block_timestamp(s.t0 + 300);
     s.env.call_public(
         s.poster,
-        AspRootRegistry::at(s.registry).post_root(2, POOL_A, BIRTH_A, 101, s.t0),
+        AspRootRegistry::at(s.registry).post_root(2, POOL_A, BIRTH_A, 101, s.t0, 1, 1),
     );
     check_at(s, s.t0 + 301, roots(POOL_A, BIRTH_A));
 }

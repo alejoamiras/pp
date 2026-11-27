@@ -258,7 +258,11 @@ export async function postRoots(world: World, post: { sequence: bigint; l1Block:
 	if (!head) throw new Error("the node has no latest block")
 	const time = head.header.globalVariables.timestamp
 	const registry = await Contract.at(world.registry, aspRootRegistryArtifact, world.base.wallet)
-	await registry.methods.post_root(post.sequence, new Fr(pool), new Fr(birth), post.l1Block, time).send(deployOpts(world.base) as never)
+	// The token reads no list length, so any length the registry accepts will do.
+	const sizes = [1, birth === 0n ? 0 : 1]
+	await registry.methods
+		.post_root(post.sequence, new Fr(pool), new Fr(birth), post.l1Block, time, ...sizes)
+		.send(deployOpts(world.base) as never)
 	return time
 }
 

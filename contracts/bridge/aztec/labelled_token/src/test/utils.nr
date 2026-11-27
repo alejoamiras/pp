@@ -61,9 +61,18 @@ pub unconstrained fn t0(s: Setup) -> u64 {
 /// The poster posts both roots at `now`, as read from an Ethereum block of that time.
 pub unconstrained fn post(s: Setup, now: u64, sequence: u64, pool_root: Field, birth_root: Field) {
     s.env.set_next_block_timestamp(now);
+    // The token reads no list length, so any length the registry accepts will do.
     s.env.call_public(
         s.poster,
-        AspRootRegistry::at(s.registry).post_root(sequence, pool_root, birth_root, 100 + sequence, now),
+        AspRootRegistry::at(s.registry).post_root(
+            sequence,
+            pool_root,
+            birth_root,
+            100 + sequence,
+            now,
+            1,
+            (birth_root != 0) as u32,
+        ),
     );
 }
 
