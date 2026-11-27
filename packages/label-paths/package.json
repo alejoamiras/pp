@@ -1,0 +1,22 @@
+{
+	"name": "@pp/label-paths",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "bun --bun vitest run",
+		"fixture": "bun scripts/gen-mock-asp-fixture.ts"
+	},
+	"dependencies": {
+		"@pp/bridge-spec": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^24.13.2",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.9"
+	}
+}

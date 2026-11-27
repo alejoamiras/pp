@@ -1,0 +1,129 @@
+name: pool-client
+
+# PR gate for packages/pool-client. Its unit suite runs here under Node (pr-quick's `test:all`
+# runs it under Bun); the suites that need the fetched Privacy Pools v2 checkout, a local pool and
+# Chromium run inside a network namespace that has loopback only.
+#
+# NO `branches:` filter on pull_request, deliberately — see the long note in pr-quick.yml.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+concurrency:
+  group: pool-client-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pool-client: ${{ steps.override.outputs.full || steps.filter.outputs.pool-client }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: paths-filter needs the merge-base with the comparison branch.
+          fetch-depth: 0
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Positive-only, no `!` negations. pp-env whole: the suites run its CLI and import its
+          # sources and fixtures by path. The actions the jobs call, and bridge-core's manifest, from
+          # which setup-aztec reads the Aztec version; root install and test config.
+          # Pinned by scripts/ci-cd/behavior-gating.test.ts.
+          filters: |
+            pool-client:
+              - 'packages/pool-client/**'
+              - 'packages/pp-env/**'
+              - 'packages/bridge-core/package.json'
+              - 'package.json'
+              - 'bun.lock'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - 'vitest.base.ts'
+              - '.github/workflows/pool-client.yml'
+              - '.github/actions/ppv2-fetch/**'
+              - '.github/actions/setup-aztec/**'
+              - '.github/actions/setup-bun/**'
+              - '.github/actions/setup-playwright/**'
+      - name: Override for manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        id: override
+        run: echo "full=true" >> "$GITHUB_OUTPUT"
+
+  unit:
+    name: Unit tests on Node
+    needs: changes
+    if: needs.changes.outputs.pool-client == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bun
+      # One unit test loads the package entries in native Node, which strips types from 22.18 on.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: bun run --cwd packages/pool-client test:node
+
+  suites:
+    name: Fetch, then offline suites
+    needs: changes
+    if: needs.changes.outputs.pool-client == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      # Aztec 6.0.0's anvil, which `pp-env up` starts, and Node 24 for Vitest and Playwright.
+      - uses: ./.github/actions/setup-aztec
+
+      - uses: ./.github/actions/ppv2-fetch
+
+      - uses: ./.github/actions/setup-playwright
+        with:
+          package-dir: packages/pool-client
+
+      # Proof, integration and browser suites, as the runner user, with only `lo` up: anything that
+      # still reaches for the network fails here.
+      - name: Post-fetch gate, loopback only
+        run: |
+          gate_path="$(dirname "$(command -v bun)"):$(dirname "$(command -v node)"):/usr/bin:/bin"
+          sudo unshare --net -- bash packages/pool-client/scripts/offline-gate.sh outer \
+            "$(id -u)" "$(id -g)" "$HOME" "$gate_path" "$PP_FORGE"
+
+  status:
+    name: pool-client-status
+    if: always()
+    needs: [changes, unit, suites]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-cd/aggregate-status.sh
+          sparse-checkout-cone-mode: false
+      - name: Aggregate results
+        run: |
+          bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.pool-client }}" "${{ needs.unit.result }}"
+          bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.pool-client }}" "${{ needs.suites.result }}"

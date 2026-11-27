@@ -60,7 +60,7 @@ function assertGraphCovered(patterns: string[], target: string, label: string) {
   }
 }
 
-const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml", "local-stack.yml"]
+const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml", "local-stack.yml", "pool-client.yml"]
 
 /**
  * The check-run each PR workflow's aggregator job produces. Branch protection matches these by
@@ -72,6 +72,7 @@ const AGGREGATOR_CHECKS: Record<string, string> = {
   "actionlint.yml": "actionlint-status",
   "pp-env.yml": "pp-env-status",
   "local-stack.yml": "local-stack-status",
+  "pool-client.yml": "pool-client-status",
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed-YAML shape is dynamic.
@@ -218,6 +219,31 @@ describe("CI behavior-gating guard", () => {
       expect(minutes, suite).toBeGreaterThanOrEqual(2)
       expect(minutes, suite).toBeLessThan(20)
     }
+  })
+
+  test("pool-client covers its package, pp-env whole, the shared test config, and every action its jobs call", () => {
+    const poolClient = filtersOf("pool-client.yml")["pool-client"]
+    assertGraphCovered(poolClient, "pool-client", "pool-client")
+    const jobs = workflow("pool-client.yml").jobs
+    const calls: string[] = [jobs.unit, jobs.suites]
+      .flatMap((job: { steps: { uses?: string }[] }) => job.steps.map((step) => step.uses))
+      .filter((uses: string | undefined) => uses?.startsWith("./.github/actions/"))
+    expect(calls.length).toBeGreaterThan(0)
+    // Its suites run pp-env's CLI and import pp-env's sources and fixtures by relative path;
+    // setup-aztec reads the Aztec version from bridge-core's manifest.
+    const roots = [
+      "packages/pp-env/**",
+      "packages/bridge-core/package.json",
+      "vitest.base.ts",
+      "package.json",
+      "bun.lock",
+      "bunfig.toml",
+      "patches/**",
+    ]
+    for (const p of [...calls.map((c) => `${c.slice(2)}/**`), ...roots]) {
+      expect(poolClient, `pool-client must gate ${p}`).toContain(p)
+    }
+    for (const job of ["unit", "suites"]) expect(jobs[job].if, job).toBe("needs.changes.outputs.pool-client == 'true'")
   })
 })
 
