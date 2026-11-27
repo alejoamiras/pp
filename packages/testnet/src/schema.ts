@@ -86,6 +86,9 @@ const poolSchema = z
 		asset: evmAddress,
 		deployBlock: decimal,
 		aspApiUrl: z.string(),
+		/** The own pool's, which `verify-deployment --pool-only` checks against the build; an operator's pool has none here. */
+		accessRouter: evmAddress.optional(),
+		relay: evmAddress.optional(),
 	})
 	.strict()
 
@@ -120,17 +123,29 @@ export const deploymentSchema = z
 	})
 	.strict()
 	.superRefine((d, ctx) => {
-		const own = d.target === "own"
-		if (own && d.network.aspPort === undefined)
-			ctx.addIssue({ code: "custom", path: ["network", "aspPort"], message: "the own pool's mock ASP needs a port" })
-		if (own && d.operator) ctx.addIssue({ code: "custom", path: ["operator"], message: "the own pool has no operator section" })
-		if (d.pool) {
-			const want = own && d.network.aspPort !== undefined ? loopback(d.network.aspPort) : undefined
-			const ok = own ? d.pool.aspApiUrl === want : isPinned("aspApi", d.pool.aspApiUrl)
-			if (!ok)
-				ctx.addIssue({ code: "custom", path: ["pool", "aspApiUrl"], message: `not this target's ASP URL: ${d.pool.aspApiUrl}` })
-		}
+		const issue = (path: (string | number)[], message: string) => ctx.addIssue({ code: "custom", path, message })
+		if (d.target === "own") ownIssues(d, issue)
+		else if (d.pool && !isPinned("aspApi", d.pool.aspApiUrl))
+			issue(["pool", "aspApiUrl"], `not this target's ASP URL: ${d.pool.aspApiUrl}`)
 	})
+
+type Draft = {
+	bundle: string
+	operator?: unknown
+	network: { aspPort?: number | undefined }
+	pool?: { aspApiUrl: string; accessRouter?: string | undefined; relay?: string | undefined } | undefined
+}
+
+function ownIssues(d: Draft, issue: (path: (string | number)[], message: string) => void): void {
+	if (d.network.aspPort === undefined) issue(["network", "aspPort"], "the own pool's mock ASP needs a port")
+	if (d.operator) issue(["operator"], "the own pool has no operator section")
+	// The own pool is pp-env's pinned build, whose verifiers carry the ceremony keys.
+	if (d.bundle !== "ceremony") issue(["bundle"], "the own pool proves with the ceremony bundle")
+	if (!d.pool) return
+	if (d.pool.accessRouter === undefined || d.pool.relay === undefined) issue(["pool"], "the own pool names its access router and relay")
+	if (d.network.aspPort === undefined || d.pool.aspApiUrl !== loopback(d.network.aspPort))
+		issue(["pool", "aspApiUrl"], `not this target's ASP URL: ${d.pool.aspApiUrl}`)
+}
 
 export type TestnetDeployment = z.output<typeof deploymentSchema>
 export type Section = "expected" | "operator" | "pool" | "bridge"

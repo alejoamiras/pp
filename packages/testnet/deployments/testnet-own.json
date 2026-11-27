@@ -13,5 +13,5 @@
 		"aspPort": 48602
 	},
 	"target": "own",
-	"bundle": "pre-ceremony"
+	"bundle": "ceremony"
 }

@@ -25,7 +25,7 @@ describe("the deployment file", () => {
 		expect(() => assertTransport(d, LIVE, true)).not.toThrow()
 	})
 
-	it("refuses an unknown key, an own pool without an ASP port, and an ASP URL that is not the target's", () => {
+	it("refuses an unknown key, an own pool without an ASP port, the ceremony bundle or its code-check addresses, and an ASP URL that is not the target's", () => {
 		expect(() => parseDeployment({ ...own, extra: 1 })).toThrow(/extra/)
 		const { aspPort: _, ...noPort } = own.network
 		expect(() => parseDeployment({ ...own, network: noPort })).toThrow(/aspPort/)
@@ -37,7 +37,14 @@ describe("the deployment file", () => {
 			asset: own.network.rollup,
 			deployBlock: "1",
 			aspApiUrl: "https://api-dev.0xbow.io",
+			accessRouter: own.network.rollup,
+			relay: own.network.rollup,
 		}
+		expect(() => parseDeployment({ ...committed[0]?.[1], bundle: "pre-ceremony" })).toThrow(/bundle/)
+		const { relay: _r, ...noRelay } = pool
+		expect(() =>
+			parseDeployment({ ...committed[0]?.[1], pool: { ...noRelay, aspApiUrl: loopback(own.network.aspPort as number) } }),
+		).toThrow(/access router and relay/)
 		expect(() => parseDeployment(JSON.parse(serializeDeployment({ ...own })) && { ...committed[0]?.[1], pool })).toThrow(/aspApiUrl/)
 		expect(
 			parseDeployment({ ...committed[0]?.[1], pool: { ...pool, aspApiUrl: loopback(own.network.aspPort as number) } }).pool
