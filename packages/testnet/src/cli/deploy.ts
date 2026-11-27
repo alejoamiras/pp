@@ -25,7 +25,7 @@ await main(async () => {
 	if (d.bridge) throw new GuardError("bridge", "the file already has a bridge; a new generation is a new file")
 	const mismatch = buildMismatch()
 	if (mismatch) throw new GuardError("build", `the forge build is not the committed one: ${mismatch}`)
-	const { L1_DEPLOYER_KEY, L2_DEPLOYER_SECRET } = readKeys(RUN_KEYS.deploy, mode, process.env, l1AddressOf)
+	const { L1_DEPLOYER_KEY, L2_DEPLOYER_SECRET } = readKeys(RUN_KEYS.deploy, mode, { env: process.env }, l1AddressOf)
 	const deployerKey = L1_DEPLOYER_KEY as `0x${string}`
 	const l2Secret = L2_DEPLOYER_SECRET as `0x${string}`
 	if (!isAddressEqual(l1AddressOf(deployerKey), d.expected.l1Deployer))

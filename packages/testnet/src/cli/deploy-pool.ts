@@ -3,13 +3,14 @@
 // postman, the six-decimal test token minted to the canary owner and enabled, every contract's runtime
 // code checked against the build. Writes the candidate `pool` section to the run directory.
 import { deployPoolOn } from "@pp/pp-env/sepolia"
+import { isAddressEqual } from "viem"
 import { l1AddressOf } from "../accounts"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { loopback, SEPOLIA } from "../network"
 import { POOL_FIELDS } from "../schema"
 import { assertOwnTarget } from "./context"
-import { cliArgs, guarded, main, report, runDir, writeCandidate } from "./common"
+import { cliArgs, guarded, logLine, main, report, runDir, writeCandidate } from "./common"
 
 /** Canary runs one test-token mint covers; the token's mint is open, so more can be minted later. */
 const MINTED_RUNS = 5n
@@ -21,8 +22,11 @@ await main(async () => {
 	const { d } = await guarded(file, mode, ["expected"], false)
 	assertOwnTarget(d)
 	if (d.pool) throw new GuardError("file", "the file already has a pool section; a second deploy would orphan it")
-	const keys = readKeys(RUN_KEYS["deploy-pool"], mode, process.env, l1AddressOf)
+	const keys = readKeys(RUN_KEYS["deploy-pool"], mode, { env: process.env }, l1AddressOf)
 	const deployerKey = keys.POOL_DEPLOYER_KEY as `0x${string}`
+	const deployer = l1AddressOf(deployerKey)
+	if (!d.expected.poolDeployer || !isAddressEqual(deployer, d.expected.poolDeployer))
+		throw new GuardError("account", `the pool deployer key is for ${deployer}, the file expects ${d.expected.poolDeployer ?? "none"}`)
 	const dir = runDir(d, "deploy-pool", mode)
 	const pool = await deployPoolOn({
 		rpcUrl: d.network.l1Rpc,
@@ -31,7 +35,7 @@ await main(async () => {
 		...(d.expected.aspPostman !== undefined && { postman: d.expected.aspPostman }),
 		mint: { to: d.expected.canaryOwner, amount: d.expected.amounts.debit * MINTED_RUNS },
 		runDir: dir,
-		log: (line) => process.stderr.write(`${line}\n`),
+		log: logLine,
 	})
 	const p = pool.deployment
 	const candidate = writeCandidate(
@@ -51,7 +55,7 @@ await main(async () => {
 		POOL_FIELDS,
 	)
 	report("pool-deployed", {
-		deployer: l1AddressOf(deployerKey),
+		deployer,
 		entrypoint: p.entrypoint,
 		asset: pool.asset,
 		spentWei: pool.spentWei,

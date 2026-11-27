@@ -3,7 +3,7 @@
 	"version": "0.0.0",
 	"private": true,
 	"license": "Apache-2.0",
-	"description": "The bridge on Sepolia and Aztec testnet: the deployment file, the guarded keyed CLIs and the rehearsal.",
+	"description": "The bridge on Sepolia and Aztec testnet: the deployment file, the key file and its guarded CLIs, and the rehearsal.",
 	"type": "module",
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",

@@ -9,7 +9,7 @@ import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { SEPOLIA } from "../network"
 import { assertOwnTarget } from "./context"
-import { cliArgs, guarded, main, report } from "./common"
+import { cliArgs, guarded, logLine, main, report } from "./common"
 
 const SERVICE = "pp-testnet-asp"
 
@@ -24,7 +24,7 @@ await main(async () => {
 		throw new GuardError("account", `--owner ${owner} is not the file's canary owner ${d.expected.canaryOwner}`)
 	const { accessRouter, aspRegistry, poolVault, entrypoint, deployBlock } = d.pool
 	if (!accessRouter) throw new GuardError("file", "the pool section names no access router")
-	const keys = readKeys(RUN_KEYS.asp, mode, process.env, l1AddressOf)
+	const keys = readKeys(RUN_KEYS.asp, mode, { env: process.env }, l1AddressOf)
 	const postmanKey = keys.ASP_POSTMAN_KEY as `0x${string}`
 	const postman = l1AddressOf(postmanKey)
 	if (d.expected.aspPostman !== undefined && !isAddressEqual(postman, d.expected.aspPostman))
@@ -42,7 +42,7 @@ await main(async () => {
 			deployment: { accessRouter, aspRegistry, pool: poolVault, entrypoint, deployBlock },
 			port,
 			owner: getAddress(owner),
-			log: (line) => process.stderr.write(`${line}\n`),
+			log: logLine,
 		})
 		report("asp-ready", { url: asp.url, owner, postman, approved: asp.approved().length })
 		if (!stop.signal.aborted) await new Promise((resolve) => stop.signal.addEventListener("abort", resolve, { once: true }))

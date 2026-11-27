@@ -1,25 +1,20 @@
-/**
- * The checks every testnet CLI runs before it reads a key. They keep a key from being used, not from
- * being present: env-exec puts every value of a run's template into the environment before Bun starts.
- */
-import { type Address, type Hex, isAddressEqual, isHex } from "viem"
+/** The checks every testnet CLI runs before it reads a key, and the one place that reads keys. */
+import { realpathSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { dirname } from "node:path"
+import { type Address, type Hex, isAddressEqual } from "viem"
 import { mnemonicToAccount } from "viem/accounts"
+import { GuardError } from "./errors"
+import { isKeyValue, type KeySpec, keyFilePath, loadKeys } from "./keyfile"
 import { isPinned, LOCAL, MAINNET, SEPOLIA } from "./network"
+import { remember } from "./redact"
 import type { TestnetDeployment } from "./schema"
+
+export { GuardError } from "./errors"
+export type { KeySpec } from "./keyfile"
 
 /** Where a run signs: the public chains, the local stack, or a loopback fork of Sepolia this run started. */
 export type Mode = { kind: "live" } | { kind: "rehearse"; manifest: string } | { kind: "rehearse-fork"; url: string }
-
-/** Refusals carry the guard's name, so a caller and a test can tell which check stopped the run. */
-export class GuardError extends Error {
-	override readonly name = "GuardError"
-	constructor(
-		readonly guard: string,
-		detail: string,
-	) {
-		super(`${guard}: ${detail}`)
-	}
-}
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"])
 const isLoopback = (u: string) => URL.canParse(u) && new URL(u).protocol === "http:" && LOOPBACK.has(new URL(u).hostname)
@@ -29,8 +24,9 @@ export const chainOf = (mode: Mode): number => (mode.kind === "rehearse" ? LOCAL
 
 /**
  * Live: the file's L1 and node URLs are pinned and its chain is Sepolia. Rehearse: chain 31337 on
- * loopback. Rehearse-fork: Sepolia's id on the loopback anvil named in argv (the fork-node guard, which
- * checks its owner and version, runs where the fork is used).
+ * loopback. Rehearse-fork: Sepolia's id on the loopback anvil named in argv, and the pinned testnet node
+ * for a CLI that uses L2 (the fork-node guard, which checks the anvil's owner and version, runs where
+ * the fork is used).
  * @throws GuardError `transport`
  */
 export function assertTransport(d: TestnetDeployment, mode: Mode, usesL2: boolean): void {
@@ -44,6 +40,8 @@ export function assertTransport(d: TestnetDeployment, mode: Mode, usesL2: boolea
 	}
 	if (mode.kind === "rehearse-fork" && (n.l1Rpc !== mode.url || !isLoopback(mode.url)))
 		throw new GuardError("transport", `a fork rehearsal signs only on the loopback anvil it started, not ${n.l1Rpc}`)
+	if (mode.kind === "rehearse-fork" && usesL2 && !isPinned("aztecNode", n.aztecNode))
+		throw new GuardError("transport", `a fork rehearsal's node is the pinned testnet node, not ${n.aztecNode}`)
 	if (mode.kind === "rehearse" && !isLoopback(n.l1Rpc))
 		throw new GuardError("transport", `a rehearsal's L1 must be loopback, not ${n.l1Rpc}`)
 	if (usesL2 && mode.kind === "rehearse" && !isLoopback(n.aztecNode))
@@ -85,12 +83,6 @@ export async function assertNode(node: { getNodeInfo(): Promise<NodeInfoLike> },
 	same("outbox", a.outboxAddress.toString(), n.outbox)
 }
 
-/** A rehearsal must not be able to reach a real key, so one set in its environment stops it. */
-export function assertNoTestnetKeys(env: NodeJS.ProcessEnv): void {
-	const set = Object.keys(env).filter((k) => k.startsWith("PP_TESTNET_"))
-	if (set.length) throw new GuardError("keys", `a rehearsal refuses real-key variables in its environment: ${set.join(", ")}`)
-}
-
 /** Anvil's well-known accounts, the only L1 keys a local rehearsal accepts. */
 const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"
 const ANVIL_ACCOUNTS = 32
@@ -103,30 +95,72 @@ const isAnvilKey = (address: Address) => {
 	return anvilAddresses.has(address.toLowerCase())
 }
 
-/** A key's role decides how it is checked; L2 secrets are field elements, L1 keys 32-byte private keys. */
-export type KeySpec = { name: string; kind: "l1" | "l2" }
+const real = (path: string) => {
+	try {
+		return realpathSync(path)
+	} catch {
+		return path
+	}
+}
 
 /**
- * Reads exactly `specs` from the environment: `PP_TESTNET_<name>` live, `PP_REHEARSE_<name>` in a
- * rehearsal. On the local stack an L1 key must be one of anvil's; on a fork the rehearsal generated it.
- * @throws GuardError `keys` naming the first missing or malformed variable, never its value
+ * This account's home from the password database. Bun's `os.userInfo().homedir` follows `$HOME`, so it
+ * cannot tell a scratch home from the real one.
+ * @throws GuardError `keys` when the database has no entry for this uid
+ */
+export function accountHome(uid: number = process.getuid?.() ?? -1): string {
+	const r = spawnSync("getent", ["passwd", String(uid)], { encoding: "utf8" })
+	const home = r.status === 0 ? r.stdout.trim().split(":")[5] : undefined
+	if (!home) throw new GuardError("keys", `the password database has no home for uid ${uid}`)
+	return home
+}
+
+/**
+ * A fork rehearsal reads the key file under `$HOME`, which must be a scratch home: the account's own
+ * home holds the real file.
+ * @throws GuardError `keys`
+ */
+export function assertScratchKeyFile(file: string, home: string = accountHome()): void {
+	if (real(dirname(file)) === real(dirname(keyFilePath(home))))
+		throw new GuardError(
+			"keys",
+			"a fork rehearsal reads a scratch key file; point HOME at a scratch directory, never this account's home",
+		)
+}
+
+/** Where a CLI's keys come from: the key file (live, fork) and the environment (local stack). */
+export type KeySources = { env: NodeJS.ProcessEnv; file?: string; accountHome?: string }
+
+/**
+ * Reads exactly `specs`. Live: the key file. Fork rehearsal: a scratch key file, never the account's.
+ * Local stack: `PP_REHEARSE_<name>` from the environment, each L1 key one of anvil's; it never opens
+ * the key file.
+ * @throws GuardError `keys` naming the file or the first missing or malformed variable, never a value
  */
 export function readKeys(
 	specs: readonly KeySpec[],
 	mode: Mode,
-	env: NodeJS.ProcessEnv,
+	sources: KeySources,
 	addressOf: (key: Hex) => Address,
 ): Record<string, Hex> {
-	if (mode.kind !== "live") assertNoTestnetKeys(env)
-	const prefix = mode.kind === "live" ? "PP_TESTNET_" : "PP_REHEARSE_"
+	const keys = mode.kind === "rehearse" ? envKeys(specs, sources.env, addressOf) : fileKeys(specs, mode, sources)
+	remember(Object.values(keys))
+	return keys
+}
+
+function fileKeys(specs: readonly KeySpec[], mode: Mode, sources: KeySources): Record<string, Hex> {
+	const file = sources.file ?? keyFilePath()
+	if (mode.kind === "rehearse-fork") assertScratchKeyFile(file, sources.accountHome)
+	return loadKeys(specs, file)
+}
+
+function envKeys(specs: readonly KeySpec[], env: NodeJS.ProcessEnv, addressOf: (key: Hex) => Address): Record<string, Hex> {
 	const out: Record<string, Hex> = {}
 	for (const { name, kind } of specs) {
-		const variable = `${prefix}${name}`
+		const variable = `PP_REHEARSE_${name}`
 		const v = env[variable]
-		if (v === undefined || !isHex(v) || v.length !== 66)
-			throw new GuardError("keys", `${variable} is not set to a 32-byte 0x hex value`)
-		if (kind === "l1" && mode.kind === "rehearse" && !isAnvilKey(addressOf(v)))
-			throw new GuardError("keys", `${variable} is not one of anvil's well-known keys`)
+		if (v === undefined || !isKeyValue(kind, v)) throw new GuardError("keys", `${variable} is not set to a valid ${kind} key`)
+		if (kind === "l1" && !isAnvilKey(addressOf(v))) throw new GuardError("keys", `${variable} is not one of anvil's well-known keys`)
 		out[name] = v
 	}
 	return out

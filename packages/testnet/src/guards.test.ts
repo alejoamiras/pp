@@ -1,9 +1,22 @@
 import { readdirSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Address, Hex } from "viem"
 import { generatePrivateKey, mnemonicToAccount, privateKeyToAccount } from "viem/accounts"
 import { describe, expect, it } from "vitest"
-import { assertL1Chain, assertNode, assertTransport, type GuardError, type Mode, readKeys } from "./guards"
+import {
+	accountHome,
+	assertL1Chain,
+	assertNode,
+	assertScratchKeyFile,
+	assertTransport,
+	type GuardError,
+	type Mode,
+	readKeys,
+} from "./guards"
+import { keyFilePath } from "./keyfile"
+import { redact } from "./redact"
+import { scratchHome, writeKeyFile } from "./test-support"
 import { toStackManifest } from "./manifest"
 import { loopback } from "./network"
 import { parseDeployment, serializeDeployment, type TestnetDeployment } from "./schema"
@@ -13,6 +26,7 @@ const committed = readdirSync(DIR).map((f) => [f, JSON.parse(readFileSync(`${DIR
 const own = parseDeployment(committed.find(([f]) => f === "testnet-own.json")?.[1])
 const LIVE: Mode = { kind: "live" }
 const REHEARSE: Mode = { kind: "rehearse", manifest: "/m.json" }
+const FORK: Mode = { kind: "rehearse-fork", url: "http://127.0.0.1:1" }
 
 const withNetwork = (n: Partial<TestnetDeployment["network"]>): TestnetDeployment => ({ ...own, network: { ...own.network, ...n } })
 const refusedBy = (guard: string) => expect.objectContaining({ name: "GuardError", guard })
@@ -114,17 +128,18 @@ describe("the guards", () => {
 		},
 	)
 
-	it("reads only the run's own variables, keeps real keys out of a rehearsal, and never prints a value", () => {
+	it("reads the key file live and on a fork (a scratch one only), the environment on the local stack, and never echoes a value", () => {
 		const key = generatePrivateKey()
 		const spec = [{ name: "GUARDIAN_KEY", kind: "l1" }] as const
-		expect(readKeys(spec, LIVE, { PP_TESTNET_GUARDIAN_KEY: key }, addressOf)).toEqual({ GUARDIAN_KEY: key })
-		expect(() => readKeys(spec, LIVE, { PP_REHEARSE_GUARDIAN_KEY: key }, addressOf)).toThrow(refusedBy("keys"))
-		expect(() => readKeys(spec, REHEARSE, { PP_TESTNET_GUARDIAN_KEY: key, PP_REHEARSE_GUARDIAN_KEY: key }, addressOf)).toThrow(
-			/real-key/,
-		)
+		const home = scratchHome()
+		const file = writeKeyFile(home, [`GUARDIAN_KEY=${key}`])
+		expect(readKeys(spec, LIVE, { env: { PP_REHEARSE_GUARDIAN_KEY: key }, file }, addressOf)).toEqual({ GUARDIAN_KEY: key })
+		expect(readKeys(spec, FORK, { env: {}, file, accountHome: scratchHome() }, addressOf)).toEqual({ GUARDIAN_KEY: key })
+		expect(() => readKeys(spec, FORK, { env: {}, file, accountHome: home }, addressOf)).toThrow(/scratch key file/)
+		expect(() => assertScratchKeyFile(keyFilePath(accountHome()))).toThrow(refusedBy("keys"))
 		const refused = (() => {
 			try {
-				readKeys(spec, REHEARSE, { PP_REHEARSE_GUARDIAN_KEY: key }, addressOf)
+				readKeys(spec, REHEARSE, { env: { PP_REHEARSE_GUARDIAN_KEY: key }, file }, addressOf)
 			} catch (e) {
 				return e as GuardError
 			}
@@ -133,6 +148,10 @@ describe("the guards", () => {
 		expect(refused?.message).not.toContain(key.slice(2))
 		const anvil = mnemonicToAccount("test test test test test test test test test test test junk", { addressIndex: 3 })
 		const anvilKey = `0x${Buffer.from(anvil.getHdKey().privateKey as Uint8Array).toString("hex")}` as Hex
-		expect(readKeys(spec, REHEARSE, { PP_REHEARSE_GUARDIAN_KEY: anvilKey }, addressOf)).toEqual({ GUARDIAN_KEY: anvilKey })
+		const unreadable = join(home, "absent", "testnet.env")
+		expect(readKeys(spec, REHEARSE, { env: { PP_REHEARSE_GUARDIAN_KEY: anvilKey }, file: unreadable }, addressOf)).toEqual({
+			GUARDIAN_KEY: anvilKey,
+		})
+		expect(redact(`echo ${key} ${key.slice(2).toUpperCase()}`)).toBe("echo [redacted] [redacted]")
 	})
 })

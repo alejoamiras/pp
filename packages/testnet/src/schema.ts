@@ -56,7 +56,10 @@ const expectedSchema = z
 		l2Deployer: word,
 		botPoster: word,
 		aspPostman: evmAddress.optional(),
+		/** The own pool's deployer; an operator target has none. */
+		poolDeployer: evmAddress.optional(),
 		canaryOwner: evmAddress,
+		canarySender: evmAddress,
 		/** Zero keeps shields paused. */
 		birthIntake: word,
 		tokenClassId: word,
@@ -133,6 +136,7 @@ type Draft = {
 	bundle: string
 	operator?: unknown
 	network: { aspPort?: number | undefined }
+	expected?: { aspPostman?: string | undefined; poolDeployer?: string | undefined } | undefined
 	pool?: { aspApiUrl: string; accessRouter?: string | undefined; relay?: string | undefined } | undefined
 }
 
@@ -141,6 +145,8 @@ function ownIssues(d: Draft, issue: (path: (string | number)[], message: string)
 	if (d.operator) issue(["operator"], "the own pool has no operator section")
 	// The own pool is pp-env's pinned build, whose verifiers carry the ceremony keys.
 	if (d.bundle !== "ceremony") issue(["bundle"], "the own pool proves with the ceremony bundle")
+	if (d.expected && (d.expected.aspPostman === undefined || d.expected.poolDeployer === undefined))
+		issue(["expected"], "the own pool names its ASP postman and pool deployer")
 	if (!d.pool) return
 	if (d.pool.accessRouter === undefined || d.pool.relay === undefined) issue(["pool"], "the own pool names its access router and relay")
 	if (d.network.aspPort === undefined || d.pool.aspApiUrl !== loopback(d.network.aspPort))

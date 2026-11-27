@@ -1,0 +1,212 @@
+import { spawn } from "node:child_process"
+import { createServer, type Server } from "node:http"
+import type { AddressInfo } from "node:net"
+import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { Fr } from "@aztec-labs/aztec.js/fields"
+import { generatePrivateKey } from "viem/accounts"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { isKeyValue, KEY_NAMES, keyFilePath } from "./keyfile"
+import { loopback } from "./network"
+import { scratchHome, writeKeyFile } from "./test-support"
+
+const CLI = fileURLToPath(new URL("./cli/", import.meta.url))
+const OWN = JSON.parse(readFileSync(fileURLToPath(new URL("../deployments/testnet-own.json", import.meta.url)), "utf8"))
+
+type Run = { code: number | null; out: string }
+
+/** Runs a CLI under `home` with stdin closed; async, so this process keeps serving the fake L1. */
+function cli(name: string, args: string[], home: string): Promise<Run> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(process.execPath, [join(CLI, `${name}.ts`), ...args], {
+			env: { PATH: process.env.PATH, HOME: home },
+			stdio: ["ignore", "pipe", "pipe"],
+		})
+		let out = ""
+		child.stdout.on("data", (b) => (out += b))
+		child.stderr.on("data", (b) => (out += b))
+		child.on("error", reject)
+		child.on("close", (code) => resolve({ code, out }))
+	})
+}
+
+const leaks = (out: string, values: readonly string[]) =>
+	values.filter((v) => out.toLowerCase().includes(v.toLowerCase().replace(/^0x/, "")))
+
+// A loopback L1 that answers what the guards and `fund` read before a key is used; anything else errors.
+let server: Server
+let rpc: string
+beforeAll(async () => {
+	const answers: Record<string, unknown> = {
+		eth_chainId: "0xaa36a7",
+		eth_blockNumber: "0x10",
+		eth_getBalance: "0x56bc75e2d63100000",
+		eth_maxPriorityFeePerGas: "0x3b9aca00",
+		eth_gasPrice: "0x77359400",
+		eth_getBlockByNumber: {
+			number: "0x10",
+			hash: `0x${"1".repeat(64)}`,
+			timestamp: "0x1",
+			baseFeePerGas: "0x3b9aca00",
+			transactions: [],
+		},
+	}
+	server = createServer((req, res) => {
+		let body = ""
+		req.on("data", (b) => (body += b))
+		req.on("end", () => {
+			const { id, method } = JSON.parse(body) as { id: number; method: string }
+			const result = answers[method]
+			res.setHeader("content-type", "application/json")
+			res.end(
+				JSON.stringify(
+					result === undefined ? { jsonrpc: "2.0", id, error: { code: -32601, message: "no" } } : { jsonrpc: "2.0", id, result },
+				),
+			)
+		})
+	})
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+	rpc = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+})
+afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())))
+
+const addr = (n: number) => `0x${n.toString(16).padStart(40, "0")}`
+const word = (n: number) => `0x${n.toString(16).padStart(64, "0")}`
+
+/** The own target on the fake L1, with every section a key-reading CLI requires and addresses no sentinel key owns. */
+function deploymentFile(home: string, sections: { pool: boolean }): string {
+	const d = {
+		...OWN,
+		network: { ...OWN.network, l1Rpc: rpc },
+		expected: {
+			guardian: addr(1),
+			lifetimeCap: "1000",
+			l1Deployer: addr(2),
+			l2Deployer: word(3),
+			botPoster: word(4),
+			aspPostman: addr(5),
+			poolDeployer: addr(6),
+			canaryOwner: addr(7),
+			canarySender: addr(8),
+			birthIntake: word(9),
+			tokenClassId: word(10),
+			amounts: { debit: "100", note: "100", bridge: "50" },
+		},
+		...(sections.pool && {
+			pool: {
+				poolVault: addr(11),
+				entrypoint: addr(12),
+				aspRegistry: addr(13),
+				keystore: addr(14),
+				asset: addr(15),
+				deployBlock: "1",
+				aspApiUrl: loopback(OWN.network.aspPort),
+				accessRouter: addr(16),
+				relay: addr(17),
+			},
+			bridge: {
+				factory: addr(18),
+				portal: addr(19),
+				hub: word(20),
+				token: word(21),
+				registry: word(22),
+				deployBlock: "2",
+				factoryTx: word(23),
+			},
+		}),
+	}
+	const path = join(home, sections.pool ? "full.json" : "bare.json")
+	writeFileSync(path, JSON.stringify(d))
+	return path
+}
+
+const sentinels = () => KEY_NAMES.map((k) => [k.name, k.kind === "l1" ? generatePrivateKey() : Fr.random().toString()] as const)
+
+describe("keys", () => {
+	it("creates the file 0700/0600, prints addresses only, never rewrites a name, and refuses a looser directory", async () => {
+		const home = scratchHome()
+		const first = await cli("keys", [], home)
+		expect(first.code).toBe(0)
+		const path = keyFilePath(home)
+		expect([statSync(dirname(path)).mode & 0o777, statSync(path).mode & 0o777]).toEqual([0o700, 0o600])
+		const lines = readFileSync(path, "utf8").trim().split("\n")
+		const values = lines.map((l) => l.slice(l.indexOf("=") + 1))
+		expect(lines.map((l) => l.slice(0, l.indexOf("=")))).toEqual(KEY_NAMES.map((k) => k.name))
+		expect(KEY_NAMES.filter((k, i) => !isKeyValue(k.kind, values[i] as string)).map((k) => k.name)).toEqual([])
+		expect(leaks(first.out, values)).toEqual([])
+		const events = first.out
+			.trim()
+			.split("\n")
+			.map((l) => JSON.parse(l))
+		expect(events.map((e) => [e.name, e.created])).toEqual(KEY_NAMES.map((k) => [k.name, true]))
+
+		writeFileSync(path, `${lines.filter((l) => !l.startsWith("GUARDIAN_KEY=")).join("\n")}\n`)
+		const second = await cli("keys", [], home)
+		expect(second.code).toBe(0)
+		const after = readFileSync(path, "utf8").trim().split("\n")
+		expect(after.slice(0, -1)).toEqual(lines.filter((l) => !l.startsWith("GUARDIAN_KEY=")))
+		expect(after.at(-1)?.startsWith("GUARDIAN_KEY=")).toBe(true)
+		expect(second.out.split("\n").filter((l) => l.includes('"created":true'))).toHaveLength(1)
+
+		chmodSync(dirname(path), 0o750)
+		const loose = await cli("keys", [], home)
+		expect([loose.code, loose.out]).toEqual([2, expect.stringMatching(/mode 750/)])
+	}, 60_000)
+})
+
+describe("every key-reading CLI on a fork", () => {
+	const RUNS = (bare: string, full: string): [string, string[]][] => [
+		["fund", [full]],
+		["deploy-pool", [bare]],
+		["asp", [full, "--owner", addr(7)]],
+		["seed", [full]],
+		["pause", [full, "--factory", addr(18)]],
+		["addresses", [full]],
+	]
+
+	const runAll = (home: string) =>
+		Promise.all(
+			RUNS(deploymentFile(home, { pool: false }), deploymentFile(home, { pool: true })).map(
+				async ([name, args]) => [name, await cli(name, [...args, "--rehearse-fork", rpc], home)] as const,
+			),
+		)
+
+	it("prints no key value when the keys belong to other accounts", async () => {
+		const home = scratchHome()
+		const keys = sentinels()
+		writeKeyFile(
+			home,
+			keys.map(([n, v]) => `${n}=${v}`),
+		)
+		const values = keys.map(([, v]) => v)
+		const results = await runAll(home)
+		for (const [name, r] of results) {
+			const refusal = name === "addresses" ? r.code === 0 : r.code === 2 && /refused: account: /.test(r.out)
+			expect([name, refusal, leaks(r.out, values)]).toEqual([name, true, []])
+		}
+	}, 60_000)
+
+	it("prints no value of a malformed key file, refusing each run by the variable's name", async () => {
+		const home = scratchHome()
+		const garbage = KEY_NAMES.map((k, i) => [k.name, `SENTINEL-${i}-NOT-A-KEY`] as const)
+		writeKeyFile(
+			home,
+			garbage.map(([n, v]) => `${n}=${v}`),
+		)
+		for (const [name, r] of await runAll(home))
+			expect([name, r.code, r.out.includes("SENTINEL"), /refused: keys: \S+ in .* is not a valid/.test(r.out)]).toEqual([
+				name,
+				2,
+				false,
+				true,
+			])
+	}, 60_000)
+
+	it("fund --quote reads no key: it answers with no key file at all", async () => {
+		const home = scratchHome()
+		const r = await cli("fund", [deploymentFile(home, { pool: false }), "--quote", "--rehearse-fork", rpc], home)
+		expect(r.code).toBe(0)
+		expect(JSON.parse(r.out.trim())).toMatchObject({ event: "funding-quote", deployer: addr(2), short: "0" })
+	}, 60_000)
+})

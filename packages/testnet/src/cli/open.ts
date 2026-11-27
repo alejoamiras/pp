@@ -21,7 +21,7 @@ await main(async () => {
 	const factory = values.factory as string | undefined
 	if (!factory || !isAddress(factory) || !isAddressEqual(factory, d.bridge.factory))
 		throw new GuardError("factory", `--factory must be the file's factory ${d.bridge.factory}`)
-	const { GUARDIAN_KEY } = readKeys(RUN_KEYS.open, mode, process.env, l1AddressOf)
+	const { GUARDIAN_KEY } = readKeys(RUN_KEYS.open, mode, { env: process.env }, l1AddressOf)
 	const guardian = l1Wallet(d, GUARDIAN_KEY as `0x${string}`, "guardian", d.expected.guardian)
 	const [gas, fees, balance] = await Promise.all([
 		l1.estimateContractGas({

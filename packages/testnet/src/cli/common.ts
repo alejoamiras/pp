@@ -10,6 +10,7 @@ import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import { laggingTolerant, PUBLIC_CHAIN_TIMING } from "@pp/bridge-core"
 import { createPublicClient, http, type PublicClient } from "viem"
 import { assertL1Chain, assertNode, assertTransport, GuardError, type Mode } from "../guards"
+import { redact } from "../redact"
 import { parseDeployment, requireSections, type Section, type TestnetDeployment } from "../schema"
 
 type Options = NonNullable<ParseArgsConfig["options"]>
@@ -106,7 +107,12 @@ export function writeCandidate(dir: string, section: Section, value: Record<stri
 
 /** One JSON line on stdout, built from `fields` alone: no signature, salt, secret or key ever reaches a report. */
 export function report(event: string, fields: Record<string, string | number | bigint | boolean>): void {
-	process.stdout.write(`${JSON.stringify({ event, ...fields }, bigints)}\n`)
+	process.stdout.write(`${redact(JSON.stringify({ event, ...fields }, bigints))}\n`)
+}
+
+/** One progress line on stderr, scrubbed of every key value this process loaded. */
+export function logLine(line: string): void {
+	process.stderr.write(`${redact(line)}\n`)
 }
 
 /** Runs a CLI body: a guard refusal exits 2 with its reason, any other failure 1, and `body`'s code otherwise. */
@@ -115,7 +121,7 @@ export async function main(body: () => Promise<number | undefined>): Promise<nev
 		process.exit((await body()) ?? 0)
 	} catch (e) {
 		const refused = e instanceof GuardError
-		process.stderr.write(`${refused ? "refused" : "failed"}: ${e instanceof Error ? e.message : String(e)}\n`)
+		logLine(`${refused ? "refused" : "failed"}: ${e instanceof Error ? e.message : String(e)}`)
 		process.exit(refused ? 2 : 1)
 	}
 }

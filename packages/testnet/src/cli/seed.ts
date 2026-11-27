@@ -19,7 +19,7 @@ await main(async () => {
 		throw new GuardError("operator", "--no-register checks an operator app's registration, which this build does not have yet")
 	const { d, l1 } = await guarded(file, mode, ["expected", "pool"], false)
 	assertOwnTarget(d)
-	const key = readKeys(RUN_KEYS.seed, mode, process.env, l1AddressOf).CANARY_OWNER_KEY as `0x${string}`
+	const key = readKeys(RUN_KEYS.seed, mode, { env: process.env }, l1AddressOf).CANARY_OWNER_KEY as `0x${string}`
 	const owner = l1AddressOf(key)
 	if (!isAddressEqual(owner, d.expected.canaryOwner))
 		throw new GuardError("account", `the owner key is for ${owner}, the file expects ${d.expected.canaryOwner}`)

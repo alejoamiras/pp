@@ -28,7 +28,7 @@ await main(async () => {
 	if (nonce !== undefined && !(Number.isSafeInteger(nonce) && nonce >= 0))
 		throw new GuardError("argv", "--nonce takes a non-negative integer")
 	if (values.replace && nonce === undefined) throw new GuardError("argv", "--replace needs --nonce")
-	const { GUARDIAN_KEY } = readKeys(RUN_KEYS.pause, mode, process.env, l1AddressOf)
+	const { GUARDIAN_KEY } = readKeys(RUN_KEYS.pause, mode, { env: process.env }, l1AddressOf)
 	const guardian = l1Wallet(d, GUARDIAN_KEY as `0x${string}`, "guardian", d.expected.guardian)
 	try {
 		const r = await pauseEntries(
