@@ -41,10 +41,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations (dorny's some-quantifier footgun). The app and the kit
           # whole; the sources of what they load (bridge-core with its sandbox harness in scripts/,
-          # bridge-spec, pool-client, label-paths, run-isolation); contracts/bridge/**, which the
-          # sandbox compiles and deploys from source; the actions these jobs run; the root files the
-          # install and the vitest config read (lint lives in pr-quick.yml). Pinned by
-          # scripts/ci-cd/behavior-gating.test.ts.
+          # bridge-spec, pool-client, label-paths, run-isolation, and the local stack the suite boots
+          # with pp-env and asp-bot); contracts/bridge/**, which the sandbox and the stack build and
+          # deploy; the actions these jobs run; the root files the install and the vitest config
+          # read (lint lives in pr-quick.yml). Pinned by scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             web:
               - 'apps/web/**'
@@ -62,6 +62,11 @@ jobs:
               - 'packages/label-paths/package.json'
               - 'packages/run-isolation/src/**'
               - 'packages/run-isolation/package.json'
+              - 'packages/local-stack/src/**'
+              - 'packages/local-stack/package.json'
+              - 'packages/pp-env/**'
+              - 'packages/asp-bot/src/**'
+              - 'packages/asp-bot/package.json'
               - 'contracts/bridge/**'
               - 'package.json'
               - 'bun.lock'
@@ -72,6 +77,8 @@ jobs:
               - '.github/actions/setup-aztec/**'
               - '.github/actions/setup-bun/**'
               - '.github/actions/setup-playwright/**'
+              - '.github/actions/ppv2-fetch/**'
+              - '.github/actions/bridge-evm-build/**'
       - name: Override for manual dispatch
         if: github.event_name == 'workflow_dispatch'
         id: override
