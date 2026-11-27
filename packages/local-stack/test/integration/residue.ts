@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { connect } from "node:net"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { setTimeout as sleep } from "node:timers/promises"
 import { groupAlive, groupMembers } from "@pp/run-isolation/process-group"
 
 const CACHE = join(homedir(), ".cache", "pp")
@@ -98,18 +99,82 @@ const describeMembers = (pgid: number) =>
 		.map((m) => `${m.pid} ${m.state} ${m.args}`)
 		.join("; ") || "no member listed (it exited after the check)"
 
+/** How long a group alive only through bb.js helpers gets to empty: ten times their own 100 ms backstop. */
+export const SETTLE_MS = 1_000
+
+/**
+ * bb.js's sync helper, by its exact argv: `<pkg>/build/<platform>/bb msgpack run --input bb-sync-…shm
+ * --request-ring-size <n>`. Importing `@aztec-labs/foundation/crypto/sync` spawns it in the importer's
+ * group. It stops itself on its spawner's death (PR_SET_PDEATHSIG), but its SIGTERM handler only sets a
+ * flag, so it can sleep out one 100 ms wait first: it always outlives its spawner, by up to that.
+ */
+export function isBbHelper(argv: readonly string[]): boolean {
+	const [bin, sub, run, input, shm, ring, size, ...extra] = argv
+	return (
+		/\/@aztec-foundation\/bb\.js\/build\/[a-z0-9-]+\/bb$/.test(bin ?? "") &&
+		sub === "msgpack" &&
+		run === "run" &&
+		input === "--input" &&
+		/^bb-sync-\d+-\d+-\d+\.shm$/.test(shm ?? "") &&
+		ring === "--request-ring-size" &&
+		/^\d+$/.test(size ?? "") &&
+		extra.length === 0
+	)
+}
+
+function argvOf(pid: number): string[] {
+	try {
+		return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").slice(0, -1)
+	} catch {
+		return []
+	}
+}
+
+/** Whether every running member of `pgid` is a helper, none of them its leader: so its spawner is gone. */
+function helpersOnly(pgid: number, helper: (argv: readonly string[]) => boolean): boolean {
+	const running = groupMembers(pgid).filter((m) => m.state !== "Z" && m.state !== "X")
+	return running.length > 0 && running.every((m) => m.pid !== pgid && helper(argvOf(m.pid)))
+}
+
+export type Settle = { boundMs?: number; helper?: (argv: readonly string[]) => boolean }
+
+/**
+ * The groups of `pgids` still running once each group alive only through helpers has had up to
+ * `boundMs` to empty; any other running member fails at once. Every wait is logged with what it saw
+ * and how long it took, so a slow exit is an observation, not a pass in silence.
+ */
+export async function settledGroups(pgids: Iterable<number>, o: Settle = {}): Promise<number[]> {
+	const [bound, helper] = [o.boundMs ?? SETTLE_MS, o.helper ?? isBbHelper]
+	const left: number[] = []
+	for (const g of pgids) {
+		if (!groupAlive(g)) continue
+		if (!helpersOnly(g, helper)) {
+			left.push(g)
+			continue
+		}
+		const [seen, started] = [describeMembers(g), performance.now()]
+		while (groupAlive(g) && helpersOnly(g, helper) && performance.now() - started < bound) await sleep(10)
+		const [ms, running] = [Math.round(performance.now() - started), groupAlive(g)]
+		if (running) left.push(g)
+		console.warn(`[residue] group ${g} ${running ? "still running" : "emptied"} after ${ms} ms; it held ${seen}`)
+	}
+	return left
+}
+
 /**
  * What a stopped run must not have left: running groups, open ports, registry rows, directories. A
- * group of zombies only has stopped (its reaper has not collected them yet); any running member fails.
+ * group of zombies only has stopped (its reaper has not collected them yet); any running member fails,
+ * except bb.js helpers, which get {@link SETTLE_MS} to follow their spawner. The rest is read at once.
  */
 export async function residueOf(r: {
 	runId: string
 	pgids: Iterable<number>
 	ports: Iterable<number>
 	tmpDir?: string
+	settle?: Settle
 }): Promise<string[]> {
 	const left: string[] = []
-	for (const g of r.pgids) if (groupAlive(g)) left.push(`process group ${g}: ${describeMembers(g)}`)
+	for (const g of await settledGroups(r.pgids, r.settle)) left.push(`process group ${g}: ${describeMembers(g)}`)
 	for (const p of r.ports) if (!(await portRefuses(p))) left.push(`port ${p} accepts`)
 	for (const row of registryRows()) if (ownedBy(row, r.runId)) left.push(`registry row ${row.port} ${row.owner}`)
 	const dirs = [

@@ -2,8 +2,8 @@ import { spawn } from "node:child_process"
 import { once } from "node:events"
 import { existsSync, readFileSync } from "node:fs"
 import { setTimeout as sleep } from "node:timers/promises"
-import { describe, expect, it } from "vitest"
-import { residueOf } from "./residue.ts"
+import { describe, expect, it, vi } from "vitest"
+import { isBbHelper, residueOf } from "./residue.ts"
 
 const state = (pid: number) => {
 	try {
@@ -44,5 +44,64 @@ describe.skipIf(!existsSync("/proc/self/stat") && process.env.CI === undefined)(
 		} finally {
 			process.kill(-pgid, "SIGKILL")
 		}
+	})
+
+	/** A group whose leader has exited, leaving one `sleep <s>` behind in it. */
+	async function orphaned(seconds: string): Promise<number> {
+		const leader = spawn("sh", ["-c", `sleep ${seconds} & exit 0`], { detached: true, stdio: "ignore" })
+		await once(leader, "exit")
+		return leader.pid as number
+	}
+	const sleeper = (seconds: string) => (argv: readonly string[]) => argv.join(" ") === `sleep ${seconds}`
+
+	it("lets a group alive only through a helper empty within the bound, and logs the wait", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+		try {
+			const pgid = await orphaned("0.05")
+			expect(await residueOf({ runId, pgids: [pgid], ports: [], settle: { helper: sleeper("0.05") } })).toEqual([])
+			expect(warn).toHaveBeenCalledWith(
+				expect.stringMatching(new RegExp(`^\\[residue\\] group ${pgid} emptied after \\d+ ms; it held \\d+ S sleep 0\\.05$`)),
+			)
+		} finally {
+			warn.mockRestore()
+		}
+	})
+
+	it("fails a helper still running at the bound, and any other member at once, naming them", async () => {
+		const helper = await orphaned("5")
+		const other = await orphaned("6")
+		try {
+			const started = performance.now()
+			expect(await residueOf({ runId, pgids: [other], ports: [], settle: { boundMs: 300, helper: sleeper("5") } })).toEqual([
+				expect.stringMatching(new RegExp(`^process group ${other}: \\d+ S sleep 6$`)),
+			])
+			expect(performance.now() - started).toBeLessThan(300)
+			expect(await residueOf({ runId, pgids: [helper], ports: [], settle: { boundMs: 300, helper: sleeper("5") } })).toEqual([
+				expect.stringMatching(new RegExp(`^process group ${helper}: \\d+ S sleep 5$`)),
+			])
+			expect(performance.now() - started).toBeGreaterThanOrEqual(300)
+		} finally {
+			for (const g of [helper, other]) process.kill(-g, "SIGKILL")
+		}
+	})
+})
+
+describe("isBbHelper", () => {
+	const bb = "/repo/node_modules/.bun/@aztec-foundation+bb.js@6.0.0/node_modules/@aztec-foundation/bb.js/build/amd64-linux/bb"
+	const argv = [bb, "msgpack", "run", "--input", "bb-sync-3650-0-0.shm", "--request-ring-size", "4194304"]
+
+	it("matches bb.js's sync helper by its exact argv and nothing near it", () => {
+		expect(isBbHelper(argv)).toBe(true)
+		const near: string[][] = [
+			[...argv, "--extra"],
+			argv.slice(0, -1),
+			[bb.replace(/bb$/, "bbx"), ...argv.slice(1)],
+			["/usr/bin/bb", ...argv.slice(1)],
+			[bb, "msgpack", "run", "--input", "other.shm", "--request-ring-size", "4194304"],
+			[bb, "prove", "run", "--input", "bb-sync-3650-0-0.shm", "--request-ring-size", "4194304"],
+			[bb, "msgpack", "run", "--input", "bb-sync-3650-0-0.shm", "--request-ring-size", "4M"],
+			[],
+		]
+		for (const v of near) expect(isBbHelper(v), v.join(" ")).toBe(false)
 	})
 })
