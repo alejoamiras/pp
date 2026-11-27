@@ -13,7 +13,9 @@ sandbox harness. Then pp-env deploys the pool on that same anvil: the Poseidon l
 contracts, a 6-decimal test token and the mock ASP. The `bridge` step deploys one bridge generation
 for that token with entries paused (bridge-core's `@pp/bridge-core/deploy`), reads every binding
 back, checks that the hub is the v1 class and only then opens entries. The `seed` step registers
-the demo's pool user and gives it two approved notes of 100.
+the demo's pool user and gives it two approved notes of 100. The `bot` step starts `@pp/asp-bot` as
+`<runId>-bot` on the bridge's ASP registry, whose poster and intake it derives from the run id. It
+finishes only once the first post has landed, and the manifest's `bot` block names its snapshot URL.
 
 Besides the toolchain (Bun, Foundry 1.7.1, Aztec 6.0.0), a fresh clone needs one networked step:
 `bun run demo:prepare`. It fetches the pool's checkout (about 1.5 min on a CI runner) and installs
@@ -34,6 +36,7 @@ contracts (`.github/actions/bridge-evm-build`) before its suite.
 [stack] pool up in … s
 [stack] bridge up in … s
 [stack] seed up in … s
+[stack] bot up in … s
 [stack] manifest up in … s
 [stack] heartbeat up in … s
 [stack] ready in … s — PP_STACK_MANIFEST=~/.cache/pp/runs/<runId>/manifest.json
@@ -64,15 +67,15 @@ marks a crashed stack, a live one may be recycled.
 
 ## Teardown
 
-Teardown is exact and ordered: heartbeat, manifest, the bridge deployer's PXE, pool, network, run
-directory. Every step is attempted, and failures are reported together. Only the process groups, ports (from the shared
+Teardown is exact and ordered: heartbeat, manifest, bot, the bridge deployer's PXE, pool, network,
+run directory. Every step is attempted, and failures are reported together. Only the process groups, ports (from the shared
 registry) and directories this run created are touched. A process that exits without teardown
 (an uncaught error) still runs the network harness's exit hook, which kills the network's groups
 and removes its directories; SIGKILL skips it, and those groups outlive the process.
 
 A run id owns its run directory, which is created exclusively, so a second stack with the same id
-is refused. No run id may end in `-pool`: both harnesses release registry rows by owner id, and
-the pool runs as `<runId>-pool`. A run id chosen by the caller must be unique on the host while its
+is refused. No run id may end in `-pool` or `-bot`: every harness releases registry rows by owner
+id, and the pool and the bot run as `<runId>-pool` and `<runId>-bot`. A run id chosen by the caller must be unique on the host while its
 stack runs: the exclusive claim covers one `runsDir`, and a stack under another one with the same
 id would share the harnesses' registry rows and data directory.
 

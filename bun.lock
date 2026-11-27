@@ -145,6 +145,7 @@
       "name": "@pp/local-stack",
       "version": "0.0.0",
       "dependencies": {
+        "@pp/asp-bot": "workspace:*",
         "@pp/bridge-core": "workspace:*",
         "@pp/pp-env": "workspace:*",
         "viem": "2.57.1",

@@ -20,12 +20,13 @@ describe("run dir", () => {
 		expect(await readdir(scratch)).toEqual([])
 	})
 
-	test("a run id in use, or one ending in -pool, is refused and nothing is touched", async () => {
+	test("a run id in use, or one ending in -pool or -bot, is refused and nothing is touched", async () => {
 		const dir = await createRunDir(scratch, "stack-2-abc")
 		await expect(createRunDir(scratch, "stack-2-abc")).rejects.toThrow("belongs to another stack")
 		expect(await readFile(join(dir, "pid"), "utf8")).toBe(`${process.pid}\n`)
 		await removeRunDir(dir)
 		await expect(createRunDir(scratch, "stack-2-pool")).rejects.toThrow("must match")
+		await expect(createRunDir(scratch, "stack-2-bot")).rejects.toThrow("must match")
 	})
 
 	test("a failed write leaves neither the target nor a temp file", async () => {
