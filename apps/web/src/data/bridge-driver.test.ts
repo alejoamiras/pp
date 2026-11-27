@@ -271,6 +271,24 @@ describe("each refusal sends nothing", () => {
 		expect(h.machine()).toEqual(initialBridge)
 	})
 
+	test("a bridge spends only while the claim stays granted, checked at Submit and at the handoff", async () => {
+		const h = harness()
+		h.denyClaim()
+		await h.submit()
+		expect(h.machine().notices.at(-1)).toEqual({ kind: "refused", code: "NOT_GRANTED" })
+		expect(h.session.prove).not.toHaveBeenCalled()
+
+		const late = harness({ reproves: ["ASP_ROOT_STALE"] })
+		late.hold("reprove")
+		const run = late.submit()
+		await late.reached("reprove")
+		late.denyClaim()
+		late.open("reprove")
+		await run
+		expect(late.sent).toEqual([])
+		expect(late.machine().failure?.code).toBe("NOT_GRANTED")
+	})
+
 	test("a claim the wallet did not grant is never asked for", async () => {
 		const h = harness()
 		h.atClaimable()

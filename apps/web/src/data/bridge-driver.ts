@@ -65,9 +65,12 @@ export function assertCurrent(a: Attempt, ctx: LiveContext): void {
 	if (!isCurrent(a, ctx)) throw new ContextChanged()
 }
 
-/** A run the page replaced (another bridge opened, a sign-out) is stopped like a changed context. */
+/**
+ * A run the page replaced (another bridge opened, a sign-out) is stopped like a changed context, and
+ * so is one whose claim grant was withdrawn: the bridged funds could not be claimed from this page.
+ */
 function assertLive(st: State, a: Attempt, signal: AbortSignal): void {
-	if (signal.aborted) throw new ContextChanged()
+	if (signal.aborted || !st.deps.canClaim()) throw new ContextChanged()
 	assertCurrent(a, st.deps.context())
 }
 
@@ -232,6 +235,7 @@ function remember(st: State, code: UiCode, a: Attempt): void {
 /** What a failed Submit means; nothing here resends. */
 function outcome(st: State, err: unknown, a: Attempt, during: Failure["during"], handedOff: boolean): BridgeEvent {
 	if (err instanceof ProveTimeout) return failure("PROVE_TIMEOUT", "preparing")
+	if (!handedOff && !st.deps.canClaim()) return failure("NOT_GRANTED", during)
 	if (!handedOff && !isCurrent(a, st.deps.context())) return failure("CONTEXT_CHANGED", during)
 	if (handedOff && isUserRejection(err)) return { type: "declined" }
 	// Past the handoff, an error without a code may hide a sent transaction.
@@ -260,6 +264,7 @@ function refusalOf(st: State, input: SubmitInput, flags: Flags, ctx: LiveContext
 	if (closed !== undefined) return closed
 	// An uncertain note sends again only with the flag, and the flag means nothing elsewhere.
 	if (st.uncertain.has(n) !== (flags.acceptUncertain === true)) return "UNCERTAIN"
+	if (!st.deps.canClaim()) return "NOT_GRANTED"
 	return submitRefusal(input, ctx, st.deps.deployment.chainId)
 }
 

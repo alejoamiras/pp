@@ -45,7 +45,7 @@ function SenderCheck({ live }: { live: Live }) {
 
 /** Amount, sender, recipient and review, then Submit. */
 export function BridgeForm({ note }: { note: PoolNoteView }) {
-	const { bridge, live, source, connection } = useApp()
+	const { bridge, live, source, connection, refusal } = useApp()
 	const now = useLive(live)
 	const { decimals, symbol } = source.deployment
 	const m = bridge.machine
@@ -54,7 +54,8 @@ export function BridgeForm({ note }: { note: PoolNoteView }) {
 	const amount = parsed !== null && parsed > 0n && parsed <= note.value ? parsed : null
 	const recipient = connection?.accounts[0] ?? null
 	useAutoPreflight(m, recipient, now.epoch)
-	const block = submitBlock(now, m, source.deployment.chainId, recipient, amount)
+	const claim = refusal("claim")
+	const block = claim !== null ? messageOf(claim) : submitBlock(now, m, source.deployment.chainId, recipient, amount)
 	const lastNotice = bridgeView(m).log.at(-1)
 	return (
 		<div className="grid gap-4" data-testid="bridge-form" data-phase={m.phase}>
