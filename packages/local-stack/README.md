@@ -41,6 +41,7 @@ contracts (`.github/actions/bridge-evm-build`) before its suite.
 [stack] bot up in … s
 [stack] manifest up in … s
 [stack] heartbeat up in … s
+[stack] circuits <pp-env's checkout>/packages/circuits/build
 [stack] ready in … s — PP_STACK_MANIFEST=~/.cache/pp/runs/<runId>/manifest.json
 [stack] pool user 0x… (two approved notes of 100); bridge sender 0x…
 SANDBOX_L1_RPC=http://127.0.0.1:… SANDBOX_NODE_URL=http://127.0.0.1:…

@@ -11,6 +11,8 @@ export type CliStack = {
 	manifestPath: string
 	manifest: { l1Rpc: string; aztecNode: string }
 	seeded: { user: string; sender: string }
+	/** pp-env's checkout supplies the circuits; a server of the proving files reads this line. */
+	pool: { clientConfig: { circuitsDir: string } }
 	stop(): Promise<void>
 }
 
@@ -72,6 +74,8 @@ export async function runCli(args: readonly string[], deps: CliDeps): Promise<nu
 		deps.error(`[stack] ${abort.signal.aborted ? "boot stopped" : "boot failed"}: ${message(err)}`)
 		return abort.signal.aborted ? 130 : err instanceof AttachRefused ? 2 : 1
 	}
+	// Before the ready line, so a reader that sees ready has already seen this.
+	deps.log(`[stack] circuits ${stack.pool.clientConfig.circuitsDir}`)
 	deps.log(`[stack] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s — PP_STACK_MANIFEST=${stack.manifestPath}`)
 	deps.log(`[stack] pool user ${stack.seeded.user} (two approved notes of 100); bridge sender ${stack.seeded.sender}`)
 	deps.log(`SANDBOX_L1_RPC=${stack.manifest.l1Rpc} SANDBOX_NODE_URL=${stack.manifest.aztecNode}`)
