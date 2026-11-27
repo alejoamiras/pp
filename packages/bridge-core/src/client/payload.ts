@@ -7,7 +7,7 @@ import {
 	encodeArguments,
 	FunctionCall,
 	FunctionSelector,
-	getFunctionArtifactByName,
+	getAllFunctionAbis,
 	getFunctionReturnType,
 } from "@aztec-labs/stdlib/abi"
 import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
@@ -34,9 +34,14 @@ export async function sponsored(p: ExecutionPayload): Promise<ExecutionPayload> 
 	return mergeExecutionPayloads([fee, p])
 }
 
-/** One call to `name` on `to`, its arguments encoded against `artifact`, as aztec.js would build it without a wallet. */
+/**
+ * One call to `name` on `to`, its arguments encoded against `artifact`, as aztec.js would build it without a wallet.
+ * @throws Error `Unknown function <name>` when the artifact has no such private, utility or public function
+ */
 export async function callPayload(artifact: ContractArtifact, to: AztecAddress, name: string, args: unknown[]): Promise<ExecutionPayload> {
-	const fn = getFunctionArtifactByName(artifact, name)
+	// A public function sits in `functions` only behind `public_dispatch`; its own ABI is in the non-dispatch list.
+	const fn = getAllFunctionAbis(artifact).find((f) => f.name === name)
+	if (!fn) throw new Error(`Unknown function ${name}`)
 	const call = FunctionCall.from({
 		name: fn.name,
 		to,
