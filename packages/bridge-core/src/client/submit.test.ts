@@ -1,5 +1,5 @@
 import { PoolClientError } from "@pp/pool-client"
-import { ContractFunctionRevertedError, type Hash, toHex, UserRejectedRequestError } from "viem"
+import { ContractFunctionRevertedError, createWalletClient, custom, defineChain, type Hash, toHex, UserRejectedRequestError } from "viem"
 import { describe, expect, it, vi } from "vitest"
 import {
 	aztecWallet,
@@ -15,6 +15,7 @@ import {
 	OWNER,
 	openSession,
 	randomRecipient,
+	SENDER,
 } from "../test/client-fakes"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { MAX_UNRESOLVED_ATTEMPTS } from "./attempts"
@@ -186,6 +187,52 @@ describe("submit: preflight at handoff", () => {
 		const e = await submit(t.ctx, t.spend, t.chain.wallet(), t.session).catch((x: unknown) => x)
 		expect(e).toMatchObject({ code: "RPC_FAILED", source: "UserRejectedRequestError" })
 		expect(t.values.size).toBe(0)
+	})
+
+	it("restores the record and answers CHAIN_MISMATCH when viem finds the wallet on another chain before sending", async () => {
+		const t = await setup()
+		const methods: string[] = []
+		const answers = [31337, 1]
+		const wallet = createWalletClient({
+			account: SENDER,
+			chain: defineChain({
+				id: 31337,
+				name: "local",
+				nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+				rpcUrls: { default: { http: [] } },
+			}),
+			// The run's own check reads 31337; the wallet then moves, and viem's check at the send reads 1.
+			transport: custom({
+				request: async ({ method }: { method: string }) => {
+					methods.push(method)
+					if (method !== "eth_chainId") throw new Error(`unexpected ${method}`)
+					return toHex(answers.shift() ?? 1)
+				},
+			}),
+		})
+		expect(await code(submit(t.ctx, t.spend, wallet, t.session))).toBe("CHAIN_MISMATCH")
+		expect(methods).toEqual(["eth_chainId", "eth_chainId"])
+		expect(t.values.size).toBe(0)
+	})
+
+	it.each<[string, Parameters<typeof foreignError>, string, number]>([
+		[
+			"another copy of viem's send wrappers",
+			[["ContractFunctionExecutionError"], ["TransactionExecutionError"], ["ChainMismatchError"]],
+			"CHAIN_MISMATCH",
+			0,
+		],
+		[
+			"a wallet's own error, which viem wraps as UnknownRpcError",
+			[["ContractFunctionExecutionError"], ["TransactionExecutionError"], ["UnknownRpcError"], ["ChainMismatchError"]],
+			"UNCERTAIN",
+			1,
+		],
+	])("reads a ChainMismatchError under %s", async (_, links, expected, attempts) => {
+		const t = await setup()
+		t.chain.writeContract.mockRejectedValueOnce(foreignError(...links))
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe(expected)
+		expect((await t.journal.read(t.spend.nullifier)).record?.attempts.length ?? 0).toBe(attempts)
 	})
 
 	it.each<[string, Parameters<typeof foreignError>]>([

@@ -82,17 +82,29 @@ export function contractRevert(e: unknown): { revert?: string } | null {
 /** viem's wrappers around a send's error: they add context and say nothing about whether it was broadcast. */
 const SEND_WRAPPERS: ReadonlySet<unknown> = new Set(["ContractFunctionExecutionError", "TransactionExecutionError"])
 
-/**
- * Whether the user refused the request: an EIP-1193 4001 with only viem's send wrappers above it.
- * Anything else above a 4001, such as a timeout, may follow a broadcast, so it is not a refusal.
- */
-export function isUserRejection(e: unknown): boolean {
+/** Whether a link of `e`'s chain matches `found` with only viem's send wrappers above it. */
+function underSendWrappers(e: unknown, found: (x: object) => boolean): boolean {
 	for (const x of causeChain(e)) {
-		if (field(x, "code") === 4001) return true
+		if (found(x)) return true
 		if (!SEND_WRAPPERS.has(field(x, "name"))) return false
 	}
 	return false
 }
+
+/**
+ * Whether the user refused the request: an EIP-1193 4001 with only viem's send wrappers above it.
+ * Anything else above a 4001, such as a timeout, may follow a broadcast, so it is not a refusal.
+ */
+export const isUserRejection = (e: unknown): boolean => underSendWrappers(e, (x) => field(x, "code") === 4001)
+
+/**
+ * Whether viem refused to send because the wallet is on another chain: its `ChainMismatchError`
+ * with only the send wrappers above it. viem 2.57.1 raises it in `sendTransaction`
+ * (`assertCurrentChain`, actions/wallet/sendTransaction.ts:223-229) before it requests
+ * `eth_sendTransaction` (:264), so nothing was sent. A wallet's own error reaches here under viem's RPC error classes,
+ * which are no wrappers.
+ */
+export const isChainMismatch = (e: unknown): boolean => underSendWrappers(e, (x) => field(x, "name") === "ChainMismatchError")
 
 /**
  * Maps any thrown value to a `BridgeClientError` built from allow-listed identifiers only. It never

@@ -3,7 +3,7 @@ import { type Account, type Chain, type Hash, hexToBigInt, isAddressEqual, type 
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { sendGasLimit } from "../l1-gas"
 import { type Intent, latestMined, observe, planAttempt } from "./attempts"
-import { contractRevert, guarded, isUserRejection } from "./boundary"
+import { contractRevert, guarded, isChainMismatch, isUserRejection } from "./boundary"
 import { assertBridgeSpend, snapshotSpend } from "./checks"
 import { BridgeClientError, type StaleRootCode } from "./errors"
 import { Journal, type JournalRecord, type KeyValueStore } from "./journal"
@@ -203,9 +203,13 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
 	try {
 		hash = await run.l1.writeContract({ ...bridgeCall(run, s), chain: run.chain, gas })
 	} catch (e) {
-		if (!isUserRejection(e)) return afterSendFailure(run, s)
+		const rejected = isUserRejection(e)
+		if (!rejected && !isChainMismatch(e)) return afterSendFailure(run, s)
+		// Nothing was sent: the user refused, or viem found the wallet on another chain first.
 		await run.journal.restore(plan.record.nullifier, plan.previous, written)
-		throw new BridgeClientError("RPC_FAILED", { source: "UserRejectedRequestError" })
+		throw rejected
+			? new BridgeClientError("RPC_FAILED", { source: "UserRejectedRequestError" })
+			: new BridgeClientError("CHAIN_MISMATCH")
 	}
 	const saved = await run.journal.write(withHash(plan.record, hash)).then(
 		() => true,
@@ -230,8 +234,10 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
 /**
  * Sends a checked bridge spend and returns the receipt of the verified `BridgedFromPool` event for
  * its nullifier, whichever transaction carried it. Never resubmits by itself: a send whose outcome
- * is unknown ends `UNCERTAIN` and needs `acceptUncertain` to try again. A second call for the same
- * nullifier while one runs in this process is `IN_FLIGHT`, whatever deployment, vault or store it names.
+ * is unknown ends `UNCERTAIN` and needs `acceptUncertain` to try again. A send refused before it
+ * left restores the journal: the user's refusal is `RPC_FAILED` (`UserRejectedRequestError`), and a
+ * wallet viem finds on another chain is `CHAIN_MISMATCH`. A second call for the same nullifier while
+ * one runs in this process is `IN_FLIGHT`, whatever deployment, vault or store it names.
  *
  * Known limit: the journal is authenticated, not fresh, and kept per deployment. A record deleted or
  * rolled back in the store, a second process or tab over the same storage, or a later send of the
