@@ -171,8 +171,9 @@ async function runPreflight(st: State, recipient: AztecAddress, epoch: number, d
 	st.binding = null
 	dispatch({ type: "preflight" })
 	await st.deps.session.preflight(recipient)
-	if (warm) await st.deps.session.warmUp()
+	// bridge-core's 10 minutes start at its answer, so a slow warm-up must not make the entry look younger.
 	const at = st.deps.timer.now()
+	if (warm) await st.deps.session.warmUp()
 	st.binding = { recipient, epoch, at, consumed: false }
 	dispatch({ type: "preflighted", binding: { recipient, epoch, at } })
 }

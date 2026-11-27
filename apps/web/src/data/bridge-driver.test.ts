@@ -371,6 +371,16 @@ describe("the bridge driver", () => {
 		expect(h.order).toEqual(["preflight", "prove"])
 	})
 
+	test("a preflight's age counts from its answer, not from the warm-up after it", async () => {
+		const h = harness()
+		h.session.warmUp = async () => h.timer.advance(2 * 60_000)
+		await h.preflight()
+		h.timer.advance(PREFLIGHT_FRESH_MS - 60_000)
+		h.order.length = 0
+		await h.submit()
+		expect(h.order).toEqual(["preflight", "prove"])
+	})
+
 	test("after UNCERTAIN only an explicit retry with acceptUncertain runs; after IN_FLIGHT none does", async () => {
 		const h = harness({ submitThrows: new BridgeFailure("UNCERTAIN") })
 		await h.submit()
