@@ -1,44 +1,74 @@
 /**
  * Fails when an artifact under `contracts/bridge/evm/out` records a machine path in its solc metadata:
  * this checkout's or the home directory anywhere in it, or any absolute source name, compilation
- * target or remapping target. Solc hashes that metadata into every contract's bytecode, and
- * `PortalFactory` embeds `ProcessorPortalImpl`'s creation code, so one machine path makes the bridge's
- * bytecode differ per checkout. Run after `forge build`.
+ * target, remapping context or remapping target. Solc hashes that metadata into every contract's
+ * bytecode, and `PortalFactory` embeds `ProcessorPortalImpl`'s creation code, so one machine path makes
+ * the bridge's bytecode differ per checkout. Run after `forge build`.
  */
 import { readdirSync, readFileSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
-import { isAbsolute, join, relative } from "node:path"
+import { join, posix, relative, win32 } from "node:path"
 import { fileURLToPath } from "node:url"
 import { EVM_ROOT } from "./gen-remappings"
 
-/** Artifacts an empty or partial `out/` would lack, so the scan cannot pass having read nothing. */
-export const REQUIRED = ["PortalFactory.sol/PortalFactory.json", "ProcessorPortalImpl.sol/ProcessorPortalImpl.json"]
+/** Contracts whose artifacts must be present, with code, under their root-relative name, so the scan cannot pass vacuously. */
+export const REQUIRED = ["PortalFactory", "ProcessorPortalImpl"]
 
-type Metadata = { sources?: object; settings?: { compilationTarget?: object; remappings?: string[] } }
+type Metadata = { sources?: object; settings?: { compilationTarget?: Record<string, string>; remappings?: string[] } }
+type Artifact = { rawMetadata?: unknown; ast?: { absolutePath?: string }; abi?: unknown[]; bytecode?: { object?: string } }
 
-function absoluteNames(raw: string): string[] {
-	const { sources, settings }: Metadata = JSON.parse(raw)
-	const targets = (settings?.remappings ?? []).map((r) => r.slice(r.indexOf("=") + 1))
-	return [...Object.keys(sources ?? {}), ...Object.keys(settings?.compilationTarget ?? {}), ...targets].filter((p) => isAbsolute(p))
+const isAbsolute = (p: string) => posix.isAbsolute(p) || win32.isAbsolute(p)
+
+/** A remapping is `[context:]prefix=target`; a prefix never holds a colon. */
+function remappingPaths(r: string): string[] {
+	const head = r.slice(0, r.indexOf("="))
+	return [head.slice(0, Math.max(head.lastIndexOf(":"), 0)), r.slice(r.indexOf("=") + 1)].filter((p) => p !== "")
+}
+
+function absoluteNames({ sources, settings }: Metadata): string[] {
+	const remapped = (settings?.remappings ?? []).flatMap(remappingPaths)
+	return [...Object.keys(sources ?? {}), ...Object.keys(settings?.compilationTarget ?? {}), ...remapped].filter(isAbsolute)
+}
+
+/** A file that defines no contract (`forge build --ast` writes one per such file): no metadata, no code, no ABI. */
+const astOnly = (a: Artifact) => a.ast !== undefined && a.bytecode?.object === "0x" && a.abi?.length === 0
+
+function inspect(file: string, artifact: Artifact, needles: readonly string[]): string[] {
+	const raw = artifact.rawMetadata
+	if (typeof raw !== "string") {
+		if (!astOnly(artifact)) return [`${file}: no rawMetadata`]
+		const name = artifact.ast?.absolutePath ?? ""
+		return needles.some((n) => name.includes(n)) || isAbsolute(name) ? [`${file}: absolute source name ${name}`] : []
+	}
+	const problems = needles.filter((n) => raw.includes(n)).map((n) => `${file}: metadata contains ${n}`)
+	const absolute = absoluteNames(JSON.parse(raw))
+	if (absolute.length > 0) problems.push(`${file}: ${absolute.length} absolute path(s), first ${absolute[0]}`)
+	return problems
+}
+
+function requiredProblems(out: string, files: readonly string[]): string[] {
+	return REQUIRED.flatMap((name) => {
+		const file = `${name}.sol/${name}.json`
+		if (!files.includes(file)) return [`${file}: missing`]
+		const artifact: Artifact = JSON.parse(readFileSync(join(out, file), "utf8"))
+		const target =
+			typeof artifact.rawMetadata === "string"
+				? (JSON.parse(artifact.rawMetadata) as Metadata).settings?.compilationTarget
+				: undefined
+		const ok = target?.[`src/${name}.sol`] === name && (artifact.bytecode?.object?.length ?? 0) > 2
+		return ok ? [] : [`${file}: not src/${name}.sol's compiled ${name}`]
+	})
 }
 
 /**
  * Every problem with the contract artifacts under `out` (build-info excluded): a `REQUIRED` artifact
- * absent, a `rawMetadata` missing, containing a needle, or naming an absolute path. Empty means clean.
+ * absent, without code or under another name; a `rawMetadata` missing (outside AST-only files),
+ * containing a needle, or naming an absolute path. Empty means clean.
  */
 export function metadataLeaks(out: string, needles: readonly string[]): string[] {
 	const files = readdirSync(out, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".json") && !f.startsWith("build-info"))
-	const problems = REQUIRED.filter((r) => !files.includes(r)).map((r) => `${r}: missing`)
-	for (const file of files) {
-		const raw: unknown = JSON.parse(readFileSync(join(out, file), "utf8")).rawMetadata
-		if (typeof raw !== "string") {
-			problems.push(`${file}: no rawMetadata`)
-			continue
-		}
-		for (const n of needles) if (raw.includes(n)) problems.push(`${file}: metadata contains ${n}`)
-		const absolute = absoluteNames(raw)
-		if (absolute.length > 0) problems.push(`${file}: ${absolute.length} absolute path(s), first ${absolute[0]}`)
-	}
+	const problems = requiredProblems(out, files)
+	for (const file of files) problems.push(...inspect(file, JSON.parse(readFileSync(join(out, file), "utf8")), needles))
 	return problems
 }
 
