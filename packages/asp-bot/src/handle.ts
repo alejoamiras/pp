@@ -40,6 +40,8 @@ export interface BotHandle {
 export type StartOptions = {
 	removeDataOnStop?: boolean
 	readyTimeoutMs?: number
+	/** An abort before ready rejects the start and stops the child, as a timeout does. */
+	signal?: AbortSignal
 	killAfterMs?: number
 	/** Test seams: the child's command line and the port release. */
 	command?: string[]
@@ -85,6 +87,32 @@ async function killGroup(child: ChildProcess, pgid: number, killAfterMs: number)
 		signalGroup(pgid, "SIGKILL")
 		await new Promise((r) => setTimeout(r, 100))
 	}
+}
+
+/** Resolves on the `ready` line `onReady` receives; rejects on exit, spawn error, timeout or abort. */
+function waitReady(
+	child: ChildProcess,
+	o: StartOptions,
+	logPath: string,
+	onReady: (f: (e: ReadyEvent) => void) => void,
+): Promise<ReadyEvent> {
+	const ms = o.readyTimeoutMs ?? 300_000
+	return new Promise<ReadyEvent>((ok, fail) => {
+		const settle = (f: () => void) => {
+			clearTimeout(timer)
+			o.signal?.removeEventListener("abort", onAbort)
+			f()
+		}
+		const timer = setTimeout(() => settle(() => fail(new Error(`asp-bot not ready after ${ms} ms; log: ${logPath}`))), ms)
+		const onAbort = () => settle(() => fail(o.signal?.reason ?? new Error("aborted")))
+		if (o.signal?.aborted) return onAbort()
+		o.signal?.addEventListener("abort", onAbort, { once: true })
+		onReady((e) => settle(() => ok(e)))
+		child.once("exit", (code, signal) =>
+			settle(() => fail(new Error(`asp-bot exited (${signal ?? code}) before ready; log: ${logPath}`))),
+		)
+		child.once("error", (e) => settle(() => fail(e)))
+	})
 }
 
 /** Matches post-now replies to requests by id. Once closed, pending and later requests reject at once. */
@@ -137,6 +165,8 @@ export async function startBot(c: BotConfig, o: StartOptions = {}): Promise<BotH
 	mkdirSync(join(CACHE, "logs"), { recursive: true })
 	const logPath = join(CACHE, "logs", `${c.runId}.log`)
 	const log = createWriteStream(logPath, { flags: "a" })
+	// A full disk must cost the log, not crash the caller with an unhandled stream error.
+	log.on("error", (e) => process.stderr.write(`[asp-bot] log ${logPath}: ${e.message}\n`))
 	const bun = process.versions.bun ? process.execPath : "bun"
 	const [cmd, ...args] = o.command ?? [bun, CLI, "run"]
 	const child = spawn(cmd as string, args, {
@@ -169,30 +199,15 @@ export async function startBot(c: BotConfig, o: StartOptions = {}): Promise<BotH
 			await killGroup(child, pgid, o.killAfterMs ?? 30_000)
 			await (o.releasePorts ?? releaseByRunId)(c.runId)
 			if (o.removeDataOnStop) rmSync(dataDir, { recursive: true, force: true })
-			await new Promise((r) => log.end(r))
+			await new Promise((r) => (log.destroyed ? r(undefined) : log.end(r)))
 		})()
 		return stopping
 	}
 
 	let ready: ReadyEvent
 	try {
-		ready = await new Promise<ReadyEvent>((ok, fail) => {
-			const timer = setTimeout(
-				() => fail(new Error(`asp-bot not ready after ${o.readyTimeoutMs ?? 300_000} ms; log: ${logPath}`)),
-				o.readyTimeoutMs ?? 300_000,
-			)
-			onReady = (e) => {
-				clearTimeout(timer)
-				ok(e)
-			}
-			child.once("exit", (code, signal) => {
-				clearTimeout(timer)
-				fail(new Error(`asp-bot exited (${signal ?? code}) before ready; log: ${logPath}`))
-			})
-			child.once("error", (e) => {
-				clearTimeout(timer)
-				fail(e)
-			})
+		ready = await waitReady(child, o, logPath, (f) => {
+			onReady = f
 		})
 	} catch (e) {
 		await stop()

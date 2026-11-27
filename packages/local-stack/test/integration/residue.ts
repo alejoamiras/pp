@@ -109,10 +109,9 @@ export const portRefuses = (port: number) =>
 		s.once("error", () => resolve(true))
 	})
 
-/** What a stopped run must not have left: live groups, open ports, registry rows, directories. */
-/** The stack's own rows and those of the pool and the bot it runs under derived ids. */
 const ownedBy = (row: RegistryRow, runId: string) => [runId, `${runId}-pool`, `${runId}-bot`].includes(row.owner)
 
+/** What a stopped run must not have left: live groups, open ports, registry rows, directories. */
 export async function residueOf(r: {
 	runId: string
 	pgids: Iterable<number>

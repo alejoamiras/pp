@@ -41,7 +41,7 @@ export type StartStackOptions = {
 	runId?: string
 	/** Parent of the run directory; defaults to `~/.cache/pp/runs`. */
 	runsDir?: string
-	/** Default true. Off, no block is mined unless a consumer asks for one. */
+	/** Default true. Off, the stack mines no block itself; a running bot's posts still make blocks. */
 	heartbeat?: boolean
 	/**
 	 * Default true. Off, the bridge gets no ASP registry and no bot runs, so no heartbeat post adds
@@ -242,12 +242,10 @@ async function bootChains(o: StartStackOptions, runId: string, teardown: Teardow
 }
 
 /**
- * Starts the ASP bot on the bridge's registry, as `<runId>-bot` so its port row is its own. It
- * resolves only once its first post has landed and `/latest` serves, so a stack never advertises a
- * bot that cannot post. It runs before the heartbeat: the local network builds a block for each
- * pending transaction, so the bot's account deploy and first post need no beat.
+ * Resolves once the bot's first post has landed, so the manifest never names a bot that cannot post.
+ * It needs no beat: the local network builds a block for each pending transaction.
  */
-function botStep(b: Booted, bridge: StackBridgeBlock): Promise<BotHandle> {
+function botStep(o: StartStackOptions, b: Booted, bridge: StackBridgeBlock): Promise<BotHandle> {
 	return startBot(
 		{
 			manifest: {
@@ -262,7 +260,7 @@ function botStep(b: Booted, bridge: StackBridgeBlock): Promise<BotHandle> {
 			dataDir: join(b.runDir, "bot"),
 			inclusionMarginSec: BOT_INCLUSION_MARGIN_SEC,
 		},
-		{ removeDataOnStop: true },
+		{ removeDataOnStop: true, ...(o.signal ? { signal: o.signal } : {}) },
 	)
 }
 
@@ -308,7 +306,7 @@ export async function bootStack(o: StartStackOptions, faults: BootFaults): Promi
 				: await runStep(
 						o,
 						"bot",
-						() => botStep(b, bridge),
+						() => botStep(o, b, bridge),
 						(h) => teardown.push("bot", () => h.stop()),
 					)
 		const manifest = manifestOf(b, bridge, bot)

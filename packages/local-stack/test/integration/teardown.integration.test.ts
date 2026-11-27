@@ -141,7 +141,6 @@ describe.skipIf(!process.env.PP_STACK_INTEGRATION)("a stack tears down exactly w
 			expect(await client.getCode({ address })).toBeTruthy()
 		expect((await fetch(new URL("/health", m.pool.aspApiUrl))).ok).toBe(true)
 		expect((await nodeInfo(m.aztecNode)).l1ChainId).toBe(31337)
-		// The bot's step returned only after its first post, so its snapshot is the record on chain.
 		const [bot, bridge] = [m.bot, m.bridge]
 		if (!bot || !bridge) throw new Error("the manifest has no bot or bridge block")
 		const snap = parseAspSnapshot(await (await fetch(new URL("/v1/snapshots/latest", bot.url))).json())
