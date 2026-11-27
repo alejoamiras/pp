@@ -2,9 +2,9 @@ import { aspLeaf, buildLeanImt, type LabelPath, type LeanImt } from "@pp/bridge-
 import { type AspSnapshot, MAX_ROOT_AGE, type Origin, type RootRecord, SnapshotError, SPEND_WINDOW, treeOf } from "./snapshot"
 
 /**
- * `STALE_ROOT` says what to do next: `snapshot` (its roots are not the record's) means fetch the
- * record's own sequence; `age` (the record is newer than `nowSec` or too old for a spend) means wait
- * for the next post.
+ * `STALE_ROOT` says what to do next. `snapshot`: its roots are not the record's, so fetch the record's
+ * own sequence. `age`: the record is too old for a spend, so wait for the next post; a record newer
+ * than `nowSec` instead means it was not read at the anchor block.
  */
 export type LabelCheck = { state: "ACTIVE"; path: LabelPath } | { state: "ABSENT" } | { state: "STALE_ROOT"; reason: "snapshot" | "age" }
 
@@ -29,7 +29,7 @@ export class LabelPathCache {
 	private readonly maxTrees: number
 
 	constructor(private readonly opts: LabelPathCacheOptions = {}) {
-		const max = opts.maxTrees ?? 2
+		const max = opts.maxTrees === undefined ? 2 : opts.maxTrees
 		if (!(Number.isSafeInteger(max) && max >= 1)) throw new RangeError(`maxTrees must be a positive integer: ${max}`)
 		this.maxTrees = max
 	}
@@ -37,7 +37,7 @@ export class LabelPathCache {
 	/**
 	 * Same rules as `labelState`; `r` is the record at the anchor block and `nowSec` its time plus the
 	 * proving budget. Throws `SnapshotError("RootMismatch")` when a found label's list does not build to
-	 * the declared root; nothing is kept.
+	 * the declared root; that list is not kept, and a tree already verified for the root stays.
 	 */
 	check(r: RootRecord, s: AspSnapshot, label: bigint, origin: Origin, nowSec: bigint): LabelCheck {
 		for (const root of this.trees.keys()) if (root !== r.poolRoot && root !== r.birthRoot) this.trees.delete(root)

@@ -118,6 +118,6 @@ describe("LabelPathCache", () => {
 		expect(calls.builds).toBe(1)
 		expect(cache.check(record(), snap, label(0), 0, T).state).toBe("ACTIVE")
 		expect(calls.builds).toBe(2)
-		expect(() => new LabelPathCache({ maxTrees: 0 })).toThrow(RangeError)
+		for (const maxTrees of [0, 1.5, null]) expect(() => new LabelPathCache({ maxTrees } as never)).toThrow(RangeError)
 	})
 })
