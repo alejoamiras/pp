@@ -1,10 +1,10 @@
 import { useState } from "react"
-import { type Address, isAddressEqual } from "viem"
+import { type Address, type Hash, isAddressEqual } from "viem"
 import { useApp } from "../../app/context"
 import { useLive } from "../../app/live"
 import { messageOf } from "../../data/errors"
 import type { ExitView } from "../../data/ports"
-import { ActionButton, Amount, Callout, Facts, Modal } from "../../ui"
+import { ActionButton, Amount, Callout, Facts, Modal, shortHex } from "../../ui"
 
 /** The sender a confirmed collect is bound to; `asOwner` is the user's explicit yes to sending from the pool owner's address. */
 export interface CollectFrom {
@@ -64,7 +64,18 @@ function OwnerBlock(p: { sender: Address; payee: Address; label: boolean; accept
  * is said to be linked to it; the signed-in pool owner's address is refused unless the user accepts
  * that link for that exact address.
  */
-export function CollectReview({ view, onClose, onConfirm }: { view: ExitView; onClose(): void; onConfirm(from: CollectFrom): void }) {
+export function CollectReview({
+	view,
+	earlier,
+	onClose,
+	onConfirm,
+}: {
+	view: ExitView
+	/** An earlier collect's transaction that may still pay this exit out. */
+	earlier: Hash | undefined
+	onClose(): void
+	onConfirm(from: CollectFrom): void
+}) {
 	const { source, live } = useApp()
 	useLive(live)
 	const ctx = live.context()
@@ -95,6 +106,12 @@ export function CollectReview({ view, onClose, onConfirm }: { view: ExitView; on
 				]}
 			/>
 			{ctx.demo && source.l1.demo ? <p className="text-xs text-ink-3">{DEMO_NOTE}</p> : null}
+			{earlier ? (
+				<Callout tone="attn" title="An earlier collect may still pay this out">
+					Transaction <span className="font-mono">{shortHex(earlier)}</span> has not been read as paid or failed. Refresh first:
+					if it lands, this collect fails but still costs gas.
+				</Callout>
+			) : null}
 			{sender === null ? null : isOwner ? (
 				<OwnerBlock
 					sender={sender}

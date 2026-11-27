@@ -1,7 +1,7 @@
 import { useState } from "react"
 import type { Address, Hash } from "viem"
 import { type CollectFailure, useApp } from "../../app/context"
-import { useLive } from "../../app/live"
+import { type LiveStore, useLive } from "../../app/live"
 import { exitKey, useExits } from "../../app/queries"
 import type { ExitStatus } from "../../data/stack-types"
 import { BridgeFailure, codeOf, isUserRejection, messageOf, PAYEE_MESSAGES, type UiCode } from "../../data/errors"
@@ -38,26 +38,39 @@ function failureOf(err: unknown, refused: "owner" | "context" | null): Failed {
 	return { code: codeOf(err) ?? "RPC_FAILED", ...(txHash ? { txHash } : {}) }
 }
 
+/**
+ * The collect's handoff: the confirmed sender, chain and demo choice, and the owner's address only
+ * with the user's yes to it, since the owner may have signed in since the review.
+ */
+function collectHandoff(live: LiveStore, from: CollectFrom) {
+	const bound = bindL1Send(live.context, from.sender, from.chainId, from.demo)
+	let owner = false
+	return {
+		handoff() {
+			if (!from.asOwner && sameAddress(live.context().owner, from.sender)) {
+				owner = true
+				throw new BridgeFailure("SENDER_IS_OWNER")
+			}
+			bound.handoff()
+		},
+		refused: (): "owner" | "context" | null => (owner ? "owner" : bound.refused() ? "context" : null),
+	}
+}
+
 function useCollect(view: ExitView) {
 	const { source, live, collecting, refresh } = useApp()
 	const key = exitKey(view)
 	const collect = async (from: CollectFrom) => {
-		const bound = bindL1Send(live.context, from.sender, from.chainId, from.demo)
-		let ownerRefused = false
-		// The owner may have signed in since the review: its address goes only with the user's yes to it.
-		const handoff = () => {
-			if (!from.asOwner && sameAddress(live.context().owner, from.sender)) {
-				ownerRefused = true
-				throw new BridgeFailure("SENDER_IS_OWNER")
-			}
-			bound.handoff()
-		}
+		// A retry that ends in anything but a payout must not hide a first collect that may still land.
+		const earlier = pendingOf(collecting.failure(key))
+		const on = collectHandoff(live, from)
 		await collecting.run(key, async () => {
 			try {
-				await source.exits.settle(view.ticket, { sender: from.sender, demo: from.demo }, { handoff })
+				await source.exits.settle(view.ticket, { sender: from.sender, demo: from.demo }, { handoff: on.handoff })
 				return undefined
 			} catch (err) {
-				return failureOf(err, ownerRefused ? "owner" : bound.refused() ? "context" : null)
+				const f = failureOf(err, on.refused())
+				return earlier ? { ...f, earlier } : f
 			} finally {
 				refresh()
 			}
@@ -65,7 +78,7 @@ function useCollect(view: ExitView) {
 	}
 	const failed = collecting.failure(key)
 	const state: Collect = collecting.has(key) ? { kind: "collecting" } : failed ? { kind: "failed", ...failed } : { kind: "idle" }
-	return { state, collect }
+	return { state, collect, earlier: pendingOf(failed) }
 }
 
 const REFRESH_FIRST =
@@ -85,15 +98,24 @@ const COLLECT_UNCONFIRMED: ReadonlySet<UiCode> = new Set(["UNCERTAIN", "UNKNOWN"
 
 const unconfirmed = (f: Failed): boolean => f.code !== "REVERTED" && (COLLECT_UNCONFIRMED.has(f.code) || f.txHash !== undefined)
 
+/** The transaction of a collect that may still pay the exit out: this failure's own, else an earlier one's. */
+const pendingOf = (f: Failed | undefined): Hash | undefined => (f && unconfirmed(f) && f.txHash ? f.txHash : f?.earlier)
+
 const DEMO_COLLECT_NOTE = "Collecting sends one Ethereum transaction from the local demo's dev account, no wallet."
 
 function CollectFailed({ failed }: { failed: Failed }) {
 	return (
-		<Callout tone="bad" title={unconfirmed(failed) ? "Not confirmed" : "Not collected"} role="alert">
+		<Callout tone="bad" title={unconfirmed(failed) || failed.earlier ? "Not confirmed" : "Not collected"} role="alert">
 			{COLLECT_MESSAGES[failed.code] ?? messageOf(failed.code)}
 			{failed.txHash ? (
 				<span className="mt-1 block font-mono" title={failed.txHash}>
 					Transaction {shortHex(failed.txHash)}
+				</span>
+			) : null}
+			{failed.earlier ? (
+				<span className="mt-1 block" title={failed.earlier}>
+					An earlier collect, transaction <span className="font-mono">{shortHex(failed.earlier)}</span>, may still pay this exit
+					out. {REFRESH_FIRST}
 				</span>
 			) : null}
 		</Callout>
@@ -102,7 +124,7 @@ function CollectFailed({ failed }: { failed: Failed }) {
 
 function ExitRow({ view }: { view: ExitView }) {
 	const { source, live } = useApp()
-	const { state, collect } = useCollect(view)
+	const { state, collect, earlier } = useCollect(view)
 	const [reviewing, setReviewing] = useState(false)
 	const s = STATUS[view.status]
 	const fromDemo = useLive(live).demo && source.l1.demo !== undefined
@@ -143,6 +165,7 @@ function ExitRow({ view }: { view: ExitView }) {
 			{reviewing && view.status === "ready" ? (
 				<CollectReview
 					view={view}
+					earlier={earlier}
 					onClose={() => setReviewing(false)}
 					onConfirm={(from) => {
 						setReviewing(false)

@@ -102,6 +102,31 @@ describe("exits", () => {
 		},
 	)
 
+	test("a declined retry keeps the first collect's unread transaction on the row and says so in the review", async () => {
+		const outcomes = [new BridgeFailure("UNCERTAIN", { l1TxHash: L1_TX }), new ProviderError(4001, "User rejected the request.")]
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				exits: {
+					tickets: async () => oneReady(s.deployment),
+					settle: async () => {
+						throw outcomes.shift()
+					},
+				},
+			}),
+		})
+		await app.user.click(screen.getByRole("button", { name: "Exits" }))
+		await confirmCollect(app.user)
+		await within(await screen.findByRole("alert")).findByTitle(L1_TX)
+		await app.user.click(screen.getByRole("button", { name: "Collect on Ethereum" }))
+		review().getByText("An earlier collect may still pay this out")
+		await app.user.click(review().getByRole("button", { name: "Collect" }))
+		const alert = within(await screen.findByRole("alert"))
+		await alert.findByText(messageOf("WALLET_REJECTED"))
+		alert.getByText("Not confirmed")
+		alert.getByTitle(L1_TX)
+	})
+
 	test("a failure read before the exit settled leaves the row once a Refresh reads it collected", async () => {
 		let settled = false
 		const app = renderApp({
