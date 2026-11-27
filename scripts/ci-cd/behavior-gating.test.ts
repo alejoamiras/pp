@@ -318,7 +318,8 @@ describe("CI behavior-gating guard", () => {
 
   test("web covers the app graph, the sandbox it boots, the contracts that sandbox compiles, its actions and the root config", () => {
     const web = filtersOf("web.yml")["web"]
-    assertGraphCovered(web, "web", "web")
+    // The closure test above holds this filter to every file the app can load; this pins that it gates the app whole.
+    expect(web, "web gates the app whole").toContain("apps/web/**")
     expect(web, "the kit's runner boots @pp/bridge-core/sandbox, which lives in scripts/").toContain("packages/bridge-core/scripts/**")
     expect(web, "the sandbox compiles the bridge from source (sandbox/forge.ts)").toContain("contracts/bridge/**")
     for (const path of importsOutside("bridge-core")) {
