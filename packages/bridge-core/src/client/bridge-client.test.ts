@@ -188,19 +188,33 @@ describe("createBridgeClient", () => {
 		expectTypeOf<keyof Parameters<BridgeClient["exitTickets"]>[0]>().toEqualTypeOf<"payee" | "fromBlock">()
 	})
 
-	// An app that reuses one mutable form object for its next exit must still get the payload its
-	// user confirmed, though the build waits for the deployment check.
-	type Form = { payee: Address; amount: bigint; label: bigint }
+	// An app may pass the form model its user keeps editing, its fields getters over that input: the
+	// payload must still be the one the user confirmed, though the build waits for the deployment check.
+	class FormModel {
+		input: { payee: Address; amount: bigint; label: bigint }
+		constructor(input: FormModel["input"]) {
+			this.input = input
+		}
+		get payee() {
+			return this.input.payee
+		}
+		get amount() {
+			return this.input.amount
+		}
+		get label() {
+			return this.input.label
+		}
+	}
 	it.each([
-		["ragequitPayload", "ragequit", (c: BridgeClient, a: Form) => c.ragequitPayload(a)],
-		["exitPublicPayload", "exit_public", (c: BridgeClient, a: Form) => c.exitPublicPayload(a)],
+		["ragequitPayload", "ragequit", (c: BridgeClient, a: FormModel) => c.ragequitPayload(a)],
+		["exitPublicPayload", "exit_public", (c: BridgeClient, a: FormModel) => c.exitPublicPayload(a)],
 	] as const)(
-		"%s builds the hub's %s from the request as called, not a form the caller changes before it resolves",
+		"%s builds the hub's %s from a getter-backed form as called, not as the caller edits it before it resolves",
 		async (_, name, build) => {
-			const a: Form = { payee: "0x000000000000000000000000000000000000bEEF", amount: 1n, label: 3n }
-			const built = build(setup().client, a)
-			a.payee = "0x000000000000000000000000000000000000dEaD"
-			a.amount = 2n
+			const form = new FormModel({ payee: "0x000000000000000000000000000000000000bEEF", amount: 1n, label: 3n })
+			const built = build(setup().client, form)
+			form.input.payee = "0x000000000000000000000000000000000000dEaD"
+			form.input.amount = 2n
 			const call = (await built).calls.find((c) => c.name === name)
 			expect(call?.to.toString()).toBe(HUB)
 			expect(call?.args.slice(1, 3).map((x) => x.toBigInt())).toEqual([0xbeefn, 1n])

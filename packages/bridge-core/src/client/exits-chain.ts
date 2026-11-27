@@ -27,7 +27,7 @@ import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { guarded } from "./boundary"
 import type { ClientDeployment } from "./deployment"
 import { BridgeClientError } from "./errors"
-import { allPages, assertExitPayee, type ExitReads, type ExitWitness, messageIndices, settleWith } from "./exits"
+import { allPages, type ExitReads, type ExitWitness, messageIndices, settleWith } from "./exits"
 import { callPayload, sponsored } from "./payload"
 import { windowedLogs } from "./resolve"
 import type { ExitTicket } from "./types"
@@ -85,6 +85,17 @@ export function exitMessageHash(d: Pick<ClientDeployment, "hub" | "portal" | "ch
 		rollupVersion: new Fr(d.rollupVersion),
 		chainId: new Fr(d.chainId),
 	})
+}
+
+/**
+ * Refuses an exit payee before anything is built: a mixed-case address whose checksum fails, by
+ * the predicate of the parser that encodes it (which accepts all-lowercase and all-uppercase hex),
+ * and the portal, which the hub refuses because the portal never pays itself.
+ * @throws BridgeClientError `SPEND_MISMATCH` with source `PayeeChecksum` or `PayeeIsPortal`
+ */
+export function assertExitPayee(portal: Address, payee: Address): void {
+	if (!EthAddress.isAddress(payee)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeChecksum" })
+	if (isAddressEqual(payee, portal)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeIsPortal" })
 }
 
 /**

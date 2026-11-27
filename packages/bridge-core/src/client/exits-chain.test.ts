@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest"
 import { DEPLOYMENT, HUB, PORTAL, SENDER } from "../test/client-fakes"
 import type { ClientDeployment } from "./deployment"
 import { exitStatusOf, exitState } from "./exits"
-import { type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
+import { assertExitPayee, type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
 import { sponsoredFpcAddress } from "./payload"
 import type { ExitTicket } from "./types"
 
@@ -260,5 +260,15 @@ describe("ragequitPayload", () => {
 		] as const,
 	])("refuses %s before building", async (_, a, source) => {
 		await expect(ragequitPayload(D, a)).rejects.toMatchObject({ code: "SPEND_MISMATCH", source })
+	})
+})
+
+describe("assertExitPayee", () => {
+	it.each([
+		["all lowercase", "0x000000000000000000000000000000000000beef"],
+		["all uppercase", "0x000000000000000000000000000000000000BEEF"],
+		["checksummed", "0x000000000000000000000000000000000000bEEF"],
+	] as const)("accepts a payee %s, as the address parser that encodes it does", (_, payee) => {
+		expect(() => assertExitPayee(PORTAL, payee)).not.toThrow()
 	})
 })

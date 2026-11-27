@@ -6,7 +6,7 @@ import type { Address } from "viem"
 import { tokenBridgeHubArtifact } from "../artifacts"
 import { guarded } from "./boundary"
 import type { ClientDeployment } from "./deployment"
-import { assertExitPayee } from "./exits"
+import { assertExitPayee } from "./exits-chain"
 import { callPayload, sponsored } from "./payload"
 
 /**

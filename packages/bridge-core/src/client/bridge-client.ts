@@ -116,13 +116,11 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 	const recordsContext = async (): Promise<RecordsContext> => ({ deployment: await deployment(), reader, node, store })
 	const exitContext = async (): Promise<ExitContext> => ({ deployment: await deployment(), reader, node, receiptTimeoutMs })
 	const exits = <T>(f: (c: ExitContext) => Promise<T>) => guarded(async () => f(await exitContext()))
-	// The request is copied before the deployment check: an app that reuses a mutable form object
-	// would otherwise get a payload other than the one its user confirmed.
-	const payload = <A extends object>(a: A, build: (d: ClientDeployment, a: A) => Promise<ExecutionPayload>) =>
-		guarded(async () => {
-			const asCalled = { ...a }
-			return build((await exitContext()).deployment, asCalled)
-		})
+	// Each method reads its request's fields by name at the call, before anything awaits: an app that
+	// reuses a mutable form object would otherwise get a payload other than the one its user
+	// confirmed. Named reads, not a spread, so a getter-backed form keeps working.
+	const payload = <A>(asCalled: A, build: (d: ClientDeployment, a: A) => Promise<ExecutionPayload>) =>
+		guarded(async () => build((await exitContext()).deployment, asCalled))
 	return Object.freeze({
 		preflight: async (a) => preflight({ deployment: await deployment(), node, preflights }, a),
 		submit: (spend, l1, s, o) => submit(submitContext, spend, l1, s, o),
@@ -135,8 +133,8 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		claimPayload: async (s, r) => claimPayload(await deployment(), s, r),
 		recover: async (s, recipient) => recover(await recordsContext(), s, recipient),
 		records: async (s) => records(await recordsContext(), s),
-		ragequitPayload: (a) => payload(a, ragequitPayload),
-		exitPublicPayload: (a) => payload(a, exitPublicPayload),
+		ragequitPayload: ({ payee, amount, label }) => payload({ payee, amount, label }, ragequitPayload),
+		exitPublicPayload: ({ payee, amount }) => payload({ payee, amount }, exitPublicPayload),
 		exitTickets: (a) => exits((c) => exitTickets(c, a)),
 		exitStatus: (t) => exits(async (c) => exitStatusOf(await exitState(exitReads(c), t))),
 		settle: (t, l1) => exits((c) => settle(c, t, l1)),

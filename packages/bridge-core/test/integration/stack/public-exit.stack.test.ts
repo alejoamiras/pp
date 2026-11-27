@@ -27,16 +27,25 @@ async function admitted(bot: string, label: bigint, deadline: number): Promise<L
 	if (!head) return null
 	const { blockNumber, timestamp } = head.header.globalVariables
 	const record = await readRootRecord({ aztecNode: k.m.aztecNode, registry: k.m.bridge.registry as Hex, at: Number(blockNumber) })
-	// The signal bounds the body read too, so a stalled bot cannot outlast the deadline.
 	const res = await fetch(`${bot}/v1/snapshots/${record.sequence}`, { signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) })
 	if (!res.ok) return null
 	const snapshot = parseAspSnapshot(await res.json())
 	return labelState(record, snapshot, label, POOL_ORIGIN, timestamp) === "ACTIVE" ? pathFor(snapshot, label, POOL_ORIGIN) : null
 }
 
+/** `p`, or a rejection at `deadline`: the node client's reads carry no deadline of their own. */
+function by<T>(deadline: number, p: Promise<T>): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error("the poll outlasted the deadline")), Math.max(1, deadline - Date.now()))
+	})
+	return Promise.race([p, late]).finally(() => clearTimeout(timer))
+}
+
 /**
  * The pool tree's path for `label`, once a post holds it and is young enough for a checked spend.
- * A malformed snapshot or a bad registry address ends the wait; any other failure is retried.
+ * A malformed snapshot (bad JSON or a bad shape) or a bad registry address ends the wait; any other
+ * failure is retried.
  */
 async function poolPath(label: bigint): Promise<LabelPath> {
 	const bot = k.m.bot?.url
@@ -45,10 +54,10 @@ async function poolPath(label: bigint): Promise<LabelPath> {
 	let last: unknown
 	while (Date.now() < deadline) {
 		try {
-			const path = await admitted(bot, label, deadline)
+			const path = await by(deadline, admitted(bot, label, deadline))
 			if (path) return path
 		} catch (e) {
-			if (e instanceof SnapshotError || e instanceof RegistryAddressError) throw e
+			if (e instanceof SnapshotError || e instanceof RegistryAddressError || e instanceof SyntaxError) throw e
 			last = e
 		}
 		await new Promise((r) => setTimeout(r, 1_000))
