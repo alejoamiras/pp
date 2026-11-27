@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { Fr } from "@aztec-labs/foundation/curves/bn254"
 import { toHex } from "viem"
 import { afterAll, describe, expect, it, vi } from "vitest"
+import { BridgeClientError } from "../src/client/errors"
 import type { ExitTicket } from "../src/client/types"
 import { serializeStackManifest } from "../src/stack-manifest"
 import { manifest } from "../src/test/client-fakes"
@@ -55,9 +56,13 @@ describe("ragequit arguments", () => {
 		expect(keysFrom({ PP_L1_KEY: KEY, PP_AZTEC_SECRET: word(Fr.MODULUS - 1n) }, false).aztec).toBe(word(Fr.MODULUS - 1n))
 	})
 
-	it("cuts a key's hex and decimal forms out of a failure line", () => {
-		const line = `invalid scalar ${BigInt(KEY)} from ${KEY.toUpperCase().replace("0X", "0x")}`
-		expect(reason(new Error(line), [KEY as `0x${string}`])).toBe("invalid scalar <redacted> from 0x<redacted>")
+	it("prints a lower layer's error by name once keys are loaded, and an uncertain settle with its L1 hash", () => {
+		const leaky = new TypeError(`invalid scalar ${BigInt(KEY)} from ${KEY}`)
+		expect(reason(leaky, false)).toBe("TypeError")
+		expect(reason(leaky, true)).toContain("invalid scalar")
+		const hash = `0x${"cd".repeat(32)}` as const
+		expect(reason(new BridgeClientError("UNCERTAIN", { l1TxHash: hash }), false)).toBe(`UNCERTAIN in L1 tx ${hash}`)
+		expect(reason(new BridgeClientError("RPC_FAILED", { source: "HttpRequestError" }), false)).toBe("RPC_FAILED (HttpRequestError)")
 	})
 
 	it.each([
@@ -121,6 +126,18 @@ describe("ticketsOfBurns", () => {
 		const out = await ticketsOfBurns(async () => reads.shift() ?? [], burns, 5n, pause)
 		expect(out.map((t) => t.l2TxHash)).toEqual(["0xa1", "0xa2"])
 		expect(pause).toHaveBeenCalledOnce()
+	})
+
+	it("reads again after a failed read, and fails with the last one when every read fails", async () => {
+		const reads: (() => Promise<ExitTicket[]>)[] = [
+			async () => Promise.reject(new Error("connection reset")),
+			async () => [ticket("0xa1", 80n), ticket("0xa2", 10n)],
+		]
+		const pause = vi.fn(async () => {})
+		expect(await ticketsOfBurns(() => (reads.shift() as () => Promise<ExitTicket[]>)(), burns, 5n, pause)).toHaveLength(2)
+		expect(pause).toHaveBeenCalledOnce()
+		const down = async () => Promise.reject(new Error("connection refused"))
+		await expect(ticketsOfBurns(down, burns, 5n, pause, 3)).rejects.toThrow("connection refused")
 	})
 
 	it("fails naming a burn that never shows a ticket, and at once on a ticket the burn did not make", async () => {

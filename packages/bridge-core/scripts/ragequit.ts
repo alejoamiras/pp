@@ -44,6 +44,11 @@ const INTEGER = /^(0x[0-9a-fA-F]+|[0-9]+)$/
 /** A refusal before anything is read from a chain or a key: bad arguments, environment or manifest. */
 export class UsageError extends Error {}
 
+/** A failure the CLI words itself, from public values only. */
+class RagequitError extends Error {}
+
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
+
 export type RagequitArgs = { settleOnly: boolean; amount?: bigint; label?: bigint; payee?: Address }
 
 function positive(flag: string, v: string | undefined): bigint | undefined {
@@ -114,11 +119,21 @@ const liveChains: ChainProbe = async (m) => {
 
 type Burn = { tx: string; amount: bigint }
 
+/** Each burn's one ticket, or the burns that show none yet. */
+function matchBurns(all: readonly ExitTicket[], burns: readonly Burn[], label: bigint): ExitTicket[] | RagequitError {
+	const found = burns.map((b) => all.filter((t) => t.l2TxHash.toLowerCase() === b.tx.toLowerCase()))
+	const exact = (ts: ExitTicket[], b: Burn) =>
+		ts.length === 1 && ts[0]?.kind === "ragequit" && ts[0].amount === b.amount && ts[0].label === label
+	if (burns.some((b, j) => found[j]?.length && !exact(found[j], b))) throw new BridgeClientError("RPC_INCONSISTENT")
+	const missing = burns.filter((_, j) => !found[j]?.length).map((b) => b.tx)
+	return missing.length ? new RagequitError(`no ticket shows for L2 tx ${missing.join(", ")}`) : found.map((ts) => ts[0] as ExitTicket)
+}
+
 /**
- * Each burn's ticket, once every burn shows exactly one of its amount and label; the node can index a
- * burn's logs after its receipt, so a missing ticket is read again before it fails.
- * @throws BridgeClientError `RPC_INCONSISTENT` when a burn shows another ticket than it made; Error when
- * one shows none within `reads`
+ * Each burn's ticket, once every burn shows exactly one of its amount and label. The node can index a
+ * burn's logs after its receipt and a read can fail in passing, so both are read again within `reads`.
+ * @throws BridgeClientError `RPC_INCONSISTENT` at once when a burn shows another ticket than it made;
+ * otherwise the last read's failure, or the burns still without a ticket, after `reads`
  */
 export async function ticketsOfBurns(
 	read: () => Promise<ExitTicket[]>,
@@ -128,14 +143,12 @@ export async function ticketsOfBurns(
 	reads = TICKET_READS,
 ): Promise<ExitTicket[]> {
 	for (let i = 1; ; i++) {
-		const all = await read()
-		const found = burns.map((b) => all.filter((t) => t.l2TxHash.toLowerCase() === b.tx.toLowerCase()))
-		const exact = (ts: ExitTicket[], b: Burn) =>
-			ts.length === 1 && ts[0]?.kind === "ragequit" && ts[0].amount === b.amount && ts[0].label === label
-		if (burns.some((b, j) => found[j]?.length && !exact(found[j], b))) throw new BridgeClientError("RPC_INCONSISTENT")
-		const missing = burns.filter((_, j) => !found[j]?.length).map((b) => b.tx)
-		if (!missing.length) return found.map((ts) => ts[0] as ExitTicket)
-		if (i >= reads) throw new Error(`no ticket shows for L2 tx ${missing.join(", ")}`)
+		const outcome = await read().then(
+			(all) => matchBurns(all, burns, label),
+			(e: unknown) => e,
+		)
+		if (Array.isArray(outcome)) return outcome
+		if (i >= reads) throw outcome
 		await pause()
 	}
 }
@@ -194,7 +207,8 @@ function rowsOf<T>(r: unknown): T[] {
 type Holder = {
 	address: AztecAddress
 	token: Contract
-	send: (payload: Awaited<ReturnType<BridgeClient["ragequitPayload"]>>) => Promise<string>
+	/** The burn's L2 transaction hash and, once the node reports it, its block. */
+	send: (payload: Awaited<ReturnType<BridgeClient["ragequitPayload"]>>) => Promise<{ tx: string; block?: bigint }>
 	stop(): Promise<void>
 }
 
@@ -204,7 +218,11 @@ async function holderOf(m: Manifest, secret: Hex): Promise<Holder> {
 	try {
 		const { address } = await account(d, secret)
 		const token = await Contract.at(d.token, labelledTokenArtifact, d.wallet as never)
-		return { address, token, send: async (payload) => (await send(d, address, payload)).txHash.toString(), stop: d.stop }
+		const sendBurn = async (payload: Parameters<Holder["send"]>[0]) => {
+			const r = await send(d, address, payload)
+			return { tx: r.txHash.toString(), block: r.blockNumber === undefined ? undefined : BigInt(r.blockNumber) }
+		}
+		return { address, token, send: sendBurn, stop: d.stop }
 	} catch (e) {
 		await d.stop()
 		throw e
@@ -238,7 +256,7 @@ const describe = (t: ExitTicket) => `${t.kind} of ${t.amount} to ${t.payee} (L2 
 export async function untilReady(client: BridgeClient, t: ExitTicket): Promise<void> {
 	const end = Date.now() + READY_TIMEOUT_MS
 	while ((await client.exitStatus(t)) === "proving") {
-		if (Date.now() > end) throw new Error(`no Outbox root covered the ${describe(t)} within ${READY_TIMEOUT_MS / 60_000} min`)
+		if (Date.now() > end) throw new RagequitError(`no Outbox root covered the ${describe(t)} within ${READY_TIMEOUT_MS / 60_000} min`)
 		await new Promise((r) => setTimeout(r, POLL_MS))
 	}
 }
@@ -264,21 +282,24 @@ async function run(a: RagequitArgs, m: Manifest, keys: Keys, log: (s: string) =>
 	const holder = await holderOf(m, keys.aztec)
 	try {
 		const label = a.label ?? (await onlyLabel(holder))
-		const burns: Burn[] = []
+		const burns: (Burn & { block?: bigint })[] = []
 		await burnLabel(
 			{
 				notes: () => notesOf(holder, label),
 				pause,
 				burn: async (amount) => {
-					const tx = await holder.send(await client.ragequitPayload({ payee, amount, label }))
+					const { tx, block } = await holder.send(await client.ragequitPayload({ payee, amount, label }))
 					log(`burned ${amount} under the label in L2 tx ${tx}`)
-					burns.push({ tx, amount })
+					burns.push({ tx, amount, block })
 					return tx
 				},
 			},
 			a.amount,
 		)
-		const tickets = await ticketsOfBurns(() => client.exitTickets({ payee }), burns, label, pause)
+		// From the first burn's block, so the payee's older tickets are neither read nor indexed.
+		const blocks = burns.map((b) => b.block)
+		const fromBlock = blocks.every((b) => b !== undefined) ? blocks.reduce((x, y) => (y < x ? y : x)) : undefined
+		const tickets = await ticketsOfBurns(() => client.exitTickets({ payee, fromBlock }), burns, label, pause)
 		for (const t of tickets) log(`ticket: ${describe(t)}`)
 		await settleAll(client, l1, tickets, log)
 	} finally {
@@ -286,18 +307,21 @@ async function run(a: RagequitArgs, m: Manifest, keys: Keys, log: (s: string) =>
 	}
 }
 
-/** The first line of `e`, with any key's hex or decimal form cut out: a guard over the range checks. */
-export function reason(e: unknown, keys: readonly Hex[]): string {
-	const why =
-		e instanceof BridgeClientError
-			? `${e.code}${e.source ? ` (${e.source})` : ""}`
-			: ((e instanceof Error ? e.message : "").split("\n")[0] ?? "failed")
-	const forms = keys.flatMap((k) => [k.slice(2), BigInt(k).toString()])
-	return forms.reduce((line, form) => line.replace(new RegExp(form, "gi"), "<redacted>"), why)
+/**
+ * What a failure prints. The client's codes (with an uncertain settle's L1 hash) and the CLI's own
+ * words carry public values only. Once keys are loaded (`raw` false), a lower layer's message never
+ * prints, only its error's name: a library can put its input in its message.
+ */
+export function reason(e: unknown, raw: boolean): string {
+	if (e instanceof BridgeClientError)
+		return [e.code, e.source && `(${e.source})`, e.l1TxHash && `in L1 tx ${e.l1TxHash}`].filter(Boolean).join(" ")
+	if (e instanceof UsageError || e instanceof RagequitError) return e.message
+	if (raw && e instanceof Error && e.message) return e.message.split("\n")[0] as string
+	return e instanceof Error && IDENTIFIER.test(e.name) ? e.name : "failed"
 }
 
-function fail(e: unknown, keys: readonly Hex[] = [], code = e instanceof UsageError ? 2 : 1): number {
-	console.error(`ragequit: ${reason(e, keys) || "failed"}`)
+function fail(e: unknown, raw: boolean, code = e instanceof UsageError ? 2 : 1): number {
+	console.error(`ragequit: ${reason(e, raw)}`)
 	return code
 }
 
@@ -312,7 +336,7 @@ export async function main(argv: string[], env: Record<string, string | undefine
 		a = parseRagequitArgs(argv)
 		m = localManifest(env.PP_STACK_MANIFEST)
 	} catch (e) {
-		return fail(e, [], 2)
+		return fail(e, true, 2)
 	}
 	let keys: Keys
 	try {
@@ -320,13 +344,13 @@ export async function main(argv: string[], env: Record<string, string | undefine
 			throw new UsageError(`the manifest's RPC or node is not on the local chain ${LOCAL_CHAIN_ID}`)
 		keys = keysFrom(env, a.settleOnly)
 	} catch (e) {
-		return fail(e)
+		return fail(e, true)
 	}
 	try {
 		await run(a, m, keys, log)
 		return 0
 	} catch (e) {
-		return fail(e, [keys.l1, ...(keys.aztec ? [keys.aztec] : [])])
+		return fail(e, false)
 	}
 }
 
