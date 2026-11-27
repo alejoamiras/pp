@@ -8,7 +8,7 @@ import type { AztecAddress, Origin } from "../a7"
 import { MAX_NOTES_PER_BURN, ragequitChunks } from "../chunks"
 import { BridgeFailure, ProviderError } from "../errors"
 import { BALANCES_PAGE, NOTES_PAGE, readAllPages } from "../paging"
-import { BN254_P, parseLabel, parseOrigin, parsePayee, parseU128 } from "../parse"
+import { BN254_P, isAztecPoint, parseLabel, parseOrigin, parsePayee, parseU128 } from "../parse"
 import type { AztecPort, LabelBalance, Sent } from "../ports"
 import { fixtureLabelState } from "./allow-list"
 import type { FixtureOp } from "./faults"
@@ -126,6 +126,8 @@ export function fixtureAztec(w: World): AztecPort {
 		},
 		publicBalance: async (owner) => publicOf(w, owner),
 		async transferPrivate(from, { to, amount, label, origin }) {
+			// The wallet refuses an address that cannot receive notes before it proves anything.
+			if (!isAztecPoint(to)) throw new BridgeFailure("RECIPIENT_INVALID")
 			return send(
 				w,
 				"transferPrivate",

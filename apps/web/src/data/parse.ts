@@ -26,13 +26,35 @@ function textOf(value: unknown): string | null {
 
 /**
  * A canonical Aztec address: 0x and 64 hex digits, below the field modulus, lower-cased. Syntax only:
- * whether it is a point on the curve (can receive notes) is `preflight`'s check.
+ * whether it can receive notes is `isAztecPoint`.
  */
 export function parseAztecAddress(value: unknown): AztecAddress | null {
 	const text = textOf(value)?.trim()
 	if (!text || !FIELD_HEX.test(text)) return null
 	if (BigInt(text) >= BN254_P) return null
 	return text.toLowerCase() as AztecAddress
+}
+
+function powMod(base: bigint, exponent: bigint, modulus: bigint): bigint {
+	let result = 1n
+	let b = base % modulus
+	for (let e = exponent; e > 0n; e >>= 1n) {
+		if (e & 1n) result = (result * b) % modulus
+		b = (b * b) % modulus
+	}
+	return result
+}
+
+/**
+ * Whether notes sent to `a` can ever be spent: an address is the x of a Grumpkin point
+ * (y² = x³ − 17 over the BN254 scalar field), so any other x, and zero, is refused. Euler's criterion
+ * decides it without aztec.js's address class, which would pull bb.js (about 11 MB) into the bundle.
+ */
+export function isAztecPoint(a: AztecAddress): boolean {
+	const x = BigInt(a)
+	if (x === 0n) return false
+	const ySquared = (((((x * x) % BN254_P) * x) % BN254_P) - 17n + BN254_P) % BN254_P
+	return ySquared === 0n || powMod(ySquared, (BN254_P - 1n) / 2n, BN254_P) === 1n
 }
 
 export type PayeeRefusal = "format" | "checksum" | "zero" | "portal"

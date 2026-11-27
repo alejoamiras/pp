@@ -22,7 +22,7 @@ const eth = (lower: string) => checksumAddress(lower as Address)
 export const ACCOUNTS = {
 	owner: eth("0x7a3e5c0de1b2a3c4d5e6f708192a3b4c5d6e91cd"),
 	sender: eth("0x51c0ffee00a1b2c3d4e5f60718293a4b5c6de2a4"),
-	aztec: az("1c4f", "e9b2"),
+	aztec: az("1c4f", "e9b4"),
 }
 
 export function fixtureDeployment(chainId: number): Deployment {

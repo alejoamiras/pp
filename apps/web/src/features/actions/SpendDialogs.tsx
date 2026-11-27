@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { useApp } from "../../app/context"
 import type { AztecAddress } from "../../data/a7"
-import { RECIPIENT_MESSAGE } from "../../data/errors"
-import { parseAztecAddress } from "../../data/parse"
+import { messageOf, RECIPIENT_MESSAGE } from "../../data/errors"
+import { isAztecPoint, parseAztecAddress } from "../../data/parse"
 import type { LabelBalance } from "../../data/ports"
 import { ActionButton, Callout, Field, LabelChip } from "../../ui"
 import { ActionShell, AmountField, useAction, useAmount } from "./shared"
@@ -19,7 +19,9 @@ const submitReason = (sending: boolean, missing: string | null) => (sending ? "S
 export function SendDialog({ account, balance, onClose }: Props) {
 	const { aztec, tx } = useApp()
 	const [to, setTo] = useState("")
-	const recipient = parseAztecAddress(to)
+	const typed = parseAztecAddress(to)
+	const recipient = typed !== null && isAztecPoint(typed) ? typed : null
+	const toError = to === "" || recipient ? undefined : typed === null ? RECIPIENT_MESSAGE : messageOf("RECIPIENT_INVALID")
 	const amount = useAmount(balance.balance)
 	const act = useAction()
 	const send = () => {
@@ -38,7 +40,7 @@ export function SendDialog({ account, balance, onClose }: Props) {
 			done="The transfer is on Aztec. The recipient sees it under the same label."
 		>
 			<LabelChip label={balance.label} />
-			<Field label="Recipient on Aztec" value={to} onValue={setTo} error={to !== "" && !recipient ? RECIPIENT_MESSAGE : undefined} />
+			<Field label="Recipient on Aztec" value={to} onValue={setTo} error={toError} />
 			<AmountField field={amount} />
 			{recipient && tx.isNewRecipient(recipient) ? (
 				<Callout tone="wait" title="First send to this recipient">

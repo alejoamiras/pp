@@ -54,6 +54,25 @@ describe("the action dialogs", () => {
 		expect(app.control.state().exits).toEqual([])
 	})
 
+	test("a private send refuses the zero address and an address off the curve, neither of which can receive notes", async () => {
+		const app = renderApp()
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		const dialog = await openDialog(app, LABELS.active, "Send privately")
+		await app.user.type(dialog.getByLabelText(/Amount/), "5")
+		const to = dialog.getByLabelText("Recipient on Aztec")
+		for (const bad of [0n, 3n]) {
+			await app.user.clear(to)
+			await app.user.type(to, `0x${bad.toString(16).padStart(64, "0")}`)
+			dialog.getByText(messageOf("RECIPIENT_INVALID"))
+			expect(disabled(dialog.getByRole("button", { name: "Send" }))).toBe(true)
+		}
+		await app.user.clear(to)
+		await app.user.type(to, OTHER)
+		expect(disabled(dialog.getByRole("button", { name: "Send" }))).toBe(false)
+		expect(app.control.state().sent.aztec).toBe(0)
+	})
+
 	test("an unshield revert says the fee was paid; change-making spends wait for finality while ragequit stays open", async () => {
 		const app = renderApp()
 		await connectAztec(app.user)
