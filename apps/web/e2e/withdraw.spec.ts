@@ -77,7 +77,8 @@ test("withdraws part of a checked label to a fresh payee in one transaction and 
 
 	await dialog.getByRole("button", { name: "Close" }).click()
 	await expect(row).toContainText(formatAmount(amount - withdrawn, s.decimals, 2), { timeout: WAIT.read })
-	await expect(page.getByTestId("public-row")).toContainText(formatAmount(0n, s.decimals, 2), { timeout: WAIT.read })
+	// The credit and the burn cancel out: the row's amount starts at 0, which a substring match would also find in 10.
+	await expect(page.getByTestId("public-row").getByText(/^0\.00/)).toBeVisible({ timeout: WAIT.read })
 	step("balances read")
 
 	await page.getByRole("button", { name: "Exits" }).click()

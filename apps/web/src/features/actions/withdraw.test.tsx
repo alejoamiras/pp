@@ -75,6 +75,27 @@ describe("the label's withdrawal to Ethereum", () => {
 		await waitFor(() => expect(asked).toContain(ACCOUNTS.sender))
 	})
 
+	test("once the wallet holds the request, the review cannot go back to an editable form", async () => {
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				aztec: {
+					...s.aztec,
+					unshieldAndExit: (_from, _a, on) => {
+						on.handoff()
+						return new Promise(() => {})
+					},
+				},
+			}),
+		})
+		await connectAztec(app.user)
+		const dialog = await openWithdraw(app)
+		const confirm = await review(app, dialog, "5")
+		expect(disabled(confirm.getByRole("button", { name: "Back" }))).toBe(false)
+		await app.user.click(confirm.getByRole("button", { name: WITHDRAW }))
+		await waitFor(() => expect(disabled(confirm.getByRole("button", { name: "Back" }))).toBe(true))
+	})
+
 	test("the form takes at most the label's 8 largest notes, and an amount at that cap reaches the port", async () => {
 		const nine = [5, 5, 5, 5, 5, 5, 5, 4, 1].map(usdc)
 		const asked: bigint[] = []
@@ -154,6 +175,8 @@ describe("the label's withdrawal to Ethereum", () => {
 			true,
 		])
 		expect(disabled(row.getByRole("button", { name: /Leave to Ethereum/ }))).toBe(false)
+		// The public withdraw makes no change, so the wait leaves it open.
+		expect(disabled(within(screen.getByTestId("public-row")).getByRole("button", { name: WITHDRAW }))).toBe(false)
 		expect(app.control.state().exits).toEqual([])
 	})
 

@@ -6,7 +6,14 @@
  * `sendThroughWallet`, and only after the payload is checked call by call against what was confirmed.
  */
 import { AztecAddress as SdkAddress, EthAddress } from "@aztec-labs/aztec.js/addresses"
-import { type ContractArtifact, encodeArguments, type FunctionCall, FunctionSelector, getAllFunctionAbis } from "@aztec-labs/aztec.js/abi"
+import {
+	type ContractArtifact,
+	encodeArguments,
+	type FunctionCall,
+	FunctionSelector,
+	FunctionType,
+	getAllFunctionAbis,
+} from "@aztec-labs/aztec.js/abi"
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import { ExecutionPayload, mergeExecutionPayloads } from "@aztec-labs/aztec.js/tx"
 import type { BridgeClient } from "@pp/bridge-core"
@@ -42,11 +49,14 @@ async function expectCall(c: FunctionCall | undefined, e: Expected): Promise<voi
 		? await FunctionSelector.fromNameAndParameters(fn.name, fn.parameters)
 		: await FunctionSelector.fromSignature(`${e.name}()`)
 	const args = fn ? encodeArguments(fn, e.args) : []
+	// The sponsor is a private call; routed as public, it would never pay.
+	const type = fn ? fn.functionType : FunctionType.PRIVATE
 	const same =
 		c !== undefined &&
 		parseAztecAddress(c.to.toString()) === e.to &&
+		c.name === e.name &&
 		c.selector.equals(selector) &&
-		(fn === null || fn === undefined || c.type === fn.functionType) &&
+		c.type === type &&
 		!c.hideMsgSender &&
 		!c.isStatic &&
 		c.args.length === args.length &&
@@ -55,11 +65,13 @@ async function expectCall(c: FunctionCall | undefined, e: Expected): Promise<voi
 }
 
 /**
- * Checks `p` is exactly `calls`, in order, paid by `fpc`.
- * @throws BridgeFailure `SPEND_MISMATCH` on any other call, order, argument, flag or fee payer
+ * Checks `p` is exactly `calls`, in order, paid by `fpc`, with no witnesses, capsules or hashed
+ * arguments of its own: none of these calls takes any.
+ * @throws BridgeFailure `SPEND_MISMATCH` on any other call, order, argument, flag, fee payer or extra input
  */
 async function expectPayload(p: ExecutionPayload, fpc: AztecAddress, calls: Expected[]): Promise<void> {
-	if (p.calls.length !== calls.length + 1 || parseAztecAddress(p.feePayer?.toString() ?? "") !== fpc)
+	const bare = p.authWitnesses.length === 0 && p.capsules.length === 0 && p.extraHashedArgs.length === 0
+	if (!bare || p.calls.length !== calls.length + 1 || parseAztecAddress(p.feePayer?.toString() ?? "") !== fpc)
 		throw new BridgeFailure("SPEND_MISMATCH")
 	await expectCall(p.calls[0], { to: fpc, artifact: null, name: SPONSOR, args: [] })
 	for (const [i, e] of calls.entries()) await expectCall(p.calls[i + 1], e)
@@ -98,7 +110,8 @@ export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "
 				path,
 			)
 			const exitOnly = new ExecutionPayload(
-				exit.calls.filter((c) => c.name !== SPONSOR),
+				// The exit's sponsor, checked above, gives way to the unshield's.
+				exit.calls.slice(1),
 				exit.authWitnesses,
 				exit.capsules,
 				exit.extraHashedArgs,

@@ -9,6 +9,7 @@ import type { AztecSendHooks, LabelBalance } from "../../data/ports"
 import { bindAztecSend } from "../../data/sends"
 import { ActionButton, Callout, Choices, Facts, formatAmount, LabelChip, plainAmount } from "../../ui"
 import {
+	type ActionState,
 	ActionShell,
 	AmountField,
 	type Guard,
@@ -38,15 +39,18 @@ interface ReviewProps {
 	/** What the exit makes public, when the dialog does not already say it. */
 	exposes?: string
 	confirm: string
-	busy: boolean
+	state: ActionState
 	onBack(): void
 	onConfirm(): void
 }
 
 /** The confirm step: the amount in every decimal it has, since what is sent is irreversible. */
-function ExitReview({ payee, amount, label, labelPublic, exposes, confirm, busy, onBack, onConfirm }: ReviewProps) {
+function ExitReview({ payee, amount, label, labelPublic, exposes, confirm, state, onBack, onConfirm }: ReviewProps) {
 	const { source } = useApp()
 	const { decimals, symbol } = source.deployment
+	const sending = state.kind === "sending"
+	// Once the wallet holds the request, an editable form would show details other than the ones it is asking about.
+	const held = sending && state.handedOff
 	return (
 		<div className="grid gap-3" data-testid="exit-review">
 			<Facts
@@ -66,11 +70,13 @@ function ExitReview({ payee, amount, label, labelPublic, exposes, confirm, busy,
 				{COLLECT_PAYER}
 			</p>
 			<div className="flex flex-wrap gap-2">
-				<ActionButton onClick={onBack}>Back</ActionButton>
+				<ActionButton disabledReason={held ? "Your wallet has this request; answer it there." : undefined} onClick={onBack}>
+					Back
+				</ActionButton>
 				<ActionButton
 					variant="primary"
 					tag={labelPublic ? "public" : undefined}
-					disabledReason={busy ? "Sending…" : undefined}
+					disabledReason={sending ? "Sending…" : undefined}
 					onClick={onConfirm}
 				>
 					{confirm}
@@ -170,7 +176,7 @@ export function RagequitDialog({ account, balance, onClose }: LabelProps) {
 					label={balance.label}
 					labelPublic
 					confirm="Leave to Ethereum"
-					busy={act.state.kind === "sending"}
+					state={act.state}
 					onBack={() => {
 						act.stop()
 						setReview(false)
@@ -239,7 +245,7 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 					labelPublic={false}
 					exposes={BALANCE_PUBLIC}
 					confirm="Withdraw to Ethereum"
-					busy={act.state.kind === "sending"}
+					state={act.state}
 					onBack={() => {
 						act.stop()
 						setReview(false)
@@ -305,7 +311,7 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 					labelPublic={false}
 					exposes={SCREENED_PUBLIC}
 					confirm="Withdraw to Ethereum"
-					busy={act.state.kind === "sending"}
+					state={act.state}
 					onBack={() => {
 						act.stop()
 						setReview(false)

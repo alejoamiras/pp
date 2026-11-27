@@ -1,3 +1,4 @@
+import { FunctionType } from "@aztec-labs/aztec.js/abi"
 import { AztecAddress as SdkAddress, EthAddress } from "@aztec-labs/aztec.js/addresses"
 import { Contract } from "@aztec-labs/aztec.js/contracts"
 import { SponsoredFeePaymentMethod } from "@aztec-labs/aztec.js/fee"
@@ -43,7 +44,16 @@ const GRANT = parseGrant(MANIFEST, {
 const ACTIVE: LabelCheck = { state: "ACTIVE", path: { index: 1, depth: 1, siblings: [7n, ...Array(17).fill(0n)] } }
 const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
 
-type Exit = { hub?: AztecAddress; token?: AztecAddress; payee?: Address; amount?: bigint; fpc?: AztecAddress; extra?: boolean }
+type Exit = {
+	hub?: AztecAddress
+	token?: AztecAddress
+	payee?: Address
+	amount?: bigint
+	fpc?: AztecAddress
+	extra?: boolean
+	publicSponsor?: boolean
+	witness?: boolean
+}
 
 /** `exit_public` as bridge-core builds it, with any field a test wants wrong. */
 async function exitPayload(wallet: Wallet, a: { payee: Address; amount: bigint }, w: Exit = {}): Promise<ExecutionPayload> {
@@ -52,8 +62,12 @@ async function exitPayload(wallet: Wallet, a: { payee: Address; amount: bigint }
 	const p = await hub.methods
 		.exit_public(sdk(w.token ?? TOKEN), EthAddress.fromString(w.payee ?? a.payee), w.amount ?? a.amount)
 		.request({ fee })
-	if (!w.extra) return p
-	return new ExecutionPayload([...p.calls, p.calls[1] as never], p.authWitnesses, p.capsules, p.extraHashedArgs, p.feePayer)
+	const calls = w.extra ? [...p.calls, p.calls[1] as never] : [...p.calls]
+	const [sponsor] = calls
+	if (w.publicSponsor && sponsor)
+		calls[0] = Object.assign(Object.create(Object.getPrototypeOf(sponsor)), sponsor, { type: FunctionType.PUBLIC })
+	const witnesses = w.witness ? [{} as never] : p.authWitnesses
+	return new ExecutionPayload(calls, witnesses, p.capsules, p.extraHashedArgs, p.feePayer)
 }
 
 function rig(check: LabelCheck = ACTIVE, wrong?: Exit) {
@@ -119,6 +133,8 @@ describe("withdrawals to Ethereum", () => {
 			["another amount", { amount: 6n }],
 			["another fee payer", { fpc: OTHER }],
 			["an extra call", { extra: true }],
+			["the sponsor routed as a public call", { publicSponsor: true }],
+			["a witness no call takes", { witness: true }],
 		]
 		for (const [what, wrong] of wrongs)
 			for (const send of ["exitPublic", "unshieldAndExit"] as const) {
