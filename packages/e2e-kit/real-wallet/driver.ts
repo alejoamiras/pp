@@ -33,6 +33,8 @@ export interface WalletDriver {
 const STEP_MS = 60_000
 /** Fee estimates and authwit previews run before the execute window allows Confirm. */
 const APPROVABLE_MS = 5 * 60_000
+/** The longest `approveExecute` can wait: for the window, its first item, Confirm to enable, then the click. */
+export const EXECUTE_APPROVAL_MS = 3 * STEP_MS + APPROVABLE_MS
 const CELLS = 9
 
 const input = (page: Page, testId: string) => page.getByTestId(testId).locator("input")
@@ -161,7 +163,7 @@ export function walletDriver(context: BrowserContext, extensionId: string, passw
 			const execute = await opening
 			await execute.getByTestId("execute-op-item").first().waitFor({ timeout: STEP_MS })
 			await untilClickable(execute, "execute-confirm-btn", APPROVABLE_MS)
-			await execute.getByTestId("execute-confirm-btn").click()
+			await execute.getByTestId("execute-confirm-btn").click({ timeout: STEP_MS })
 			return execute
 		},
 

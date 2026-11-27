@@ -88,23 +88,23 @@ test("the sepolia-fork suite gets a committed keyless gateway, and counts only i
 
 test("the real-wallet suite counts only its reporter's one line, at the reporter's total", () => {
 	const suite = SUITES.find((s) => s.name === "real-wallet")
-	expect(suite).toMatchObject({ cwd: "packages/e2e-kit", command: ["bun", "run", "test:real-wallet"], expected: 3 })
+	expect(suite).toMatchObject({ cwd: "packages/e2e-kit", command: ["bun", "run", "test:real-wallet"], expected: 4 })
 	expect(suite?.expected, "the suite and the kit's reporter agree on the total").toBe(REAL_WALLET_TESTS)
 	// It starts detached process groups, which a bounded suite's kill would orphan.
 	expect(suite?.command[0]).not.toBe("bash")
 	expect(suite?.prepare?.at(-1)).toEqual(["forge", "build", "--root", "contracts/bridge/evm", "--skip", "test", "script"])
-	const count = expectedPassed("real-wallet", 3)
-	const ran = "  3 passed (2.1m)\nreal-wallet: 3/3 passed as expected\n[real-wallet] state in s; nothing of the run survives\n"
-	expect(count(ran)).toBe(3)
-	expect(count("\u001b[2mreal-wallet: 3/3 passed as expected\u001b[22m\n")).toBe(3)
+	const count = expectedPassed("real-wallet", 4)
+	const ran = "  4 passed (2.1m)\nreal-wallet: 4/4 passed as expected\n[real-wallet] state in s; nothing of the run survives\n"
+	expect(count(ran)).toBe(4)
+	expect(count("\u001b[2mreal-wallet: 4/4 passed as expected\u001b[22m\n")).toBe(4)
 	if (suite) {
 		expect(verdict(suite, 0, ran)).toBeUndefined()
-		expect(verdict(suite, 0, "  1 skipped\n  2 passed (2.1m)\nreal-wallet: 2/3 passed as expected\n")).toBe(
-			"real-wallet: 2 tests passed, expected 3",
+		expect(verdict(suite, 0, "  1 skipped\n  3 passed (2.1m)\nreal-wallet: 3/4 passed as expected\n")).toBe(
+			"real-wallet: 3 tests passed, expected 4",
 		)
 	}
-	expect(count("  3 passed (2.1m)\n")).toBe(0)
-	expect(count("real-wallet: 3/3 passed as expected\nreal-wallet: 3/3 passed as expected\n")).toBe(0)
-	expect(count("real-wallet: 3/4 passed as expected\n")).toBe(0)
-	expect(count("other: 3/3 passed as expected\n")).toBe(0)
+	expect(count("  4 passed (2.1m)\n")).toBe(0)
+	expect(count("real-wallet: 4/4 passed as expected\nreal-wallet: 4/4 passed as expected\n")).toBe(0)
+	expect(count("real-wallet: 4/5 passed as expected\n")).toBe(0)
+	expect(count("other: 4/4 passed as expected\n")).toBe(0)
 })
