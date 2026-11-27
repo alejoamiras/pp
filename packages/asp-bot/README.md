@@ -12,11 +12,12 @@ build a label path. Demo grade: snapshots live in memory, and a restart serves o
 3. Rebuilds the approved birth set (see Births).
 4. Halts with `size_mismatch` when the record holds one of these roots with a list of another length.
    One root has one honest list, so one of the two lists is collapsed, and the feed must not replace
-   the length on chain. It drops the list it fetched and asks the feed again every tick, so it resumes
-   once the lengths agree. The log line names the list, both lengths and what to do: compare both
-   lists with the ASP's published list; if the feed is wrong, fix it or restart the bot; if the posted
-   length is wrong, fix the feed first, then the admin calls `set_poster`, which clears the record. A
-   cleared record makes the bot fetch the feed again before it posts.
+   the length on chain. It drops the list it fetched and asks the feed again on a later tick, no
+   sooner than its request floor (see The ASP API), and the halt clears once the lengths agree. The
+   log line names the list, both lengths and what to do: compare both lists with the ASP's published
+   list; if the feed is wrong, fix it; if the posted length is wrong, fix the feed first, then the
+   admin calls `set_poster`, which clears the record. A cleared record makes the bot fetch the feed
+   again before it posts.
 5. Posts when the pool root or the birth root changed, or when 300 s of Aztec chain time passed since
    the last post, with the length of each list. Before sending, it checks the registry's `post_root`
    assertions itself (sequence, non-zero root, monotonic block and time, observation lag ≤ 1800 s,
@@ -75,6 +76,36 @@ hold that sequence.
 handle's `postNow()` asks for a post at once, and `stop()` stops the group, releases the bot's port
 row and, with `removeDataOnStop`, deletes its wallet store. On the local network, the poster and
 intake accounts derive from the stack's run id (`localBotAccounts`), so no key is configured.
+
+## The ASP API
+
+The bot reads the pool's leaves from `GET /association-set/leaves`. The standalone always scopes the query by
+`chainId` and `entrypoint`, since one chain can host several pools. It treats the answer as untrusted:
+- every request carries the User-Agent `pp-aztec-bridge-bot/<version>`; the standalone's `userAgent` may
+  add a version or comments after that product token, never replace it;
+- one call is one request: it follows no redirect and opens a fresh connection, so a dropped one is
+  never resent;
+- it asks for an unencoded answer and inflates gzip, deflate or br itself, refusing any other encoding;
+- the deadline is 10 s for the whole body;
+- the answer is capped at 24 MiB, before and after inflating;
+- before parsing, an answer with more commas outside its strings than 2^18 entries allow (the registry's
+  list limit), or with more than 16 containers, is refused; after parsing, more than 2^18 leaves, or a
+  leaf outside [1, p), is refused;
+- no error quotes the answer or the URL.
+
+The leaves are used only when they hash to the root the ASP registry holds on Ethereum.
+
+The standalone requests the leaves at most once every 5 minutes, which is the operator's term for its API.
+The 5 minutes count from the start of each attempt, so a failed or timed-out request uses the
+allowance too.
+- **Root changes and mismatches.** The root comes from Ethereum, so leaves are requested only when that
+  root changes, after an admin's reset, or after a list fails a check. When the leaves do not hash to the
+  root, the bot posts nothing new, keeps serving a snapshot it holds, and asks again after the 5
+  minutes.
+- **Resets.** A list fetched since a reset is kept until it is posted.
+- **One process per pool.** The floor lives in the process's memory, so a restart or a second process
+  for the same pool asks again at once. Run one process per pool, and do not restart it in a loop.
+- **The local stack.** Its child bot has no floor.
 
 ## Tests
 
