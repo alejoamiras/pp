@@ -1,7 +1,55 @@
-import { type ChildProcess, spawn } from "node:child_process"
+import { type ChildProcess, type IOType, spawn } from "node:child_process"
 import { closeSync, mkdirSync, openSync } from "node:fs"
 import { dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+import { type RowRef, registryPath } from "./ports.ts"
 import { groupAlive, groupGone, signalGroup } from "./process-group.ts"
+import type { WatchSpec } from "./watch.ts"
+
+const LAUNCHER = fileURLToPath(new URL("./watch.ts", import.meta.url))
+
+/** What a watched group's leader does once the process that spawned it has died. */
+export interface Watch {
+	/** The registry rows the group's ports hold; released only once the leader sees the group empty. */
+	release?: RowRef[]
+	/** How long the group gets between SIGTERM and SIGKILL. */
+	graceMs?: number
+}
+
+type Stdio = [IOType | number, IOType | number, IOType | number]
+
+/**
+ * Spawns `cmd` in a process group of its own that ends when this process dies by any death, SIGKILL
+ * included. The group's leader is a small launcher (`watch.ts`, run by this process's own runtime) whose
+ * child is `cmd`, in the same group and with the given stdio. The launcher holds a pipe whose other end
+ * only this process holds; when that end closes it sends the group SIGTERM, waits `graceMs` for every
+ * other member to stop, releases `watch.release`, and exits. A member still running then gets SIGKILL with
+ * the whole group, the launcher included, and the rows stay.
+ *
+ * The parent is the process that calls this: under vitest's `forks` pool the worker, under `threads` the
+ * vitest process itself, whose end closes only when it exits. While the parent lives, the group behaves as
+ * if `cmd` led it: group signals reach `cmd` directly, and the launcher exits as `cmd` did. A member `cmd`
+ * leaves behind after it exits is no longer watched.
+ *
+ * Give `cmd` files (as `spawnOwned` does), not pipes, for output: a pipe's reader is this process, and a
+ * command whose output has no reader may not stop on SIGTERM (the Aztec node does not). Such a group takes
+ * the SIGKILL path, and its rows stay.
+ */
+export function spawnWatched(
+	cmd: string,
+	args: string[],
+	options: { stdio: Stdio; env?: NodeJS.ProcessEnv },
+	watch: Watch = {},
+): ChildProcess {
+	const spec: WatchSpec = { cmd, args, release: watch.release ?? [], registry: registryPath(), graceMs: watch.graceMs ?? 5_000 }
+	// Node warns on stripping the launcher's types; Bun takes no such flag.
+	const flags = process.versions.bun ? [] : ["--no-warnings"]
+	return spawn(process.execPath, [...flags, LAUNCHER, JSON.stringify(spec)], {
+		stdio: [...options.stdio, "pipe"],
+		detached: true,
+		env: options.env,
+	})
+}
 
 /** A spawned group leader plus the one authority on whether it still runs: its own exit or spawn error. */
 export interface OwnedChild {
@@ -13,15 +61,16 @@ export interface OwnedChild {
 }
 
 /**
- * Spawns `cmd` as a new process-group leader writing both streams straight to `logFile`. A command
- * that cannot start ends `exited` with a reason instead of an uncaught `error` event.
+ * Spawns `cmd` in a watched process group (`spawnWatched`) writing both streams straight to `logFile`,
+ * which no death order can leave without a reader. A command that cannot start ends `exited` with exit
+ * code 127, and the log says why.
  */
-export function spawnOwned(cmd: string, args: string[], logFile: string, env: Record<string, string>): OwnedChild {
+export function spawnOwned(cmd: string, args: string[], logFile: string, env: NodeJS.ProcessEnv, watch: Watch = {}): OwnedChild {
 	mkdirSync(dirname(logFile), { recursive: true })
 	const log = openSync(logFile, "a", 0o600)
 	let child: ChildProcess
 	try {
-		child = spawn(cmd, args, { stdio: ["ignore", log, log], detached: true, env })
+		child = spawnWatched(cmd, args, { stdio: ["ignore", log, log], env }, watch)
 	} finally {
 		closeSync(log)
 	}

@@ -141,10 +141,10 @@ export function groupMembers(pgid: number, proc: ProcFs = HOST): { pid: number; 
  * listed with their listed threads. A thread that exits is gone before its stat is read, so the listing,
  * not the stats, is what a later pass compares.
  */
-function scanGroup(pgid: number, proc: ProcFs): { running: boolean; members: string } {
+function scanGroup(pgid: number, proc: ProcFs, skip?: number): { running: boolean; members: string } {
 	const members: string[] = []
 	for (const pid of proc.readdir("/proc")) {
-		if (!/^\d+$/.test(pid)) continue
+		if (!/^\d+$/.test(pid) || Number(pid) === skip) continue
 		const st = readStat(`/proc/${pid}/stat`, proc)
 		if (st?.pgrp !== pgid) continue
 		if (!exited(st.state)) return { running: true, members: "" }
@@ -160,10 +160,10 @@ function scanGroup(pgid: number, proc: ProcFs): { running: boolean; members: str
  * child forked, or a thread started, after it was listed by a creator that exits before the pass reads
  * it, so a pass that finds only zombies is repeated until two in a row list the same members and threads.
  */
-function hasRunningMember(pgid: number, proc: ProcFs): boolean {
+function hasRunningMember(pgid: number, proc: ProcFs, skip?: number): boolean {
 	let last: string | undefined
 	for (let i = 0; i < SCANS; i++) {
-		const { running, members } = scanGroup(pgid, proc)
+		const { running, members } = scanGroup(pgid, proc, skip)
 		if (running) return true
 		if (members === last) return false
 		last = members
@@ -179,6 +179,14 @@ function hasRunningMember(pgid: number, proc: ProcFs): boolean {
  */
 export function groupAlive(pgid: number, proc: ProcFs = HOST): boolean {
 	return signalable(pgid) && (!PROC || hasRunningMember(pgid, proc))
+}
+
+/**
+ * Whether a member of `pgid` other than `self` is still running, by `groupAlive`'s rules; always true
+ * without `/proc`, where only the kernel's view of the whole group exists and `self` is in it.
+ */
+export function othersRunning(pgid: number, self: number, proc: ProcFs = HOST): boolean {
+	return !PROC || hasRunningMember(pgid, proc, self)
 }
 
 /** Sends `s` to every member of `pgid`; false when the kernel refused it (no such group, or not ours to signal). */
