@@ -71,7 +71,13 @@ async function world() {
 		await log("public", TX_B, TOKEN, OUT_ELSEWHERE),
 		await log("public", TX_B, TOKEN, OUT),
 	]
-	const state = { posted: false, head: 300n, consumed: new Set<string>(), settled: [] as { epoch: bigint; leafId: bigint; tx: Hash }[] }
+	const state = {
+		posted: false,
+		head: 300n,
+		cachedHead: undefined as bigint | undefined,
+		consumed: new Set<string>(),
+		settled: [] as { epoch: bigint; leafId: bigint; tx: Hash; block: bigint }[],
+	}
 	const node = {
 		getPublicLogsByTags: vi.fn(async (q: { tags: Tag[]; fromBlock?: number }) => [
 			logs.filter((l) => l.tag.equals(q.tags[0]!) && l.blockNumber >= (q.fromBlock ?? 0)),
@@ -95,7 +101,12 @@ async function world() {
 	}
 	const zero = toHex(0n, { size: 32 })
 	const reader = {
-		getBlockNumber: async () => state.head,
+		// viem serves a cached head for `cacheTime` (its polling interval) unless told 0; here the cache never expires.
+		getBlockNumber: async (o?: { cacheTime?: number }) => {
+			if (o?.cacheTime === 0) return state.head
+			state.cachedHead ??= state.head
+			return state.cachedHead
+		},
 		readContract: vi.fn(async (q: { functionName: string; args: bigint[] }) => {
 			if (q.functionName === "getRoots")
 				return Array.from({ length: 32 }, (_, i) => (i === 0 && state.posted ? root.toString() : zero))
@@ -103,8 +114,8 @@ async function world() {
 		}),
 		getLogs: vi.fn(async (q: { address: Address; args: { epoch: bigint }; fromBlock: bigint; toBlock: bigint }) =>
 			state.settled
-				.filter((s) => q.address === PORTAL && s.epoch === q.args.epoch)
-				.map((s) => ({ args: { epoch: s.epoch, leafId: s.leafId }, transactionHash: s.tx, blockNumber: 250n, removed: false })),
+				.filter((s) => q.address === PORTAL && s.epoch === q.args.epoch && s.block >= q.fromBlock && s.block <= q.toBlock)
+				.map((s) => ({ args: { epoch: s.epoch, leafId: s.leafId }, transactionHash: s.tx, blockNumber: s.block, removed: false })),
 		),
 		simulateContract: vi.fn(async (_call: unknown) => ({})),
 		waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: Hash }) => ({ status: "success", transactionHash: hash })),
@@ -115,8 +126,9 @@ async function world() {
 		const leafId = 2n ** BigInt(path.length) + (call.args.at(-2) as bigint)
 		const epochOf = call.args.at(-4) as bigint
 		const tx = toHex(0xe0n + BigInt(state.settled.length), { size: 32 })
+		state.head += 1n
 		state.consumed.add(`${epochOf}:${leafId}`)
-		state.settled.push({ epoch: epochOf, leafId, tx })
+		state.settled.push({ epoch: epochOf, leafId, tx, block: state.head })
 		return tx
 	})
 	const l1 = { account: { address: SENDER, type: "json-rpc" }, chain: undefined, getChainId: vi.fn(async () => 31337), writeContract }
@@ -163,9 +175,9 @@ describe("exit tickets", () => {
 		state.posted = true
 		expect(await status(c, ragequit!)).toBe("ready")
 		const w = await exitReads(c).witness(ragequit!)
-		state.settled.push({ epoch: w!.epoch, leafId: w!.leafId + 1n, tx: toHex(0xf1n, { size: 32 }) })
+		state.settled.push({ epoch: w!.epoch, leafId: w!.leafId + 1n, tx: toHex(0xf1n, { size: 32 }), block: 250n })
 		expect(await status(c, ragequit!)).toBe("ready")
-		state.settled.push({ epoch: w!.epoch, leafId: w!.leafId, tx: toHex(0xf2n, { size: 32 }) })
+		state.settled.push({ epoch: w!.epoch, leafId: w!.leafId, tx: toHex(0xf2n, { size: 32 }), block: 250n })
 		expect(await status(c, ragequit!)).toBe("settled")
 	})
 
@@ -181,20 +193,23 @@ describe("settle", () => {
 	it.each([
 		["a ragequit", 0, "settleRagequit", (t: ExitTicket) => [t.payee, t.amount, t.kind === "ragequit" && t.label]],
 		["a public exit", 3, "settlePublicExit", (t: ExitTicket) => [t.payee, t.amount]],
-	] as const)("settles %s with its witness and returns the transaction of its ExitSettled", async (_, i, fn, head) => {
-		const { c, state, reader, l1, writeContract } = await world()
-		state.posted = true
-		const t = (await exitTickets(c, {}))[i]!
-		const w = await exitReads(c).witness(t)
-		const tx = await settle(c, t, l1)
-		const args = [...head(t), w!.epoch, w!.numCheckpointsInEpoch, w!.leafIndex, w!.path]
-		expect(reader.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: PORTAL, functionName: fn, args }))
-		expect(writeContract).toHaveBeenCalledOnce()
-		expect(tx).toBe(state.settled[0]?.tx)
-		expect(await status(c, t)).toBe("settled")
-		expect(await settle(c, t, l1)).toBe(tx)
-		expect(writeContract).toHaveBeenCalledOnce()
-	})
+	] as const)(
+		"settles %s with its witness and returns the transaction of its ExitSettled, read past a cached head",
+		async (_, i, fn, head) => {
+			const { c, state, reader, l1, writeContract } = await world()
+			state.posted = true
+			const t = (await exitTickets(c, {}))[i]!
+			const w = await exitReads(c).witness(t)
+			const tx = await settle(c, t, l1)
+			const args = [...head(t), w!.epoch, w!.numCheckpointsInEpoch, w!.leafIndex, w!.path]
+			expect(reader.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: PORTAL, functionName: fn, args }))
+			expect(writeContract).toHaveBeenCalledOnce()
+			expect(tx).toBe(state.settled[0]?.tx)
+			expect(await status(c, t)).toBe("settled")
+			expect(await settle(c, t, l1)).toBe(tx)
+			expect(writeContract).toHaveBeenCalledOnce()
+		},
+	)
 
 	it("refuses a wallet on another chain, and a ticket no root covers yet, before any send", async () => {
 		const { c, l1, writeContract } = await world()

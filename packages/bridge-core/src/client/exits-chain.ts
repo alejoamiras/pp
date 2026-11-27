@@ -196,7 +196,9 @@ export function exitReads(c: ExitContext): ExitReads<ExitProof> {
 	return {
 		witness: (t) => proofOf(c, t),
 		settledTx: async (w) => {
-			const logs = await windowedLogs(d.deployBlock, await c.reader.getBlockNumber(), true, async (fromBlock, toBlock) => {
+			// Uncached: a settle mined within viem's cache window must be inside the scan.
+			const head = await c.reader.getBlockNumber({ cacheTime: 0 })
+			const logs = await windowedLogs(d.deployBlock, head, true, async (fromBlock, toBlock) => {
 				const window = await c.reader.getLogs({
 					address: d.portal,
 					event: EXIT_SETTLED,
