@@ -37,20 +37,23 @@ export function messageIndices(ticketHashes: readonly Hex[], messagesInTx: reado
 /** A ticket's identity on L1: the Outbox `(epoch, leafId)` its witness proves. */
 export type ExitWitness = { epoch: bigint; leafId: bigint }
 
-export type ExitReads = {
-	witness(t: ExitTicket): Promise<ExitWitness | undefined>
+export type ExitReads<W extends ExitWitness = ExitWitness> = {
+	witness(t: ExitTicket): Promise<W | undefined>
 	/** The transaction of the portal's `ExitSettled` with exactly this pair, if any. */
 	settledTx(w: ExitWitness): Promise<Hash | null>
 	consumed(w: ExitWitness): Promise<boolean>
 }
 
-export type ExitState = { status: "proving" } | { status: "ready"; witness: ExitWitness } | { status: "settled"; tx: Hash }
+export type ExitState<W extends ExitWitness = ExitWitness> =
+	| { status: "proving" }
+	| { status: "ready"; witness: W }
+	| { status: "settled"; tx: Hash }
 
 /**
  * `settled` needs the portal's event for the exact pair; a consumed leaf whose event the RPC does
  * not show is re-read once (the consume and the event are one transaction) and then reported.
  */
-export async function exitState(io: ExitReads, t: ExitTicket): Promise<ExitState> {
+export async function exitState<W extends ExitWitness>(io: ExitReads<W>, t: ExitTicket): Promise<ExitState<W>> {
 	const witness = await io.witness(t)
 	if (!witness) return { status: "proving" }
 	const settled = await io.settledTx(witness)
@@ -61,21 +64,22 @@ export async function exitState(io: ExitReads, t: ExitTicket): Promise<ExitState
 	throw new BridgeClientError("RPC_INCONSISTENT")
 }
 
-export const exitStatusOf = (s: ExitState): ExitStatus => s.status
+export const exitStatusOf = (s: ExitState<ExitWitness>): ExitStatus => s.status
 
 /**
  * Settles a ready ticket, or returns the transaction that already did. If another payer settles
  * between the read and the send, the send reverts and the exact pair's event names that payer's
  * transaction.
  */
-export async function settleWith(io: ExitReads, t: ExitTicket, send: (w: ExitWitness) => Promise<Hash>): Promise<Hash> {
+export async function settleWith<W extends ExitWitness>(io: ExitReads<W>, t: ExitTicket, send: (w: W) => Promise<Hash>): Promise<Hash> {
 	const s = await exitState(io, t)
 	if (s.status === "settled") return s.tx
 	if (s.status === "proving") throw new BridgeClientError("EXIT_NOT_READY")
 	try {
 		return await send(s.witness)
 	} catch (e) {
-		const raced = await io.settledTx(s.witness)
+		// The send's own error (an UNCERTAIN carries its hash) outlives a failed re-read.
+		const raced = await io.settledTx(s.witness).catch(() => null)
 		if (raced) return raced
 		throw e
 	}

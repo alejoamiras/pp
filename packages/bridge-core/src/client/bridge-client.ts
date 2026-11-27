@@ -1,18 +1,21 @@
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
 import type { ExecutionPayload } from "@aztec-labs/stdlib/tx"
-import { createPublicClient, http, type WalletClient } from "viem"
+import { type Address, createPublicClient, type Hash, http, type WalletClient } from "viem"
 import type { StackManifest } from "../stack-manifest"
-import { translate } from "./boundary"
+import { guarded, translate } from "./boundary"
 import { abortable, type ClaimNode, claimPayload, type WaitClaimableOptions, waitClaimable } from "./claim"
 import { type ClientDeployment, type DeploymentNode, type DeploymentReader, namedDeployment, verifyDeployment } from "./deployment"
+import { BridgeClientError } from "./errors"
+import { exitStatusOf, exitState } from "./exits"
+import { type ExitContext, type ExitNode, type ExitReader, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
 import type { KeyValueStore } from "./journal"
 import { type PreflightNode, type PreflightWallet, Preflights, preflight } from "./preflight"
 import { prepareBridgeSpend } from "./prepare"
 import { type RecordsContext, records, recover } from "./records"
 import type { BridgeSession } from "./session"
 import { type SubmitContext, type SubmitOptions, type SubmitReader, submit } from "./submit"
-import type { BridgeReceipt, BridgeRecordView, PreparedBridgeSpend } from "./types"
+import type { BridgeReceipt, BridgeRecordView, ExitStatus, ExitTicket, PreparedBridgeSpend } from "./types"
 
 /**
  * One bridge generation's client. Every method first awaits a one-time check that the manifest's
@@ -35,11 +38,28 @@ export interface BridgeClient {
 	recover(s: BridgeSession, recipient: AztecAddress): Promise<(BridgeReceipt & { id: string })[]>
 	/** The session's journal records, pending ones included, each with its step read from the chain. */
 	records(s: BridgeSession): Promise<BridgeRecordView[]>
+	/**
+	 * The hub's `ragequit` of `amount` under `label` to `payee`, paid by the SponsoredFPC, for the
+	 * holder's wallet to send. Burn exact chunks only (`ragequitChunks`).
+	 * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`
+	 */
+	ragequitPayload(a: { payee: Address; amount: bigint; label: bigint }): Promise<ExecutionPayload>
+	/**
+	 * The hub's `exit_public` of a public balance to `payee`.
+	 * @throws BridgeClientError `STAGE_UNSUPPORTED`: this client does not build it yet
+	 */
+	exitPublicPayload(a: { payee: Address; amount: bigint }): Promise<ExecutionPayload>
+	/** The deployment token's ragequit and public exit tickets from L2 block `fromBlock` on, from chain data alone. */
+	exitTickets(a: { payee?: Address; fromBlock?: bigint }): Promise<ExitTicket[]>
+	/** `proving` until an Outbox root covers the ticket, then `ready`, then `settled` once the portal paid its exact leaf. */
+	exitStatus(t: ExitTicket): Promise<ExitStatus>
+	/** Settles `t` on Ethereum from `l1`, or returns the transaction that already did. */
+	settle(t: ExitTicket, l1: WalletClient): Promise<Hash>
 }
 
 export type ClientIo = {
-	reader: SubmitReader & DeploymentReader
-	node: ClaimNode & PreflightNode & DeploymentNode
+	reader: SubmitReader & DeploymentReader & ExitReader
+	node: ClaimNode & PreflightNode & DeploymentNode & ExitNode
 	store: KeyValueStore
 }
 
@@ -82,6 +102,7 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		})
 		return verified
 	}
+	const receiptTimeoutMs = o.receiptTimeoutMs ?? RECEIPT_TIMEOUT_MS
 	const submitContext = async (): Promise<SubmitContext> => ({
 		deployment: await deployment(),
 		reader,
@@ -89,9 +110,11 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		preflights,
 		reprove: (s, spend) =>
 			prepareBridgeSpend(s, { note: spend.spentCommitment, amount: spend.amount, portal: named.portal, recipient: spend.recipient }),
-		receiptTimeoutMs: o.receiptTimeoutMs ?? RECEIPT_TIMEOUT_MS,
+		receiptTimeoutMs,
 	})
 	const recordsContext = async (): Promise<RecordsContext> => ({ deployment: await deployment(), reader, node, store })
+	const exitContext = async (): Promise<ExitContext> => ({ deployment: await deployment(), reader, node, receiptTimeoutMs })
+	const exits = <T>(f: (c: ExitContext) => Promise<T>) => guarded(async () => f(await exitContext()))
 	return Object.freeze({
 		preflight: async (a) => preflight({ deployment: await deployment(), node, preflights }, a),
 		submit: (spend, l1, s, o) => submit(submitContext, spend, l1, s, o),
@@ -104,5 +127,13 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		claimPayload: async (s, r) => claimPayload(await deployment(), s, r),
 		recover: async (s, recipient) => recover(await recordsContext(), s, recipient),
 		records: async (s) => records(await recordsContext(), s),
+		ragequitPayload: (a) => exits((c) => ragequitPayload(c.deployment, a)),
+		exitPublicPayload: () =>
+			exits(async () => {
+				throw new BridgeClientError("STAGE_UNSUPPORTED")
+			}),
+		exitTickets: (a) => exits((c) => exitTickets(c, a)),
+		exitStatus: (t) => exits(async (c) => exitStatusOf(await exitState(exitReads(c), t))),
+		settle: (t, l1) => exits((c) => settle(c, t, l1)),
 	} satisfies BridgeClient)
 }

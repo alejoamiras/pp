@@ -6,6 +6,7 @@ One command brings up everything the bridge and the pool need on one machine:
 bun run demo:prepare  # once per clone (networked): the pool's checkout and the bridge contracts
 bun run demo          # boot (about 97 s), print how to reach it, tear down
 bun run demo --keep   # boot and hold until SIGINT, SIGTERM or SIGHUP
+bun run demo:smoke    # with the kept stack's PP_STACK_MANIFEST: bridge, claim, ragequit and settle once
 ```
 
 It starts one anvil (chain 31337) and the Aztec 6.0.0 local network on it through bridge-core's

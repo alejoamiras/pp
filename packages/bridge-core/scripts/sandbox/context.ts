@@ -4,13 +4,26 @@ import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import type { ContractBase } from "@aztec-labs/aztec.js/contracts"
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import { EthAddress } from "@aztec-labs/foundation/eth-address"
-import type { L1Ctx } from "../../src/flows"
-import type { JournalTokenBlock } from "../../src/journal"
+import type { L1Ctx } from "../l1-ctx"
 import type { BridgeBlock, ManifestToken, ManifestV2 } from "../../src/manifest-v2"
 import type { L2Ctx } from "../generation"
 import { registerHub, registerHubToken } from "../script-l2"
 import type { SandboxClients } from "./handle"
 import { l2CtxFor } from "./l2"
+
+/** One token as a sandbox run records it: its L1 and L2 addresses and the words its registration used. */
+export interface TokenBlock {
+	erc20: string
+	portal: string
+	l2Token: string
+	nameWord: string
+	symbolWord: string
+	decimals: number
+	displaySymbol: string
+	/** From the factory's `PortalCreated`/`registrationOf`: the `register` leaf a first claim consumes. */
+	registerKey?: string
+	registerIndex?: string
+}
 
 // ─── Context ─────────────────────────────────────────────────────────────────
 
@@ -26,7 +39,7 @@ export interface SmokeContext {
 	bridge: BridgeBlock
 	hub: ContractBase
 	/** Every fresh token the battery deploys, so a later flow can read its L2 balance. */
-	l2TokenOf: (block: JournalTokenBlock) => Promise<ContractBase>
+	l2TokenOf: (block: TokenBlock) => Promise<ContractBase>
 	mins: () => string
 }
 
@@ -66,7 +79,7 @@ export async function buildContext(clients: SandboxClients, manifest: ManifestV2
 // ─── Token shapes ────────────────────────────────────────────────────────────
 
 /** The ManifestToken shape for a token this run invented — the factory read-back is the authority. */
-export function tokenFromBlock(block: JournalTokenBlock, decimals: number): ManifestToken {
+export function tokenFromBlock(block: TokenBlock, decimals: number): ManifestToken {
 	return {
 		erc20: block.erc20,
 		portal: block.portal,
@@ -81,7 +94,7 @@ export function tokenFromBlock(block: JournalTokenBlock, decimals: number): Mani
 	}
 }
 
-export const tokenBlockOf = (t: ManifestToken): JournalTokenBlock => ({
+export const tokenBlockOf = (t: ManifestToken): TokenBlock => ({
 	erc20: t.erc20,
 	portal: t.portal,
 	l2Token: t.l2Token,
@@ -91,7 +104,7 @@ export const tokenBlockOf = (t: ManifestToken): JournalTokenBlock => ({
 	displaySymbol: t.displaySymbol,
 })
 
-export const registerArgsOf = (block: JournalTokenBlock, nameWord: string) =>
+export const registerArgsOf = (block: TokenBlock, nameWord: string) =>
 	[
 		EthAddress.fromString(block.erc20),
 		EthAddress.fromString(block.portal),

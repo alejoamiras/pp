@@ -61,6 +61,7 @@ jobs:
               - 'contracts/bridge/**'
               - 'packages/bridge-spec/src/**'
               - 'packages/bridge-spec/package.json'
+              - 'packages/bridge-spec/vectors/v1.json'
               - 'packages/pool-client/src/**'
               - 'packages/pool-client/package.json'
               - 'packages/pool-client/test/support/**'
@@ -158,12 +159,13 @@ jobs:
           retention-days: 7
 
   bridge-stack:
-    # bridge-core's stack suite against one stack this job boots and stops (scripts/with-stack.ts).
+    # bridge-core's stack suite, then demo:smoke, against one stack this job boots and stops
+    # (scripts/with-stack.ts).
     name: bridge stack suite
     needs: changes
     if: needs.changes.outputs.stack == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -177,21 +179,25 @@ jobs:
 
       - uses: ./.github/actions/bridge-evm-build
 
-      - name: Stack suite
-        # Twice the measured step time (boot, cases, teardown), rounded up to whole minutes.
-        timeout-minutes: 7
+      - name: Stack suite and smoke
+        # Twice the measured step time (boot, cases, smoke, teardown), rounded up to whole minutes.
+        timeout-minutes: 30
         working-directory: packages/bridge-core
-        # A required case that was skipped, filtered or renamed fails check-cases.
+        # A required case that was skipped, filtered or renamed fails check-cases. S6u, S7u and E1u
+        # run at the unit layer, so their report joins the stack's.
         run: |
           start=$(date +%s)
           set +e
-          bun run test:integration:stack -- deploy \
-            --reporter=verbose --reporter=json --outputFile.json="$GITHUB_WORKSPACE/stack.json" 2>&1 | tee "$GITHUB_WORKSPACE/stack.log"
+          bun scripts/with-stack.ts \
+            "bun run test:integration:stack -- --reporter=verbose --reporter=json --outputFile.json=$GITHUB_WORKSPACE/stack.json" \
+            "bun scripts/demo-smoke.ts" 2>&1 | tee "$GITHUB_WORKSPACE/stack.log"
           status=${PIPESTATUS[0]}
           set -e
           echo "bridge stack wall-clock: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
           [ "$status" -eq 0 ] || exit "$status"
-          bun scripts/check-cases.ts deploy "$GITHUB_WORKSPACE/stack.json"
+          bun --bun vitest run src/client/submit.test.ts src/client/exits.test.ts \
+            --reporter=json --outputFile.json="$GITHUB_WORKSPACE/unit.json"
+          bun scripts/check-cases.ts bridge "$GITHUB_WORKSPACE/stack.json" "$GITHUB_WORKSPACE/unit.json"
 
       - name: Upload stack logs on failure
         if: failure()
@@ -201,6 +207,7 @@ jobs:
           path: |
             stack.log
             stack.json
+            unit.json
             ~/.cache/pp/bridge-sandbox/logs/*.log
             ~/.cache/pp/asp-bot/logs/*.log
           if-no-files-found: ignore

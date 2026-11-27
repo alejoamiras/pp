@@ -6,7 +6,7 @@ import { Contract, type ContractInstanceWithAddress } from "@aztec-labs/aztec.js
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import { getContractAddress } from "viem"
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
-import type { L1Ctx } from "../src/flows"
+import type { L1Ctx } from "./l1-ctx"
 import { toWord } from "../src/register-hash"
 import { openDeployJournal } from "./deploy-manifest"
 import { deriveHubInstance } from "./script-l2"

@@ -39,8 +39,8 @@ describe("exit tickets", () => {
 	})
 })
 
-describe("exitState (E1u: the controlled pre-root read)", () => {
-	it("is proving without a witness, ready once one exists, settled only by the exact pair's event", async () => {
+describe("exitState", () => {
+	it("E1u is proving at the controlled pre-root read, ready once a witness exists, settled only by the exact pair's event", async () => {
 		expect(await exitState(reads({ witness: false }), T)).toEqual({ status: "proving" })
 		expect(await exitState(reads({}), T)).toEqual({ status: "ready", witness: W })
 		expect(await exitState(reads({ settled: [TX] }), T)).toEqual({ status: "settled", tx: TX })

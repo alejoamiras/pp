@@ -1,7 +1,7 @@
 /** The run handle: strings only, so it crosses a process boundary and vitest's `provide()` intact.
  *  `openSandbox` turns it back into connected clients for whichever process holds it. */
 import { z } from "zod"
-import type { L1Ctx } from "../../src/flows"
+import type { L1Ctx } from "../l1-ctx"
 import type { ManifestV2 } from "../../src/manifest-v2"
 import { manifestV2Schema } from "../../src/manifest-v2"
 import { createL1Clients } from "../script-bootstrap"
