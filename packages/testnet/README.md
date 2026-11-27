@@ -12,6 +12,14 @@ package deploys with pp-env's pinned build and approves through its own mock ASP
 existing pool and the operator's ASP. A run never edits the checkout: it writes a candidate section to
 `~/.cache/pp/testnet/<target>/<run>/`, which is checked and committed before the next run.
 
+A pool's `deployBlock` is where note discovery starts, so it must not follow any of the pool's events, and
+the file's L1 endpoint must serve logs from it. The own pool's comes from its deploy script, read before
+broadcast. An operator target's is the earliest creation block of its vault, keystore and entrypoint, not
+the operator API's `fromBlock`, which can be a later first deposit. `verify-deployment` checks both on the
+file's own endpoint. The files pin the keyless Tenderly gateway, which keeps full history; the other pinned
+endpoint keeps about 34 hours. `@pp/testnet/schema` exports the file's schema without Node or key-file
+imports, for builds that read a deployment file.
+
 ## Keys
 
 All keys live in `~/.config/pp/testnet.env`, outside every repository: directory 0700, file 0600,
@@ -43,7 +51,7 @@ hashes and allowlisted URLs only. A guard refusal exits 2 before any key is read
 | `asp --owner <address>` (own) | ASP postman | the mock ASP on its loopback port: approves only that owner's deposits, posts roots, serves reads only |
 | `seed [--recipient <address>]` | canary owner | registers and makes the canary deposit; with `--recipient`, deposits it for that registered address instead |
 | `deploy` | L1 deployer, L2 deployer | the bridge generation with entries paused |
-| `verify-deployment [--pool-only] [--bot] [--label <l> --min-sequence <s>]` | none | code, bindings, the factory's creation, class ids, paused entries, the checks before opening, the bot's record |
+| `verify-deployment [--pool-only] [--bot] [--label <l> --min-sequence <s>]` | none | code, bindings, the deploy block's history, the factory's creation, class ids, paused entries, the checks before opening, the bot's record |
 | `bot` | bot poster, bot intake | the ASP-root poster, snapshot server and birth intake, on the file's loopback port |
 | `open --factory <address>` | guardian | opens entries once every check before opening passes and the guardian holds gas for three pauses |
 | `pause --factory <address> [--nonce <n> [--replace]]` | guardian | pauses entries; done only when finalized |
