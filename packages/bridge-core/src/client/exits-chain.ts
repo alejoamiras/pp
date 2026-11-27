@@ -27,7 +27,7 @@ import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { guarded } from "./boundary"
 import type { ClientDeployment } from "./deployment"
 import { BridgeClientError } from "./errors"
-import { allPages, type ExitReads, type ExitWitness, messageIndices, settleWith } from "./exits"
+import { allPages, assertExitPayee, type ExitReads, type ExitWitness, messageIndices, settleWith } from "./exits"
 import { callPayload, sponsored } from "./payload"
 import { windowedLogs } from "./resolve"
 import type { ExitTicket } from "./types"
@@ -91,13 +91,13 @@ export function exitMessageHash(d: Pick<ClientDeployment, "hub" | "portal" | "ch
  * The hub's `ragequit` of `amount` under `label` to `payee`, paid by the SponsoredFPC, for the
  * holder's wallet to send. The burn takes the label's largest notes first; see `ragequitChunks`.
  * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`: a payee that is
- * zero, wider than 160 bits or the portal (which would burn and never settle), an amount of zero or
- * of 2^128 or more, a label of zero or of the field modulus or more
+ * zero, wider than 160 bits, mixed-case with a failing checksum, or the portal (which the hub
+ * refuses), an amount of zero or of 2^128 or more, a label of zero or of the field modulus or more
  */
 export function ragequitPayload(d: ClientDeployment, a: { payee: Address; amount: bigint; label: bigint }): Promise<ExecutionPayload> {
 	return guarded(async () => {
 		ragequitContentV1(a)
-		if (isAddressEqual(a.payee, d.portal)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeIsPortal" })
+		assertExitPayee(d.portal, a.payee)
 		const args = [AztecAddress.fromStringUnsafe(d.token), EthAddress.fromString(a.payee), a.amount, new Fr(a.label)]
 		return sponsored(await callPayload(tokenBridgeHubArtifact, AztecAddress.fromStringUnsafe(d.hub), "ragequit", args))
 	})

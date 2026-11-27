@@ -188,16 +188,24 @@ describe("createBridgeClient", () => {
 		expectTypeOf<keyof Parameters<BridgeClient["exitTickets"]>[0]>().toEqualTypeOf<"payee" | "fromBlock">()
 	})
 
-	it("builds the public exit on the hub from the request as called, whatever the caller changes during the deployment check", async () => {
-		const t = setup()
-		const a: { payee: Address; amount: bigint } = { payee: "0x000000000000000000000000000000000000bEEF", amount: 1n }
-		const built = t.client.exitPublicPayload(a)
-		a.payee = "0x000000000000000000000000000000000000dEaD"
-		a.amount = 2n
-		const call = (await built).calls.find((c) => c.name === "exit_public")
-		expect(call?.to.toString()).toBe(HUB)
-		expect(call?.args.slice(1).map((x) => x.toBigInt())).toEqual([0xbeefn, 1n])
-	})
+	// An app that reuses one mutable form object for its next exit must still get the payload its
+	// user confirmed, though the build waits for the deployment check.
+	type Form = { payee: Address; amount: bigint; label: bigint }
+	it.each([
+		["ragequitPayload", "ragequit", (c: BridgeClient, a: Form) => c.ragequitPayload(a)],
+		["exitPublicPayload", "exit_public", (c: BridgeClient, a: Form) => c.exitPublicPayload(a)],
+	] as const)(
+		"%s builds the hub's %s from the request as called, not a form the caller changes before it resolves",
+		async (_, name, build) => {
+			const a: Form = { payee: "0x000000000000000000000000000000000000bEEF", amount: 1n, label: 3n }
+			const built = build(setup().client, a)
+			a.payee = "0x000000000000000000000000000000000000dEaD"
+			a.amount = 2n
+			const call = (await built).calls.find((c) => c.name === name)
+			expect(call?.to.toString()).toBe(HUB)
+			expect(call?.args.slice(1, 3).map((x) => x.toBigInt())).toEqual([0xbeefn, 1n])
+		},
+	)
 
 	it("refuses a public exit when the deployment check fails", async () => {
 		const payee: Address = "0x000000000000000000000000000000000000bEEF"

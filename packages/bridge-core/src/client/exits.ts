@@ -1,6 +1,17 @@
-import type { Hash, Hex } from "viem"
+import { type Address, type Hash, type Hex, isAddress, isAddressEqual } from "viem"
 import { BridgeClientError } from "./errors"
 import type { ExitStatus, ExitTicket } from "./types"
+
+/**
+ * Refuses an exit payee before anything is built: a mixed-case address whose checksum fails, which
+ * the address parser would otherwise refuse as a transport failure, and the portal, which the hub
+ * refuses because the portal never pays itself.
+ * @throws BridgeClientError `SPEND_MISMATCH` with source `PayeeChecksum` or `PayeeIsPortal`
+ */
+export function assertExitPayee(portal: Address, payee: Address): void {
+	if (!isAddress(payee)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeChecksum" })
+	if (isAddressEqual(payee, portal)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeIsPortal" })
+}
 
 /** One page of a cursor-paged query; `next` is absent once the range is exhausted. */
 export type Page<T, C> = { items: T[]; next?: C }

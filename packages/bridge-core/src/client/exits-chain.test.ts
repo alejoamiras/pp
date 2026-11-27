@@ -250,10 +250,15 @@ describe("ragequitPayload", () => {
 			(r) =>
 				[r.name, { payee: payeeOf(r.args.payee!), amount: BigInt(r.args.amount!), label: BigInt(r.args.label!) }, r.error] as const,
 		)
-	it.each([...refused, ["the portal as payee", { payee: PORTAL, amount: 1n, label: 1n }, "PayeeIsPortal"] as const])(
-		"refuses %s before building",
-		async (_, a, source) => {
-			await expect(ragequitPayload(D, a)).rejects.toMatchObject({ code: "SPEND_MISMATCH", source })
-		},
-	)
+	it.each([
+		...refused,
+		["the portal as payee", { payee: PORTAL, amount: 1n, label: 1n }, "PayeeIsPortal"] as const,
+		[
+			"a mixed-case payee whose checksum fails",
+			{ payee: "0x000000000000000000000000000000000000BeeF", amount: 1n, label: 1n },
+			"PayeeChecksum",
+		] as const,
+	])("refuses %s before building", async (_, a, source) => {
+		await expect(ragequitPayload(D, a)).rejects.toMatchObject({ code: "SPEND_MISMATCH", source })
+	})
 })

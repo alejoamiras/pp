@@ -40,12 +40,13 @@ export interface BridgeClient {
 	records(s: BridgeSession): Promise<BridgeRecordView[]>
 	/**
 	 * The hub's `ragequit` of `amount` under `label` to `payee`, paid by the SponsoredFPC, for the
-	 * holder's wallet to send. Burn exact chunks only (`ragequitChunks`).
+	 * holder's wallet to send. Burn exact chunks only (`ragequitChunks`). `a` is read once, at the call.
 	 * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`
 	 */
 	ragequitPayload(a: { payee: Address; amount: bigint; label: bigint }): Promise<ExecutionPayload>
 	/**
-	 * The hub's `exit_public` of `amount` of the sender's public balance of the deployment's token to `payee`.
+	 * The hub's `exit_public` of `amount` of the sender's public balance of the deployment's token to
+	 * `payee`. `a` is read once, at the call.
 	 * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`
 	 */
 	exitPublicPayload(a: { payee: Address; amount: bigint }): Promise<ExecutionPayload>
@@ -115,6 +116,13 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 	const recordsContext = async (): Promise<RecordsContext> => ({ deployment: await deployment(), reader, node, store })
 	const exitContext = async (): Promise<ExitContext> => ({ deployment: await deployment(), reader, node, receiptTimeoutMs })
 	const exits = <T>(f: (c: ExitContext) => Promise<T>) => guarded(async () => f(await exitContext()))
+	// The request is copied before the deployment check: an app that reuses a mutable form object
+	// would otherwise get a payload other than the one its user confirmed.
+	const payload = <A extends object>(a: A, build: (d: ClientDeployment, a: A) => Promise<ExecutionPayload>) =>
+		guarded(async () => {
+			const asCalled = { ...a }
+			return build((await exitContext()).deployment, asCalled)
+		})
 	return Object.freeze({
 		preflight: async (a) => preflight({ deployment: await deployment(), node, preflights }, a),
 		submit: (spend, l1, s, o) => submit(submitContext, spend, l1, s, o),
@@ -127,9 +135,8 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		claimPayload: async (s, r) => claimPayload(await deployment(), s, r),
 		recover: async (s, recipient) => recover(await recordsContext(), s, recipient),
 		records: async (s) => records(await recordsContext(), s),
-		ragequitPayload: (a) => exits((c) => ragequitPayload(c.deployment, a)),
-		// Read at entry: a caller's later change to its request must not reach the payload built after the check.
-		exitPublicPayload: ({ payee, amount }) => exits((c) => exitPublicPayload(c.deployment, { payee, amount })),
+		ragequitPayload: (a) => payload(a, ragequitPayload),
+		exitPublicPayload: (a) => payload(a, exitPublicPayload),
 		exitTickets: (a) => exits((c) => exitTickets(c, a)),
 		exitStatus: (t) => exits(async (c) => exitStatusOf(await exitState(exitReads(c), t))),
 		settle: (t, l1) => exits((c) => settle(c, t, l1)),

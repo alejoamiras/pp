@@ -2,11 +2,11 @@ import { EthAddress } from "@aztec-labs/foundation/eth-address"
 import { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
 import type { ExecutionPayload } from "@aztec-labs/stdlib/tx"
 import { exitContentV1 } from "@pp/bridge-spec"
-import { type Address, isAddress, isAddressEqual } from "viem"
+import type { Address } from "viem"
 import { tokenBridgeHubArtifact } from "../artifacts"
 import { guarded } from "./boundary"
 import type { ClientDeployment } from "./deployment"
-import { BridgeClientError } from "./errors"
+import { assertExitPayee } from "./exits"
 import { callPayload, sponsored } from "./payload"
 
 /**
@@ -20,8 +20,7 @@ import { callPayload, sponsored } from "./payload"
 export function exitPublicPayload(d: ClientDeployment, a: { payee: Address; amount: bigint }): Promise<ExecutionPayload> {
 	return guarded(async () => {
 		exitContentV1(a)
-		if (!isAddress(a.payee)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeChecksum" })
-		if (isAddressEqual(a.payee, d.portal)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeIsPortal" })
+		assertExitPayee(d.portal, a.payee)
 		const args = [AztecAddress.fromStringUnsafe(d.token), EthAddress.fromString(a.payee), a.amount]
 		return sponsored(await callPayload(tokenBridgeHubArtifact, AztecAddress.fromStringUnsafe(d.hub), "exit_public", args))
 	})

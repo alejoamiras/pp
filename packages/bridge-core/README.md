@@ -65,7 +65,8 @@ Exits: `exitTickets` reads the hub's `RagequitTicket` and `PublicExitTicket` eve
 manifest's token and matches each to its own Outbox message, so identical exits in one transaction
 settle separately. `exitStatus` and `settle` key a ticket by its witness's `(epoch, leafId)`, never
 by content. `ragequitPayload` and `exitPublicPayload` build the hub's `ragequit` and `exit_public`
-for the holder's wallet to send, and refuse a payee the portal would never pay before building.
+for the holder's wallet to send, from the request as it was at the call, and refuse a payee whose
+checksum fails or whom the portal would never pay before building.
 
 ## The local network
 
