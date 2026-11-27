@@ -1,23 +1,12 @@
 import { PoolClientError, spendRevertCode } from "@pp/pool-client"
-import {
-	type Account,
-	BaseError,
-	type Chain,
-	type Hash,
-	hexToBigInt,
-	isAddressEqual,
-	type PublicClient,
-	TransactionNotFoundError,
-	TransactionReceiptNotFoundError,
-	type WalletClient,
-} from "viem"
+import { type Account, BaseError, type Chain, type Hash, hexToBigInt, isAddressEqual, type PublicClient, type WalletClient } from "viem"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { sendGasLimit } from "../l1-gas"
-import { type AttemptState, type Intent, planAttempt } from "./attempts"
+import { type Intent, latestMined, observe, planAttempt } from "./attempts"
 import { contractRevert, guarded, revertName } from "./boundary"
 import { assertBridgeSpend, snapshotSpend } from "./checks"
 import { BridgeClientError, type StaleRootCode } from "./errors"
-import { Journal, type JournalAttempt, type JournalRecord, type KeyValueStore } from "./journal"
+import { Journal, type JournalRecord, type KeyValueStore } from "./journal"
 import type { Preflights } from "./preflight"
 import {
 	type BridgeIntent,
@@ -67,6 +56,8 @@ const staleCode = (e: unknown): StaleRootCode | null =>
 	e instanceof PoolClientError && STALE_CODES.has(e.code) ? (e.code as StaleRootCode) : null
 
 // The proof's own nullifier, never the metadata field: checks have tied the two together by now.
+const contextOf = async (ctx: SubmitContext | (() => Promise<SubmitContext>)) => (typeof ctx === "function" ? ctx() : ctx)
+
 const intentOf = (s: PreparedBridgeSpend): Intent => ({
 	nullifier: s.proof.pubSignals[0]?.[0] as bigint,
 	recipient: s.recipient.toString(),
@@ -116,30 +107,6 @@ const bridgeCall = (run: Run, s: PreparedBridgeSpend) => ({
 	args: [s.proof, s.noteData, s.secretHash] as const,
 	account: run.account,
 })
-
-const isNotFound = (e: unknown) =>
-	e instanceof BaseError && e.walk((x) => x instanceof TransactionReceiptNotFoundError || x instanceof TransactionNotFoundError) !== null
-
-const orNull = (e: unknown): null => {
-	if (isNotFound(e)) return null
-	throw e
-}
-
-type Observed = { state: AttemptState; mined?: { hash: Hash; block: bigint } }
-
-/** What the RPC says about one attempt; a successful receipt sets the resolver's precedence and lower bound on the head. */
-async function observe(c: SubmitReader, a: JournalAttempt): Promise<Observed> {
-	if (!a.l1TxHash) return { state: "hashless" }
-	const receipt = await c.getTransactionReceipt({ hash: a.l1TxHash }).catch(orNull)
-	if (receipt?.status === "success") return { state: "pending", mined: { hash: a.l1TxHash, block: receipt.blockNumber } }
-	if (receipt) return { state: "reverted" }
-	const tx = await c.getTransaction({ hash: a.l1TxHash }).catch(orNull)
-	return { state: tx ? "pending" : "unknown" }
-}
-
-/** The latest successful attempt, which the resolver must read up to and an error must name. */
-const latestMined = (o: Observed[]) =>
-	o.reduce<Observed["mined"]>((m, x) => (x.mined && (!m || x.mined.block >= m.block) ? x.mined : m), undefined)
 
 async function openRun(
 	ctx: SubmitContext,
@@ -271,9 +238,12 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
  * rolled back in the store, a second process or tab over the same storage, or a later send of the
  * note through another generation's portal on the same vault, can let a note be sent again while an
  * earlier send is pending; the vault lets only one land, so the cost is a reverted transaction's gas.
+ *
+ * @param ctx a function is called only after the spend is snapshotted and its note held, so a context
+ *   that needs IO (the client's one-time deployment check) keeps both guarantees.
  */
 export function submit(
-	ctx: SubmitContext,
+	ctx: SubmitContext | (() => Promise<SubmitContext>),
 	spend: PreparedBridgeSpend,
 	l1: WalletClient,
 	s: BridgeSession,
@@ -284,9 +254,10 @@ export function submit(
 		let snap = snapshotSpend(spend)
 		const release = holdNote(snap)
 		try {
-			const run = await openRun(ctx, l1, l1.account, l1.chain, s, o, snap)
+			const { account, chain } = l1
+			const run = await openRun(await contextOf(ctx), l1, account, chain, s, o, snap)
 			for (let reproofs = 0; ; reproofs++) {
-				await assertBridgeSpend(snap, run.session.pool, run.secrets.claimKey, ctx.deployment)
+				await assertBridgeSpend(snap, run.session.pool, run.secrets.claimKey, run.ctx.deployment)
 				const guard = await journalGuard(run, snap)
 				if ("receipt" in guard) return guard.receipt
 				const fresh = await freshness(run, snap)
@@ -294,7 +265,7 @@ export function submit(
 				if (fresh.kind === "ready") return await broadcast(run, snap, guard, fresh.gas)
 				if (reproofs === MAX_REPROOFS) throw new BridgeClientError("STALE", { stale: fresh.stale })
 				o.onReprove?.(fresh.stale)
-				snap = sameSpend(snap, snapshotSpend(await ctx.reprove(run.session, snap)))
+				snap = sameSpend(snap, snapshotSpend(await run.ctx.reprove(run.session, snap)))
 			}
 		} finally {
 			release()
@@ -311,8 +282,10 @@ export function submit(
  */
 const running = new Set<bigint>()
 
+/** @throws BridgeClientError `SPEND_MISMATCH` (`nullifier`) when the proof's first signal is missing or is not the spend's nullifier */
 function holdNote(s: PreparedBridgeSpend): () => void {
-	const key = s.proof.pubSignals[0]?.[0] ?? s.nullifier
+	const key = s.proof.pubSignals[0]?.[0]
+	if (key === undefined || key !== s.nullifier) throw new BridgeClientError("SPEND_MISMATCH", { check: "nullifier" })
 	if (running.has(key)) throw new BridgeClientError("IN_FLIGHT")
 	running.add(key)
 	return () => running.delete(key)

@@ -185,6 +185,21 @@ describe("submit: preflight at handoff", () => {
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
 	})
 
+	it("keys the hold only by a bigint proof nullifier equal to the spend's, refusing anything else with zero sends", async () => {
+		const t = await setup()
+		const rows = (first: unknown[]) => [first, ...t.spend.proof.pubSignals.slice(1)] as bigint[][]
+		const cases: [PreparedBridgeSpend, string, string?][] = [
+			[{ ...t.spend, proof: { ...t.spend.proof, pubSignals: rows([String(t.spend.nullifier)]) } }, "shape"],
+			[{ ...t.spend, nullifier: String(t.spend.nullifier) as unknown as bigint }, "shape"],
+			[{ ...t.spend, proof: { ...t.spend.proof, pubSignals: rows([]) } }, "nullifier"],
+			[{ ...t.spend, nullifier: t.spend.nullifier + 1n }, "nullifier"],
+		]
+		for (const [spend, check] of cases)
+			await expect(submit(t.ctx, spend, t.chain.wallet(), t.session)).rejects.toMatchObject({ code: "SPEND_MISMATCH", check })
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+		expect(t.values.size).toBe(0)
+	})
+
 	it("refuses with zero sends when the preflighted wallet no longer lists the recipient", async () => {
 		const t = await setup()
 		t.preflights.record(DEPLOYMENT.id, t.recipient, aztecWallet([]))
