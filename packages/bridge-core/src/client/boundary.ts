@@ -104,7 +104,18 @@ export const isUserRejection = (e: unknown): boolean => underSendWrappers(e, (x)
  * `eth_sendTransaction` (:264), so nothing was sent. A wallet's own error reaches here under viem's RPC error classes,
  * which are no wrappers.
  */
-export const isChainMismatch = (e: unknown): boolean => underSendWrappers(e, (x) => field(x, "name") === "ChainMismatchError")
+const isChainMismatch = (e: unknown): boolean => underSendWrappers(e, (x) => field(x, "name") === "ChainMismatchError")
+
+/**
+ * The error for a wallet send that never left: the user's refusal as `RPC_FAILED` with source
+ * `UserRejectedRequestError`, and viem's pre-send chain check as `CHAIN_MISMATCH`. `null` when the
+ * send may have been broadcast.
+ */
+export function unsentError(e: unknown): BridgeClientError | null {
+	if (isUserRejection(e)) return new BridgeClientError("RPC_FAILED", { source: "UserRejectedRequestError" })
+	if (isChainMismatch(e)) return new BridgeClientError("CHAIN_MISMATCH")
+	return null
+}
 
 /**
  * Maps any thrown value to a `BridgeClientError` built from allow-listed identifiers only. It never

@@ -8,9 +8,9 @@ import { Tag } from "@aztec-labs/stdlib/logs"
 import { computeL2ToL1MembershipWitnessFromMessagesInEpoch } from "@aztec-labs/stdlib/messaging"
 import { TxHash, TxStatus } from "@aztec-labs/stdlib/tx"
 import vectors from "@pp/bridge-spec/vectors/v1.json" with { type: "json" }
-import { type Address, type Hash, type Hex, getAddress, toHex } from "viem"
+import { type Address, type Hash, type Hex, getAddress, toHex, UserRejectedRequestError } from "viem"
 import { describe, expect, it, vi } from "vitest"
-import { DEPLOYMENT, HUB, headRequest, PORTAL, SENDER } from "../test/client-fakes"
+import { DEPLOYMENT, foreignError, HUB, headRequest, PORTAL, SENDER } from "../test/client-fakes"
 import type { ClientDeployment } from "./deployment"
 import { exitStatusOf, exitState } from "./exits"
 import { assertExitPayee, type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
@@ -238,6 +238,25 @@ describe("settle", () => {
 		})
 		const e = await settle(c, t!, l1).catch((x: unknown) => x)
 		expect(e).toMatchObject({ code: "UNCERTAIN", l1TxHash: state.settled[0]?.tx })
+	})
+
+	it.each<[string, () => Error, object]>([
+		[
+			"the user's refusal",
+			() => new UserRejectedRequestError(new Error("no")),
+			{ code: "RPC_FAILED", source: "UserRejectedRequestError" },
+		],
+		[
+			"viem's chain check before the send",
+			() => foreignError(["ContractFunctionExecutionError"], ["TransactionExecutionError"], ["ChainMismatchError"]),
+			{ code: "CHAIN_MISMATCH" },
+		],
+	])("reports %s as a settle that never left", async (_, refusal, expected) => {
+		const { c, state, l1, writeContract } = await world()
+		state.posted = true
+		const [t] = await exitTickets(c, {})
+		writeContract.mockRejectedValueOnce(refusal())
+		await expect(settle(c, t!, l1)).rejects.toMatchObject(expected)
 	})
 
 	it("refuses a wallet on another chain, and a ticket no root covers yet, before any send", async () => {

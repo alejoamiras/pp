@@ -3,7 +3,7 @@ import { type Account, type Chain, type Hash, hexToBigInt, isAddressEqual, type 
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { sendGasLimit } from "../l1-gas"
 import { type Intent, latestMined, observe, planAttempt } from "./attempts"
-import { contractRevert, guarded, isChainMismatch, isUserRejection } from "./boundary"
+import { contractRevert, guarded, unsentError } from "./boundary"
 import { assertBridgeSpend, snapshotSpend } from "./checks"
 import { BridgeClientError, type StaleRootCode } from "./errors"
 import { Journal, type JournalRecord, type KeyValueStore } from "./journal"
@@ -203,13 +203,10 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
 	try {
 		hash = await run.l1.writeContract({ ...bridgeCall(run, s), chain: run.chain, gas })
 	} catch (e) {
-		const rejected = isUserRejection(e)
-		if (!rejected && !isChainMismatch(e)) return afterSendFailure(run, s)
-		// Nothing was sent: the user refused, or viem found the wallet on another chain first.
+		const unsent = unsentError(e)
+		if (!unsent) return afterSendFailure(run, s)
 		await run.journal.restore(plan.record.nullifier, plan.previous, written)
-		throw rejected
-			? new BridgeClientError("RPC_FAILED", { source: "UserRejectedRequestError" })
-			: new BridgeClientError("CHAIN_MISMATCH")
+		throw unsent
 	}
 	const saved = await run.journal.write(withHash(plan.record, hash)).then(
 		() => true,
