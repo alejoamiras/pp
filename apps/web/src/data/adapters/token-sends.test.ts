@@ -4,7 +4,7 @@ import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { describe, expect, test, vi } from "vitest"
 import { stageManifest } from "../capabilities"
-import type { AllowListPort, AztecSendHooks } from "../ports"
+import type { AllowListPort, AztecSendHooks, Stage } from "../ports"
 import type { AztecAddress, LabelCheck } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
 import { parseGrant } from "../wallet/grant"
@@ -16,21 +16,24 @@ const [HUB, TOKEN, FPC, ME, YOU] = [at("08"), at("09"), at("0c"), at("1c"), at("
 const T = { hub: HUB, token: TOKEN, sponsoredFpc: FPC }
 /** A label holding more than any test spends, in one note. */
 const ENOUGH = async () => [1000n]
-const MANIFEST = stageManifest("2b", T)
-const GRANT = parseGrant(MANIFEST, {
-	granted: MANIFEST.capabilities.map((c) => (c.type === "accounts" ? { ...c, accounts: [{ item: ME }] } : c)),
-})
+/** The whole request granted, as an honest wallet answers it. */
+function grantAt(stage: Stage) {
+	const manifest = stageManifest(stage, T)
+	return parseGrant(manifest, {
+		granted: manifest.capabilities.map((c) => (c.type === "accounts" ? { ...c, accounts: [{ item: ME }] } : c)),
+	})
+}
 const ACTIVE: LabelCheck = { state: "ACTIVE", path: { index: 1, depth: 1, siblings: [7n, ...Array(17).fill(0n)] } }
 
 /** A connected wallet whose answers a test can change while the send waits on the allow list. */
-function rig() {
+function rig(stage: Stage = "2b") {
 	const wallet = {
 		getAccounts: vi.fn(async () => [{ alias: "me", item: SdkAddress.fromStringUnsafe(ME) }]),
 		getChainInfo: vi.fn(async () => ({ chainId: new Fr(31337n), version: new Fr(5n) })),
 		registerContract: vi.fn(async () => {}),
 		sendTx: vi.fn(async (_p: ExecutionPayload) => ({ txHash: { toString: () => at("dd") } })),
 	}
-	let live: HeldWallet | null = { epoch: 3, wallet: wallet as unknown as Wallet, grant: GRANT }
+	let live: HeldWallet | null = { epoch: 3, wallet: wallet as unknown as Wallet, grant: grantAt(stage) }
 	const node = {
 		getContract: vi.fn(async (a: { toString(): string }) => ({ address: a })),
 		getTxReceipt: vi.fn(async () => ({
@@ -211,5 +214,46 @@ describe("the token's checked spends", () => {
 			await expect(refused).rejects.toMatchObject({ code })
 			expect(q.wallet.sendTx).not.toHaveBeenCalled()
 		}
+	})
+})
+
+describe("the shield", () => {
+	test("sends shield(amount) paid by the SponsoredFPC with no label path, handing off right before the wallet sends", async () => {
+		const unchecked = () => ({ current: vi.fn(), check: vi.fn() })
+		const shield = (r: ReturnType<typeof rig>, allowList: ReturnType<typeof unchecked>, hooks: AztecSendHooks) =>
+			stackTokenSends({ aztec: r.aztec, allowList, sponsoredFpc: FPC, notes: ENOUGH }).shield(ME, 5n, hooks)
+
+		const r = rig("2c")
+		const list = unchecked()
+		const order: string[] = []
+		r.wallet.sendTx.mockImplementation(async () => {
+			order.push("send")
+			return { txHash: { toString: () => at("dd") } }
+		})
+		await expect(
+			shield(
+				r,
+				list,
+				on(() => void order.push("handoff")),
+			),
+		).resolves.toMatchObject({ status: "success" })
+		expect(order).toEqual(["handoff", "send"])
+		const payload = r.wallet.sendTx.mock.calls[0]?.[0] as ExecutionPayload
+		expect(payload.calls.map((c) => [c.to.toString(), c.name])).toEqual([
+			[FPC, "sponsor_unconditionally"],
+			[TOKEN, "shield"],
+		])
+		expect(payload.calls[1]?.args.map((a) => a.toBigInt())).toEqual([5n])
+		expect([list.current, list.check].map((f) => f.mock.calls.length)).toEqual([0, 0])
+
+		const refused = rig("2c")
+		const handoff = () => {
+			throw new Error("the page's account changed")
+		}
+		await expect(shield(refused, unchecked(), on(handoff))).rejects.toThrow("the page's account changed")
+		expect(refused.wallet.sendTx).not.toHaveBeenCalled()
+		const ungranted = rig("2b")
+		await expect(shield(ungranted, unchecked(), on())).rejects.toMatchObject({ code: "NOT_GRANTED" })
+		expect(ungranted.wallet.sendTx).not.toHaveBeenCalled()
 	})
 })

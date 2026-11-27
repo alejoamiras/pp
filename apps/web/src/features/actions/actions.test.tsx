@@ -405,3 +405,50 @@ describe("the action dialogs", () => {
 		await waitFor(() => expect(held()).toBe(false))
 	})
 })
+
+describe("the shield dialog", () => {
+	const openShield = async (app: ReturnType<typeof renderApp>) => {
+		const shield = () => within(screen.getByTestId("public-row")).getByRole("button", { name: "Shield" })
+		await waitFor(() => expect(disabled(shield())).toBe(false))
+		await app.user.click(shield())
+		return within(await screen.findByTestId("action-dialog"))
+	}
+
+	test("a dialog opened under one connection does not come back under the next, even for the same account", async () => {
+		const app = renderApp()
+		await connectAztec(app.user)
+		await openShield(app)
+		act(() => app.control.disconnectAztec())
+		await waitFor(() => expect(screen.queryByTestId("action-dialog")).toBeNull())
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		expect(screen.queryByTestId("action-dialog")).toBeNull()
+		expect(app.control.state().sent.aztec).toBe(0)
+	})
+
+	test("a shield whose connection ends while it waits to send sends nothing", async () => {
+		let release = () => {}
+		const held = new Promise<void>((r) => {
+			release = r
+		})
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				aztec: {
+					...s.aztec,
+					shield: async (from, amount, on) => {
+						await held
+						return s.aztec.shield(from, amount, on)
+					},
+				},
+			}),
+		})
+		await connectAztec(app.user)
+		const dialog = await openShield(app)
+		await app.user.type(dialog.getByLabelText(/Amount/), "5")
+		await app.user.click(dialog.getByRole("button", { name: "Shield" }))
+		act(() => app.control.disconnectAztec())
+		await act(async () => release())
+		expect(app.control.state().sent.aztec).toBe(0)
+	})
+})

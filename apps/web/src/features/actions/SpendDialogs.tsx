@@ -109,22 +109,23 @@ export function UnshieldDialog({ account, balance, onClose }: Props) {
 
 /** Moves public balance into a new private label, which waits for approval. */
 export function ShieldDialog({ account, amount: available, onClose }: { account: AztecAddress; amount: bigint; onClose(): void }) {
-	const { aztec } = useApp()
+	const { aztec, live } = useApp()
 	const amount = useAmount(available)
 	const act = useAction(account)
 	const send = () => {
 		const value = amount.amount
 		if (value === null) return
-		void act.send("shield", () => aztec.shield(account, value))
+		const on = bound(live, account, act)
+		if (on) void act.send("shield", (guard) => aztec.shield(account, value, guard(on)))
 	}
 	return (
 		<ActionShell
 			title="Shield"
-			description="Moves public balance into a new private label. The label waits for approval before it can be sent or unshielded; it can always leave to Ethereum."
+			description="Moves public balance into a new private label. The label cannot be sent or unshielded until the allow list approves it; it can always leave to Ethereum."
 			action="shield"
 			state={act.state}
 			onClose={onClose}
-			done="Shielded. The new label shows as awaiting approval until the allow list includes it."
+			done="Shielded. The new label reads Not enabled yet until the allow list includes it, then Funds enabled."
 		>
 			<AmountField field={amount} />
 			<ActionButton

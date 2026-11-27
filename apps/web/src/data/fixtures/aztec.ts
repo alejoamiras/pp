@@ -159,7 +159,10 @@ export function fixtureAztec(w: World): AztecPort {
 				checkedSpend(w, from, label, origin, amount, () => addPublic(w, from, amount)),
 			)
 		},
-		async shield(from, amount) {
+		async shield(from, amount, on) {
+			// The token's u128 argument and its nonzero assert refuse these before anything is proved.
+			if (amount <= 0n || amount >= 2n ** 128n) throw new BridgeFailure("AMOUNT_INVALID")
+			on.handoff()
 			return send(w, "shield", () => {
 				if (publicOf(w, from) < amount) return "public balance too low"
 				const label = BigInt(w.nextHex(31)) % BN254_P

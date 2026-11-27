@@ -90,7 +90,7 @@ const loadExits = (): Promise<ExitSide> =>
 		m.stackExits({ manifest, deployment, aztec: side.deps, notes: (owner, label) => side.port.notesByLabel(owner, label), l1 }),
 	))
 
-type SendSide = Pick<AztecPort, "transferPrivate" | "unshield">
+type SendSide = Pick<AztecPort, "transferPrivate" | "unshield" | "shield">
 let sendsLoad: Promise<SendSide> | undefined
 const loadSends = (): Promise<SendSide> =>
 	(sendsLoad ??= Promise.all([import("./token-sends"), loadAztec()]).then(([m, side]) =>
@@ -113,7 +113,7 @@ const aztec: AztecPort = {
 	publicBalance: async (owner) => (await loadAztec()).port.publicBalance(owner),
 	transferPrivate: async (from, a, on) => (await loadSends()).transferPrivate(from, a, on),
 	unshield: async (from, a, on) => (await loadSends()).unshield(from, a, on),
-	shield: unavailable("AztecPort.shield"),
+	shield: async (from, amount, on) => (await loadSends()).shield(from, amount, on),
 	ragequit: async (from, a, on) => (await loadExits()).ragequit(from, a, on),
 	exitPublic: unavailable("AztecPort.exitPublic"),
 }
