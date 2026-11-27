@@ -2,6 +2,7 @@
 import { act, cleanup, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, test } from "vitest"
 import type { PoolNoteView } from "../../data/stack-types"
+import { BridgeFailure, messageOf } from "../../data/errors"
 import { LABELS } from "../../data/fixtures/seed"
 import { connectAztec, labelRow, noteRow, renderApp, signIn } from "../../test-utils/app"
 
@@ -48,6 +49,26 @@ describe("home", () => {
 		}
 		expect(screen.queryAllByTestId("note-row").map((r) => r.dataset.commitment)).not.toContain("5")
 		screen.getByText("1 empty note (left by bridging a whole note) not shown.")
+	})
+
+	test("a session without a bridge part still lists the notes, and each bridge button says why it is closed", async () => {
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				sessions: {
+					...s.sessions,
+					open: async (a) => ({
+						...(await s.sessions.open(a)),
+						records: () => Promise.reject(new BridgeFailure("BRIDGE_UNAVAILABLE")),
+					}),
+				},
+			}),
+		})
+		await signIn(app.user)
+		await connectAztec(app.user)
+		const bridge = await waitFor(() => noteRow(0x1001n).getByRole("button", { name: "Bridge to Aztec" }))
+		expect(isDisabled(bridge)).toBe(true)
+		expect(reasonOf(bridge)).toBe(messageOf("BRIDGE_UNAVAILABLE"))
 	})
 
 	test("ABSENT and STALE_ROOT close Send and Unshield with their reason, ragequit stays open, and the list's age is chain time", async () => {

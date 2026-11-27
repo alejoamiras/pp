@@ -8,8 +8,9 @@
  * on a device that has no journal for it.
  */
 import type { Hash } from "viem"
-import type { AztecAddress, BridgeRecordView, PoolNoteStatus, PoolNoteView } from "./stack-types"
+import { codeOf } from "./errors"
 import type { L1TxState, Session } from "./ports"
+import type { AztecAddress, BridgeRecordView, PoolNoteStatus, PoolNoteView } from "./stack-types"
 
 export interface PoolState {
 	notes: PoolNoteView[]
@@ -25,6 +26,8 @@ export interface PoolState {
 	consumed: BridgeRecordView[]
 	/** Each bridge's or open record's note (spent once mined), by record id: where its label and value come from. */
 	noteOf: ReadonlyMap<string, PoolNoteView>
+	/** The session has no bridge part in this build: notes only, and no bridge to start. */
+	bridgeUnavailable: boolean
 }
 
 const GONE: ReadonlySet<PoolNoteStatus> = new Set(["spent", "exiting", "exited"])
@@ -98,11 +101,21 @@ export async function readPool(
 	connected: readonly AztecAddress[],
 	submitting: () => ReadonlySet<bigint> = () => new Set(),
 ): Promise<PoolState> {
-	const [notes, records] = await Promise.all([session.notes(), session.records()])
+	const [notes, records] = await Promise.all([session.notes(), journal(session)])
+	const notesOnly = (bridgeUnavailable: boolean): PoolState => ({
+		notes,
+		bridges: [],
+		inFlight: new Map(),
+		uncertain: new Map(),
+		sending: new Map(),
+		consumed: [],
+		noteOf: new Map(),
+		bridgeUnavailable,
+	})
+	if (records === null) return notesOnly(true)
 	const open = records.filter(isOpen)
 	const recipients = [...new Set([...connected, ...open.map((r) => r.recipient)])]
-	if (recipients.length === 0)
-		return { notes, bridges: [], inFlight: new Map(), uncertain: new Map(), sending: new Map(), consumed: [], noteOf: new Map() }
+	if (recipients.length === 0) return notesOnly(false)
 	const hashes = [...new Set(open.flatMap((r) => (r.l1TxHash ? [r.l1TxHash] : [])))]
 	const [nullifiers, recovered, states] = await Promise.all([
 		Promise.all(notes.map((n) => session.nullifierOf(n.commitment))),
@@ -119,5 +132,15 @@ export async function readPool(
 			return note ? [[r.id, note] as const] : []
 		}),
 	)
-	return { notes, noteOf, ...found }
+	return { notes, noteOf, ...found, bridgeUnavailable: false }
+}
+
+/** The session's journal, or `null` when this build's session has no bridge part. */
+async function journal(session: Session): Promise<BridgeRecordView[] | null> {
+	try {
+		return await session.records()
+	} catch (err) {
+		if (codeOf(err) === "BRIDGE_UNAVAILABLE") return null
+		throw err
+	}
 }

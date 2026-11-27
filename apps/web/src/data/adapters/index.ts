@@ -1,39 +1,69 @@
 /**
- * The stack behind `#data`: the real wallet connector, and ports that refuse until their packages land.
- * The deployment is a placeholder with zero addresses: no build serves this data mode yet, and the
- * stack-build check only proves that no fixture module is reachable from it.
+ * The stack behind `#data`: the deployment and endpoints from the build's stack target, Ethereum
+ * through the page's injected wallet, chain time from both chains, and the owner's session over
+ * pool-client and the bridge client. The Aztec, exit and allow-list ports have no stack adapter yet
+ * and refuse.
  */
+import { getAddress } from "viem"
 import { target } from "../../target"
-import type { AztecAddress } from "../stack-types"
 import { stageManifest } from "../capabilities"
-import type { AllowListPort, AztecPort, Deployment, ExitPort, L1Port, SessionPort } from "../ports"
+import { parseAztecAddress } from "../parse"
+import type { AllowListPort, AztecPort, Deployment, ExitPort, SessionPort } from "../ports"
 import type { DataSource } from "../source"
+import type { AztecAddress } from "../stack-types"
 import { browserTimer } from "../timer"
 import { loadRealConnector } from "../wallet/load"
+import { stackClock } from "./clock"
+import { type InjectedWallet, stackL1 } from "./l1"
 
 const unavailable = (port: string) => (): Promise<never> => Promise.reject(new Error(`${port} has no stack adapter in this build`))
-const ZERO_AZTEC = `0x${"0".repeat(64)}` as AztecAddress
-const ZERO_L1 = `0x${"0".repeat(40)}` as const
 
+const stack = target.stack
+if (stack === null) throw new Error("a stack build was built without a stack target")
+const { manifest } = stack
+
+function aztecAddress(value: string, field: string): AztecAddress {
+	const parsed = parseAztecAddress(value)
+	if (parsed === null) throw new Error(`stack target: ${field} is not an Aztec address`)
+	return parsed
+}
+
+/**
+ * The asset's decimals and symbol are not read from chain yet: 6 is the local stack's test token's,
+ * and the symbol stays empty rather than guessed.
+ */
 const deployment: Deployment = {
-	id: `${target.l1ChainId}:${ZERO_L1}:${ZERO_AZTEC}`,
-	chainId: target.l1ChainId,
+	id: `${manifest.chainId}:${manifest.bridge.portal.toLowerCase()}:${manifest.bridge.hub.toLowerCase()}`,
+	chainId: manifest.chainId,
 	stage: "2a",
-	portal: ZERO_L1,
-	hub: ZERO_AZTEC,
-	token: ZERO_AZTEC,
-	sponsoredFpc: ZERO_AZTEC,
+	portal: getAddress(manifest.bridge.portal),
+	hub: aztecAddress(manifest.bridge.hub, "bridge.hub"),
+	token: aztecAddress(manifest.bridge.token, "bridge.token"),
+	sponsoredFpc: aztecAddress(stack.sponsoredFpc, "sponsoredFpc"),
 	decimals: 6,
 	symbol: "",
 }
 
-const l1: L1Port = {
-	accounts: unavailable("L1Port.accounts"),
-	chainId: unavailable("L1Port.chainId"),
-	signTypedData: unavailable("L1Port.signTypedData"),
-	onAccountsChanged: () => () => {},
-	onChainChanged: () => () => {},
+const l1 = stackL1(target, (globalThis as { ethereum?: InjectedWallet }).ethereum)
+
+type Sessions = Promise<SessionPort>
+let sessionsLoad: Sessions | undefined
+/** The session module and the page's prover load on first use; proving files come from this page's own server. */
+const loadSessions = (): Sessions =>
+	(sessionsLoad ??= import("./session").then((m) =>
+		m.stackSessions({
+			manifest,
+			reads: l1.reads,
+			prover: m.proverFor(browserTimer),
+			artifacts: { kind: "gateway", urls: [location.origin] },
+		}),
+	))
+
+const sessions: SessionPort = {
+	open: async (a) => (await loadSessions()).open(a),
+	forget: async () => (await loadSessions()).forget(),
 }
+
 const aztec: AztecPort = {
 	balancesByLabel: unavailable("AztecPort.balancesByLabel"),
 	notesByLabel: unavailable("AztecPort.notesByLabel"),
@@ -44,7 +74,6 @@ const aztec: AztecPort = {
 	ragequit: unavailable("AztecPort.ragequit"),
 	exitPublic: unavailable("AztecPort.exitPublic"),
 }
-const sessions: SessionPort = { open: unavailable("SessionPort.open"), forget: unavailable("SessionPort.forget") }
 const exits: ExitPort = { tickets: unavailable("ExitPort.tickets"), settle: unavailable("ExitPort.settle") }
 const allowList: AllowListPort = {
 	current: unavailable("AllowListPort.current"),
@@ -56,7 +85,7 @@ const allowList: AllowListPort = {
 export const source: DataSource = {
 	mode: "stack",
 	deployment,
-	clock: { aztecNow: unavailable("ChainClock.aztecNow"), l1Now: unavailable("ChainClock.l1Now") },
+	clock: stackClock(l1.reads, target.nodeUrl),
 	timer: browserTimer,
 	l1,
 	sessions,
