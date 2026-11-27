@@ -39,6 +39,17 @@ export async function hubBindingAt(node: PublicStorageReader, hub: string, erc20
 	return value.isZero() ? undefined : value.toString()
 }
 
+/**
+ * The ASP registry the hub passes to its tokens, read as `hubBindingAt` reads a binding: the address
+ * sits first in its `PublicImmutable`'s `WithHash`. Zero for a generation without checked spends.
+ * Meaningful only for a hub of the committed artifact's class, whose layout names the slot.
+ */
+export async function hubRegistryAt(node: PublicStorageReader, hub: string): Promise<Fr> {
+	const slot = tokenBridgeHubArtifact.storageLayout.registry?.slot
+	if (!slot) throw new Error("the hub artifact declares no registry storage")
+	return node.getPublicStorageAt("latest", AztecAddress.fromStringUnsafe(hub), slot)
+}
+
 /** The hub's binding for an ERC-20, or undefined when it has not registered it. */
 export async function hubTokenFor(hub: ContractBase, erc20: string, from: string): Promise<string | undefined> {
 	const r = (await hub.methods

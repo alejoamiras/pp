@@ -20,7 +20,7 @@ package re-derives it rather than trusting a file.
 
 | File | Purpose |
 |---|---|
-| `client/` | The bridge client: the session and its keys, the sealed journal, the spend checks, `submit` and its resolver, claims, `records` and `recover`, and exits (`ragequitPayload`, `exitTickets`, `exitStatus`, `settle`). `createBridgeClient` wires them over the manifest's RPC and node and checks the deployment once. |
+| `client/` | The bridge client: the session and its keys, the sealed journal, the spend checks, `submit` and its resolver, claims, `records` and `recover`, and exits (`ragequitPayload`, `exitPublicPayload`, `exitPrivatePayload`, `exitTickets`, `exitStatus`, `settle`). `createBridgeClient` wires them over the manifest's RPC and node and checks the deployment once. |
 | `hub-l2.ts` | Reads of the L2 hub: `hubAt`, and an ERC-20's token binding through `token_for` or straight from public storage (`hubBindingAt`). |
 | `l1-receipt.ts` / `l1-to-l2-readiness.ts` | The resilient receipt wait, and when an L1→L2 message becomes consumable. |
 | `hub-token.ts` / `portal-address.ts` | The L2 token the hub derives for an ERC-20 (`LabelledToken`, `deployer = hub`, `salt = erc20`, the hub's ASP registry among its constructor arguments) and the portal clone the factory derives (salt = token). Both pinned against the on-chain derivations. |
@@ -56,7 +56,7 @@ are trusted beyond that.
 
 Fees: every L2 transaction the client builds pays through the SponsoredFPC: the claim, and with it
 the recipient's account deployment, which the wallet sends in the same transaction (`preflight`
-only simulates the sponsored path), each ragequit burn and each public exit. No option takes a fee
+only simulates the sponsored path), each ragequit burn and each public or private exit. No option takes a fee
 or a payment method, so the holder's own Fee Juice never pays: the fee payer is public, and paying
 from the account would link it to its bridge or to its exit ticket. This holds only where a
 sponsored FPC exists, which today means the local network and the testnet.
@@ -66,7 +66,14 @@ manifest's token and matches each to its own Outbox message, so identical exits 
 settle separately. `exitStatus` and `settle` key a ticket by its witness's `(epoch, leafId)`, never
 by content. `ragequitPayload` and `exitPublicPayload` build the hub's `ragequit` and `exit_public`
 for the holder's wallet to send, from the request as it was at the call, and refuse a payee whose
-checksum fails or whom the portal would never pay before building.
+checksum fails or whom the portal would never pay before building. `exitPrivatePayload` builds the
+hub's `exit_private`, which spends a label's notes under `unshield`'s registry check (the caller
+passes the label's path, for example from `@pp/label-paths`) and publishes a `PublicExitTicket`, so the
+three calls above serve it as a public exit (`kind: "public"` names the content, not an account). Paid
+through the SponsoredFPC, no public effect of its transaction names the holder; its amount, payee and
+timing stay public. It answers `STAGE_UNSUPPORTED`
+unless the deployment's hub and token are this commit's classes and the hub has a registry: one
+commit serves one generation.
 
 ## The local network
 

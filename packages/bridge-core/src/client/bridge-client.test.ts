@@ -1,5 +1,7 @@
 import { Fr } from "@aztec-labs/foundation/curves/bn254"
 import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
+import { getContractClassFromArtifact } from "@aztec-labs/stdlib/contract"
+import type { LabelPath } from "@pp/bridge-spec"
 import { type Address, type Hex, type PublicClient, toHex } from "viem"
 import { describe, expect, expectTypeOf, it, vi } from "vitest"
 import {
@@ -17,6 +19,7 @@ import {
 	randomRecipient,
 	VAULT,
 } from "../test/client-fakes"
+import { labelledTokenArtifact, tokenBridgeHubArtifact } from "../artifacts"
 import { type BridgeClient, bridgeClientOver, type ClientIo, clientIo, createBridgeClient } from "./bridge-client"
 import type { WaitClaimableOptions } from "./claim"
 import { BridgeClientError } from "./errors"
@@ -102,6 +105,11 @@ function setup(o: Setup = {}) {
 			async (_block: unknown, contract: { toString(): string }) =>
 				new Fr(BigInt(contract.toString()) === BigInt(HUB) ? 7n : 10n ** 18n),
 		),
+		// This commit's hub at HUB, its token everywhere else (the registry included, which need only exist).
+		getContract: vi.fn(async (address: { toString(): string }) => {
+			const artifact = BigInt(address.toString()) === BigInt(HUB) ? tokenBridgeHubArtifact : labelledTokenArtifact
+			return { address, currentContractClassId: (await getContractClassFromArtifact(artifact)).id }
+		}),
 		getL1ToL2MessageIndex: vi.fn(async () => undefined),
 		getBlockData: vi.fn(async () => undefined),
 		getL1ToL2MessageMembershipWitness: vi.fn(async () => undefined),
@@ -233,6 +241,7 @@ describe("createBridgeClient", () => {
 		expectTypeOf<Parameters<BridgeClient["records"]>>().toEqualTypeOf<[BridgeSession]>()
 		expectTypeOf<keyof Parameters<BridgeClient["ragequitPayload"]>[0]>().toEqualTypeOf<"payee" | "amount" | "label">()
 		expectTypeOf<keyof Parameters<BridgeClient["exitPublicPayload"]>[0]>().toEqualTypeOf<"payee" | "amount">()
+		expectTypeOf<keyof Parameters<BridgeClient["exitPrivatePayload"]>[0]>().toEqualTypeOf<"payee" | "amount" | "label" | "path">()
 		expectTypeOf<keyof Parameters<BridgeClient["exitTickets"]>[0]>().toEqualTypeOf<"payee" | "fromBlock">()
 	})
 
@@ -284,6 +293,16 @@ describe("createBridgeClient", () => {
 			built = build(setup().client, form)
 		}).not.toThrow()
 		await expect(built).rejects.toBeInstanceOf(BridgeClientError)
+	})
+
+	it("exitPrivatePayload builds from the path as called, not as the caller edits its siblings before it resolves", async () => {
+		const path: LabelPath & { siblings: bigint[] } = { index: 1, depth: 1, siblings: [5n, ...Array<bigint>(17).fill(0n)] }
+		const form = new FormModel({ payee: "0x000000000000000000000000000000000000bEEF", amount: 1n, label: 3n })
+		const built = setup().client.exitPrivatePayload(Object.assign(form, { path }))
+		path.siblings[0] = 6n
+		path.index = 0
+		const call = (await built).calls.find((c) => c.name === "exit_private")
+		expect(call?.args.slice(1, 7).map((x) => x.toBigInt())).toEqual([0xbeefn, 1n, 3n, 1n, 1n, 5n])
 	})
 
 	it("refuses a public exit when the deployment check fails", async () => {
