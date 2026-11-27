@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest"
 import { DEPLOYMENT, HUB, PORTAL, SENDER } from "../test/client-fakes"
 import type { ClientDeployment } from "./deployment"
 import { exitStatusOf, exitState } from "./exits"
-import { type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
+import { assertExitPayee, type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
 import { sponsoredFpcAddress } from "./payload"
 import type { ExitTicket } from "./types"
 
@@ -250,10 +250,25 @@ describe("ragequitPayload", () => {
 			(r) =>
 				[r.name, { payee: payeeOf(r.args.payee!), amount: BigInt(r.args.amount!), label: BigInt(r.args.label!) }, r.error] as const,
 		)
-	it.each([...refused, ["the portal as payee", { payee: PORTAL, amount: 1n, label: 1n }, "PayeeIsPortal"] as const])(
-		"refuses %s before building",
-		async (_, a, source) => {
-			await expect(ragequitPayload(D, a)).rejects.toMatchObject({ code: "SPEND_MISMATCH", source })
-		},
-	)
+	it.each([
+		...refused,
+		["the portal as payee", { payee: PORTAL, amount: 1n, label: 1n }, "PayeeIsPortal"] as const,
+		[
+			"a mixed-case payee whose checksum fails",
+			{ payee: "0x000000000000000000000000000000000000BeeF", amount: 1n, label: 1n },
+			"PayeeChecksum",
+		] as const,
+	])("refuses %s before building", async (_, a, source) => {
+		await expect(ragequitPayload(D, a)).rejects.toMatchObject({ code: "SPEND_MISMATCH", source })
+	})
+})
+
+describe("assertExitPayee", () => {
+	it.each([
+		["all lowercase", "0x000000000000000000000000000000000000beef"],
+		["all uppercase", "0x000000000000000000000000000000000000BEEF"],
+		["checksummed", "0x000000000000000000000000000000000000bEEF"],
+	] as const)("accepts a payee %s, as the address parser that encodes it does", (_, payee) => {
+		expect(() => assertExitPayee(PORTAL, payee)).not.toThrow()
+	})
 })

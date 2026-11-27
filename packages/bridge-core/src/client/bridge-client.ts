@@ -6,7 +6,7 @@ import type { StackManifest } from "../stack-manifest"
 import { guarded, translate } from "./boundary"
 import { abortable, type ClaimNode, claimPayload, type WaitClaimableOptions, waitClaimable } from "./claim"
 import { type ClientDeployment, type DeploymentNode, type DeploymentReader, namedDeployment, verifyDeployment } from "./deployment"
-import { BridgeClientError } from "./errors"
+import { exitPublicPayload } from "./exit-public"
 import { exitStatusOf, exitState } from "./exits"
 import { type ExitContext, type ExitNode, type ExitReader, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
 import type { KeyValueStore } from "./journal"
@@ -40,13 +40,14 @@ export interface BridgeClient {
 	records(s: BridgeSession): Promise<BridgeRecordView[]>
 	/**
 	 * The hub's `ragequit` of `amount` under `label` to `payee`, paid by the SponsoredFPC, for the
-	 * holder's wallet to send. Burn exact chunks only (`ragequitChunks`).
+	 * holder's wallet to send. Burn exact chunks only (`ragequitChunks`). `a` is read once, at the call.
 	 * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`
 	 */
 	ragequitPayload(a: { payee: Address; amount: bigint; label: bigint }): Promise<ExecutionPayload>
 	/**
-	 * The hub's `exit_public` of a public balance to `payee`.
-	 * @throws BridgeClientError `STAGE_UNSUPPORTED`: this client does not build it yet
+	 * The hub's `exit_public` of `amount` of the sender's public balance of the deployment's token to
+	 * `payee`. `a` is read once, at the call.
+	 * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`
 	 */
 	exitPublicPayload(a: { payee: Address; amount: bigint }): Promise<ExecutionPayload>
 	/** The deployment token's ragequit and public exit tickets from L2 block `fromBlock` on, from chain data alone. */
@@ -115,6 +116,19 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 	const recordsContext = async (): Promise<RecordsContext> => ({ deployment: await deployment(), reader, node, store })
 	const exitContext = async (): Promise<ExitContext> => ({ deployment: await deployment(), reader, node, receiptTimeoutMs })
 	const exits = <T>(f: (c: ExitContext) => Promise<T>) => guarded(async () => f(await exitContext()))
+	// `read` takes the request's fields by name at the call, before anything awaits: an app that
+	// reuses a mutable form object would otherwise get a payload other than the one its user
+	// confirmed. Named reads, not a spread, so a getter-backed form keeps working; a read that throws
+	// still rejects as the client's error.
+	const payload = <A>(read: () => A, build: (d: ClientDeployment, a: A) => Promise<ExecutionPayload>): Promise<ExecutionPayload> => {
+		let asCalled: A
+		try {
+			asCalled = read()
+		} catch (e) {
+			return Promise.reject(translate(e))
+		}
+		return guarded(async () => build((await exitContext()).deployment, asCalled))
+	}
 	return Object.freeze({
 		preflight: async (a) => preflight({ deployment: await deployment(), node, preflights }, a),
 		submit: (spend, l1, s, o) => submit(submitContext, spend, l1, s, o),
@@ -127,11 +141,8 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 		claimPayload: async (s, r) => claimPayload(await deployment(), s, r),
 		recover: async (s, recipient) => recover(await recordsContext(), s, recipient),
 		records: async (s) => records(await recordsContext(), s),
-		ragequitPayload: (a) => exits((c) => ragequitPayload(c.deployment, a)),
-		exitPublicPayload: () =>
-			exits(async () => {
-				throw new BridgeClientError("STAGE_UNSUPPORTED")
-			}),
+		ragequitPayload: (a) => payload(() => ({ payee: a.payee, amount: a.amount, label: a.label }), ragequitPayload),
+		exitPublicPayload: (a) => payload(() => ({ payee: a.payee, amount: a.amount }), exitPublicPayload),
 		exitTickets: (a) => exits((c) => exitTickets(c, a)),
 		exitStatus: (t) => exits(async (c) => exitStatusOf(await exitState(exitReads(c), t))),
 		settle: (t, l1) => exits((c) => settle(c, t, l1)),

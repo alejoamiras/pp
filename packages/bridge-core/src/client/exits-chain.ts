@@ -88,16 +88,27 @@ export function exitMessageHash(d: Pick<ClientDeployment, "hub" | "portal" | "ch
 }
 
 /**
+ * Refuses an exit payee before anything is built: a mixed-case address whose checksum fails, by
+ * the predicate of the parser that encodes it (which accepts all-lowercase and all-uppercase hex),
+ * and the portal, which the hub refuses because the portal never pays itself.
+ * @throws BridgeClientError `SPEND_MISMATCH` with source `PayeeChecksum` or `PayeeIsPortal`
+ */
+export function assertExitPayee(portal: Address, payee: Address): void {
+	if (!EthAddress.isAddress(payee)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeChecksum" })
+	if (isAddressEqual(payee, portal)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeIsPortal" })
+}
+
+/**
  * The hub's `ragequit` of `amount` under `label` to `payee`, paid by the SponsoredFPC, for the
  * holder's wallet to send. The burn takes the label's largest notes first; see `ragequitChunks`.
  * @throws BridgeClientError `SPEND_MISMATCH` naming the refused field in `source`: a payee that is
- * zero, wider than 160 bits or the portal (which would burn and never settle), an amount of zero or
- * of 2^128 or more, a label of zero or of the field modulus or more
+ * zero, wider than 160 bits, mixed-case with a failing checksum, or the portal (which the hub
+ * refuses), an amount of zero or of 2^128 or more, a label of zero or of the field modulus or more
  */
 export function ragequitPayload(d: ClientDeployment, a: { payee: Address; amount: bigint; label: bigint }): Promise<ExecutionPayload> {
 	return guarded(async () => {
 		ragequitContentV1(a)
-		if (isAddressEqual(a.payee, d.portal)) throw new BridgeClientError("SPEND_MISMATCH", { source: "PayeeIsPortal" })
+		assertExitPayee(d.portal, a.payee)
 		const args = [AztecAddress.fromStringUnsafe(d.token), EthAddress.fromString(a.payee), a.amount, new Fr(a.label)]
 		return sponsored(await callPayload(tokenBridgeHubArtifact, AztecAddress.fromStringUnsafe(d.hub), "ragequit", args))
 	})
