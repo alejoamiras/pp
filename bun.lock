@@ -257,6 +257,24 @@
     "@0xbow/privacy-pools-v2-sdk": {
       "viem": "2.57.1",
     },
+    "@aztec-labs/aztec.js": {
+      "zod": "4.6.7",
+    },
+    "@aztec-labs/entrypoints": {
+      "zod": "4.6.7",
+    },
+    "@aztec-labs/ethereum": {
+      "zod": "4.6.7",
+    },
+    "@aztec-labs/foundation": {
+      "zod": "4.6.7",
+    },
+    "@aztec-labs/stdlib": {
+      "zod": "4.6.7",
+    },
+    "@aztec-labs/world-state": {
+      "zod": "4.6.7",
+    },
     "vite": "^8.3.8",
     "ws": "8.21.0",
   },
@@ -273,7 +291,7 @@
     "vite": "^8.3.8",
     "vite-plugin-node-polyfills": "^0.28.0",
     "vitest": "^4.1.12",
-    "zod": "4.4.3",
+    "zod": "4.6.7",
   },
   "catalogs": {
     "pool": {
@@ -2015,7 +2033,7 @@
 
     "yocto-queue": ["yocto-queue@0.1.0", "", {}, "sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q=="],
 
-    "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
+    "zod": ["zod@4.6.7", "", {}, "sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg=="],
 
     "@0xbow/privacy-pools-v2-sdk/@noble/curves": ["@noble/curves@2.0.1", "", { "dependencies": { "@noble/hashes": "2.0.1" } }, "sha512-vs1Az2OOTBiP4q0pwjW5aF0xp9n4MxVrmkFBxc6EKZc6ddYx5gaZiAsZoq0uRRXWbi3AT/sBqn05eRPtn1JCPw=="],
 

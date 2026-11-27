@@ -18,7 +18,7 @@
 		"vite": "^8.3.8",
 		"vite-plugin-node-polyfills": "^0.28.0",
 		"vitest": "^4.1.12",
-		"zod": "4.4.3"
+		"zod": "4.6.7"
 	},
 	"catalogs": {
 		"pool": {
@@ -55,7 +55,25 @@
 			"viem": "2.57.1"
 		},
 		"vite": "^8.3.8",
-		"ws": "8.21.0"
+		"ws": "8.21.0",
+		"@aztec-labs/aztec.js": {
+			"zod": "4.6.7"
+		},
+		"@aztec-labs/entrypoints": {
+			"zod": "4.6.7"
+		},
+		"@aztec-labs/ethereum": {
+			"zod": "4.6.7"
+		},
+		"@aztec-labs/foundation": {
+			"zod": "4.6.7"
+		},
+		"@aztec-labs/stdlib": {
+			"zod": "4.6.7"
+		},
+		"@aztec-labs/world-state": {
+			"zod": "4.6.7"
+		}
 	},
 	"patchedDependencies": {
 		"@aztec-foundation/noir-acvm_js@6.0.0": "patches/@aztec-foundation%2Fnoir-acvm_js@6.0.0.patch",
