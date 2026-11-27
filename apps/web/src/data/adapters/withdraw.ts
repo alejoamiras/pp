@@ -30,8 +30,6 @@ import { checkedPath, spendPayloads, type TokenSendDeps } from "./token-sends"
 export interface WithdrawDeps extends TokenSendDeps {
 	/** Builds `exit_public` with bridge-core's payee and amount refusals; nothing on it writes. */
 	client: Pick<BridgeClient, "exitPublicPayload">
-	/** The account's public balance as the connected wallet reports it when called. */
-	publicBalance: AztecPort["publicBalance"]
 }
 
 /** What the user confirmed; every call in the payload must carry exactly these values. */

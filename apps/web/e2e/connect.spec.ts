@@ -65,10 +65,7 @@ test("a declined grant closes the bridge and token actions with a reason; granti
 	await signInToPool(page)
 	const bridge = page.locator(`[data-testid="note-row"][data-commitment="${note}"]`).getByRole("button", { name: "Bridge to Aztec" })
 	const publicRow = page.getByTestId("public-row")
-	// A stack build has no public withdrawal yet; Shield and the bridge carry the grant there.
-	const tokenActions = (stack ? ["Shield"] : ["Shield", "Withdraw to Ethereum"]).map((name) =>
-		publicRow.getByRole("button", { name, exact: true }),
-	)
+	const tokenActions = ["Shield", "Withdraw to Ethereum"].map((name) => publicRow.getByRole("button", { name, exact: true }))
 	const wallet = { profile: "plain", origin: run.testWalletOrigins.plain, account: actor.address } as const
 
 	const declined = await connectWallet(page, { ...wallet, whileVerifying: declineNextGrant })

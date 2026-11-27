@@ -83,6 +83,7 @@ describe("dispatch", () => {
 			["transferPrivate", ["transferPrivate", "notes"]],
 			["unshield", ["unshield", "notes"]],
 			["ragequit", ["ragequit", "notes"]],
+			["shield", ["shield", "publicBalance"]],
 			["exitPublic", ["exitPublic", "publicBalance"]],
 			["unshieldAndExit", ["unshield", "exitPublic", "notes"]],
 		]

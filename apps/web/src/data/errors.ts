@@ -108,7 +108,6 @@ const MESSAGES: Record<UiCode, string> = {
 	LABEL_ABSENT: "This label is not in the latest allow list, so nothing was sent.",
 	OVER_NOTE_CAP:
 		"This label's notes changed, and one transaction can no longer spend that amount, so nothing was sent. Check the amount and try again.",
-	OVER_PUBLIC_BALANCE: "Your public balance no longer covers that amount, so nothing was sent. Refresh, check the amount and try again.",
 	LIST_STALE: "The allow list is out of date, so nothing was sent. Wait for its next post.",
 	OVER_PUBLIC_BALANCE: "Your public balance no longer covers that amount, so nothing was sent. Refresh, check the amount and try again.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",

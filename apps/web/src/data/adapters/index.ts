@@ -40,7 +40,7 @@ function aztecAddress(value: string, field: string): AztecAddress {
 const deployment: Omit<Deployment, "decimals" | "symbol"> = {
 	id: `${manifest.chainId}:${manifest.bridge.portal.toLowerCase()}:${manifest.bridge.hub.toLowerCase()}`,
 	chainId: manifest.chainId,
-	stage: "2c",
+	stage: "2d",
 	portal: getAddress(manifest.bridge.portal),
 	hub: aztecAddress(manifest.bridge.hub, "bridge.hub"),
 	token: aztecAddress(manifest.bridge.token, "bridge.token"),
