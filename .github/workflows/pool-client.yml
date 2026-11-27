@@ -58,6 +58,7 @@ jobs:
               - '.github/actions/ppv2-fetch/**'
               - '.github/actions/setup-aztec/**'
               - '.github/actions/setup-bun/**'
+              - '.github/actions/setup-foundry/**'
               - '.github/actions/setup-playwright/**'
       - name: Override for manual dispatch
         if: github.event_name == 'workflow_dispatch'

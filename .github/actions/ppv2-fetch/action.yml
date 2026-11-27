@@ -29,12 +29,12 @@ outputs:
 runs:
   using: composite
   steps:
-    # The repository's one Foundry pin. pp-env reads forge from PP_FORGE, never from PATH.
+    # setup-foundry's script, from this action's directory: a nested `uses: ./…` resolves against
+    # the workspace, which in the nightly is the tested commit. pp-env reads forge from PP_FORGE,
+    # never from PATH.
     - name: Install Foundry 1.7.1
-      uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-      with:
-        version: "1.7.1"
-        cache: false
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/../setup-foundry/install.sh"
 
     - name: Resolve the checkout path and cache key
       id: paths
