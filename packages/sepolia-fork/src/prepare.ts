@@ -30,16 +30,44 @@ const FIAT_TOKEN_ABI = parseAbi([
 	"function balanceOf(address) view returns (uint256)",
 ])
 
+/**
+ * What `PortalFork.t.sol` reads, flat so Forge's typed JSON readers take each field: words as decimal
+ * strings, the 1x1 spend's eight signal rows as one array, its note data as parallel arrays.
+ */
 export type Fixture = {
 	block: number
 	vault: Address
 	usdc: Address
+	inbox: Address
 	factory: Address
 	portal: Address
-	user: Address
 	secretHash: Hex
-	amountOut: string
-	spend: PreparedSpend
+	/** Another valid secret hash, for the case that the proof binds the one it was made with. */
+	otherSecretHash: Hex
+	pA: string[]
+	pB0: string[]
+	pB1: string[]
+	pC: string[]
+	signals: string[]
+	noteHints: Hex[]
+	noteData: Hex[]
+}
+
+/** A random secret hash inside the field: 240 bits, never zero. */
+const randomSecretHash = (): Hex => numberToHex(BigInt(`0x${crypto.getRandomValues(new Uint8Array(30)).toHex()}`) + 1n, { size: 32 })
+
+function forgeFields(spend: PreparedSpend): Pick<Fixture, "pA" | "pB0" | "pB1" | "pC" | "signals" | "noteHints" | "noteData"> {
+	const [{ pA, pB, pC, pubSignals }, , notes] = spend.args
+	const words = (xs: readonly bigint[]) => xs.map((x) => x.toString())
+	return {
+		pA: words(pA),
+		pB0: words(pB[0]),
+		pB1: words(pB[1]),
+		pC: words(pC),
+		signals: words(pubSignals.flat()),
+		noteHints: notes.map((n) => n.hint),
+		noteData: notes.map((n) => n.data),
+	}
 }
 
 /** Where the Forge cases read the fixture; inside `out/fork`, the one path the fork profile may read. */
@@ -67,7 +95,7 @@ async function mintUsdc(fork: ForkAnvil, usdc: Address, to: ForkWallet, amount: 
 }
 
 /** A fresh factory for the real registry and vault, its USDC portal, and entries opened by its guardian. */
-async function bridgeSide(fork: ForkAnvil, run: RunContext): Promise<{ factory: Address; portal: Address }> {
+export async function bridgeSide(fork: ForkAnvil, run: RunContext): Promise<{ factory: Address; portal: Address }> {
 	const { abi, bytecode } = artifact("PortalFactory")
 	const guardian = await freshWriter(fork)
 	const args = [run.pins.aztec.registry, HUB_PLACEHOLDER, run.pins.pool.vault, LIFETIME_CAP, guardian.account.address]
@@ -142,7 +170,7 @@ export async function verifierAccepts(fork: ForkAnvil, verifier: Address, spend:
 export async function prepare(fork: ForkAnvil, run: RunContext): Promise<{ fixture: Fixture; path: string }> {
 	const user = await poolSide(fork, run)
 	const { factory, portal } = await bridgeSide(fork, run)
-	const secretHash = numberToHex(BigInt(`0x${crypto.getRandomValues(new Uint8Array(30)).toHex()}`) + 1n, { size: 32 })
+	const secretHash = randomSecretHash()
 	const spend = await timed(run.log, "spend proved", () =>
 		user.prepareSpend({ processor: portal, data: bridgeDataV1(secretHash), asset: run.pins.pool.usdc, amountOut: AMOUNT_OUT }),
 	)
@@ -155,20 +183,17 @@ export async function prepare(fork: ForkAnvil, run: RunContext): Promise<{ fixtu
 		block,
 		vault: pool.vault,
 		usdc: pool.usdc,
+		inbox: run.pins.bindings.inbox,
 		factory,
 		portal,
-		user: user.address,
 		secretHash,
-		amountOut: AMOUNT_OUT.toString(),
-		spend,
+		otherSecretHash: randomSecretHash(),
+		...forgeFields(spend),
 	}
 	const path = fixturePath(run.runId)
 	mkdirSync(dirname(path), { recursive: true })
 	run.cleanup.push(async () => rmSync(dirname(path), { recursive: true, force: true }))
-	writeFileSync(
-		path,
-		JSON.stringify(fixture, (_, v) => (typeof v === "bigint" ? toHex(v) : v), 2),
-	)
+	writeFileSync(path, JSON.stringify(fixture, null, 2))
 	run.log(`fixture written: ${relative(REPO_ROOT, path)}`)
 	return { fixture, path }
 }

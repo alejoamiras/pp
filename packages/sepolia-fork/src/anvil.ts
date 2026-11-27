@@ -11,19 +11,22 @@ export const FOUNDRY_VERSION = "1.7.1"
 /** What that anvil answers to `web3_clientVersion`; writers refuse a node that answers anything else. */
 export const ANVIL_CLIENT_VERSION = `anvil/v${FOUNDRY_VERSION}`
 
-/** The first `anvil` reporting the pinned version: on `PATH` (CI installs it there), then the repository's tool cache. */
-export function resolveAnvil(
-	candidates = [Bun.which("anvil"), join(homedir(), `.cache/pp/tools/foundry-${FOUNDRY_VERSION}/anvil`)],
+/** The first `tool` reporting the pinned version: on `PATH` (CI installs it there), then the repository's tool cache. */
+export function resolveFoundry(
+	tool: "anvil" | "forge",
+	candidates = [Bun.which(tool), join(homedir(), `.cache/pp/tools/foundry-${FOUNDRY_VERSION}/${tool}`)],
 ): string {
 	const tried: string[] = []
 	for (const bin of candidates) {
 		if (!bin || !existsSync(bin)) continue
 		const first = spawnSync(bin, ["--version"], { encoding: "utf8" }).stdout?.split("\n")[0] ?? ""
-		if (first === `anvil Version: ${FOUNDRY_VERSION}`) return bin
+		if (first === `${tool} Version: ${FOUNDRY_VERSION}`) return bin
 		tried.push(`${bin} (${first || "no version"})`)
 	}
-	throw new Error(`no anvil ${FOUNDRY_VERSION} found; tried ${tried.join(", ") || "nothing"}. Install Foundry ${FOUNDRY_VERSION}.`)
+	throw new Error(`no ${tool} ${FOUNDRY_VERSION} found; tried ${tried.join(", ") || "nothing"}. Install Foundry ${FOUNDRY_VERSION}.`)
 }
+
+export const resolveAnvil = (candidates?: (string | null)[]) => resolveFoundry("anvil", candidates)
 
 export interface ForkAnvil {
 	/** The loopback URL of the anvil this run spawned; the only URL a writer binds to. */
@@ -65,10 +68,13 @@ export async function startForkAnvil(o: StartOptions): Promise<ForkAnvil> {
 		// Quiet, so the endpoint never reaches the log.
 		["--silent"],
 	].flat()
-	const owned = spawnOwned(o.bin ?? resolveAnvil(), args, join(o.dataDir, "anvil.log"), {
-		PATH: process.env.PATH ?? "",
-		HOME: o.dataDir,
-	})
+	const owned = spawnOwned(
+		o.bin ?? resolveAnvil(),
+		args,
+		join(o.dataDir, "anvil.log"),
+		{ PATH: process.env.PATH ?? "", HOME: o.dataDir },
+		{ release: [{ port, service: "fork-anvil", owner: o.runId }] },
+	)
 	o.cleanup.push(async () => {
 		if (!(await killGroup(owned))) throw new Error(`fork anvil's process group ${owned.child.pid} survived SIGKILL`)
 	})

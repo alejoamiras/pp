@@ -13,6 +13,8 @@ import { ENDPOINT_RETRIES, hostOf, httpRpc } from "./rpc.ts"
 import { assertFork } from "./writer.ts"
 
 export const RUNS_DIR = join(homedir(), ".cache/pp/fork/runs")
+/** The whole run, preflight to teardown; past it the run fails and tears down whatever it started. */
+export const RUN_DEADLINE_MS = 10 * 60_000
 
 export type Leftovers = { groups: number; rows: number; dirs: number }
 
@@ -34,6 +36,7 @@ type RunOptions = {
 	/** Runs on the live fork after the preflight, before teardown; `run.cleanup` unwinds with the fork's. */
 	body?: (fork: ForkAnvil, run: RunContext) => Promise<void>
 	log?: (line: string) => void
+	deadlineMs?: number
 }
 
 export type RunReport = { finalized: bigint; leftovers: Leftovers }
@@ -92,10 +95,20 @@ export async function runFork(o: RunOptions): Promise<RunReport> {
 	run.cleanup.push(() => releasePorts(runId))
 	let finalized: bigint | undefined
 	let failure: unknown
+	const ms = o.deadlineMs ?? RUN_DEADLINE_MS
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const expired = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error(`the run passed its ${ms / 1000} s deadline`)), ms)
+	})
+	const work = preflightAndBody(o, run)
+	// Past the deadline the work is abandoned to teardown, which kills the processes it is waiting on.
+	work.catch(() => {})
 	try {
-		finalized = await preflightAndBody(o, run)
+		finalized = await Promise.race([work, expired])
 	} catch (err) {
 		failure = err
+	} finally {
+		clearTimeout(timer)
 	}
 	await run.cleanup.run().catch((err: unknown) => {
 		failure ??= err

@@ -78,8 +78,8 @@ with warm package and toolchain caches.
 | Pool client, unit | `bun run --cwd packages/pool-client test` and `test:node` | 10 s |
 | Web e2e (sandbox boot, both builds, Playwright) | `bun run --cwd apps/web e2e` | 4 min |
 | Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |
-| Sepolia fork, unit | `bun run --cwd packages/sepolia-fork test` | 1 s |
-| Sepolia fork, against Sepolia | `SEPOLIA_RPC_URL=<public endpoint with archive state> bun run --cwd packages/sepolia-fork test:net`, then `run` | 6 s · 5 s |
+| Sepolia fork, unit | `bun run --cwd packages/sepolia-fork test` | 4 s |
+| Sepolia fork, against Sepolia | `SEPOLIA_RPC_URL=<public endpoint with archive state> bun run --cwd packages/sepolia-fork test:net`, then `run` after `forge build` in `contracts/bridge/evm` (`run --prepare-only` stops before Forge) | 14 s · 5 min 15 s (the pool user's sync 4 min 15 s) |
 
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row
 the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml`,
@@ -90,7 +90,8 @@ Suites too slow for a pull request go in `SUITES` in [`scripts/nightly.ts`](scri
 `main`, so a lane adds its deep suite in its own branch; dispatch the workflow with a `ref` to test
 another. A suite that passes no test fails. The L1 fuzz and invariant suites are
 `contracts/bridge/evm/scripts/nightly.sh` at that package's `nightly` Foundry profile; local-stack's
-32-minute idle case is its `test:integration:long`.
+32-minute idle case is its `test:integration:long`; the Sepolia fork suite is sepolia-fork's `run`,
+against the keyless public endpoint committed in that file.
 
 ## Working in this repo
 

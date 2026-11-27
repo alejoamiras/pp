@@ -42,12 +42,19 @@ async function main(argv: string[]): Promise<number> {
 		if (command === "pins") await pins(endpoint, rest[0])
 		else {
 			// Loaded only for a real run: the pool SDK takes seconds to import, and the skip line should not.
-			const [{ runFork }, { prepare }] = await Promise.all([import("./run.ts"), import("./prepare.ts")])
+			const [{ runFork }, { prepare }, { runForkCases }] = await Promise.all([
+				import("./run.ts"),
+				import("./prepare.ts"),
+				import("./forge.ts"),
+			])
 			await runFork({
 				endpoint,
 				body: async (fork, run) => {
-					await prepare(fork, run)
-					if (!rest.includes("--prepare-only")) throw new Error("the Forge cases are not wired yet; run with --prepare-only")
+					const { fixture, path } = await prepare(fork, run)
+					if (rest.includes("--prepare-only")) return
+					const { dataDir, cleanup } = run
+					const passed = await runForkCases({ url: fork.url, block: fixture.block, fixture: path, dataDir, cleanup })
+					run.log(`${passed} fork cases passed`)
 				},
 			})
 		}
@@ -60,4 +67,5 @@ async function main(argv: string[]): Promise<number> {
 	}
 }
 
-process.exitCode = await main(process.argv.slice(2))
+// exit, not exitCode: work abandoned at the deadline must not hold the process open after teardown.
+process.exit(await main(process.argv.slice(2)))

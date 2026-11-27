@@ -50,3 +50,11 @@ runs = 5000
 
 [profile.nightly.invariant]
 depth = 500
+
+# test/PortalFork.t.sol, run only by packages/sepolia-fork against the anvil it owns. The cases read that
+# runner's fixture and nothing else; Forge's RPC cache stays off so a block height reused by a fresh fork
+# never serves an earlier run's state.
+[profile.fork]
+ffi = false
+no_storage_caching = true
+fs_permissions = [{ access = "read", path = "./out/fork" }]
