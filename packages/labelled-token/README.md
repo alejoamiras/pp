@@ -30,9 +30,10 @@ sender, unless the pair already shares an interactive handshake (see below).
 
 - `.` ([`src/index.ts`](src/index.ts)): the artifact and its type. Browser-safe; nothing Node-only is
   reachable from it.
-- `./testing` ([`test/net/testing.ts`](test/net/testing.ts)): Node-only helpers for another package's
-  network suite: deploy the token with its test minter and a real registry, post roots, move the
-  birth intake, shield, and read the announcement, the `ShieldDebited` log and a tx's nullifiers.
+- `./testing` ([`test/net/testing.ts`](test/net/testing.ts)): helpers for another package's network
+  suite, run under Bun like this package's own: deploy the token with its test minter and a real
+  registry, post roots, move the birth intake, shield, and read the announcement, the `ShieldDebited`
+  log and a tx's nullifiers.
 - `scripts/gates.ts`: `bun run gates` profiles every private function into `bench/gates.json`;
   `gates:check` fails on drift or on a function over `bench/budget.json`; `gates -- --stock` profiles
   the stock aztec-standards Token into `bench/stock-gates.json`.

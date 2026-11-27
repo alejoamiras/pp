@@ -151,8 +151,8 @@ describe("births", () => {
 		expect(await labels(carol.token, carol.from)).toEqual([])
 		expect((await announcements(desk.wallet, deployed.token.address, intake)).length).toBe(1)
 
-		// As after a reverted unshield (S18): the dropped deliveries' sequence nullifiers block the
-		// owner's next constrained send until the revert is final. An attached network may be there.
+		// Each constrained delivery proves its predecessor's sequence nullifier, which the revert dropped,
+		// so the owner's next one fails until the revert is final. An attached network may be there.
 		if (inject("ownsNetwork")) {
 			await expect(carol.token.methods.shield(5n).send(sendOpts(carol) as never)).rejects.toThrow(/reading an unknown nullifier/)
 		}
@@ -210,5 +210,8 @@ describe("births: approval", () => {
 		expect((await land(base.node, proven)).executionResult).toBe(TxExecutionResult.REVERTED)
 		expect(await publicBalance(bob.token, bob.from)).toBe(34n)
 		expect(await values(bob.token, bob.from, born.label)).toEqual([10n])
+		// An exact chunk delivers no change, so the dropped sequence nullifier does not block it.
+		await bob.token.methods.unshield(10n, born.label, approved.path(born.label)).send(sendOpts(bob) as never)
+		await settledPublic(bob, 44n)
 	})
 })

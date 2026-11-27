@@ -1,5 +1,6 @@
-// Shields and the birth-origin notes they create. TXE delivers the announcement to the intake's event
-// store, so a test reads the secret the way the bot does.
+// Shields and the birth-origin notes they create. A contract call's `random` is answered by the TXE
+// server, out of `OracleMock`'s reach, so a test reads the secret from the announcement TXE delivers to
+// the intake's event store, as the bot does.
 use crate::{
     LabelledToken,
     note::ORIGIN_BIRTH,
@@ -66,7 +67,6 @@ pub struct Birth {
 unconstrained fn announcements(s: Setup, intake: AztecAddress) -> BoundedVec<Birth, 5> {
     // A utility call runs the token's sync, which discovers the intake's messages.
     let _ = balance(s, intake);
-    // The signature the intake's client queries by.
     let selector = EventSelector::from_signature("BirthAnnouncement(Field,Field,(Field),u128)");
     let raw = private_events(selector, s.token, intake);
     let mut out = BoundedVec::new();
@@ -256,8 +256,8 @@ fn birth_separators_distinct_from_aztec_nr() {
         DOM_SEP__PROTOCOL_NULLIFIER,
         DOM_SEP__PRIVATE_INITIALIZATION_NULLIFIER,
         DOM_SEP__PUBLIC_INITIALIZATION_NULLIFIER,
-        // aztec-nr's own, crate-private upstream: initialization, constrained message, single-use
-        // claim, tx and authwit nullifiers, and note randomness.
+        // aztec-nr's own, crate-private upstream (v6.0.0 `test/domain_separators.nr`): initialization,
+        // constrained message, single-use claim, tx and authwit nullifiers, and note randomness.
         1653084894,
         3723577546,
         1465998995,

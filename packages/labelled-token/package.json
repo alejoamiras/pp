@@ -5,11 +5,7 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
-		"./testing": {
-			"types": "./test/net/testing.ts",
-			"bun": "./test/net/testing.ts",
-			"node": "./test/net/testing.ts"
-		}
+		"./testing": "./test/net/testing.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.scripts.json",
