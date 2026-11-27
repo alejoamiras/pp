@@ -4,6 +4,7 @@ import { useApp } from "../../app/context"
 import { type Live, useLive } from "../../app/live"
 import type { PoolNoteView } from "../../data/stack-types"
 import type { BridgeMachine } from "../../data/bridge-machine"
+import { chainName } from "../../data/chain"
 import { codeOf, messageOf, type UiCode } from "../../data/errors"
 import { bridgeView } from "../../data/model"
 import { parseAmount } from "../../data/parse"
@@ -80,7 +81,12 @@ function SenderCheck({ now, sender }: { now: Live; sender: Address | null }) {
 					<ActionButton onClick={chooseDemo}>Send from the local dev account</ActionButton>
 					{refused ? <span>{messageOf(refused)}</span> : null}
 				</span>
-			) : null}
+			) : (
+				<span className="mt-2 block">
+					That account sends the bridge's Ethereum transaction and pays its gas, so it needs its own ETH on{" "}
+					{chainName(source.deployment.chainId)}.
+				</span>
+			)}
 		</Callout>
 	)
 }
