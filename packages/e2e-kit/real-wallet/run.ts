@@ -12,6 +12,13 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { leftovers } from "./inventory"
 
+const args = process.argv.slice(2).filter((a) => a !== "--")
+// agent.sh reads a leading `reap` as its own command, which stops this checkout's other runs.
+if (args[0] === "reap") {
+	console.error("[real-wallet] `reap` is agent.sh's command, not a Playwright argument; run agent.sh reap directly")
+	process.exit(2)
+}
+
 const kit = join(dirname(fileURLToPath(import.meta.url)), "..")
 const parent = process.env.PP_E2E_STATE_DIR || join(kit, ".e2e-state")
 mkdirSync(parent, { recursive: true })
@@ -21,7 +28,6 @@ const stateDir = mkdtempSync(join(parent, "real-wallet-"))
 const { PP_E2E_KEEP: _keep, PP_E2E_ATTACH: _attach, ...inherited } = process.env
 const env: NodeJS.ProcessEnv = { ...inherited, PP_E2E_STATE_DIR: stateDir, PP_E2E_MODE: "stack", PP_E2E_WALLET: "real" }
 
-const args = process.argv.slice(2).filter((a) => a !== "--")
 const run = spawnSync("bash", [join(kit, "scripts/e2e/agent.sh"), ...args], { stdio: "inherit", env })
 const status = run.status ?? 1
 const left = leftovers(stateDir)

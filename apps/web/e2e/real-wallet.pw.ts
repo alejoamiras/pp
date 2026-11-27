@@ -109,8 +109,12 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 	).toEqual([])
 
 	// Recorded, not asserted: what the wallet shows for the token is a finding, never a nightly failure.
-	const imported = await rw.driver.importToken(s.manifest.bridge.token)
-	const total = "added" in imported ? `${await rw.driver.tokenTotal(s.symbol)} ${s.symbol}` : `not imported: ${imported.refused}`
+	const total = await rw.driver
+		.importToken(s.manifest.bridge.token)
+		.then(async (imported) =>
+			"added" in imported ? `${await rw.driver.tokenTotal(s.symbol)} ${s.symbol}` : `not imported: ${imported.refused}`,
+		)
+		.catch((e: Error) => `not observed: ${e.message.split("\n")[0]}`)
 	testInfo.annotations.push({ type: "wallet token total", description: `${total}; the app shows ${shown}` })
 	rw.log(`wallet token total ${total}; the app shows ${shown}`)
 })
