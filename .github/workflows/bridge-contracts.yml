@@ -66,6 +66,8 @@ jobs:
               # labelled-token's dependency library, named as the graph pin requires.
               - 'packages/bridge-core/src/**'
               - 'packages/bridge-core/package.json'
+              - 'packages/label-paths/src/**'
+              - 'packages/label-paths/package.json'
               - 'vitest.base.ts'
               - 'package.json'
               - 'bun.lock'
