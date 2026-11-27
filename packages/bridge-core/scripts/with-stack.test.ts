@@ -86,6 +86,12 @@ describe("with-stack", () => {
 		30_000,
 	)
 
+	it("lets a process the command started finish exiting before calling it residue", async () => {
+		const r = await withStack("ready", ["sleep 0.5 &"])
+		expect(r.code).toBe(0)
+		expect(r.output).not.toContain("residue")
+	}, 30_000)
+
 	it("kills and reports a process a command leaves behind when it exits", async () => {
 		const r = await withChild("sleep 300 & echo child $!", false)
 		expect(r.code).toBe(1)
