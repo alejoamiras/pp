@@ -1,9 +1,9 @@
 name: Setup Playwright
-description: Restore the Playwright browser cache keyed on a workspace's pinned version, then install Chromium with its system deps.
+description: Restore the Playwright browser cache keyed on the Playwright version a workspace installed, then install Chromium with its system deps.
 
 inputs:
   package-dir:
-    description: The workspace whose Playwright pin and binary are used, relative to the repository root.
+    description: The workspace whose installed Playwright keys the cache and installs Chromium, relative to the repository root.
     default: packages/e2e-kit
   cache-save:
     description: >
@@ -15,12 +15,26 @@ inputs:
 runs:
   using: composite
   steps:
+    # The installed version, not the manifest: a `catalog:` spec stays the same when the catalog
+    # moves Playwright to a release with new browsers.
+    - name: Read the installed Playwright version
+      id: version
+      shell: bash
+      env:
+        PLAYWRIGHT: ${{ inputs.package-dir }}/node_modules/.bin/playwright
+      run: |
+        out=$("$PLAYWRIGHT" --version)
+        if [[ ! $out =~ ^Version\ ([0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*)$ ]]; then
+          echo "setup-playwright: unexpected version output: $out" >&2
+          exit 1
+        fi
+        echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
     - name: Restore the browser cache
       id: restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles(format('{0}/package.json', inputs.package-dir)) }}
+        key: ${{ runner.os }}-playwright-${{ steps.version.outputs.version }}
         restore-keys: |
           ${{ runner.os }}-playwright-
     # The browser download is skipped on a cache hit; the OS deps are installed either way (they
