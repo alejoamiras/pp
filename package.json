@@ -16,6 +16,7 @@
 		"test:ci-gating": "BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun test scripts/ci-cd/",
 		"demo": "bun packages/local-stack/src/cli.ts demo",
 		"demo:prepare": "bun packages/local-stack/src/prepare.ts",
+		"demo:smoke": "bun packages/bridge-core/scripts/demo-smoke.ts",
 		"ragequit": "bun packages/bridge-core/scripts/ragequit.ts",
 		"nightly": "bun scripts/nightly.ts",
 		"baseline:complexity": "bun scripts/complexity-baseline/generate.ts",
