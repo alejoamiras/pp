@@ -43,7 +43,8 @@ async function scratchFile(c: Ctx, scratchHome: string, runId: string): Promise<
 	if (!own.expected) throw new Error(`${OWN} has no expected section; commit it from \`addresses\` first`)
 	writeScratch(c, {
 		...own,
-		network: { ...own.network, l1Rpc: c.forkUrl, aspPort },
+		// The live send endpoint would carry a fork-signed transaction to Sepolia.
+		network: { ...own.network, l1Rpc: c.forkUrl, l1SendRpc: c.forkUrl, aspPort },
 		expected: expectedOf(addresses, own.expected.amounts),
 	})
 	return addresses
@@ -90,7 +91,14 @@ async function stranger(c: Ctx) {
 		aspRegistry: pool.aspRegistry,
 		deployBlock: BigInt(pool.deployBlock),
 	}
-	const user = await sepoliaPoolUser({ rpcUrl: c.forkUrl, chainId: SEPOLIA, deployment, aspUrl: pool.aspApiUrl, key: key as Hex })
+	const user = await sepoliaPoolUser({
+		rpcUrl: c.forkUrl,
+		sendRpcUrl: c.forkUrl,
+		chainId: SEPOLIA,
+		deployment,
+		aspUrl: pool.aspApiUrl,
+		key: key as Hex,
+	})
 	await user.registerKeystore()
 	return { user, asset: pool.asset, note }
 }

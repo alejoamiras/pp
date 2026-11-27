@@ -25,7 +25,8 @@ const isLoopback = (u: string) => URL.canParse(u) && new URL(u).protocol === "ht
 export const chainOf = (mode: Mode): number => (mode.kind === "rehearse" ? LOCAL : SEPOLIA)
 
 /**
- * The file's endpoints are the mode's. Live: pinned URLs on Sepolia. Rehearse: chain 31337 on loopback,
+ * The file's endpoints are the mode's. Live: pinned URLs on Sepolia, a send endpoint required. A
+ * rehearsal's send endpoint, when it names one, is loopback. Rehearse: chain 31337 on loopback,
  * at exactly the L1 and node URLs of the stack manifest named in argv. Rehearse-fork: Sepolia's id on
  * the loopback URL named in argv, for L1 commands only: a fork has no Aztec node of its own, so an L2
  * command would reach the real testnet. That the URL serves the pinned anvil is {@link assertForkNode}'s
@@ -37,10 +38,11 @@ export function assertTransport(d: TestnetDeployment, mode: Mode, usesL2: boolea
 	if (n.l1ChainId !== chainOf(mode))
 		throw new GuardError("transport", `the file names chain ${n.l1ChainId}, this mode signs on ${chainOf(mode)}`)
 	if (mode.kind === "live") {
-		if (!isPinned("l1Rpc", n.l1Rpc)) throw new GuardError("transport", `${n.l1Rpc} is not a pinned L1 URL`)
-		if (!isPinned("aztecNode", n.aztecNode)) throw new GuardError("transport", `${n.aztecNode} is not a pinned node URL`)
+		assertPinned(n)
 		return
 	}
+	if (n.l1SendRpc !== undefined && !isLoopback(n.l1SendRpc))
+		throw new GuardError("transport", `a rehearsal's L1 send endpoint must be loopback, not ${n.l1SendRpc}`)
 	if (mode.kind === "rehearse-fork") {
 		if (usesL2)
 			throw new GuardError(
@@ -54,6 +56,14 @@ export function assertTransport(d: TestnetDeployment, mode: Mode, usesL2: boolea
 	if (!isLoopback(n.l1Rpc)) throw new GuardError("transport", `a rehearsal's L1 must be loopback, not ${n.l1Rpc}`)
 	if (usesL2 && !isLoopback(n.aztecNode)) throw new GuardError("transport", `a rehearsal's node must be loopback, not ${n.aztecNode}`)
 	assertStackEndpoints(n, mode.manifest)
+}
+
+/** A live run's endpoints are each exactly a pinned URL, the send endpoint included. */
+function assertPinned(n: TestnetDeployment["network"]): void {
+	if (!isPinned("l1Rpc", n.l1Rpc)) throw new GuardError("transport", `${n.l1Rpc} is not a pinned L1 URL`)
+	if (n.l1SendRpc === undefined || !isPinned("l1SendRpc", n.l1SendRpc))
+		throw new GuardError("transport", `${n.l1SendRpc ?? "no l1SendRpc"} is not the pinned L1 send URL`)
+	if (!isPinned("aztecNode", n.aztecNode)) throw new GuardError("transport", `${n.aztecNode} is not a pinned node URL`)
 }
 
 function assertStackEndpoints(n: TestnetDeployment["network"], manifest: string): void {

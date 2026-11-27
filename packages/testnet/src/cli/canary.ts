@@ -20,7 +20,8 @@ import { GuardError, type Mode, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { loopback } from "../network"
 import { CanaryError, CanaryReport, outcomeOf } from "../report"
-import { cliArgs, report as emit, guarded, loadDeployment, logLine, main, runDir } from "./common"
+import { journalTo } from "@pp/pp-env/send-path"
+import { cliArgs, report as emit, guarded, loadDeployment, logLine, main, runDir, sendLogPath } from "./common"
 import { assertOwnTarget } from "./context"
 import { l1Wallet } from "./wallet"
 
@@ -61,7 +62,13 @@ async function canary(file: string, mode: Mode, a: Extract<CanaryArgs, { kind: "
 	const owner = l1AddressOf(ownerKey)
 	if (!isAddressEqual(owner, d.expected.canaryOwner))
 		throw new GuardError("account", `the owner key is for ${owner}, the file expects ${d.expected.canaryOwner}`)
-	const sender = l1Wallet(d, keys.CANARY_SENDER_KEY as Hex, "canary sender", d.expected.canarySender)
+	const sender = l1Wallet(
+		d,
+		keys.CANARY_SENDER_KEY as Hex,
+		"canary sender",
+		d.expected.canarySender,
+		journalTo(sendLogPath(d, "canary", mode)),
+	)
 	if (isAddressEqual(sender.account.address, owner)) throw new GuardError("account", "the canary sender is the owner")
 	const base = exitContext(g, mode, sender, r, s)
 	const spendIo = liveSpendIo({
@@ -80,7 +87,7 @@ async function settle(file: string, mode: Mode, r: CanaryReport, s: State): Prom
 	const g = await guarded(file, mode, SECTIONS, true)
 	assertOwnTarget(g.d)
 	const key = readKeys(RUN_KEYS["canary-settle"], mode, { env: process.env }, l1AddressOf).CANARY_SENDER_KEY as Hex
-	const sender = l1Wallet(g.d, key, "canary sender", g.d.expected.canarySender)
+	const sender = l1Wallet(g.d, key, "canary sender", g.d.expected.canarySender, journalTo(sendLogPath(g.d, "canary", mode)))
 	await settleListed(exitContext(g, mode, sender, r, s))
 }
 

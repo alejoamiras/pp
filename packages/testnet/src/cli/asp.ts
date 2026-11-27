@@ -1,7 +1,3 @@
-// asp <deployment file> --owner <address> [--owner <address>] [--rehearse-fork <url>]
-// Runs the own pool's mock ASP on the file's loopback port until SIGINT or SIGTERM: it approves only
-// the deposits of the owners named, each the file's canary owner or its demo owner, posts each grown
-// set's root with the postman key, and serves reads only.
 import { claimRows, releaseNamed } from "@pp/run-isolation/ports"
 import { type Address, getAddress, isAddress, isAddressEqual } from "viem"
 import { l1AddressOf } from "../accounts"
@@ -9,7 +5,8 @@ import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { SEPOLIA } from "../network"
 import { assertOwnTarget } from "./context"
-import { cliArgs, guarded, logLine, main, report } from "./common"
+import { cliArgs, guarded, logLine, main, report, sendLogPath } from "./common"
+import { sendRpcOf } from "./wallet"
 
 const SERVICE = "pp-testnet-asp"
 
@@ -46,6 +43,8 @@ await main(async () => {
 	try {
 		const asp = await startMockAsp({
 			rpcUrl: d.network.l1Rpc,
+			sendRpcUrl: sendRpcOf(d),
+			journalPath: sendLogPath(d, "asp", mode),
 			chainId: SEPOLIA,
 			postmanKey,
 			deployment: { accessRouter, aspRegistry, pool: poolVault, entrypoint, deployBlock },

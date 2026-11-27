@@ -32,6 +32,8 @@ const REHEARSE: Mode = { kind: "rehearse", manifest: "/m.json" }
 const FORK: Mode = { kind: "rehearse-fork", url: "http://127.0.0.1:1" }
 
 const withNetwork = (n: Partial<TestnetDeployment["network"]>): TestnetDeployment => ({ ...own, network: { ...own.network, ...n } })
+/** `own` moved off the public chains, without the live send endpoint a rehearsal file never carries. */
+const offline = (n: Partial<TestnetDeployment["network"]>): TestnetDeployment => withNetwork({ l1SendRpc: undefined, ...n })
 /** A stack manifest at `n`'s endpoints, in a scratch directory; returns its path. */
 const stackManifest = (n: TestnetDeployment["network"]): string => {
 	const path = join(scratchHome(), "manifest.json")
@@ -116,23 +118,28 @@ describe("the guards", () => {
 			refusedBy("transport"),
 		)
 		expect(() => assertTransport(withNetwork({ aztecNode: "https://evil.example" }), LIVE, true)).toThrow(refusedBy("transport"))
-		const local = withNetwork({ l1ChainId: 31337, l1Rpc: "http://127.0.0.1:8545", aztecNode: "http://127.0.0.1:8080" })
+		expect(() => assertTransport(offline({}), LIVE, true)).toThrow(/no l1SendRpc/)
+		expect(() => assertTransport(withNetwork({ l1SendRpc: own.network.l1Rpc }), LIVE, true)).toThrow(/pinned L1 send URL/)
+		expect(() => assertTransport(own, LIVE, true)).not.toThrow()
+		const local = offline({ l1ChainId: 31337, l1Rpc: "http://127.0.0.1:8545", aztecNode: "http://127.0.0.1:8080" })
 		const stack: Mode = { kind: "rehearse", manifest: stackManifest(local.network) }
 		expect(() => assertTransport(local, stack, true)).not.toThrow()
 		expect(() => assertTransport(local, LIVE, true)).toThrow(refusedBy("transport"))
 		expect(() => assertTransport(own, stack, true)).toThrow(refusedBy("transport"))
 		const fork: Mode = { kind: "rehearse-fork", url: "http://127.0.0.1:9545" }
-		expect(() => assertTransport(withNetwork({ l1Rpc: "http://127.0.0.1:9545" }), fork, false)).not.toThrow()
+		expect(() => assertTransport(offline({ l1Rpc: "http://127.0.0.1:9545" }), fork, false)).not.toThrow()
+		expect(() => assertTransport(offline({ l1Rpc: fork.url, l1SendRpc: fork.url }), fork, false)).not.toThrow()
+		expect(() => assertTransport(withNetwork({ l1Rpc: fork.url }), fork, false)).toThrow(/send endpoint must be loopback/)
 		expect(() => assertTransport(own, fork, false)).toThrow(refusedBy("transport"))
 	})
 
 	it("refuses every L2 command on a fork, whose node would be the real testnet's", () => {
 		const fork: Mode = { kind: "rehearse-fork", url: "http://127.0.0.1:9545" }
-		expect(() => assertTransport(withNetwork({ l1Rpc: fork.url }), fork, true)).toThrow(/local stack with --rehearse/)
+		expect(() => assertTransport(offline({ l1Rpc: fork.url }), fork, true)).toThrow(/local stack with --rehearse/)
 	})
 
 	it("holds a stack rehearsal to the L1 and node of the manifest named in argv", () => {
-		const local = withNetwork({ l1ChainId: 31337, l1Rpc: "http://127.0.0.1:8545", aztecNode: "http://127.0.0.1:8080" })
+		const local = offline({ l1ChainId: 31337, l1Rpc: "http://127.0.0.1:8545", aztecNode: "http://127.0.0.1:8080" })
 		const other = (n: Partial<TestnetDeployment["network"]>): Mode => ({
 			kind: "rehearse",
 			manifest: stackManifest({ ...local.network, ...n }),

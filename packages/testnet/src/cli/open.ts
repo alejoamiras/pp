@@ -6,7 +6,8 @@ import { PORTAL_FACTORY_ABI, PUBLIC_CHAIN_TIMING } from "@pp/bridge-core"
 import { formatEther, isAddress, isAddressEqual } from "viem"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
-import { cliArgs, guarded, main, report } from "./common"
+import { journalTo } from "@pp/pp-env/send-path"
+import { cliArgs, guarded, main, report, sendLogPath } from "./common"
 import { assertOwnTarget, openContextOf } from "./context"
 import { l1AddressOf } from "../accounts"
 import { l1Wallet } from "./wallet"
@@ -22,7 +23,7 @@ await main(async () => {
 	if (!factory || !isAddress(factory) || !isAddressEqual(factory, d.bridge.factory))
 		throw new GuardError("factory", `--factory must be the file's factory ${d.bridge.factory}`)
 	const { GUARDIAN_KEY } = readKeys(RUN_KEYS.open, mode, { env: process.env }, l1AddressOf)
-	const guardian = l1Wallet(d, GUARDIAN_KEY as `0x${string}`, "guardian", d.expected.guardian)
+	const guardian = l1Wallet(d, GUARDIAN_KEY as `0x${string}`, "guardian", d.expected.guardian, journalTo(sendLogPath(d, "open", mode)))
 	const [gas, fees, balance] = await Promise.all([
 		l1.estimateContractGas({
 			address: d.bridge.factory,

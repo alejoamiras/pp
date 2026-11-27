@@ -21,6 +21,14 @@ file's own endpoint. The files pin the keyless Tenderly gateway, which keeps ful
 endpoint keeps about 34 hours. `@pp/testnet/schema` exports the file's schema without Node or key-file
 imports, for builds that read a deployment file.
 
+Every L1 send goes to `network.l1SendRpc`, a second pinned endpoint, and every other call to `l1Rpc`:
+the Tenderly gateway refuses sends under load. A live run refuses a file whose send endpoint is missing or
+not pinned, and checks that it serves Sepolia before reading a key; a rehearsal's is loopback, or absent,
+and then sends go where it reads. The send rules are `@pp/pp-env/send-path`'s, for the viem wallets and,
+through a loopback relay, for `deploy-pool`'s Forge script, which gets fee caps of twice the fee estimate
+(never below 1 gwei) and a 1 gwei tip. Each keyed run appends every send's hash, nonce and each answer to
+`send-path.jsonl` in its run directory. `pause` sends through the same endpoint, so it needs it up.
+
 ## Keys
 
 All keys live in `~/.config/pp/testnet.env`, outside every repository: directory 0700, file 0600,
@@ -36,6 +44,8 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
 - One address is funded by hand: the L1 deployer. `fund` tops each other L1 address up to the summed
   gas budgets of the roles it holds (`src/funding.ts`) at twice the fee estimate, never below 1 gwei;
   `fund --quote` reads no key and prints what the deployer must hold, the top-ups' own gas included.
+  Each top-up reports the seconds until the read endpoint showed it and until its receipt; one not shown
+  within 60 s stops the run.
 - The budgets are Prague gas, which the rehearsals check, times live Sepolia's measured cost over Prague
   for the role's kind of transaction: 7.67 for creations, 5.01 for fresh storage. Sepolia's fork since
   2026-10-06 reprices state creation, which a rehearsal on anvil 1.7.1 cannot show; a role still short

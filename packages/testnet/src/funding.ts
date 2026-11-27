@@ -69,6 +69,16 @@ export function recipientsOf(e: NonNullable<TestnetDeployment["expected"]>): Rec
 	return out
 }
 
+/**
+ * Fee caps for a forge script, matching what its budget was funded at: the max fee is the floored
+ * estimate times the margin, the tip the floor, so a base fee rising to the floor strands nothing and
+ * no transaction can pay more per gas than the budget assumed.
+ */
+export const scriptFees = (maxFeePerGas: bigint): { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } => ({
+	maxFeePerGas: (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN,
+	maxPriorityFeePerGas: FEE_FLOOR_WEI,
+})
+
 export const needOf = (role: FundedRole, maxFeePerGas: bigint): bigint =>
 	liveGasOf(role) * (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN
 

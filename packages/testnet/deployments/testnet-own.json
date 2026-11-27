@@ -9,6 +9,7 @@
 		"rollupVersion": 679261766,
 		"fpc": "0x2d8fff82a3b0c15d0a89169e7d8d043e079ab94d52031f1de1e4972ebad169d3",
 		"l1Rpc": "https://sepolia.gateway.tenderly.co",
+		"l1SendRpc": "https://ethereum-sepolia-rpc.publicnode.com",
 		"aztecNode": "https://aztec-testnet.drpc.org",
 		"botPort": 48601,
 		"aspPort": 48602

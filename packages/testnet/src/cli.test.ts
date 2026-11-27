@@ -94,7 +94,7 @@ const word = (n: number) => `0x${n.toString(16).padStart(64, "0")}`
 function deploymentFile(home: string, sections: { pool: boolean }, expected: Record<string, string | undefined> = {}): string {
 	const d = {
 		...OWN,
-		network: { ...OWN.network, l1Rpc: rpc },
+		network: { ...OWN.network, l1Rpc: rpc, l1SendRpc: rpc },
 		expected: {
 			guardian: addr(1),
 			lifetimeCap: "1000",

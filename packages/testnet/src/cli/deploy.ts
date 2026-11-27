@@ -6,14 +6,15 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { deployBridgeGeneration, readDeployJournal } from "@pp/bridge-core/deploy"
 import { SANDBOX_ACTOR_SALT } from "@pp/bridge-core/sandbox"
-import { sendRetrying } from "@pp/pp-env/send-retry"
+import { journalTo, sendThrough } from "@pp/pp-env/send-path"
 import { isAddressEqual } from "viem"
 import { l1AddressOf, l2AddressOf } from "../accounts"
 import { deployBuildMismatch } from "../creation"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { BRIDGE_FIELDS } from "../schema"
-import { cliArgs, guarded, main, report, runDir, writeCandidate } from "./common"
+import { cliArgs, guarded, main, report, runDir, sendLogPath, writeCandidate } from "./common"
+import { sendPathOf } from "./wallet"
 import { assertOwnTarget } from "./context"
 
 /** The L2 deploy and send waits on a public network, where proving and checkpoints take minutes. */
@@ -38,7 +39,7 @@ await main(async () => {
 	if (existsSync(journalPath)) throw new GuardError("journal", `${journalPath} exists: a resumed deploy is the owner's call`)
 	const u = await deployBridgeGeneration({
 		l1Rpc: d.network.l1Rpc,
-		wrapL1WalletTransport: (t) => sendRetrying(t),
+		wrapL1WalletTransport: (t) => sendThrough(t, sendPathOf(d, [d.expected.l1Deployer], journalTo(sendLogPath(d, "deploy", mode)))),
 		aztecNode: d.network.aztecNode,
 		chainId: d.network.l1ChainId,
 		pool: { poolVault: d.pool.poolVault, asset: d.pool.asset },

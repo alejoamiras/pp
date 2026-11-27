@@ -8,8 +8,10 @@ import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { loopback, SEPOLIA } from "../network"
 import { POOL_FIELDS } from "../schema"
+import { scriptFees } from "../funding"
 import { assertOwnTarget } from "./context"
 import { cliArgs, guarded, logLine, main, report, runDir, writeCandidate } from "./common"
+import { sendRpcOf } from "./wallet"
 
 /** Canary runs one test-token mint covers; the token's mint is open, so more can be minted later. */
 const MINTED_RUNS = 5n
@@ -26,7 +28,7 @@ await main(async () => {
 	const { file, mode } = cliArgs(process.argv.slice(2), {})
 	if (mode.kind === "rehearse")
 		throw new GuardError("argv", "the local stack brings its own pool; deploy-pool runs live or on a Sepolia fork")
-	const { d } = await guarded(file, mode, ["expected"], false)
+	const { d, l1 } = await guarded(file, mode, ["expected"], false)
 	assertOwnTarget(d)
 	if (d.pool) throw new GuardError("file", "the file already has a pool section; a second deploy would orphan it")
 	const keys = readKeys(RUN_KEYS["deploy-pool"], mode, { env: process.env }, l1AddressOf)
@@ -37,8 +39,12 @@ await main(async () => {
 	const dir = runDir(d, "deploy-pool", mode)
 	// Past the guards: this entry loads the pool checkout, which a refusal must not need.
 	const { deployPoolOn } = await import("@pp/pp-env/sepolia")
+	const fees = scriptFees((await l1.estimateFeesPerGas()).maxFeePerGas)
+	logLine(`forge's fee caps: max ${fees.maxFeePerGas} wei, tip ${fees.maxPriorityFeePerGas} wei per gas`)
 	const pool = await deployPoolOn({
 		rpcUrl: d.network.l1Rpc,
+		sendRpcUrl: sendRpcOf(d),
+		fees,
 		chainId: SEPOLIA,
 		deployerKey,
 		...(d.expected.aspPostman !== undefined && { postman: d.expected.aspPostman }),

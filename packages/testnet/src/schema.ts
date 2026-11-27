@@ -46,6 +46,8 @@ const networkSchema = z
 		rollupVersion: z.number().int().positive(),
 		fpc: word,
 		l1Rpc: url,
+		/** Where every keyed L1 send goes; reads stay on `l1Rpc`. Required live; a rehearsal defaults it to `l1Rpc`. */
+		l1SendRpc: url.optional(),
 		aztecNode: url,
 		/** The bot's snapshot server, on loopback. */
 		botPort: port,
