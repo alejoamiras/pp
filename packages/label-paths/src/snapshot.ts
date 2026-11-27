@@ -72,9 +72,8 @@ export function verifySnapshot(s: AspSnapshot): void {
 }
 
 /**
- * Throws `SnapshotError("SizeMismatch")` unless each list has the length posted with its root; hashes
- * nothing. A root does not fix its list's length: one collapsed into inner nodes builds to the same root.
- * Both lists are compared, as both roots are.
+ * A root does not fix its list's length (a list collapsed into inner nodes keeps it), so each list must
+ * have the record's length; both are checked, as both roots are, whichever origin is queried.
  */
 export function assertSizes(r: RootRecord, s: AspSnapshot): void {
 	if (BigInt(s.poolLeaves.length) !== r.poolSize) throw new SnapshotError("SizeMismatch", "poolLeaves")

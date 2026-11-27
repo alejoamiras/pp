@@ -66,6 +66,13 @@ describe("snapshot routes", () => {
 		expect(book.servesLatest(5n)).toBe(false)
 		book.setCurrent(record(5n))
 		expect(book.servesLatest(5n)).toBe(true)
+		// A record of the same roots whose birth list has another length is not this snapshot's.
+		const birthLeaves = [aspLeaf(9n)]
+		const births = { ...snapshot(6n), birthRoot: buildLeanImt(birthLeaves).root, birthLeaves }
+		book.hold(births)
+		book.setCurrent({ ...record(6n), birthRoot: births.birthRoot, birthSize: 2n })
+		expect(book.servesLatest(6n)).toBe(false)
+		expect(book.body(6n)).toBeUndefined()
 	})
 })
 

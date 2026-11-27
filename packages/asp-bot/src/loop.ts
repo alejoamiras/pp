@@ -32,10 +32,9 @@ const ascending = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0)
 
 const SIZE_MISMATCH = {
 	why: "a posted root now comes with a list of another length; one root has one honest list, so one of the two is collapsed",
-	next: "compare both lists with the ASP's published list: if the feed is wrong, fix it and restart the bot; if the posted length is wrong, the admin calls set_poster, which clears the record, and the bot posts again",
+	next: "the bot asks the feed again every tick and resumes once the lengths agree; otherwise compare both lists with the ASP's published list: if the feed is wrong, fix it or restart the bot; if the posted length is wrong, fix the feed first, then the admin calls set_poster, which clears the record, and the bot posts again",
 }
 
-/** The first list whose root the record holds with another length, or `null`. */
 function sizeMismatch(record: RootRecord, pool: Pool, birthLeaves: bigint[], birthRoot: bigint): Record<string, unknown> | null {
 	const lists = [
 		{ list: "pool", root: pool.root, posted: record.poolRoot, postedSize: record.poolSize, size: pool.leaves.length },
@@ -80,13 +79,19 @@ export class Poster {
 		if (!e) return this.halt("no_l1_block", { aztecTime: tip.time })
 		const root = await p.aspRootAt(e)
 		if (root === null) return this.halt("empty_set", { l1Block: e.number })
+		// A cleared record is the admin's reset: fetch the feed again rather than repost a list cached before it.
+		if (record.poolRoot === 0n) this.pool = null
 		const pool = await this.poolFor(root)
 		if (!pool) return { post: false, reason: "asp_root_mismatch" }
 		const birthLeaves = (await p.birthLeaves(tip)).sort(ascending)
 		const birthRoot = buildLeanImt(birthLeaves).root
 		// The feed must not replace a length the record already holds for its root.
 		const mismatch = sizeMismatch(record, pool, birthLeaves, birthRoot)
-		if (mismatch) return this.halt("size_mismatch", mismatch)
+		if (mismatch) {
+			// The cached list builds to the root, so only a fresh fetch can bring back the honest one.
+			this.pool = null
+			return this.halt("size_mismatch", mismatch)
+		}
 		this.holdCurrent(record, pool, birthLeaves, birthRoot)
 
 		const d = decide({
@@ -114,6 +119,7 @@ export class Poster {
 		return d
 	}
 
+	/** A root already held reuses its leaves without asking the feed. */
 	private async poolFor(root: bigint): Promise<Pool | null> {
 		if (this.pool?.root === root) return this.pool
 		const leaves = await this.ports.aspLeaves()

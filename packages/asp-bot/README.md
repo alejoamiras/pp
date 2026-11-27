@@ -12,9 +12,11 @@ build a label path. Demo grade: snapshots live in memory, and a restart serves o
 3. Rebuilds the approved birth set (see Births).
 4. Halts with `size_mismatch` when the record holds one of these roots with a list of another length.
    One root has one honest list, so one of the two lists is collapsed, and the feed must not replace
-   the length on chain. The log line names the list, both lengths and what to do: compare both lists
-   with the ASP's published list; if the feed is wrong, fix it and restart the bot; if the posted
-   length is wrong, the admin calls `set_poster`, which clears the record, and the bot posts again.
+   the length on chain. It drops the list it fetched and asks the feed again every tick, so it resumes
+   once the lengths agree. The log line names the list, both lengths and what to do: compare both
+   lists with the ASP's published list; if the feed is wrong, fix it or restart the bot; if the posted
+   length is wrong, fix the feed first, then the admin calls `set_poster`, which clears the record. A
+   cleared record makes the bot fetch the feed again before it posts.
 5. Posts when the pool root or the birth root changed, or when 300 s of Aztec chain time passed since
    the last post, with the length of each list. Before sending, it checks the registry's `post_root`
    assertions itself (sequence, non-zero root, monotonic block and time, observation lag ≤ 1800 s,
