@@ -17,6 +17,7 @@ import { PoolClientError } from "./errors.ts"
 import { type RootReader, readRoots, staleRoot } from "./fresh.ts"
 import { deriveKeys, normaliseSignature, verifySigner } from "./keys.ts"
 import { openNoteData } from "./note-data.ts"
+import { ownRegistration, type RegistrationReader, registrationStep } from "./registration.ts"
 import { type ArtifactSource, createArtifacts } from "./runtime/artifacts.ts"
 import {
 	BN254_SCALAR_MODULUS,
@@ -212,6 +213,15 @@ function client(
 			const roots = { state: row(2), keystore: row(3), asp: row(4) }
 			const stale = staleRoot(roots, await readRoots(publicClient as unknown as RootReader, pool, roots))
 			if (stale !== null) throw new PoolClientError(stale, "re-prove: the vault would refuse this proof's root")
+		},
+
+		async registrationStep(after) {
+			if (after !== undefined && (typeof after !== "bigint" || after < 0n)) throw new TypeError("after must be a block number")
+			const reader: RegistrationReader = {
+				head: () => freshHead(publicClient),
+				readContract: (c) => publicClient.readContract(c as Parameters<PublicClient["readContract"]>[0]),
+			}
+			return registrationStep(reader, pool, owner, ownRegistration(deriveKeys(owner, signature), sdk.notes, sdk.hash), after)
 		},
 	}
 }

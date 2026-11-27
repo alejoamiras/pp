@@ -11,6 +11,8 @@ export type PoolClientErrorCode =
 	| "ARTIFACT_MISMATCH"
 	| "SPEND_CHECK_FAILED"
 	| "NULLIFIER_NOT_FOUND"
+	| "KEYSTORE_MISMATCH"
+	| "REGISTERED_TO_OTHER_KEYS"
 
 export type SpendCheck = "shape" | "request" | "params" | "public" | "nullifier" | "change" | "context"
 

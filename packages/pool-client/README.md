@@ -2,8 +2,9 @@
 
 A Privacy Pools v2 client for Node, Bun and the browser, over `@0xbow/privacy-pools-v2-sdk` 1.0.2.
 It opens a client from a wallet signature, lists the user's notes with their label status, prepares and checks a one-input
-`transact_1x1` spend to a processor contract with caller `data`, and recovers the change note's opening from chain data. It
-never submits a transaction, registers a keystore or makes a deposit.
+`transact_1x1` spend to a processor contract with caller `data`, recovers the change note's opening from chain data, and
+prepares the owner's keystore registration one call at a time. It prepares registration calls and never sends them; it never
+submits a transaction or makes a deposit.
 
 ## Use
 
@@ -34,6 +35,18 @@ check throws `PoolClientError` with code `SPEND_CHECK_FAILED` and the check's na
 
 Choosing a trusted processor is the caller's job: the proof binds the processor and `data`, not what the processor does.
 
+## Registration
+
+A spend needs the owner's auth policy in the keystore, and senders need its viewing key. `registrationStep()` reads both, and
+the vault's keystore address, at one block, and returns `{ status: "registered" }` or `{ status: "send", call }`: one
+deep-frozen `{ function, from, to, data, value: 0n }`, `setAuthPolicy` first, then `setViewingKey`, each built from this
+client's own keys. Send `call` from `call.from` only, since the keystore registers its sender. Wait for a successful receipt,
+then ask again with the receipt's block (`registrationStep(receipt.blockNumber)`), so the next read never sees the chain from
+before it. Nothing is held between calls, so a reload resumes where the chain is. It refuses with `KEYSTORE_MISMATCH` when the
+vault reads another keystore than `pool.keystore`, and with `REGISTERED_TO_OTHER_KEYS` when the keystore holds another key
+for this owner. It never overwrites that key, though the keystore would let the owner replace a viewing key. A resent
+`setAuthPolicy` reverts with `Keystore_AuthPolicyAlreadySet`.
+
 ## Circuit files
 
 Files are checked against a pinned bundle in every runtime: sha256 and size, with a gateway response cut off at the
@@ -60,7 +73,7 @@ imports `@pp/pool-client/prover-worker`. The worker keeps a page responsive; `te
 |---|---|---|
 | `test`, `test:node` | nothing | unit, under Bun and Node |
 | `test:proof`, `test:proof:node` | pp-env's fetched checkout | real Groth16 on the pinned files, no chain |
-| `test:integration`, `test:integration:node` | the checkout, Aztec 6.0.0's anvil | seven steps against `pp-env up` |
+| `test:integration`, `test:integration:node` | the checkout, Aztec 6.0.0's anvil | the spend steps and a step-wise registration against `pp-env up` |
 | `test:browser` | the checkout, Playwright's Chromium | prove, cache and worker in Chromium, cross-origin isolated |
 | `test:browser:integration` | all of the above | a spend prepared in the page that the vault accepts |
 

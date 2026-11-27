@@ -54,6 +54,7 @@ export const POOL_VAULT_VIEWS_ABI = [
 		outputs: [{ name: "_isKnown", type: "bool" }],
 		stateMutability: "view",
 	},
+	{ type: "function", name: "keystore", inputs: [], outputs: [{ name: "_keystore", type: "address" }], stateMutability: "view" },
 ] as const
 
 export const KEYSTORE_VIEWS_ABI = [
@@ -65,6 +66,42 @@ export const KEYSTORE_VIEWS_ABI = [
 		outputs: [{ name: "_validUntil", type: "uint256" }],
 		stateMutability: "view",
 	},
+] as const
+
+/** The owner's two keys as the keystore holds them, and the two calls that set them for `msg.sender`. */
+export const KEYSTORE_REGISTRATION_ABI = [
+	{
+		type: "function",
+		name: "nullifyingKeys",
+		inputs: [{ name: "_account", type: "address" }],
+		outputs: [{ name: "_nullifyingKeyHash", type: "uint256" }],
+		stateMutability: "view",
+	},
+	{
+		type: "function",
+		name: "viewingKeys",
+		inputs: [{ name: "_account", type: "address" }],
+		outputs: [{ name: "_viewingKey", type: "bytes32" }],
+		stateMutability: "view",
+	},
+	{
+		type: "function",
+		name: "setAuthPolicy",
+		inputs: [
+			{ name: "_authDigest", type: "uint256" },
+			{ name: "_nullifyingKeyHash", type: "uint256" },
+		],
+		outputs: [],
+		stateMutability: "nonpayable",
+	},
+	{
+		type: "function",
+		name: "setViewingKey",
+		inputs: [{ name: "_viewingKey", type: "bytes32" }],
+		outputs: [],
+		stateMutability: "nonpayable",
+	},
+	error("Keystore_AuthPolicyAlreadySet"),
 ] as const
 
 export const ASP_REGISTRY_VIEWS_ABI = [
