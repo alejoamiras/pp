@@ -14,21 +14,17 @@
 import { readFileSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { Contract } from "@aztec-labs/aztec.js/contracts"
-import { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
-import { TxStatus } from "@aztec-labs/stdlib/tx"
+import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
 import { type Address, createWalletClient, getAddress, type Hex, http, isAddress, type WalletClient } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { foundry } from "viem/chains"
-import { labelledTokenArtifact, tokenBridgeHubArtifact } from "../src/artifacts"
+import { labelledTokenArtifact } from "../src/artifacts"
 import { type BridgeClient, createBridgeClient } from "../src/client/bridge-client"
 import { ragequitChunks } from "../src/client/chunks"
 import { BridgeClientError } from "../src/client/errors"
-import type { KeyValueStore } from "../src/client/journal"
 import type { ExitTicket } from "../src/client/types"
 import { parseStackManifest, requireBlocks } from "../src/stack-manifest"
-import { actorAccount } from "./sandbox/l2"
-import { createL2Wallet, createNode } from "./script-bootstrap"
-import { sponsoredFpcFee } from "./script-l2"
+import { account, device, memoryJournal, send } from "./stack-actors"
 
 const LOCAL_CHAIN_ID = 31337
 /** `private_notes_by_label` returns at most this many values per call (`VALUES_PER_PAGE`). */
@@ -149,31 +145,15 @@ type Holder = {
 	stop(): Promise<void>
 }
 
-/** The account `secret` derives, in a fresh embedded wallet that knows the SponsoredFPC, the hub and its token. */
+/** The account `secret` derives, on a fresh device that knows the SponsoredFPC, the hub and its token. */
 async function holderOf(m: ReturnType<typeof localManifest>, secret: Hex): Promise<Holder> {
-	const wallet = await createL2Wallet({ nodeUrl: m.aztecNode, proverEnabled: false, sandboxKeysOnly: true })
+	const d = await device(m)
 	try {
-		const node = createNode(m.aztecNode)
-		await sponsoredFpcFee(wallet)
-		const hub = AztecAddress.fromStringUnsafe(m.bridge.hub)
-		const tokenAddress = AztecAddress.fromStringUnsafe(m.bridge.token)
-		for (const [address, artifact] of [
-			[hub, tokenBridgeHubArtifact],
-			[tokenAddress, labelledTokenArtifact],
-		] as const) {
-			const instance = await node.getContract(address)
-			if (!instance) throw new Error(`the node does not serve ${address}`)
-			await wallet.registerContract(instance, artifact)
-		}
-		const { address } = await actorAccount(wallet, secret)
-		const token = await Contract.at(tokenAddress, labelledTokenArtifact, wallet as never)
-		const send: Holder["send"] = async (payload) => {
-			const { receipt } = await wallet.sendTx(payload, { from: address, wait: { waitForStatus: TxStatus.PROPOSED } })
-			return receipt.txHash.toString()
-		}
-		return { address, token, send, stop: () => wallet.stop() }
+		const { address } = await account(d, secret)
+		const token = await Contract.at(d.token, labelledTokenArtifact, d.wallet as never)
+		return { address, token, send: async (payload) => (await send(d, address, payload)).txHash.toString(), stop: d.stop }
 	} catch (e) {
-		await wallet.stop()
+		await d.stop()
 		throw e
 	}
 }
@@ -200,7 +180,7 @@ async function notesOf(h: Holder, label: bigint): Promise<bigint[]> {
 
 const describe = (t: ExitTicket) => `${t.kind} of ${t.amount} to ${t.payee} (L2 tx ${t.l2TxHash}, message ${t.messageIndexInTx})`
 
-async function untilReady(client: BridgeClient, t: ExitTicket): Promise<void> {
+export async function untilReady(client: BridgeClient, t: ExitTicket): Promise<void> {
 	const end = Date.now() + READY_TIMEOUT_MS
 	while ((await client.exitStatus(t)) === "proving") {
 		if (Date.now() > end) throw new Error(`no Outbox root covered the ${describe(t)} within ${READY_TIMEOUT_MS / 60_000} min`)
@@ -217,11 +197,6 @@ async function settleAll(client: BridgeClient, l1: WalletClient, tickets: ExitTi
 		await untilReady(client, t)
 		log(`settled ${describe(t)} in L1 tx ${await client.settle(t, l1)}`)
 	}
-}
-
-const memoryJournal = (): KeyValueStore => {
-	const m = new Map<string, string>()
-	return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v), removeItem: (k) => void m.delete(k) }
 }
 
 async function run(a: RagequitArgs, m: ReturnType<typeof localManifest>, keys: { l1: Hex; aztec?: Hex }, log: (s: string) => void) {
