@@ -339,6 +339,18 @@ describe("submit: after the wallet call", () => {
 		expect((await u.journal.read(u.spend.nullifier)).record?.attempts[0]?.l1TxHash).toBe((timedOut as BridgeClientError).l1TxHash)
 	})
 
+	it("is UNCERTAIN with its own hash when the wallet replaced the send with a success that bridged nothing", async () => {
+		const t = await setup()
+		let sent: Hash | undefined
+		t.chain.onSend = (_call, h) => {
+			sent = h
+			t.chain.head += 1n
+			t.chain.receipts.set(h, { status: "success", blockNumber: t.chain.head, transactionHash: hash(999) })
+		}
+		const e = await submit(t.ctx, t.spend, t.chain.wallet(), t.session).catch((x: unknown) => x)
+		expect(e).toMatchObject({ code: "UNCERTAIN", l1TxHash: sent })
+	})
+
 	it("returns the event's receipt when the transaction landed but its hash could not be saved", async () => {
 		const t = await setup({ failWrite: (n) => n === 2 })
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ amount: 70n })

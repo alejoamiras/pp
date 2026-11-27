@@ -150,7 +150,7 @@ export class FakeChain {
 	head = 200n
 	spentAt = 0n
 	readonly logs: Log[] = []
-	readonly receipts = new Map<Hash, { status: "success" | "reverted"; blockNumber: bigint }>()
+	readonly receipts = new Map<Hash, { status: "success" | "reverted"; blockNumber: bigint; transactionHash: Hash }>()
 	readonly pending = new Set<Hash>()
 	readonly simulate = vi.fn(async (_call: unknown) => ({}))
 	/** What a send does once the wallet signed it; by default the bridge lands. */
@@ -176,12 +176,12 @@ export class FakeChain {
 				[e.leafIndex, e.changeCommitment, e.amount],
 			),
 		})
-		this.receipts.set(hash, { status: "success", blockNumber: this.head })
+		this.receipts.set(hash, { status: "success", blockNumber: this.head, transactionHash: hash })
 	}
 
 	revert(hash: Hash): void {
 		this.head += 1n
-		this.receipts.set(hash, { status: "reverted", blockNumber: this.head })
+		this.receipts.set(hash, { status: "reverted", blockNumber: this.head, transactionHash: hash })
 	}
 
 	readonly reader: SubmitReader = {

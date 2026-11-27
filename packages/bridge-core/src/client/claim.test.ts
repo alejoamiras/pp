@@ -73,4 +73,18 @@ describe("waitClaimable", () => {
 		abort.abort()
 		await expect(waiting).rejects.toMatchObject({ code: "RPC_FAILED" })
 	}, 20_000)
+
+	it("rejects at once when aborted during a readiness read, even one that later answers ready", async () => {
+		let answer: (index: bigint) => void = () => {}
+		const node = {
+			getL1ToL2MessageIndex: vi.fn(() => new Promise<bigint>((r) => (answer = r))),
+			getBlockData: vi.fn(async () => ({ header: { state: { l1ToL2MessageTree: { nextAvailableLeafIndex: 64n } } } })),
+		}
+		const abort = new AbortController()
+		const waiting = waitClaimable(node, receipt(), { signal: abort.signal })
+		await vi.waitFor(() => expect(node.getL1ToL2MessageIndex).toHaveBeenCalled())
+		abort.abort()
+		answer(40n)
+		await expect(waiting).rejects.toMatchObject({ code: "RPC_FAILED" })
+	})
 })

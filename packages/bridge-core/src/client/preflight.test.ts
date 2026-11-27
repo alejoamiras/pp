@@ -7,9 +7,11 @@ import { DEPLOYMENT, offCurveAddress, randomRecipient } from "../test/client-fak
 import { sponsoredFpcAddress } from "./payload"
 import { Preflights, preflight } from "./preflight"
 
-async function setup(o: { listed?: boolean; fpc?: boolean; simulates?: boolean } = {}) {
+async function setup(o: { listed?: boolean; fpc?: boolean; simulates?: boolean; network?: readonly [number, bigint] } = {}) {
 	const recipient = await randomRecipient()
+	const [chainId, version] = o.network ?? [DEPLOYMENT.chainId, DEPLOYMENT.rollupVersion]
 	const wallet = {
+		getChainInfo: vi.fn(async () => ({ chainId: new Fr(chainId), version: new Fr(version) })),
 		getAccounts: vi.fn(async () => (o.listed === false ? [] : [{ alias: "", item: recipient }])),
 		simulateTx: vi.fn(async (_p: ExecutionPayload, _o: { from: unknown }) => {
 			if (o.simulates === false) throw new Error("cannot deploy")
@@ -19,7 +21,7 @@ async function setup(o: { listed?: boolean; fpc?: boolean; simulates?: boolean }
 	// The Fee Juice balance slot the node is asked for; an FPC that is absent holds nothing.
 	const node = { getPublicStorageAt: vi.fn(async () => new Fr(o.fpc === false ? 0n : 10n ** 18n)) }
 	const preflights = new Preflights()
-	const ctx = { deploymentId: DEPLOYMENT.id, node, preflights }
+	const ctx = { deployment: DEPLOYMENT, node, preflights }
 	const code = (r = recipient) =>
 		preflight(ctx, { recipient: r, wallet }).then(
 			() => "ok",
@@ -43,6 +45,8 @@ describe("preflight", () => {
 
 	it.each([
 		["an invalid point", {}, "RECIPIENT_INVALID"],
+		["a wallet on another L1 chain", { network: [1, DEPLOYMENT.rollupVersion] }, "CHAIN_MISMATCH"],
+		["a wallet on another rollup version", { network: [DEPLOYMENT.chainId, 2n] }, "CHAIN_MISMATCH"],
 		["an address the wallet lacks", { listed: false }, "RECIPIENT_NOT_IN_WALLET"],
 		["a network whose SponsoredFPC holds no Fee Juice", { fpc: false }, "FEE_PATH_FAILED"],
 		["an account whose sponsored transaction cannot simulate", { simulates: false }, "FEE_PATH_FAILED"],

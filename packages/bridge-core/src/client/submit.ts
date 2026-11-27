@@ -55,9 +55,9 @@ const STALE_CODES: ReadonlySet<string> = new Set<StaleRootCode>(["STATE_ROOT_STA
 const staleCode = (e: unknown): StaleRootCode | null =>
 	e instanceof PoolClientError && STALE_CODES.has(e.code) ? (e.code as StaleRootCode) : null
 
-// The proof's own nullifier, never the metadata field: checks have tied the two together by now.
 const contextOf = async (ctx: SubmitContext | (() => Promise<SubmitContext>)) => (typeof ctx === "function" ? ctx() : ctx)
 
+// The proof's own nullifier, never the metadata field: checks have tied the two together by now.
 const intentOf = (s: PreparedBridgeSpend): Intent => ({
 	nullifier: s.proof.pubSignals[0]?.[0] as bigint,
 	recipient: s.recipient.toString(),
@@ -219,11 +219,15 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
 	if (!saved) return afterSendFailure(run, s, hash)
 	const receipt = await run.ctx.reader.waitForTransactionReceipt({ hash, timeout: run.ctx.receiptTimeoutMs }).catch(() => null)
 	if (!receipt) return afterSendFailure(run, s, hash)
-	// From here the transaction is mined, so a failed read is UNCERTAIN with its hash, never RPC_FAILED.
-	const resolved = await resolveFor(run, s, receipt.status === "success", receipt.blockNumber).catch(() => null)
+	// viem answers with a replacement's receipt when the wallet sped up or cancelled the send, and
+	// only our own transaction's success implies a bridge event.
+	const own = receipt.transactionHash === hash
+	// From here a transaction is mined, so a failed read is UNCERTAIN with its hash, never RPC_FAILED.
+	const resolved = await resolveFor(run, s, own && receipt.status === "success", receipt.blockNumber).catch(() => null)
 	if (!resolved) return afterSendFailure(run, s, hash)
 	const done = outcome(resolved, hash)
 	if (done) return done
+	if (!own) return afterSendFailure(run, s, hash)
 	const stale = await revertCause(run.ctx.reader, hash, spendRevertCode).catch(() => null)
 	throw new BridgeClientError("REVERTED", { stale, l1TxHash: hash })
 }

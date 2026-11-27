@@ -37,17 +37,28 @@ const SPENT_NULLIFIERS_ABI = [
 /** Log queries stay within what public RPCs accept. */
 const LOG_WINDOW = 10_000n
 
-/** The portal's `BridgedFromPool` logs for any of `nullifiers` up to `head`, in fixed windows; stops at the first if `first`. */
-async function bridgedLogs(c: ResolverClient, d: ResolverDeployment, nullifiers: readonly bigint[], head: bigint, first: boolean) {
-	const found = []
-	for (let from = d.deployBlock; from <= head; from += LOG_WINDOW) {
-		const to = from + LOG_WINDOW - 1n < head ? from + LOG_WINDOW - 1n : head
-		const args = { nullifier: [...nullifiers] }
-		const logs = await c.getLogs({ address: d.portal, event: BRIDGED, args, fromBlock: from, toBlock: to })
-		found.push(...logs.filter((l) => !l.removed))
+/** `query`'s unremoved logs from `from` to `head`, in fixed windows; stops at the first window holding any if `first`. */
+export async function windowedLogs<L extends { removed: boolean }>(
+	from: bigint,
+	head: bigint,
+	first: boolean,
+	query: (fromBlock: bigint, toBlock: bigint) => Promise<L[]>,
+): Promise<L[]> {
+	const found: L[] = []
+	for (let lo = from; lo <= head; lo += LOG_WINDOW) {
+		const hi = lo + LOG_WINDOW - 1n < head ? lo + LOG_WINDOW - 1n : head
+		found.push(...(await query(lo, hi)).filter((l) => !l.removed))
 		if (first && found.length) break
 	}
 	return found
+}
+
+/** The portal's `BridgedFromPool` logs for any of `nullifiers` up to `head`; stops at the first if `first`. */
+function bridgedLogs(c: ResolverClient, d: ResolverDeployment, nullifiers: readonly bigint[], head: bigint, first: boolean) {
+	const args = { nullifier: [...nullifiers] }
+	return windowedLogs(d.deployBlock, head, first, (fromBlock, toBlock) =>
+		c.getLogs({ address: d.portal, event: BRIDGED, args, fromBlock, toBlock }),
+	)
 }
 
 type BridgedLog = Awaited<ReturnType<typeof bridgedLogs>>[number]

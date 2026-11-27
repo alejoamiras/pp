@@ -22,7 +22,7 @@ import type { BridgeReceipt, BridgeRecordView, PreparedBridgeSpend } from "./typ
 export interface BridgeClient {
 	/**
 	 * Checks that `recipient` can claim and binds it to `wallet` on this client for ten minutes.
-	 * @throws BridgeClientError `RECIPIENT_INVALID`, `RECIPIENT_NOT_IN_WALLET`, `FEE_PATH_FAILED`
+	 * @throws BridgeClientError `RECIPIENT_INVALID`, `CHAIN_MISMATCH`, `RECIPIENT_NOT_IN_WALLET`, `FEE_PATH_FAILED`
 	 */
 	preflight(a: { recipient: AztecAddress; wallet: PreflightWallet }): Promise<void>
 	/** Sends a checked bridge spend; see `submit` for the checks, the journal and the outcome codes. */
@@ -60,7 +60,6 @@ export function createBridgeClient(a: { manifest: StackManifest; journal: KeyVal
 	}
 }
 
-/** The L1 reader and Aztec node the manifest names, and `store`. */
 export function clientIo(manifest: StackManifest, store: KeyValueStore): ClientIo {
 	const reader = createPublicClient({ transport: http(manifest.l1Rpc), pollingInterval: 1_000 })
 	return { reader, node: createAztecNodeClient(manifest.aztecNode), store }
@@ -94,7 +93,7 @@ export function bridgeClientOver(manifest: StackManifest, io: ClientIo, o: { rec
 	})
 	const recordsContext = async (): Promise<RecordsContext> => ({ deployment: await deployment(), reader, node, store })
 	return Object.freeze({
-		preflight: async (a) => preflight({ deploymentId: (await deployment()).id, node, preflights }, a),
+		preflight: async (a) => preflight({ deployment: await deployment(), node, preflights }, a),
 		submit: (spend, l1, s, o) => submit(submitContext, spend, l1, s, o),
 		waitClaimable: async (r, o) => {
 			await deployment()

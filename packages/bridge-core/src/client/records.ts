@@ -25,7 +25,7 @@ const lastHash = (r: JournalRecord) => {
 
 const STEP_OF_CLAIM = { found: "claimable", missing: "mined", nullified: "claimed" } as const
 
-/** The record's step read from the chain now; a claimed record is reported once, then deleted. */
+/** The record's step read from the chain now. */
 async function viewOf(c: Ctx, record: JournalRecord, spentCommitment: bigint): Promise<BridgeRecordView> {
 	const claimSalt = deriveClaimSalt(c.secrets.claimKey, spentCommitment)
 	const secretHash = await claimSecretHash(claimSalt, AztecAddress.fromStringUnsafe(record.recipient))
@@ -36,7 +36,7 @@ async function viewOf(c: Ctx, record: JournalRecord, spentCommitment: bigint): P
 	const base = {
 		id: await c.journal.id(record.nullifier),
 		nullifier: record.nullifier,
-		recipient: record.recipient,
+		recipient: AztecAddress.fromStringUnsafe(record.recipient),
 		amount: record.amount,
 	}
 	if (r.kind !== "bridged") {
@@ -50,7 +50,6 @@ async function viewOf(c: Ctx, record: JournalRecord, spentCommitment: bigint): P
 		return { ...base, ...lastHash(record), step }
 	}
 	const state = await claimState(c.node, c.deployment.hub, r.receipt, claimSalt, record.recipient)
-	if (state === "nullified") await c.journal.remove(record.nullifier)
 	return { ...base, l1TxHash: r.receipt.l1TxHash, step: STEP_OF_CLAIM[state], receipt: r.receipt }
 }
 
@@ -69,6 +68,8 @@ export function records(ctx: RecordsContext, s: unknown): Promise<BridgeRecordVi
 			const { record } = await c.journal.read(await session.pool.nullifierOf(note.commitment))
 			if (record) views.push(await viewOf(c, record, note.commitment))
 		}
+		// Only after every read passed, so a failed call never drops a claim it did not report.
+		for (const v of views) if (v.step === "claimed") await c.journal.remove(v.nullifier)
 		return views
 	})
 }
@@ -81,7 +82,6 @@ async function unclaimedFor(ctx: RecordsContext, claimKey: Uint8Array, who: Azte
 	return (await claimState(ctx.node, ctx.deployment.hub, r, claimSalt, who.toString())) !== "nullified"
 }
 
-/** The session's spent notes, by nullifier. */
 async function spentNotes(pool: SessionPool): Promise<Map<bigint, bigint>> {
 	const spent = new Map<bigint, bigint>()
 	for (const n of await pool.notes()) if (n.status === "spent") spent.set(await pool.nullifierOf(n.commitment), n.commitment)

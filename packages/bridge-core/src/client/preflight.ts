@@ -61,29 +61,33 @@ export class Preflights {
 	}
 }
 
-/** The wallet surface preflight uses: its accounts, and a simulation from one of them. */
-export type PreflightWallet = Pick<Wallet, "getAccounts" | "simulateTx">
+/** The wallet surface preflight uses: its network, its accounts, and a simulation from one of them. */
+export type PreflightWallet = Pick<Wallet, "getChainInfo" | "getAccounts" | "simulateTx">
 
 /** The node surface preflight uses: public storage, where the FPC's Fee Juice balance lives. */
 export type PreflightNode = Pick<AztecNode, "getPublicStorageAt">
 
 /**
- * Checks that `recipient` can claim: a valid address, one of the wallet's own accounts (only the
- * recipient's account can claim), a SponsoredFPC holding Fee Juice, and an empty transaction from
- * it, paid by that FPC, simulating; the wallet simulates with a stub account, so this tests the fee
- * path, not the account's own deployment. The FPC is probed by its balance, not by `getContract`: a
- * network's genesis FPC is never published as an instance, so the node serves none for it.
+ * Checks that `recipient` can claim: a valid address, a wallet on the deployment's network, one of
+ * that wallet's own accounts (only the recipient's account can claim), a SponsoredFPC holding Fee
+ * Juice, and an empty transaction from it, paid by that FPC, simulating. The wallet simulates with a
+ * stub account, so this tests the fee path, not the account's deployment. The FPC is probed by its
+ * balance: a network's genesis FPC is never published as an instance, so the node serves none for it.
  * On success `preflights` keeps the wallet for this deployment and recipient for ten minutes.
- * @throws BridgeClientError `RECIPIENT_INVALID`, `RECIPIENT_NOT_IN_WALLET`, `FEE_PATH_FAILED`
+ * @throws BridgeClientError `RECIPIENT_INVALID`, `CHAIN_MISMATCH`, `RECIPIENT_NOT_IN_WALLET`, `FEE_PATH_FAILED`
  */
 export function preflight(
-	ctx: { deploymentId: string; node: PreflightNode; preflights: Preflights },
+	ctx: { deployment: { id: string; chainId: number; rollupVersion: bigint }; node: PreflightNode; preflights: Preflights },
 	a: { recipient: AztecAddress; wallet: PreflightWallet },
 ): Promise<void> {
 	return guarded(async () => {
 		const recipient = AztecAddress.fromStringUnsafe(String(a.recipient.toString()))
 		const wallet = a.wallet
+		const { id, chainId, rollupVersion } = ctx.deployment
 		if (!(await recipient.isValid())) throw new BridgeClientError("RECIPIENT_INVALID")
+		const network = await wallet.getChainInfo()
+		if (network.chainId.toBigInt() !== BigInt(chainId) || network.version.toBigInt() !== rollupVersion)
+			throw new BridgeClientError("CHAIN_MISMATCH")
 		const wanted = recipient.toString().toLowerCase()
 		if (!(await wallet.getAccounts()).some((x) => x.item.toString().toLowerCase() === wanted))
 			throw new BridgeClientError("RECIPIENT_NOT_IN_WALLET")
@@ -93,6 +97,6 @@ export function preflight(
 		await wallet.simulateTx(empty, { from: recipient }).catch(() => {
 			throw new BridgeClientError("FEE_PATH_FAILED")
 		})
-		ctx.preflights.record(ctx.deploymentId, recipient, wallet)
+		ctx.preflights.record(id, recipient, wallet)
 	})
 }

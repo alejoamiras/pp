@@ -40,7 +40,7 @@ async function setup() {
 	const spend = await bridgeSpend(recipient)
 	const keep = (attempts: { l1TxHash?: Hash }[]) =>
 		journal.write({ nullifier: NULLIFIER, recipient: recipient.toString(), amount: spend.amount, attempts })
-	return { session, chain, store, values, ctx, journal, recipient, spend, keep, setClaim: (c: ClaimState) => (claim = c) }
+	return { pool, session, chain, store, values, ctx, journal, recipient, spend, keep, setClaim: (c: ClaimState) => (claim = c) }
 }
 
 describe("records", () => {
@@ -48,7 +48,9 @@ describe("records", () => {
 		const t = await setup()
 		t.chain.pending.add(hash(1))
 		await t.keep([{ l1TxHash: hash(1) }])
-		expect((await records(t.ctx, t.session))[0]).toMatchObject({ step: "submitted", l1TxHash: hash(1), nullifier: NULLIFIER })
+		const [first] = await records(t.ctx, t.session)
+		expect(first).toMatchObject({ step: "submitted", l1TxHash: hash(1), nullifier: NULLIFIER })
+		expect(first?.recipient.equals(t.recipient)).toBe(true)
 
 		await t.chain.land(t.spend.secretHash, hash(1), t.spend.proof.pubSignals)
 		expect((await records(t.ctx, t.session))[0]).toMatchObject({ step: "mined", receipt: { l1TxHash: hash(1), amount: 70n } })
@@ -58,6 +60,25 @@ describe("records", () => {
 		expect((await records(t.ctx, t.session))[0]?.step).toBe("claimed")
 		expect(await records(t.ctx, t.session)).toEqual([])
 		expect(t.values.size).toBe(0)
+	})
+
+	it("deletes a claimed record only after every read passed, so a failed call never drops it unreported", async () => {
+		const t = await setup()
+		await t.keep([{ l1TxHash: hash(1) }])
+		await t.chain.land(t.spend.secretHash, hash(1), t.spend.proof.pubSignals)
+		t.setClaim("nullified")
+		const [claimed] = await t.pool.notes()
+		t.pool.notes.mockResolvedValue([claimed!, { ...claimed!, commitment: 77n }])
+		let failed = false
+		t.pool.nullifierOf.mockImplementation((async (c: bigint) => {
+			if (c !== 77n) return NULLIFIER
+			if (failed) return 78n
+			failed = true
+			throw new Error("socket hang up")
+		}) as never)
+		await expect(records(t.ctx, t.session)).rejects.toBeDefined()
+		expect((await records(t.ctx, t.session)).map((v) => v.step)).toEqual(["claimed"])
+		expect(await records(t.ctx, t.session)).toEqual([])
 	})
 
 	it("skips and keeps a record that no longer opens", async () => {

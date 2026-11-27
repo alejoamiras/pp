@@ -44,27 +44,50 @@ const BINDINGS: Record<string, unknown> = {
 	underlying: ASSET,
 }
 
-function setup(o: { chainId?: number; l1ChainId?: number; rollupVersion?: number; reads?: Record<string, unknown> } = {}) {
+type Setup = {
+	chainId?: number
+	l1ChainId?: number
+	rollupVersion?: number
+	reads?: Record<string, unknown>
+	/** The L2 token the manifest names; the hub binds the asset to 7. */
+	token?: Hex
+	/** The block of the factory's `PortalCreated` for the manifest's portal; the manifest starts its scan at 100. */
+	createdAt?: bigint
+}
+
+function setup(o: Setup = {}) {
 	const chain = new FakeChain()
 	const answers = { ...BINDINGS, ...o.reads }
 	const readContract = vi.fn(async (q: { functionName: string }) =>
 		q.functionName in answers ? answers[q.functionName] : chain.reader.readContract(q as never),
 	)
-	const reader = { ...chain.reader, getChainId: vi.fn(async () => o.chainId ?? 31337), readContract }
+	const m = manifest()
+	if (o.token) m.bridge!.token = o.token
+	const created = { blockNumber: o.createdAt ?? 100n, removed: false }
+	const getLogs = vi.fn(async (q: { address: Address; fromBlock: bigint; toBlock: bigint }) =>
+		q.address === m.bridge!.factory
+			? [created].filter((l) => l.blockNumber >= q.fromBlock && l.blockNumber <= q.toBlock)
+			: chain.reader.getLogs(q as never),
+	)
+	const reader = { ...chain.reader, getChainId: vi.fn(async () => o.chainId ?? 31337), readContract, getLogs }
 	const node = {
 		getNodeInfo: vi.fn(async () => ({
 			l1ChainId: o.l1ChainId ?? 31337,
 			rollupVersion: o.rollupVersion ?? 1,
 			l1ContractAddresses: { inboxAddress: INBOX, outboxAddress: OUTBOX },
 		})),
-		getPublicStorageAt: vi.fn(async () => new Fr(10n ** 18n)),
+		// The hub's storage holds its token binding; the SponsoredFPC's balance is the other read.
+		getPublicStorageAt: vi.fn(
+			async (_block: unknown, contract: { toString(): string }) =>
+				new Fr(BigInt(contract.toString()) === BigInt(HUB) ? 7n : 10n ** 18n),
+		),
 		getL1ToL2MessageIndex: vi.fn(async () => undefined),
 		getBlockData: vi.fn(async () => undefined),
 		getL1ToL2MessageMembershipWitness: vi.fn(async () => undefined),
 		findLeavesIndexes: vi.fn(async () => []),
 	}
 	const { store } = memoryStore()
-	const client = bridgeClientOver(manifest(), { reader, node, store } as unknown as ClientIo)
+	const client = bridgeClientOver(m, { reader, node, store } as unknown as ClientIo)
 	const bindingReads = () => readContract.mock.calls.filter(([q]) => q.functionName in BINDINGS).length
 	return { chain, client, reader, node, readContract, bindingReads }
 }
@@ -90,6 +113,8 @@ describe("createBridgeClient", () => {
 		["a portal bound to another hub", { reads: { L2_HUB: toHex(9n, { size: 32 }) } }, "DEPLOYMENT_MISMATCH"],
 		["a portal bound to another vault", { reads: { POOL: OTHER } }, "DEPLOYMENT_MISMATCH"],
 		["a portal the factory does not hold for the asset", { reads: { portalOf: OTHER } }, "DEPLOYMENT_MISMATCH"],
+		["a manifest naming another L2 token than the hub binds", { token: toHex(8n, { size: 32 }) }, "DEPLOYMENT_MISMATCH"],
+		["a scan start after the portal's creation", { createdAt: 99n }, "DEPLOYMENT_MISMATCH"],
 	])("refuses %s before acting", async (_, o, code) => {
 		const t = setup(o)
 		const pool = fakePool()
@@ -111,6 +136,7 @@ describe("createBridgeClient", () => {
 		const recipient = await randomRecipient()
 		const wallet = {
 			...aztecWallet([recipient]),
+			getChainInfo: vi.fn(async () => ({ chainId: new Fr(31337), version: new Fr(1) })),
 			simulateTx: vi.fn(async () => ({})),
 		}
 		await t.client.preflight({ recipient, wallet: wallet as never })

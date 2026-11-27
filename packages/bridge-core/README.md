@@ -48,10 +48,13 @@ install the libs and `forge build` first ([`contracts/bridge/evm/README.md`](../
 
 Before its first action, `createBridgeClient` checks that the L1 RPC and the Aztec node are on the
 manifest's chain. It also checks that the portal is the factory's clone for the pool's asset, bound
-to the manifest's hub and vault and to the rollup the node follows. Reads are trusted beyond that.
+to the manifest's hub and vault and to the rollup the node follows; that the hub binds the asset to
+the manifest's token; and that the portal was created at or after the manifest's scan start. Reads
+are trusted beyond that.
 
-Fees: every L2 transaction the client builds (a claim, and an account's deployment through
-`preflight`) pays through the SponsoredFPC. No option takes a fee or a payment method, so the
+Fees: every L2 transaction the client builds pays through the SponsoredFPC: the claim, and with it
+the recipient's account deployment, which the wallet sends in the same transaction (`preflight`
+only simulates the sponsored path). No option takes a fee or a payment method, so the
 holder's own Fee Juice never pays: the fee payer is public, and paying from the account would link
 it to its bridge. This holds only where a sponsored FPC exists, which today means the local network
 and the testnet.

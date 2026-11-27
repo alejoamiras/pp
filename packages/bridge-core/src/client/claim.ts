@@ -38,6 +38,17 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 	})
 }
 
+/** `p`, or the signal's reason as soon as it aborts, so a stalled read cannot outlive a cancel. */
+function abortable<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+	if (!signal) return p
+	return new Promise((resolve, reject) => {
+		const done = () => reject(signal.reason)
+		if (signal.aborted) return done()
+		signal.addEventListener("abort", done, { once: true })
+		p.then(resolve, reject).finally(() => signal.removeEventListener("abort", done))
+	})
+}
+
 /**
  * Resolves once the bridge's message can be consumed: the latest block's message tree has passed
  * its leaf. `forceBlock` is for bare harnesses whose chain has no heartbeat.
@@ -48,9 +59,9 @@ export function waitClaimable(node: MessageReadinessNode, r: BridgeReceipt, o: W
 		const { messageKey } = r
 		for (;;) {
 			o.signal?.throwIfAborted()
-			const ready = await l1ToL2MessageReadiness(node, messageKey)
+			const ready = await abortable(l1ToL2MessageReadiness(node, messageKey), o.signal)
 			if (ready && ready.anchor >= ready.checkpoint) return
-			if (o.forceBlock) await o.forceBlock()
+			if (o.forceBlock) await abortable(o.forceBlock(), o.signal)
 			await delay(POLL_MS, o.signal)
 		}
 	})
