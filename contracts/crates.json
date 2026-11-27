@@ -6,7 +6,7 @@
 			"kind": "contract",
 			"parity": true,
 			"nargo": { "filter": "keystone", "floor": 3 },
-			"txe": { "floor": 44 }
+			"txe": { "floor": 52 }
 		},
 		{
 			"name": "asp_registry",

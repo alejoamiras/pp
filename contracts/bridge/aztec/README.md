@@ -45,7 +45,7 @@ never a re-pin of a deployed hub.
 ## Tests
 
 - **TXE**: `scripts/run-txe-tests.sh` rebuilds the crate (the suite deploys the contract from its
-  `target/` artifact), then runs the 44 named tests in `token_bridge_hub/txe-manifest.txt` against a
+  `target/` artifact), then runs the 52 named tests in `token_bridge_hub/txe-manifest.txt` against a
   TXE server whose dependencies are the committed mini-project `txe-server/` (frozen
   lockfile — never an ad-hoc `bun add`). `token_bridge_hub/txe-ts-map.md` maps every cross-boundary
   property to its L1 / TS counterpart. The TXE cannot run the protocol registry publish
