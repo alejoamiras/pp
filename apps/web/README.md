@@ -27,6 +27,12 @@ the three proving files of `transact_1x1`, the one circuit the app proves, from 
 the pool checkout's circuit builds that the stack's CLI prints; they are never part of a build.
 `serve` refuses to start unless that is an absolute directory.
 
+Two rules hold in every build. A collect first shows the account it is sent from and the payee, and
+says when that transaction links the two in public; it refuses the signed-in pool owner's address
+unless the user accepts that link for it. An Aztec send whose outcome the page could not read, or
+one the node dropped, holds its account's sends until a Refresh reads that transaction included or
+reverted; one whose wallet call failed after it was handed over holds until the page reloads.
+
 ### Ethereum for a local demo by hand
 
 The page signs in with the account that owns the pool notes, so a human needs an injected
