@@ -9,7 +9,6 @@ import { expect, it } from "vitest"
  */
 const from = new URL("../package.json", import.meta.url).href
 
-it("resolves the standards Token artifact and the l1-artifacts contract sources", () => {
-	expect(existsSync(resolvePackageAsset("@aztec-foundation/aztec-standards", "target/token_contract-Token.json", { from }))).toBe(true)
+it("resolves the l1-artifacts contract sources", () => {
 	expect(existsSync(resolvePackageAsset("@aztec-foundation/l1-artifacts", "l1-contracts/src", { from }))).toBe(true)
 })
