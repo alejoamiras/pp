@@ -3,7 +3,7 @@ import { Fr } from "@aztec-labs/foundation/curves/bn254"
 import { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
 import type { ExecutionPayload } from "@aztec-labs/stdlib/tx"
 import type { LabelPath } from "@pp/bridge-spec"
-import { type AspSnapshot, labelState, parseAspSnapshot, pathFor, readRootRecord } from "@pp/label-paths"
+import { type AspSnapshot, type Hex, labelState, parseAspSnapshot, pathFor, readRootRecord } from "@pp/label-paths"
 import { describe, expect, it } from "vitest"
 import { settled } from "../../../scripts/sandbox/context"
 import { labelledTokenArtifact } from "../../../src/artifacts"
@@ -29,7 +29,7 @@ describe("births", () => {
 		if (!bot) throw new Error("the stack runs no bot")
 		return parseAspSnapshot(await (await fetch(`${bot.url}/v1/snapshots/${at}`)).json())
 	}
-	const record = (at: number) => readRootRecord({ aztecNode: k.m.aztecNode, registry, at })
+	const record = (at: number | Hex) => readRootRecord({ aztecNode: k.m.aztecNode, registry, at })
 	const timeAt = async (n: number) => (await k.dev().node.getBlockData(n as never))?.header.globalVariables.timestamp ?? 0n
 	const tokenCall = (name: string, args: unknown[]): Promise<ExecutionPayload> =>
 		callPayload(labelledTokenArtifact, AztecAddress.fromStringUnsafe(k.m.bridge.token), name, args).then(sponsored)
@@ -41,9 +41,12 @@ describe("births", () => {
 	 */
 	async function activePath(label: bigint, origin: typeof POOL | typeof BIRTH, what: string): Promise<LabelPath> {
 		const read = async () => {
-			const tip = Number(await k.dev().node.getBlockNumber())
-			const [r, s, t] = await Promise.all([record(tip), snapshot("latest"), timeAt(tip)])
-			return labelState(r, s, label, origin, t + PROVING_BUDGET_SEC) === "ACTIVE" ? pathFor(s, label, origin) : null
+			// One block, by hash: its record and its time cannot come from two blocks at the same height.
+			const tip = await k.dev().node.getBlockData(await k.dev().node.getBlockNumber())
+			if (!tip) return null
+			const [r, s] = await Promise.all([record(tip.blockHash.toString() as Hex), snapshot("latest")])
+			const time = tip.header.globalVariables.timestamp
+			return labelState(r, s, label, origin, time + PROVING_BUDGET_SEC) === "ACTIVE" ? pathFor(s, label, origin) : null
 		}
 		return (await settled(read, (p) => p !== null, what, APPROVAL_MS)) as LabelPath
 	}
@@ -78,8 +81,12 @@ describe("births", () => {
 
 			const path = await activePath(born, BIRTH, "the bot's approval of the birth")
 			const to = (await account(dev)).address
-			// A well-formed path one level too deep reconstructs another root: the birth tree is checked.
-			const wrong = { index: path.index, depth: path.depth + 1, siblings: path.siblings.map((s, i) => (i === path.depth ? 1n : s)) }
+			// A well-formed path to another root (an active sibling changed, or a lone leaf given one): the birth tree is checked.
+			const wrong = {
+				index: path.index,
+				depth: Math.max(path.depth, 1),
+				siblings: path.siblings.map((s, i) => (i === 0 ? s + 1n : s)),
+			}
 			const token = await Contract.at(dev.token, labelledTokenArtifact, dev.wallet as never)
 			await expect(token.methods.transfer_private(to, 25n, born, wrong).simulate({ from } as never)).rejects.toThrow(/NotMember/)
 
