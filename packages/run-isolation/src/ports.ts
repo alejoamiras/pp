@@ -242,8 +242,7 @@ export function portsOwnedBy(runId: string): number[] {
 	if (!existsSync(registryPath())) return []
 	return readFileSync(registryPath(), "utf8")
 		.split("\n")
-		.filter((l) => ownedBy(l, runId))
-		.map((l) => portOf(l) as number)
+		.flatMap((l) => (ownedBy(l, runId) ? (portOf(l) ?? []) : []))
 }
 
 export function rowsOwnedBy(runId: string): number {
