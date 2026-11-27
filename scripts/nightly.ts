@@ -142,9 +142,11 @@ export const SUITES: Suite[] = [
 			"src/client/attempts.property.test.ts",
 			"src/client/boundary.property.test.ts",
 			"src/l1-gas.property.test.ts",
+			"src/client/chunks.property.test.ts",
+			"src/client/exits.property.test.ts",
 		],
 		minutes: 10,
-		expected: 19,
+		expected: 21,
 		env: { FC_RUNS_SCALE: "10" },
 	}),
 ]
