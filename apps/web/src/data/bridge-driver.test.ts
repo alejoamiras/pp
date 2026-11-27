@@ -470,6 +470,7 @@ describe("the bridge driver", () => {
 		["no hash the chain knows", {}, "UNCERTAIN"],
 		["a hash pending at the RPC", { tx: "pending" }, "IN_FLIGHT"],
 		["its note spent by another transaction", { spent: true }, "CONSUMED_ELSEWHERE"],
+		["its own hash mined and its note spent, the event not read yet", { tx: "mined", spent: true }, "IN_FLIGHT"],
 		["the bridge's event on chain", { seen: true }, null],
 	] as const)("an open record with %s answers a Submit without the override, before any proof", async (_name, o, code) => {
 		const h = harness()

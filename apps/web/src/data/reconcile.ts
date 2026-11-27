@@ -4,9 +4,11 @@
  * record is read against the chain. Only the bridge's event makes it a bridge to follow, from `recover`
  * or as bridge-core's verified receipt on the record. A hash never does: the record carries its latest
  * attempt's, which can be a reverted retry while an earlier attempt is still out, and a successful
- * receipt shows that a transaction ran, not that it bridged this note. A hash pending at the RPC, or
- * mined with no event seen yet, is in flight; no hash, one the RPC does not know, or one that reverted
- * is uncertain while the note is unspent; a note spent without the event was consumed elsewhere.
+ * receipt shows that a transaction ran, not that it bridged this note. A hash pending at the RPC while
+ * the note is unspent is in flight, and so is one mined with no event seen yet, spent note or not,
+ * since the event read can lag the receipt. No hash, one the RPC does not know, or one that reverted is
+ * uncertain while the note is unspent; a note spent with no successful receipt of ours was consumed
+ * elsewhere.
  * `recover` also runs for the connected accounts, so a mined bridge shows on a device that has no
  * journal for it.
  */
@@ -19,13 +21,13 @@ export interface PoolState {
 	notes: PoolNoteView[]
 	/** Unclaimed bridges the chain shows, to follow and claim. */
 	bridges: BridgeRecordView[]
-	/** Records whose transaction is pending at the RPC, by their note's commitment: wait, send nothing. */
+	/** Records whose transaction is pending at the RPC, or mined with no event read yet, by their note's commitment: wait, send nothing. */
 	inFlight: ReadonlyMap<bigint, BridgeRecordView>
 	/** Records the chain shows nothing for while their note is unspent, by commitment: check or send again. */
 	uncertain: ReadonlyMap<bigint, BridgeRecordView>
 	/** The same, for a note this page is sending now, by commitment: its bridge screen follows it, nothing else is sent. */
 	sending: ReadonlyMap<bigint, BridgeRecordView>
-	/** Records whose note was spent without this bridge's event. */
+	/** Records whose note was spent with neither this bridge's event nor a successful receipt of ours. */
 	consumed: BridgeRecordView[]
 	/** Each bridge's or open record's note (spent once mined), by record id: where its label and value come from. */
 	noteOf: ReadonlyMap<string, PoolNoteView>
@@ -40,19 +42,20 @@ const isOpen = (r: BridgeRecordView) => typeof r.step !== "object" && r.step !==
 /** What an open record's attempt is on chain: a bridge to follow, pending at the RPC, unconfirmed, or beaten to its note. */
 export type PriorKind = "bridge" | "in-flight" | "uncertain" | "consumed"
 
-const WAITING: ReadonlySet<L1TxState | undefined> = new Set(["pending", "mined"])
-
 /** `seen`: the record's event, by `recover` or its verified receipt; `tx`: the RPC's answer for its hash; `unspent`: its note. */
 function classify(seen: boolean, tx: L1TxState | undefined, unspent: boolean): PriorKind {
 	if (seen) return "bridge"
-	if (unspent && WAITING.has(tx)) return "in-flight"
+	// Our own hash's successful receipt outranks the note reading spent: the spend may be this one.
+	if (tx === "mined" || (unspent && tx === "pending")) return "in-flight"
 	return unspent ? "uncertain" : "consumed"
 }
+
+const isUnspent = (n: PoolNoteView | undefined): n is PoolNoteView => n !== undefined && !GONE.has(n.status)
 
 const verified = (r: BridgeRecordView, recovered: BridgeRecordView | undefined) => recovered !== undefined || r.receipt !== undefined
 
 /**
- * `recovered` is `recover` for the recipients, `unspent` maps each unspent note's nullifier to the note,
+ * `recovered` is `recover` for the recipients, `notes` maps each note's nullifier to the note, spent ones included,
  * `txs` holds the RPC's answer for each open record's hash, and `submitting` lists the notes this page
  * is sending now. A send waiting on its wallet has a record with no hash, which is unconfirmed only once
  * no live Submit owns it.
@@ -60,7 +63,7 @@ const verified = (r: BridgeRecordView, recovered: BridgeRecordView | undefined) 
 export function reconcile(
 	records: readonly BridgeRecordView[],
 	recovered: readonly BridgeRecordView[],
-	unspent: ReadonlyMap<bigint, PoolNoteView>,
+	notes: ReadonlyMap<bigint, PoolNoteView>,
 	txs: ReadonlyMap<Hash, L1TxState>,
 	submitting: ReadonlySet<bigint> = new Set(),
 ): Pick<PoolState, "bridges" | "inFlight" | "uncertain" | "sending" | "consumed"> {
@@ -70,8 +73,8 @@ export function reconcile(
 	const consumed: BridgeRecordView[] = []
 	for (const r of records.filter(isOpen)) {
 		const seen = recovered.find((x) => x.id === r.id)
-		const note = unspent.get(r.nullifier)
-		const kind = classify(verified(r, seen), r.l1TxHash ? txs.get(r.l1TxHash) : undefined, note !== undefined)
+		const note = notes.get(r.nullifier)
+		const kind = classify(verified(r, seen), r.l1TxHash ? txs.get(r.l1TxHash) : undefined, isUnspent(note))
 		if (kind === "bridge") bridges.push(seen ?? r)
 		else if (kind === "consumed" || note === undefined) consumed.push(r)
 		else (kind === "uncertain" && submitting.has(note.commitment) ? sending : open[kind]).set(note.commitment, r)
@@ -96,7 +99,7 @@ export type Found = { kind: "bridge" | "closed"; record: BridgeRecordView } | { 
 async function journalOf(session: Session, commitment: bigint) {
 	const [nullifier, records, notes] = await Promise.all([session.nullifierOf(commitment), session.records(), session.notes()])
 	const note = notes.find((n) => n.commitment === commitment)
-	return { nullifier, mine: records.filter((x) => x.nullifier === nullifier), unspent: note !== undefined && !GONE.has(note.status) }
+	return { nullifier, mine: records.filter((x) => x.nullifier === nullifier), unspent: isUnspent(note) }
 }
 
 async function readOpen(session: Session, r: BridgeRecordView, unspent: boolean): Promise<Prior> {
@@ -160,9 +163,8 @@ export async function readPool(
 		Promise.all(hashes.map((h) => session.l1TxState(h))),
 	])
 	const byNullifier = new Map(notes.map((n, i) => [nullifiers[i] as bigint, n]))
-	const unspent = new Map([...byNullifier].filter(([, n]) => !GONE.has(n.status)))
 	const txs = new Map(hashes.map((h, i) => [h, states[i] as L1TxState]))
-	const found = reconcile(records, recovered.flat(), unspent, txs, submitting())
+	const found = reconcile(records, recovered.flat(), byNullifier, txs, submitting())
 	const noteOf = new Map(
 		[...open, ...found.bridges].flatMap((r) => {
 			const note = byNullifier.get(r.nullifier)
