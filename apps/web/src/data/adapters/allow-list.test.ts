@@ -28,7 +28,16 @@ const body = (sequence: bigint, declared = poolRoot) =>
 function chain() {
 	const blocks = new Map<string, { timestamp: number; record: RootRecord }>()
 	const snapshots = new Map<bigint, string>()
-	const s = { tip: "", blocks, snapshots, holdBot: false, rpc: [] as { method: string; params: unknown[] }[], bot: [] as string[] }
+	const s = {
+		tip: "",
+		blocks,
+		snapshots,
+		holdBot: false,
+		rpc: [] as { method: string; params: unknown[] }[],
+		bot: [] as string[],
+		/** Runs once, right after a block-data answer: a new block can land between the two reads. */
+		afterBlockData: null as (() => void) | null,
+	}
 	const field = (v: bigint) => `0x${v.toString(16)}`
 	const fetchFn = (async (url: string, init?: RequestInit) => {
 		if (url.startsWith(BOT)) {
@@ -43,7 +52,11 @@ function chain() {
 		if (method === "node_getBlockData") {
 			const h = at(params[0])
 			const b = blocks.get(h)
-			return Response.json({ result: b ? { blockHash: h, header: { globalVariables: { timestamp: b.timestamp } } } : null })
+			const answer = Response.json({ result: b ? { blockHash: h, header: { globalVariables: { timestamp: b.timestamp } } } : null })
+			const next = s.afterBlockData
+			s.afterBlockData = null
+			next?.()
+			return answer
 		}
 		const r = blocks.get(at(params[0]))?.record as RootRecord
 		const slot = Number(BigInt(params[2] as string) - ROOT_RECORD_SLOT)
@@ -100,6 +113,8 @@ describe("the stack's allow list", () => {
 		const r = rig()
 		r.post(40, 1_500, recordOf(7n))
 		r.s.snapshots.set(7n, body(7n))
+		// Block 41 lands between the time read and the record read: only a read pinned to 40 still sees 7.
+		r.s.afterBlockData = () => r.post(41, 1_600, recordOf(8n))
 		const view = await r.port.current()
 		expect(view).toEqual({ record: recordOf(7n), nowSec: 1_500n })
 		const storage = r.s.rpc.filter((q) => q.method === "node_getPublicStorageAt")
