@@ -1,16 +1,8 @@
 /**
- * The bridge driver: plain async functions that run one note's bridge against a `Session` and report
- * through `dispatch`. It owns the rules that decide whether anything is sent:
- *
- * - Submit freezes an `Attempt`; `assertCurrent` re-checks it after preflight and proving and, through
- *   `SubmitHooks.handoff`, right before the wallet is asked to send. A change stops with nothing sent.
- * - One attempt per note at a time; after `UNCERTAIN` only an explicit `acceptUncertain` retry runs,
- *   and after `IN_FLIGHT`, `CONSUMED_ELSEWHERE` or an unknown outcome past the handoff none does.
- * - A preflight is bound to its recipient and Aztec epoch and is re-run after Submit when it is older
- *   than 9 minutes (bridge-core keeps one for 10) or a send consumed it.
- * - Proving waits two frames so the pause message paints, and gives up after 60 s on the injected timer,
- *   because a failing prover can hang without an error.
- * - A claim never resends by itself: a dropped or unanswered one stays pending.
+ * Runs one note's bridge against a `Session` and reports through `dispatch`. Proving waits two frames
+ * so the pause message paints, then gives up after 60 s on the injected timer, because a failing prover
+ * can hang without an error. A preflight is re-run at Submit once it is 9 minutes old, since bridge-core
+ * keeps one for 10.
  */
 import { type Address, isAddressEqual } from "viem"
 import type { AztecAddress, BridgeRecordView, PoolNoteView } from "./a7"
@@ -133,9 +125,9 @@ interface State {
 	binding: Binding | null
 	/** Notes with a Submit under way. */
 	active: Set<bigint>
-	/** Notes whose last send is uncertain: they send again only with `acceptUncertain`. */
-	uncertain: Set<bigint>
-	/** Notes that must not send again from this page: may be in flight, spent elsewhere, or sent with an unknown outcome. */
+	/** Notes with a transaction pending at the RPC, from the session's answer or the last reconciliation. */
+	inFlight: ReadonlySet<bigint>
+	/** Notes spent outside this bridge: they never send again from this page. */
 	closed: Map<bigint, UiCode>
 	/** Records with a claim under way, or one the chain dropped or never answered. */
 	claims: Set<string>
@@ -224,11 +216,11 @@ function extraOf(err: unknown): Partial<Failure> {
 	return { ...(e.stale !== undefined ? { stale: e.stale } : {}), ...(e.l1TxHash ? { l1TxHash: e.l1TxHash } : {}) }
 }
 
-const CLOSES: ReadonlySet<UiCode> = new Set(["IN_FLIGHT", "CONSUMED_ELSEWHERE", "UNKNOWN"])
+const CLOSES: ReadonlySet<UiCode> = new Set(["CONSUMED_ELSEWHERE"])
 
 /** Remembers what a code means for the note's next Submit. */
 function remember(st: State, code: UiCode, a: Attempt): void {
-	if (code === "UNCERTAIN") st.uncertain.add(a.note)
+	if (code === "IN_FLIGHT") st.inFlight = new Set([...st.inFlight, a.note])
 	if (CLOSES.has(code)) st.closed.set(a.note, code)
 	if (code === "PREFLIGHT_REQUIRED") st.binding = null
 }
@@ -239,8 +231,8 @@ function outcome(st: State, err: unknown, a: Attempt, during: Failure["during"],
 	if (!handedOff && !st.deps.canClaim()) return failure("NOT_GRANTED", during)
 	if (!handedOff && !isCurrent(a, st.deps.context())) return failure("CONTEXT_CHANGED", during)
 	if (handedOff && isUserRejection(err)) return { type: "declined" }
-	// Past the handoff, an error without a code may hide a sent transaction.
-	const code = codeOf(err) ?? (handedOff ? "UNKNOWN" : during === "preparing" ? "PROVE_FAILED" : "RPC_FAILED")
+	// Past the handoff, an error without a code may hide a sent transaction with no hash: UNCERTAIN.
+	const code = codeOf(err) ?? (handedOff ? "UNCERTAIN" : during === "preparing" ? "PROVE_FAILED" : "RPC_FAILED")
 	remember(st, code, a)
 	return failure(code, code === "REVERTED" ? "submitted" : during, extraOf(err))
 }
@@ -259,12 +251,12 @@ function freeze(st: State, input: SubmitInput, ctx: LiveContext): Attempt {
 	})
 }
 
-function refusalOf(st: State, input: SubmitInput, flags: Flags, ctx: LiveContext): UiCode | null {
+/** Nothing here answers for an uncertain note: its journal and the chain decide, inside `Session.submit`. */
+function refusalOf(st: State, input: SubmitInput, ctx: LiveContext): UiCode | null {
 	const n = input.note.commitment
 	const closed = st.closed.get(n)
 	if (closed !== undefined) return closed
-	// An uncertain note sends again only with the flag, and the flag means nothing elsewhere.
-	if (st.uncertain.has(n) !== (flags.acceptUncertain === true)) return "UNCERTAIN"
+	if (st.inFlight.has(n)) return "IN_FLIGHT"
 	if (!st.deps.canClaim()) return "NOT_GRANTED"
 	return submitRefusal(input, ctx, st.deps.deployment.chainId)
 }
@@ -296,7 +288,7 @@ async function submit(
 		if (!signal.aborted) dispatch(e)
 	}
 	const ctx = st.deps.context()
-	const refusal = refusalOf(st, input, flags, ctx)
+	const refusal = refusalOf(st, input, ctx)
 	if (refusal !== null) {
 		emit({ type: "refused", code: refusal })
 		return null
@@ -323,7 +315,6 @@ async function submit(
 		during = "prepared"
 		emit({ type: "proved" })
 		const record = await st.deps.session.submit(proved, a, hooks, flags.acceptUncertain ? { acceptUncertain: true } : undefined)
-		st.uncertain.delete(n)
 		emit({ type: "record", record })
 		return record
 	} catch (err) {
@@ -402,7 +393,7 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
  * waits for it to become claimable (also after a reload); `claim` sends it from its recipient.
  */
 export function createBridgeDriver(deps: DriverDeps) {
-	const st: State = { deps, seq: 0, binding: null, active: new Set(), uncertain: new Set(), closed: new Map(), claims: new Set() }
+	const st: State = { deps, seq: 0, binding: null, active: new Set(), inFlight: new Set(), closed: new Map(), claims: new Set() }
 	return {
 		/** Preflight and warm-up for the connected recipient, ahead of Submit. */
 		preflight: (recipient: string, dispatch: Dispatch, signal: AbortSignal) => preflight(st, recipient, dispatch, signal),
@@ -411,8 +402,10 @@ export function createBridgeDriver(deps: DriverDeps) {
 			submit(st, input, dispatch, signal, flags),
 		follow: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => follow(st, record, dispatch, signal),
 		claim: (record: BridgeRecordView, dispatch: Dispatch, signal: AbortSignal) => claim(st, record, dispatch, signal),
-		/** Closes `note` for this page: reconciliation found a record of it that may be in flight. */
-		hold: (note: bigint, code: UiCode) => void st.closed.set(note, code),
+		/** The notes reconciliation found pending at the RPC; each refuses a Submit until it leaves the set. */
+		hold: (notes: ReadonlySet<bigint>) => {
+			st.inFlight = notes
+		},
 	}
 }
 

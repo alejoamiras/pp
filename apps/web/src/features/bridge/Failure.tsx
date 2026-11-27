@@ -1,11 +1,11 @@
 import { useApp } from "../../app/context"
 import type { Failure, Offer } from "../../data/bridge-machine"
-import { messageOf, type UiCode } from "../../data/errors"
+import { messageOf, UNCERTAIN_WORST_CASE, type UiCode } from "../../data/errors"
 import { ActionButton, Callout } from "../../ui"
 
-const TITLES: Partial<Record<UiCode, string>> = {
+export const TITLES: Partial<Record<UiCode, string>> = {
 	UNCERTAIN: "We can't see your transaction yet",
-	IN_FLIGHT: "A bridge from this note may be in flight",
+	IN_FLIGHT: "Waiting for your Ethereum transaction",
 	CONSUMED_ELSEWHERE: "This note was spent elsewhere",
 	PROVE_TIMEOUT: "Proving took too long",
 	CONTEXT_CHANGED: "Your wallet changed",
@@ -22,15 +22,20 @@ const BUTTONS: Record<Exclude<Offer, "none">, string> = {
 	"switch-account": "Try again",
 }
 
-/** A stopped bridge: what happened, what was not sent, and the one next step the failure allows. */
+/**
+ * A stopped bridge: what happened, what was not sent, and the next step the failure allows. After
+ * `UNCERTAIN` that is two: Check again submits without the override, so only the session's journal
+ * and the chain answer it; Send again passes `acceptUncertain`.
+ */
 export function FailureCallout({ failure }: { failure: Failure }) {
 	const { bridge, connection } = useApp()
 	const amount = bridge.subject?.amount ?? null
-	const recipient = connection?.accounts[0] ?? ""
+	const recipient = bridge.machine.attempt?.recipient ?? connection?.accounts[0] ?? ""
+	const resubmit = (acceptUncertain: boolean) => amount !== null && void bridge.submit(amount, recipient, acceptUncertain)
 	const act = (offer: Offer) => {
 		if (offer === "prepare-again") return bridge.restart()
 		if (offer === "claim") return void bridge.claim()
-		if (amount !== null) void bridge.submit(amount, recipient, offer === "send-again")
+		resubmit(offer === "send-again")
 	}
 	const { offer } = failure
 	return (
@@ -39,11 +44,10 @@ export function FailureCallout({ failure }: { failure: Failure }) {
 				{messageOf(failure.code)}
 			</p>
 			{failure.reason ? <p className="mt-1">Reported by the chain: {failure.reason}</p> : null}
-			{offer === "send-again" ? (
-				<p className="mt-1 font-semibold">A second transaction may revert and cost gas if the first one lands.</p>
-			) : null}
+			{offer === "send-again" ? <p className="mt-1 font-semibold">{UNCERTAIN_WORST_CASE}</p> : null}
 			{offer !== "none" ? (
-				<div className="mt-2">
+				<div className="mt-2 flex flex-wrap gap-2">
+					{offer === "send-again" ? <ActionButton onClick={() => resubmit(false)}>Check again</ActionButton> : null}
 					<ActionButton variant="primary" onClick={() => act(offer)}>
 						{BUTTONS[offer]}
 					</ActionButton>

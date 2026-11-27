@@ -39,9 +39,8 @@ const MESSAGES: Record<UiCode, string> = {
 	PREFLIGHT_REQUIRED: "The pre-check expired; nothing was sent. Run it again.",
 	SPEND_MISMATCH: "The prepared spend failed its checks, so nothing was sent.",
 	SENDER_IS_OWNER: "Switch your Ethereum wallet to a separate account: sending from the pool owner's address links it to this bridge.",
-	IN_FLIGHT: "A bridge from this note may be in flight. Wait for it to land before trying again.",
-	UNCERTAIN:
-		"We can't see your transaction yet. You can send again, but a second transaction may revert and cost gas if the first one lands.",
+	IN_FLIGHT: "Your earlier transaction for this note is waiting to be mined. Wait for it; the page sends nothing more meanwhile.",
+	UNCERTAIN: "This page could not confirm whether your wallet sent the earlier transaction for this note.",
 	STALE: "The pool kept changing while proving; nothing was sent. Prove again.",
 	SIMULATION_REVERTED: "The bridge would fail on Ethereum, so nothing was sent.",
 	REVERTED: "The Ethereum transaction reverted; your note is unspent. Prove again to retry.",
@@ -89,6 +88,9 @@ export const PAYEE_MESSAGES: Record<PayeeRefusal, string> = {
 }
 
 export const RECIPIENT_MESSAGE = "Enter an Aztec address: 0x followed by 64 hex digits."
+
+/** The worst case of sending again after `UNCERTAIN`, said before the button. */
+export const UNCERTAIN_WORST_CASE = "A note can be spent only once, so if both transactions go out, one fails and costs gas only."
 
 /** Which root an internal re-proof follows, in the page's words. */
 export const ROOT_NAMES: Record<StaleRootCode, string> = {

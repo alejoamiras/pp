@@ -1,11 +1,12 @@
 import { useApp } from "../../app/context"
 import { usePool } from "../../app/queries"
 import type { BridgeRecordView, PoolNoteView } from "../../data/a7"
-import { messageOf } from "../../data/errors"
+import { messageOf, UNCERTAIN_WORST_CASE } from "../../data/errors"
 import { type NoteRow, poolNotesView } from "../../data/model"
 import type { Session } from "../../data/ports"
 import type { PoolState } from "../../data/reconcile"
 import { ActionButton, Amount, Callout, EmptyState, LabelChip, Panel, StateBadge, shortHex } from "../../ui"
+import { TITLES } from "../bridge/Failure"
 import { EthereumSignIn } from "../connect/EthereumSignIn"
 
 const BUSY = new Set(["starting", "proving", "sending", "preflight"])
@@ -19,10 +20,48 @@ function useBridgeBlock(): string | undefined {
 	return undefined
 }
 
-function NoteItem({ row, inFlight }: { row: NoteRow; inFlight: boolean }) {
-	const { source, bridge, go, refresh } = useApp()
+/** A record whose transaction the RPC holds unmined: its hash, and no send until it lands or drops. */
+function InFlightNote({ record }: { record: BridgeRecordView }) {
+	return (
+		<Callout tone="wait" title={TITLES.IN_FLIGHT} role="status">
+			<p>{messageOf("IN_FLIGHT")}</p>
+			<p className="mt-1 font-mono text-xs break-all" data-testid="pending-tx">
+				{record.l1TxHash}
+			</p>
+		</Callout>
+	)
+}
+
+/** A record the chain shows nothing for: Check again asks the session without the override; Send again passes it. */
+function UncertainNote({ note, record }: { note: PoolNoteView; record: BridgeRecordView }) {
+	const { bridge, go } = useApp()
+	const block = useBridgeBlock()
+	const retry = (acceptUncertain: boolean) => {
+		void bridge.retry(note, record, acceptUncertain)
+		go("bridge")
+	}
+	return (
+		<Callout tone="attn" title={TITLES.UNCERTAIN} role="status">
+			<p>{messageOf("UNCERTAIN")}</p>
+			<p className="mt-1 font-semibold">{UNCERTAIN_WORST_CASE}</p>
+			<div className="mt-2 flex flex-wrap gap-2">
+				<ActionButton disabledReason={block} onClick={() => retry(false)}>
+					Check again
+				</ActionButton>
+				<ActionButton variant="primary" disabledReason={block} onClick={() => retry(true)}>
+					Send again
+				</ActionButton>
+			</div>
+		</Callout>
+	)
+}
+
+function NoteItem({ row, pool }: { row: NoteRow; pool: PoolState }) {
+	const { source, bridge, go } = useApp()
 	const block = useBridgeBlock()
 	const { note } = row
+	const inFlight = pool.inFlight.get(note.commitment)
+	const uncertain = pool.uncertain.get(note.commitment)
 	const open = (n: PoolNoteView) => {
 		bridge.open(n)
 		go("bridge")
@@ -42,12 +81,9 @@ function NoteItem({ row, inFlight }: { row: NoteRow; inFlight: boolean }) {
 				<span>Pool note</span>
 			</div>
 			{inFlight ? (
-				<Callout tone="attn" title="A bridge from this note may be in flight" role="status">
-					<p>We can't see its Ethereum transaction yet, so this note cannot be bridged again until we can.</p>
-					<div className="mt-2">
-						<ActionButton onClick={refresh}>Check again</ActionButton>
-					</div>
-				</Callout>
+				<InFlightNote record={inFlight} />
+			) : uncertain ? (
+				<UncertainNote note={note} record={uncertain} />
 			) : row.blocked ? (
 				<p className="text-xs text-ink-3">{row.blocked}</p>
 			) : (
@@ -112,7 +148,8 @@ function NoNotes() {
 }
 
 function PoolNotes({ session }: { session: Session }) {
-	const pool = usePool(session)
+	const { connection } = useApp()
+	const pool = usePool(session, connection?.accounts ?? [])
 	if (pool.isPending) return <Callout tone="wait" busy role="status" title="Reading your pool notes…" />
 	if (pool.isError)
 		return (
@@ -131,7 +168,7 @@ function PoolNotes({ session }: { session: Session }) {
 			<p className="text-cap font-bold tracking-[0.06em] text-ink-3 uppercase">Notes by label</p>
 			<ul className="grid gap-2">
 				{view.rows.map((row) => (
-					<NoteItem key={row.note.commitment.toString()} row={row} inFlight={pool.data.inFlight.has(row.note.commitment)} />
+					<NoteItem key={row.note.commitment.toString()} row={row} pool={pool.data} />
 				))}
 			</ul>
 			{view.emptyCount > 0 ? (
@@ -144,8 +181,8 @@ function PoolNotes({ session }: { session: Session }) {
 }
 
 function PoolTotal({ session }: { session: Session }) {
-	const { source } = useApp()
-	const notes = usePool(session).data?.notes
+	const { source, connection } = useApp()
+	const notes = usePool(session, connection?.accounts ?? []).data?.notes
 	if (!notes) return null
 	const total = poolNotesView(notes).rows.reduce((sum, r) => sum + r.note.value, 0n)
 	return <Amount value={total} decimals={source.deployment.decimals} symbol={source.deployment.symbol} size="total" />

@@ -39,7 +39,8 @@ function NowPanel({ m }: { m: BridgeMachine }) {
 function NextYou() {
 	const { bridge, source, connection } = useApp()
 	const { amount, note } = bridge.subject ?? { amount: null, note: null }
-	const into = connection?.accounts[0]
+	// The claim sends from the record's recipient, which can be any of the wallet's accounts.
+	const into = bridge.machine.record?.recipient ?? connection?.accounts[0]
 	return (
 		<div className="grid gap-3">
 			<Callout tone="attn" eyebrow="Next, you" title="Your Aztec wallet will ask you to approve one transaction">

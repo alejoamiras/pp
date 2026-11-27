@@ -73,7 +73,8 @@ export interface SessionPort {
 	open(a: { owner: Address; sign(td: TypedDataDefinition): Promise<Hex> }): Promise<Session>
 	/**
 	 * Deletes every bridge record this device keeps. A bridge already mined stays recoverable from the
-	 * signature and the chain (`recover`); one not yet mined loses its "may be in flight" hold.
+	 * signature and the chain (`recover`); an unmined one is forgotten, so its note bridges again with no
+	 * override.
 	 */
 	forget(): Promise<void>
 }
@@ -113,16 +114,28 @@ export interface Session {
 	prove(a: Attempt): Promise<Proved>
 	/** Ends an unsettled `prove` (it rejects) and readies a fresh prover; nothing is reopened. */
 	cancelProve(): void
-	/** Re-proves at most twice inside. @throws BridgeClientError */
+	/**
+	 * Re-proves at most twice inside, each re-proof under the same deadline as `prove`. An earlier
+	 * attempt of the note decides first: `IN_FLIGHT` while its transaction is pending at the RPC, and
+	 * `UNCERTAIN` while it has no hash or one the RPC does not know, unless `acceptUncertain`, which every
+	 * later submit needs again until the chain shows the bridge. A wallet refusal before broadcast (4001)
+	 * leaves the journal as it was. @throws BridgeClientError
+	 */
 	submit(p: Proved, a: Attempt, on: SubmitHooks, o?: { acceptUncertain?: true }): Promise<BridgeRecordView>
 	waitClaimable(id: string, signal: AbortSignal): Promise<void>
 	/** Sends from the record's recipient. */
 	claim(id: string, on: ClaimHooks): Promise<Sent>
+	/** This device's journal, unmined records included. */
 	records(): Promise<BridgeRecordView[]>
 	/** Unclaimed bridges to `recipient`, with the same ids as `records()`. */
 	recover(recipient: AztecAddress): Promise<BridgeRecordView[]>
+	/** What the Ethereum RPC knows of a journal record's hash. */
+	l1TxState(hash: Hash): Promise<L1TxState>
 	close(): void
 }
+
+/** `pending`: in the RPC's pool, not mined; `unknown`: the RPC has no such transaction (never sent, or dropped). */
+export type L1TxState = "pending" | "mined" | "unknown"
 
 export interface LabelBalance {
 	label: bigint

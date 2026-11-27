@@ -70,8 +70,11 @@ export interface FixtureBridge {
 	label: bigint
 	amount: bigint
 	l1TxHash?: `0x${string}`
-	/** `pending`: journalled before the Ethereum send and not answered yet; it lives on this device only. */
-	state: "pending" | "mined" | "reverted" | "claimed"
+	/**
+	 * `pending`: journalled before the Ethereum send, with no hash yet; `sent`: the wallet returned a hash
+	 * that is not mined. Both live in this device's journal only.
+	 */
+	state: "pending" | "sent" | "mined" | "reverted" | "claimed"
 	minedAtAztecBlock: number
 	/** Dropped from this device's journal; still on chain for `recover` once mined. */
 	forgotten?: true

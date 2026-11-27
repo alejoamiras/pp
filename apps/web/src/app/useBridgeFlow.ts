@@ -24,18 +24,11 @@ interface Deps {
 	settled(): void
 }
 
-/**
- * One bridge on screen at a time: the pure machine in a reducer and one driver per open session. A
- * new session, a new subject or an unmount aborts what is running; the driver's own checks decide
- * whether anything is sent.
- */
-export function useBridgeFlow({ source, live, session, canClaim, frame, settled }: Deps) {
-	const [machine, dispatch] = useReducer(bridgeReducer, initialBridge)
-	const [subject, setSubject] = useState<BridgeSubject | null>(null)
+/** One driver per open session; `canClaim` is read at each check, so a new grant applies at once. */
+function useDriver({ source, live, session, canClaim, frame }: Omit<Deps, "settled">) {
 	const claimAllowed = useRef(canClaim)
 	claimAllowed.current = canClaim
-	const run = useRef(new AbortController())
-	const driver = useMemo(
+	return useMemo(
 		() =>
 			session
 				? createBridgeDriver({
@@ -49,6 +42,18 @@ export function useBridgeFlow({ source, live, session, canClaim, frame, settled 
 				: null,
 		[session, source, live, frame],
 	)
+}
+
+/**
+ * One bridge on screen at a time: the pure machine in a reducer and one driver per open session. A
+ * new session, a new subject or an unmount aborts what is running; the driver's own checks decide
+ * whether anything is sent.
+ */
+export function useBridgeFlow({ settled, ...deps }: Deps) {
+	const [machine, dispatch] = useReducer(bridgeReducer, initialBridge)
+	const [subject, setSubject] = useState<BridgeSubject | null>(null)
+	const run = useRef(new AbortController())
+	const driver = useDriver(deps)
 	const fresh = useCallback(() => {
 		run.current.abort()
 		run.current = new AbortController()
@@ -81,12 +86,9 @@ export function useBridgeFlow({ source, live, session, canClaim, frame, settled 
 		[driver, fresh],
 	)
 
-	const submit = useCallback(
-		async (amount: bigint, recipient: string, acceptUncertain = false) => {
-			const note = subject?.note
-			if (!driver || !note) return
-			const signal = run.current.signal
-			setSubject({ note, amount })
+	const send = useCallback(
+		async (note: PoolNoteView, amount: bigint, recipient: string, acceptUncertain: boolean, signal: AbortSignal) => {
+			if (!driver) return
 			const record = await driver.submit(
 				{ note, amount, recipient },
 				dispatch,
@@ -96,7 +98,27 @@ export function useBridgeFlow({ source, live, session, canClaim, frame, settled 
 			settled()
 			if (record && !signal.aborted) await driver.follow(record, dispatch, signal)
 		},
-		[driver, subject, settled],
+		[driver, settled],
+	)
+
+	const submit = useCallback(
+		async (amount: bigint, recipient: string, acceptUncertain = false) => {
+			const note = subject?.note
+			if (!note) return
+			setSubject({ note, amount })
+			await send(note, amount, recipient, acceptUncertain, run.current.signal)
+		},
+		[subject, send],
+	)
+
+	/** Checks a bridge the page could not confirm (no override) or sends it again (`acceptUncertain`). */
+	const retry = useCallback(
+		async (note: PoolNoteView, record: BridgeRecordView, acceptUncertain: boolean) => {
+			const signal = fresh()
+			setSubject({ note, amount: record.amount })
+			await send(note, record.amount, record.recipient, acceptUncertain, signal)
+		},
+		[fresh, send],
 	)
 
 	const claim = useCallback(async () => {
@@ -111,6 +133,7 @@ export function useBridgeFlow({ source, live, session, canClaim, frame, settled 
 		open,
 		resume,
 		submit,
+		retry,
 		claim,
 		preflight: useCallback((recipient: string) => void driver?.preflight(recipient, dispatch, run.current.signal), [driver]),
 		invalidate: useCallback(() => dispatch({ type: "invalidate" }), []),
@@ -120,7 +143,7 @@ export function useBridgeFlow({ source, live, session, canClaim, frame, settled 
 			fresh()
 			setSubject(null)
 		}, [fresh]),
-		hold: useCallback((note: bigint) => driver?.hold(note, "IN_FLIGHT"), [driver]),
+		hold: useCallback((notes: ReadonlySet<bigint>) => driver?.hold(notes), [driver]),
 	}
 }
 

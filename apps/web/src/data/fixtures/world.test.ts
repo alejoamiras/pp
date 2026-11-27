@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest"
+import { describe, expect, test, vi } from "vitest"
 import type { BridgeRecordView } from "../a7"
 import { createBridgeDriver, type LiveContext } from "../bridge-driver"
 import { type BridgeMachine, bridgeReducer, initialBridge } from "../bridge-machine"
@@ -81,6 +81,29 @@ describe("the fixture world", () => {
 		expect(minted).toEqual([{ owner: ACCOUNTS.aztec, label: LABELS.bridgeable.toString(), origin: 0, value: "70000000" }])
 		expect(second.control.state().notes.map((n) => [n.value, n.status])).toContainEqual(["30000000", "approved"])
 		expect(store.dump()).not.toContain(FAKE_SIGNATURE.slice(2))
+	})
+
+	test("a wallet refusal of a resend leaves the journal as it was; a send lost with no code keeps its record", async () => {
+		const store = memoryStore()
+		const first = await page(store)
+		const [bridgeable] = await first.session.notes()
+		if (!bridgeable) throw new Error("no seeded note")
+		const input = { note: bridgeable, amount: 70_000_000n, recipient: ACCOUNTS.aztec }
+		first.control.hangNext("send")
+		void first.driver.submit(input, first.dispatch, new AbortController().signal)
+		await vi.waitFor(() => expect(first.control.state().bridges).toMatchObject([{ state: "pending" }]))
+
+		const second = await page(store)
+		const signal = new AbortController().signal
+		const journal = second.control.state().bridges
+		second.control.failNext("send", "REJECTED")
+		await second.driver.submit(input, second.dispatch, signal, { acceptUncertain: true })
+		expect(second.machine().notices.at(-1)).toEqual({ kind: "declined" })
+		expect(second.control.state().bridges).toEqual(journal)
+		second.control.failNext("send", "LOST")
+		await second.driver.submit(input, second.dispatch, signal, { acceptUncertain: true })
+		expect(second.machine().failure?.code).toBe("UNCERTAIN")
+		expect(second.control.state().bridges).toMatchObject([{ state: "pending" }])
 	})
 
 	test("the control checks its inputs and arms one-shot faults", async () => {

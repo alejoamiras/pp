@@ -1,13 +1,13 @@
 /**
  * The fixture bridge session. It keeps the rules the driver depends on (a preflight bound to its
- * recipient for 10 minutes and consumed by a send, at most two internal re-proofs, `UNCERTAIN` until
- * `acceptUncertain`, the send going through the guarded wallet so `handoff` runs first, a journal record
- * written before the send and restored on a refusal), and holds the signature it was opened with in
- * its closure only.
+ * recipient for 10 minutes and consumed by a send, at most two internal re-proofs, the journal's
+ * `IN_FLIGHT` and `UNCERTAIN` for an earlier attempt, the send going through the guarded wallet so
+ * `handoff` runs first, a journal record written before the send and restored on a refusal), and holds
+ * the signature it was opened with in its closure only.
  */
 import { type Address, type Hex, isAddressEqual, type TypedDataDefinition } from "viem"
 import type { AztecAddress, BridgeRecordView, PoolNoteView } from "../a7"
-import { BridgeFailure, ProviderError, type UiCode } from "../errors"
+import { BridgeFailure, ProviderError, providerCode, type UiCode } from "../errors"
 import { parseAztecAddress } from "../parse"
 import type { Attempt, ClaimHooks, Proved, Sent, Session, SessionPort, SubmitHooks } from "../ports"
 import { type Eip1193Provider, guardedProvider } from "../wallet/guarded-provider"
@@ -38,7 +38,7 @@ function typedData(owner: Address, chainId: number): TypedDataDefinition {
 function stepOf(w: World, b: FixtureBridge): BridgeRecordView["step"] {
 	if (b.state === "reverted") return { error: "REVERTED" }
 	if (b.state === "claimed") return "claimed"
-	if (b.state === "pending") return "submitted"
+	if (b.state === "pending" || b.state === "sent") return "submitted"
 	return w.aztecBlock() > b.minedAtAztecBlock ? "claimable" : "mined"
 }
 
@@ -58,6 +58,7 @@ function sendingWallet(inner: Eip1193Provider, fault: string | null, hang: boole
 	return {
 		async request(args) {
 			if (fault === "REJECTED") throw new ProviderError(4001, "User rejected the request.")
+			if (fault === "LOST") throw new Error("the wallet's connection dropped")
 			if (hang) return never()
 			return inner.request(args)
 		},
@@ -74,6 +75,19 @@ interface Ctx {
 function upsertBridge(w: World, b: FixtureBridge): void {
 	w.update((s) => {
 		s.bridges = [...s.bridges.filter((x) => x.id !== b.id), b]
+	})
+}
+
+/** The journal as it stood before a send, for the note: its record and whether it was uncertain. */
+interface Before {
+	record: FixtureBridge | undefined
+	uncertain: bigint[]
+}
+
+function restore(w: World, note: bigint, before: Before): void {
+	w.update((s) => {
+		s.bridges = [...s.bridges.filter((b) => b.id !== idOf(note)), ...(before.record ? [before.record] : [])]
+		s.uncertain = before.uncertain
 	})
 }
 
@@ -115,37 +129,52 @@ function checkSubmit(c: Ctx, a: Attempt, o?: { acceptUncertain?: true }): void {
 	const fault = w.takeFault("submit")
 	if (fault === "UNCERTAIN") w.update((s) => void s.uncertain.push(a.note))
 	if (fault !== null) fail(fault)
-	if (w.s.uncertain.includes(a.note) && !o?.acceptUncertain) fail("UNCERTAIN")
+	const prior = w.s.bridges.find((b) => b.id === idOf(a.note))
+	if (prior?.state === "sent") fail("IN_FLIGHT")
+	if ((prior?.state === "pending" || w.s.uncertain.includes(a.note)) && !o?.acceptUncertain) fail("UNCERTAIN")
 }
 
-async function submit(c: Ctx, a: Attempt, on: SubmitHooks, o?: { acceptUncertain?: true }): Promise<BridgeRecordView> {
-	const { w } = c
-	checkSubmit(c, a, o)
+async function reprove(w: World, on: SubmitHooks): Promise<void> {
 	for (let i = 0; ; i++) {
 		const stale = w.takeReprove()
-		if (stale === null) break
+		if (stale === null) return
 		if (i === MAX_REPROOFS) throw new BridgeFailure("STALE", { stale })
 		on.reproving(stale)
 		// The re-proof yields, so a wallet change can land while it is held.
 		await Promise.resolve()
 	}
+}
+
+async function submit(c: Ctx, a: Attempt, on: SubmitHooks, o?: { acceptUncertain?: true }): Promise<BridgeRecordView> {
+	const { w } = c
+	checkSubmit(c, a, o)
+	await reprove(w, on)
 	if ((c.preflights.get(a.recipient) ?? -1) < w.timer.now()) fail("PREFLIGHT_REQUIRED")
 	c.preflights.delete(a.recipient)
 	const note = w.s.notes.find((n) => n.commitment === a.note)
 	if (note?.status !== "approved" || note.value < a.amount) return fail("CONSUMED_ELSEWHERE")
 	const sendFault = w.takeFault("send")
 	const wallet = guardedProvider(sendingWallet(c.provider, sendFault, w.takeHang("send")), on.handoff)
-	// Journalled before the wallet is asked, so a reload mid-send still knows a bridge may be in flight.
+	const before: Before = { record: w.s.bridges.find((b) => b.id === idOf(a.note)), uncertain: w.s.uncertain }
+	// Journalled before the wallet is asked, so a reload mid-send still knows a bridge may be out. An
+	// override of a hashless attempt leaves that attempt out there too: the note stays uncertain until mined.
+	if (o?.acceptUncertain && before.record?.state === "pending")
+		w.update((s) => {
+			s.uncertain = [...s.uncertain, a.note]
+		})
 	upsertBridge(w, journalled(c, a, note, "pending"))
 	let hash: Hex
 	try {
 		hash = (await wallet.request({ method: "eth_sendTransaction", params: [{ from: a.sender, to: w.deployment.portal }] })) as Hex
 	} catch (err) {
-		// Every refusal here comes before broadcast, so the record goes.
-		w.update((s) => {
-			s.bridges = s.bridges.filter((b) => b.id !== idOf(a.note))
-		})
+		// A refusal before broadcast leaves the journal as it was; any other failure may have sent.
+		if (providerCode(err) === 4001) restore(w, a.note, before)
 		throw err
+	}
+	if (sendFault === "PENDING") {
+		upsertBridge(w, journalled(c, a, note, "sent", hash))
+		// bridge-core waits for the receipt, which this transaction never gets.
+		return never()
 	}
 	if (sendFault === "REVERTED") {
 		upsertBridge(w, journalled(c, a, note, "reverted", hash))
@@ -254,6 +283,11 @@ function makeSession(c: Ctx, signature: Hex): Session {
 			live()
 			return w.s.bridges.filter((b) => b.owner === c.owner && b.recipient === recipient && b.state === "mined").map((b) => view(w, b))
 		},
+		async l1TxState(hash) {
+			live()
+			const b = w.s.bridges.find((x) => x.l1TxHash === hash)
+			return b === undefined ? "unknown" : b.state === "sent" ? "pending" : "mined"
+		},
 		close() {
 			held = null
 		},
@@ -270,9 +304,10 @@ export function fixtureSessions(w: World, provider: Eip1193Provider): SessionPor
 			return makeSession({ w, provider, owner, preflights: new Map() }, signature)
 		},
 		async forget() {
-			// A pending record exists only in this device's journal; the rest stay on chain for `recover`.
+			// Only a mined bridge is on chain for `recover`; every other record lived in this journal alone.
 			w.update((s) => {
-				s.bridges = s.bridges.filter((b) => b.state !== "pending").map((b) => ({ ...b, forgotten: true }))
+				s.bridges = s.bridges.filter((b) => b.state !== "pending" && b.state !== "sent").map((b) => ({ ...b, forgotten: true }))
+				s.uncertain = []
 			})
 		},
 	}

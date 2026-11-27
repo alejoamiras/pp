@@ -105,6 +105,7 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 		}),
 		records: async () => [],
 		recover: async () => [],
+		l1TxState: async () => "unknown",
 		close: () => {},
 	}
 	const timer = virtualTimer()
@@ -381,14 +382,13 @@ describe("the bridge driver", () => {
 		expect(h.order).toEqual(["preflight", "prove"])
 	})
 
-	test("after UNCERTAIN only an explicit retry with acceptUncertain runs; after IN_FLIGHT none does", async () => {
+	test("after UNCERTAIN a check without the override still reaches the session and the override is passed on; after IN_FLIGHT nothing is sent", async () => {
 		const h = harness({ submitThrows: new BridgeFailure("UNCERTAIN") })
 		await h.submit()
 		expect(h.machine().failure).toMatchObject({ code: "UNCERTAIN", offer: "send-again" })
 		await h.submit()
-		expect(h.session.submit).toHaveBeenCalledTimes(1)
 		await h.submit(INPUT, { acceptUncertain: true })
-		expect(h.submitOpts).toEqual([undefined, { acceptUncertain: true }])
+		expect(h.submitOpts).toEqual([undefined, undefined, { acceptUncertain: true }])
 
 		const f = harness({ submitThrows: new BridgeFailure("IN_FLIGHT") })
 		await f.submit()

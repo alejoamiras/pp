@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, test } from "vitest"
-import { messageOf } from "../../data/errors"
+import { messageOf, UNCERTAIN_WORST_CASE } from "../../data/errors"
+import type { DataSource } from "../../data/source"
 import { connectAztec, memoryStore, noteRow, renderApp, signIn } from "../../test-utils/app"
 
 afterEach(cleanup)
@@ -13,8 +14,8 @@ const landed = () =>
 	waitFor(() => expect(["mined", "claimable"]).toContain(screen.getByTestId("bridge-screen").dataset.step), { timeout: 3_000 })
 
 /** Owner signed in, Aztec connected, the separate sender selected, 70 typed into the 100 note's bridge form. */
-async function openBridge(store = memoryStore()) {
-	const app = renderApp({ store })
+async function openBridge(store = memoryStore(), patch?: (s: DataSource) => DataSource) {
+	const app = renderApp({ store, ...(patch ? { patch } : {}) })
 	await signIn(app.user)
 	await connectAztec(app.user)
 	act(() => app.control.selectL1Account("sender"))
@@ -27,6 +28,40 @@ async function submit(app: Awaited<ReturnType<typeof openBridge>>) {
 	const button = () => within(screen.getByTestId("bridge-form")).getByRole<HTMLButtonElement>("button", { name: "Bridge to Aztec" })
 	await waitFor(() => expect(button().disabled).toBe(false))
 	await app.user.click(button())
+}
+
+/** Records the options of every `Session.submit`, so a test sees what reached the session. */
+function submitsOf(): { options: unknown[]; patch(s: DataSource): DataSource } {
+	const options: unknown[] = []
+	return {
+		options,
+		patch: (s) => ({
+			...s,
+			sessions: {
+				...s.sessions,
+				async open(a) {
+					const session = await s.sessions.open(a)
+					return {
+						...session,
+						submit: (p, attempt, on, o) => {
+							options.push(o)
+							return session.submit(p, attempt, on, o)
+						},
+					}
+				},
+			},
+		}),
+	}
+}
+
+/** A second page load over `store`, signed in as the owner with Aztec connected and the sender selected. */
+async function reload(store: ReturnType<typeof memoryStore>) {
+	const app = renderApp({ store })
+	act(() => app.control.selectL1Account("owner"))
+	await signIn(app.user)
+	await connectAztec(app.user)
+	act(() => app.control.selectL1Account("sender"))
+	return app
 }
 
 describe("the bridge screen", () => {
@@ -77,18 +112,24 @@ describe("the bridge screen", () => {
 		await landed()
 	})
 
-	test("UNCERTAIN offers only an explicit Send again, warning that a second transaction may revert and cost gas", async () => {
-		const app = await openBridge()
+	test("UNCERTAIN states the worst case; Check again asks the session without the override, Send again sends with it", async () => {
+		const submits = submitsOf()
+		const app = await openBridge(memoryStore(), submits.patch)
 		app.control.failNext("submit", "UNCERTAIN")
 		await submit(app)
 		await screen.findByText("We can't see your transaction yet")
-		screen.getByText("A second transaction may revert and cost gas if the first one lands.")
+		screen.getByText(UNCERTAIN_WORST_CASE)
 		expect(screen.queryByRole("button", { name: "Prove again" })).toBeNull()
+		await app.user.click(screen.getByRole("button", { name: "Check again" }))
+		await waitFor(() => expect(submits.options).toEqual([undefined, undefined]))
+		await screen.findByTestId("bridge-failure")
+		expect(app.control.state().sent.l1).toBe(0)
 		await app.user.click(screen.getByRole("button", { name: "Send again" }))
 		await landed()
+		expect(submits.options.at(-1)).toEqual({ acceptUncertain: true })
 	})
 
-	test("a reload with an unanswered Ethereum wallet shows may be in flight and offers no second bridge of that note", async () => {
+	test("a reload with an unanswered Ethereum wallet and no hash shows UNCERTAIN on the note, and Send again bridges it", async () => {
 		const store = memoryStore()
 		const first = await openBridge(store)
 		first.control.hangNext("send")
@@ -96,12 +137,41 @@ describe("the bridge screen", () => {
 		await screen.findByText("Sent: waiting for the Ethereum transaction to be mined")
 		first.unmount()
 
-		const second = renderApp({ store })
-		act(() => second.control.selectL1Account("owner"))
-		await signIn(second.user)
-		const row = noteRow(NOTE)
-		row.getByText("A bridge from this note may be in flight")
-		expect(row.queryByRole("button", { name: "Bridge to Aztec" })).toBeNull()
-		expect(second.control.state().sent.l1).toBe(0)
+		const second = await reload(store)
+		await waitFor(() => noteRow(NOTE).getByText("We can't see your transaction yet"))
+		noteRow(NOTE).getByText(UNCERTAIN_WORST_CASE)
+		noteRow(NOTE).getByRole("button", { name: "Check again" })
+		expect(noteRow(NOTE).queryByRole("button", { name: "Bridge to Aztec" })).toBeNull()
+		await waitFor(() => expect(noteRow(NOTE).getByRole<HTMLButtonElement>("button", { name: "Send again" }).disabled).toBe(false))
+		await second.user.click(noteRow(NOTE).getByRole("button", { name: "Send again" }))
+		await landed()
+		expect(second.control.state().sent.l1).toBe(1)
+	})
+
+	test("a record whose transaction is pending at the RPC shows IN_FLIGHT with its hash and offers no send", async () => {
+		const store = memoryStore()
+		const first = await openBridge(store)
+		first.control.failNext("send", "PENDING")
+		await submit(first)
+		await screen.findByText("Sent: waiting for the Ethereum transaction to be mined")
+		const hash = first.control.state().bridges[0]?.l1TxHash
+		first.unmount()
+
+		await reload(store)
+		await waitFor(() => noteRow(NOTE).getByText("Waiting for your Ethereum transaction"))
+		expect(noteRow(NOTE).getByTestId("pending-tx").textContent).toBe(hash)
+		expect(noteRow(NOTE).queryAllByRole("button")).toEqual([])
+	})
+
+	test("a mined bridge whose journal was forgotten comes back from the chain for the connected account", async () => {
+		const store = memoryStore()
+		const first = await openBridge(store)
+		await submit(first)
+		await landed()
+		await first.source.sessions.forget()
+		first.unmount()
+
+		await reload(store)
+		await screen.findByTestId("bridge-record")
 	})
 })
