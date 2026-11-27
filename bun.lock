@@ -74,6 +74,7 @@
         "@pp/bridge-spec": "workspace:*",
         "@pp/label-paths": "workspace:*",
         "@pp/labelled-token": "workspace:*",
+        "@pp/run-isolation": "workspace:*",
         "viem": "catalog:",
       },
       "devDependencies": {

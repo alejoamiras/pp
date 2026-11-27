@@ -21,10 +21,12 @@ export async function liveBirthSource(o: {
 	intake: AztecAddress
 	artifact: ContractArtifact
 	syncedBlock(): Promise<number>
+	blockHash(number: number): Promise<string>
 }): Promise<BirthSource> {
 	const [announced, debited] = await Promise.all([eventMeta(o.artifact, "BirthAnnouncement"), eventMeta(o.artifact, "ShieldDebited")])
 	return {
 		syncedBlock: o.syncedBlock,
+		blockHash: o.blockHash,
 		async announcements(token, toBlock) {
 			const found = await o.wallet.getPrivateEvents<BirthAnnouncement>(announced, {
 				contractAddress: token,
