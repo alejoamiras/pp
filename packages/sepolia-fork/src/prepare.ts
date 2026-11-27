@@ -7,7 +7,6 @@ import { createPoolUser, type PoolUser, type PreparedSpend } from "@pp/pp-env/cl
 import { attachForkPoolEnv } from "@pp/pp-env/fork"
 import { type Address, getAddress, type Hex, numberToHex, pad, parseAbi, toHex } from "viem"
 import { ANVIL_CLIENT_VERSION, type ForkAnvil } from "./anvil.ts"
-import { BUNDLE } from "./bundle.ts"
 import { EVM_DIR, fixturePath } from "./forge.ts"
 import { SEPOLIA_CHAIN_ID } from "./pins.ts"
 import type { RunContext } from "./run.ts"
@@ -18,7 +17,7 @@ const REPO_ROOT = join(import.meta.dir, "../../..")
 export const HUB_PLACEHOLDER = pad(toHex("sepolia-fork hub"), { size: 32 })
 const LIFETIME_CAP = 10n ** 12n
 const DEPOSIT = 10_000_000n
-/** The entrypoint pulls the vetting fee on top of the deposit (100 bps on V8 today); twice the deposit covers any fee. */
+/** The entrypoint pulls the vetting fee on top of the deposit (100 bps on both targets' USDC today); twice the deposit covers any fee. */
 const MINTED = 2n * DEPOSIT
 export const AMOUNT_OUT = 1_000_000n
 /** `verifyProof(uint256[2],uint256[2][2],uint256[2],uint256[8])`, the selector the vault routes 1x1 spends to. */
@@ -131,7 +130,7 @@ async function poolSide(fork: ForkAnvil, run: RunContext): Promise<PoolUser> {
 			},
 			postman: pool.postman,
 			circuitsDir: run.bundle,
-			circuitBundle: BUNDLE,
+			circuitBundle: run.pins.bundle,
 			runId: run.runId,
 		}),
 	)
@@ -174,7 +173,7 @@ export async function prepare(fork: ForkAnvil, run: RunContext): Promise<{ fixtu
 		user.prepareSpend({ processor: portal, data: bridgeDataV1(secretHash), asset: run.pins.pool.usdc, amountOut: AMOUNT_OUT }),
 	)
 	if (!(await verifierAccepts(fork, run.pins.bindings.transact1x1Verifier, spend)))
-		throw new Error("the deployed 1x1 verifier rejects the spend proved with the pre-ceremony keys")
+		throw new Error(`the deployed 1x1 verifier rejects the spend proved with the ${run.pins.bundle} keys`)
 	run.log("the deployed 1x1 verifier accepts the spend")
 	const block = Number(await fork.rpc<Hex>("eth_blockNumber"))
 	const { pool } = run.pins

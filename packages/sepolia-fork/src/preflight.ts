@@ -10,6 +10,7 @@ import {
 	slice,
 	toFunctionSelector,
 } from "viem"
+import { type CodeReader, codeMismatches, EIP1967_IMPLEMENTATION_SLOT, EMPTY_CODE_HASH, POOL_CONTRACTS, readPoolCode } from "./code.ts"
 import { missingKeyPoints, type Vkey } from "./keys.ts"
 import { type Bindings, type Pins, SEPOLIA_CHAIN_ID } from "./pins.ts"
 import type { Rpc } from "./rpc.ts"
@@ -30,7 +31,6 @@ export class PreflightError extends Error {
 	}
 }
 
-const EIP1967_IMPLEMENTATION = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 /** The vault's ERC-7201 router storage; its first slot maps keccak256(abi.encode(inputs, outputs)) to a packed route. */
 const ROUTER_LOCATION = "0x0c027be59f417c97b0d67624f8bfbaef96df39bc0b10e77a5d17c62359798400"
 
@@ -44,21 +44,22 @@ const call = (rpc: Rpc, to: Address, signature: string, tag: string) =>
 const addressWord = (word: Hex): Address => getAddress(slice(word, 12, 32))
 const codeHash = async (rpc: Rpc, address: Address, tag: string) => keccak256(await rpc<Hex>("eth_getCode", [address, tag]))
 
-export type BlockTag = bigint | "finalized"
-const tagOf = (b: BlockTag) => (b === "finalized" ? b : numberToHex(b))
+/** This transport as the shared reader takes it; each read names the block, so the reads are one snapshot. */
+const codeReader = (rpc: Rpc): CodeReader => ({
+	getCode: ({ address, blockNumber }) => rpc<Hex>("eth_getCode", [address, numberToHex(blockNumber)]),
+	getStorageAt: ({ address, slot, blockNumber }) => rpc<Hex>("eth_getStorageAt", [address, slot, numberToHex(blockNumber)]),
+})
 
 /** Every binding in {@link Bindings}, read at one block. */
-export async function readBindings(rpc: Rpc, pins: Pins, block: BlockTag): Promise<Bindings> {
-	const tag = tagOf(block)
+export async function readBindings(rpc: Rpc, pins: Pins, block: bigint): Promise<Bindings> {
+	const tag = numberToHex(block)
 	const { vault } = pins.pool
-	const vaultImplementation = addressWord(await rpc<Hex>("eth_getStorageAt", [vault, EIP1967_IMPLEMENTATION, tag]))
 	const route = await rpc<Hex>("eth_getStorageAt", [vault, routeSlot(1n, 1n), tag])
 	const transact1x1Verifier = addressWord(route)
 	const rollup = addressWord(await call(rpc, pins.aztec.registry, "getCanonicalRollup()", tag))
 	const inbox = addressWord(await call(rpc, rollup, "getInbox()", tag))
 	return {
-		vaultImplementation,
-		vaultImplementationCodeHash: await codeHash(rpc, vaultImplementation, tag),
+		code: await readPoolCode(codeReader(rpc), pins.pool, block),
 		depositVerifier: addressWord(await call(rpc, vault, "depositVerifier()", tag)),
 		transact1x1Verifier,
 		transact1x1Selector: slice(route, 8, 12),
@@ -74,13 +75,52 @@ export async function readBindings(rpc: Rpc, pins: Pins, block: BlockTag): Promi
 const same = (a: unknown, b: unknown): boolean =>
 	typeof a === "string" && typeof b === "string" ? a.toLowerCase() === b.toLowerCase() : a === b
 
-/** Names of the bindings in `got` that differ from `want`. */
+/** Names of the bindings in `got` that differ from `want`; a code field is named `code.<contract>.<field>`. */
 export function drifted(got: Bindings, want: Bindings): string[] {
-	return (Object.keys(want) as (keyof Bindings)[]).filter((k) => !same(got[k], want[k]))
+	const flat = (Object.keys(want) as (keyof Bindings)[]).filter((k) => k !== "code" && !same(got[k], want[k]))
+	return [...flat, ...codeMismatches(want.code, got.code)]
 }
 
-const explain = (names: string[], got: Bindings, want: Bindings) =>
-	names.map((k) => `${k} is ${got[k as keyof Bindings]}, pinned ${want[k as keyof Bindings]}`).join("; ")
+const at = (b: Bindings, name: string): unknown =>
+	name.split(".").reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], b)
+
+export type Mismatch = { name: string; message: string }
+
+const explain = (names: string[], got: Bindings, want: Bindings): Mismatch[] =>
+	names.map((name) => ({ name, message: `${name} is ${at(got, name)}, pinned ${at(want, name)}` }))
+
+/**
+ * Each contract names the others the target pins, so the code the pins hash is the code a spend reaches.
+ * Checked against the target's addresses rather than pinned, so a refresh can never enroll a rewiring.
+ */
+export async function wiringMismatches(rpc: Rpc, pins: Pins, block: bigint): Promise<Mismatch[]> {
+	const tag = numberToHex(block)
+	const { vault, entrypoint, keystore, aspRegistry } = pins.pool
+	const links = [
+		["wiring.vault.keystore", vault, "keystore()", keystore],
+		["wiring.vault.aspRegistry", vault, "aspRegistry()", aspRegistry],
+		["wiring.entrypoint.poolVault", entrypoint, "poolVault()", vault],
+	] as const
+	const out: Mismatch[] = []
+	for (const [name, from, getter, want] of links) {
+		const got = addressWord(await call(rpc, from, getter, tag))
+		if (!same(got, want)) out.push({ name, message: `${name} is ${got}, the target's is ${want}` })
+	}
+	return out
+}
+
+/** The bindings and wiring that differ at `block`, with one message each. */
+async function mismatchesAt(rpc: Rpc, pins: Pins, block: bigint): Promise<Mismatch[]> {
+	const got = await readBindings(rpc, pins, block)
+	return [...explain(drifted(got, pins.bindings), got, pins.bindings), ...(await wiringMismatches(rpc, pins, block))]
+}
+
+const fail = (kind: PreflightError["kind"], lead: string, found: Mismatch[]) =>
+	new PreflightError(
+		kind,
+		`${lead}: ${found.map((m) => m.message).join("; ")}`,
+		found.map((m) => m.name),
+	)
 
 type Header = { hash: Hex } | null
 
@@ -102,7 +142,7 @@ export async function checkEndpoint(rpc: Rpc, pins: Pins, host: string): Promise
 		throw new PreflightError("pin", `pin block.hash: ${host} has ${header.hash} at block ${n}, pinned ${pins.block.hash}`, [
 			"block.hash",
 		])
-	await served(rpc<Hex>("eth_getStorageAt", [pins.pool.vault, EIP1967_IMPLEMENTATION, numberToHex(n)]))
+	await served(rpc<Hex>("eth_getStorageAt", [pins.pool.vault, EIP1967_IMPLEMENTATION_SLOT, numberToHex(n)]))
 }
 
 /** The fork at the pinned block holds every pin. */
@@ -113,10 +153,8 @@ export async function checkFork(fork: Rpc, pins: Pins): Promise<void> {
 		throw new PreflightError("pin", `pin block.hash: the fork has ${header?.hash} at block ${n}, pinned ${pins.block.hash}`, [
 			"block.hash",
 		])
-	const got = await readBindings(fork, pins, n)
-	const names = drifted(got, pins.bindings)
-	if (names.length > 0)
-		throw new PreflightError("pin", `pins drifted on the fork at block ${n}: ${explain(names, got, pins.bindings)}`, names)
+	const found = await mismatchesAt(fork, pins, n)
+	if (found.length > 0) throw fail("pin", `pins drifted on the fork at block ${n}`, found)
 }
 
 /** The pinned verifier that checks each circuit's proofs. */
@@ -146,23 +184,34 @@ export async function checkLive(rpc: Rpc, pins: Pins): Promise<bigint> {
 			`the endpoint failed reading the live deployment: ${why instanceof Error ? why.message : String(why)}`,
 		)
 	let finalized: bigint
-	let got: Bindings
+	let found: Mismatch[]
 	try {
 		const header = await rpc<{ number: Hex } | null>("eth_getBlockByNumber", ["finalized", false])
 		if (header === null) throw new Error("no finalized block")
 		finalized = BigInt(header.number)
 		// A lagging gateway would otherwise check the deployment before the pin, not after it.
 		if (finalized < pins.block.number) throw new Error(`its finalized block ${finalized} predates the pinned block`)
-		got = await readBindings(rpc, pins, finalized)
+		found = await mismatchesAt(rpc, pins, finalized)
 	} catch (err) {
 		throw unread(err)
 	}
-	const names = drifted(got, pins.bindings)
-	if (names.length > 0)
-		throw new PreflightError(
-			"live",
-			`the live deployment moved after block ${pins.block.number} (finalized ${finalized}): ${explain(names, got, pins.bindings)}`,
-			names,
-		)
+	if (found.length > 0) throw fail("live", `the live deployment moved after block ${pins.block.number} (finalized ${finalized})`, found)
 	return finalized
+}
+
+/**
+ * The bindings to pin for `pins`' addresses at `block`, refused when the result could never be a valid pin:
+ * a cleared implementation slot, empty code, or wiring that names other contracts than the target's.
+ */
+export async function enroll(rpc: Rpc, pins: Pins, block: bigint): Promise<Bindings> {
+	const bindings = await readBindings(rpc, pins, block)
+	const problems = (await wiringMismatches(rpc, pins, block)).map((m) => m.message)
+	for (const c of POOL_CONTRACTS) {
+		const { proxyCodeHash, implementation, implementationCodeHash } = bindings.code[c]
+		if (proxyCodeHash === EMPTY_CODE_HASH) problems.push(`${c} has no code`)
+		if (BigInt(implementation) === 0n) problems.push(`${c}'s EIP-1967 slot is empty`)
+		else if (implementationCodeHash === EMPTY_CODE_HASH) problems.push(`${c}'s implementation ${implementation} has no code`)
+	}
+	if (problems.length > 0) throw new Error(`refusing to pin block ${block}: ${problems.join("; ")}`)
+	return bindings
 }

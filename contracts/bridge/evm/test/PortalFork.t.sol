@@ -13,9 +13,9 @@ import {IPortalFactory} from "../src/interfaces/IPortalFactory.sol";
 import {IPrivacyPoolVault} from "../src/interfaces/IPrivacyPoolVault.sol";
 import {BridgeMessageV1} from "../src/libraries/BridgeMessageV1.sol";
 
-/// The bridge's L1 side against the live Sepolia pool (V8) and the Aztec testnet Inbox, on the fork that
-/// `packages/sepolia-fork` prepared: an approved USDC note, a fresh factory and portal, and one spend proved
-/// to that portal. Only that runner runs it, with the fixture at `PP_FORK_FIXTURE`; hermetic gates skip `Fork`.
+/// The bridge's L1 side against a live Sepolia pool (the runner's target) and the Aztec testnet Inbox, on the
+/// fork that `packages/sepolia-fork` prepared: an approved USDC note, a fresh factory and portal, and one spend
+/// proved to that portal. Only that runner runs it, with the fixture at `PP_FORK_FIXTURE`; hermetic gates skip `Fork`.
 /// Expected errors are the pool's at the commit pp-env pins, so a deployed vault that differs fails by name.
 contract PortalForkTest is Test {
     uint256 internal constant SEPOLIA = 11_155_111;

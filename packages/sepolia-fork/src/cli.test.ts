@@ -24,12 +24,30 @@ test("with no endpoint the suite skips in one line, unless --require-rpc makes t
 	}
 })
 
-test("a refused endpoint fails, named by its host alone", () => {
+test("a command line that is not one fails with usage before any endpoint is read, so it never skips", () => {
+	for (const [args, cause] of [
+		[["run", "--target", "v8"], 'unknown target "v8"; known: pool1, vault-323c'],
+		[["run", "--targt", "pool1"], "Unknown option '--targt'"],
+		[["run", "extra"], "run takes no arguments, got extra"],
+		[["pins"], "pins takes one block number"],
+		[["pins", "1", "2"], "pins takes one block number"],
+		[["pins", "1", "--prepare-only"], "pins takes only --target"],
+		[["deploy"], 'unknown command "deploy"'],
+	] as const) {
+		const r = cli([...args])
+		expect([args, r.code, r.out]).toEqual([args, 2, ""])
+		expect(r.err).toContain(`sepolia-fork: ${cause}`)
+	}
+})
+
+test("a refused endpoint fails, named by its host alone, at the selected target's block (pool1 by default)", () => {
 	// Port 9 (discard) is closed on loopback, so the first call is refused at once.
 	const failed = cli(["run"], "http://127.0.0.1:9/v2/k3y")
 	expect(failed.code).toBe(1)
-	expect(failed.err).toContain("sepolia-fork: endpoint failure: 127.0.0.1:9 no longer serves block 12220000")
+	expect(failed.err).toContain("sepolia-fork: endpoint failure: 127.0.0.1:9 no longer serves block 12224362")
 	expect(failed.err).not.toContain("k3y")
+	const old = cli(["run", "--target", "vault-323c"], "http://127.0.0.1:9/v2/k3y")
+	expect(old.err).toContain("no longer serves block 12220000")
 	const unparseable = cli(["run"], "rpc.example/v2/k3y")
 	expect([unparseable.code, unparseable.err.trim()]).toEqual([1, "sepolia-fork: SEPOLIA_RPC_URL is not an http(s) URL"])
 })
