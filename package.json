@@ -14,6 +14,7 @@
 		"typecheck:all": "bun run --filter '@pp/*' typecheck",
 		"test:all": "BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun run --filter '@pp/*' --if-present test",
 		"test:ci-gating": "BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun test scripts/ci-cd/",
+		"test:unfetched": "bun scripts/unfetched.ts",
 		"demo": "bun packages/local-stack/src/cli.ts demo",
 		"nightly": "bun scripts/nightly.ts",
 		"baseline:complexity": "bun scripts/complexity-baseline/generate.ts",
@@ -24,7 +25,8 @@
 	"devDependencies": {
 		"@biomejs/biome": "2.5.13",
 		"@commitlint/cli": "^21.0.2",
-		"@commitlint/config-conventional": "^21.0.2"
+		"@commitlint/config-conventional": "^21.0.2",
+		"@pp/run-isolation": "workspace:*"
 	},
 	"packageManager": "bun@1.4.2",
 	"license": "Apache-2.0",
