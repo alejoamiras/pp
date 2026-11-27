@@ -5,12 +5,27 @@ inputs:
   package-dir:
     description: The workspace whose Playwright pin and binary are used, relative to the repository root.
     default: packages/e2e-kit
+  cache-save:
+    description: >
+      "false" restores the browser cache without saving it, for a job that runs code from a branch
+      other than the one whose cache scope it writes to.
+    required: false
+    default: "true"
 
 runs:
   using: composite
   steps:
-    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    - if: inputs.cache-save != 'false'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       id: cache
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles(format('{0}/package.json', inputs.package-dir)) }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-
+    - if: inputs.cache-save == 'false'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      id: restore
       with:
         path: ~/.cache/ms-playwright
         key: ${{ runner.os }}-playwright-${{ hashFiles(format('{0}/package.json', inputs.package-dir)) }}
@@ -22,7 +37,7 @@ runs:
       shell: bash
       env:
         PLAYWRIGHT: ${{ inputs.package-dir }}/node_modules/.bin/playwright
-        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit }}
       run: |
         if [ "$CACHE_HIT" = "true" ]; then
           "$PLAYWRIGHT" install-deps chromium
