@@ -11,7 +11,7 @@ use aztec::protocol::{
 // The committed LabelledToken artifact's class — pinned in bridge-core's
 // noir-artifact-classids.test.ts as well. Both vectors are the token's own `bench/handoff.json`
 // cases, so the token, the hub and bridge-core pin one pair.
-global TOKEN_CLASS_ID: Field = 0x04999e44146bf207240c03ba11b7ea3dbaac99aad3fa35c21fafd90e47b00f6c;
+global TOKEN_CLASS_ID: Field = 0x1433444ed316fe06e46c3dfb026089b3488dc8b76162d768384a906f6a0c0bbc;
 
 fn derive(registry: Field) -> Field {
     TokenBridgeHub::derive_token(
@@ -28,7 +28,7 @@ fn derive(registry: Field) -> Field {
 
 #[test]
 fn keystone_hub_token_address_matches_bridge_core() {
-    assert(derive(0) == 0x0eb98022ce121743822703080b043606102eb13412f2add3872994e5230539e2);
+    assert(derive(0) == 0x216fa64a96f11c2f9373105daaca55ee376e075cbaf464ddb87825e2f94101cf);
 }
 
 // The registry is a constructor argument, so it moves the address: a generation with a registry
@@ -36,7 +36,7 @@ fn keystone_hub_token_address_matches_bridge_core() {
 #[test]
 fn keystone_hub_token_address_binds_the_registry() {
     assert(
-        derive(0x7e57) == 0x1e9b63585361e5e7ae746b001924f40b2b7f27e11e718da0c46bf6ceed0ae137,
+        derive(0x7e57) == 0x1593084048a3dd0dea1cb66ca09270c2fdc13d161518cbbaeacdcc9c593baf54,
     );
 }
 

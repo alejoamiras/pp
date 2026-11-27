@@ -50,8 +50,9 @@ pub contract LabelledToken {
         amount: u128,
     }
 
-    /// The public side of a shield. `birth_id` ties it to one announcement and reveals the label only
-    /// to whoever holds the secret.
+    /// The public side of a shield. `birth_id` ties it to one announcement without naming the label;
+    /// once the birth tree admits the label, its new leaf can link the two, and batching approvals only
+    /// narrows that.
     #[event]
     struct ShieldDebited {
         birth_id: Field,
@@ -60,7 +61,7 @@ pub contract LabelledToken {
     }
 
     /// Read together in private, so one immutable holds both. `registry` is zero in a generation that
-    /// has no checked spends.
+    /// has no checked spends or shields.
     #[derive(Deserialize, Eq, Packable, Serialize)]
     pub struct Config {
         pub minter: AztecAddress,
@@ -139,7 +140,6 @@ pub contract LabelledToken {
         // step could not undo them.
         assert(self.context.in_revertible_phase(), "setup phase");
         let owner = self.msg_sender();
-        // Nullify and write the change before the enqueue, so a revert of the public step drops all.
         let (_, roots) = self.internal._checked_debit(owner, amount, label, path);
         self.enqueue_self.finish_unshield(owner, amount, roots);
     }
@@ -162,12 +162,13 @@ pub contract LabelledToken {
         assert(amount != 0, "zero amount");
         let owner = self.msg_sender();
         // Safety: the prover picks the secret. A repeated one hits the birth nullifier; a guessable one
-        // lets a later holder of the label link it to this debit.
+        // links the label to this debit from the debit alone.
         let secret = unsafe { random() };
         let label = birth_label(self.address, owner, amount, secret);
         // The bridge's settlement encoder rejects a zero label: such a note could never exit.
         assert(label != 0, "zero label");
         self.enqueue_self.debit_for_shield(owner, amount, birth_id(label, secret));
+        // The hub's sole-consumer guard pins this statement and `shield`'s header; change them with its exemption.
         self.context.push_nullifier_unsafe(birth_nullifier(owner, secret));
         self.storage.private_balances.at(owner).add(label, ORIGIN_BIRTH, amount);
         // Read at the anchor, so an intake rotation reaches proofs anchored after it; the expiry bounds
@@ -218,7 +219,7 @@ pub contract LabelledToken {
         self.storage.public_balances.at(owner).read()
     }
 
-    /// Spends `amount` of `owner`'s `label` notes and returns the change, after proving `label` in
+    /// Spends `amount` of `owner`'s `label` notes and writes back the change, after proving `label` in
     /// the tree of the notes' common origin at the anchor; returns that origin and both roots.
     #[internal("private")]
     fn _checked_debit(owner: AztecAddress, amount: u128, label: Field, path: LabelPath) -> (u8, AnchorRoots) {
@@ -269,7 +270,7 @@ pub contract LabelledToken {
         self.storage.private_balances.at(owner).balance_of()
     }
 
-    /// `(label, origin, balance)` per distinct label of `owner`, from the `start`-th label.
+    /// `(label, origin, balance)` per distinct (label, origin) pair of `owner`, from the `start`-th pair.
     // No parameter of an external function may be named `offset`: aztec-nr's generated call stubs
     // keep a local of that name and would serialize it in place of the argument.
     #[external("utility")]

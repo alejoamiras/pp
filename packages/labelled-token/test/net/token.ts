@@ -33,7 +33,7 @@ export const sendOpts = (d: Device) => ({ from: d.from, fee: d.fee, wait: { wait
 
 export const deployOpts = (d: Device) => ({ from: d.from, fee: d.fee, wait: { waitForStatus: TxStatus.CHECKPOINTED } })
 
-/** A zero `registry` deploys a stage-A token, on which every checked spend fails. */
+/** With a zero `registry`, checked spends and shields fail with "registry unset". */
 export async function deployStage(d: Device, registry: AztecAddress = AztecAddress.ZERO): Promise<Deployed> {
 	const stub = await Contract.deploy(d.wallet, stubArtifact, [], undefined).send(deployOpts(d) as never)
 	const word = (s: string) => wordToNoirString(toWord(utf8(s)))

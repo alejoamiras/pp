@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs"
 import { setTimeout as sleep } from "node:timers/promises"
 
 const PROC = existsSync("/proc/self/stat")
@@ -11,7 +11,19 @@ export interface ProcFs {
 	readFile(path: string): string
 }
 
-const HOST: ProcFs = { readdir: (path) => readdirSync(path), readFile: (path) => readFileSync(path, "utf8") }
+/** The `/proc` reads `pidNamespace` makes: files and symbolic links. */
+export interface ProcLinks extends ProcFs {
+	/** A symbolic link's target; throws if it is missing. */
+	readlink(path: string): string
+	exists(path: string): boolean
+}
+
+const HOST: ProcLinks = {
+	readdir: (path) => readdirSync(path),
+	readFile: (path) => readFileSync(path, "utf8"),
+	readlink: (path) => readlinkSync(path),
+	exists: (path) => existsSync(path),
+}
 
 /** Passes over a zombie-only group before membership that never settles reads as a member still forking. */
 const SCANS = 8
@@ -27,17 +39,18 @@ const signalable = (pgid: number) => {
 
 const exited = (state: string | undefined) => state === undefined || state === "Z" || state === "X"
 
-/** State and process group from a `/proc` stat file, or undefined once it is gone. */
-function readStat(path: string, proc: ProcFs): { state?: string; pgrp: number } | undefined {
+/** State, process group and start time from a `/proc` stat file, or undefined once it is gone. */
+function readStat(path: string, proc: ProcFs): { state?: string; pgrp: number; start?: string } | undefined {
 	let stat: string
 	try {
 		stat = proc.readFile(path)
 	} catch {
 		return undefined
 	}
-	// The command name may hold spaces and parentheses; after its last ")" come state, ppid, pgrp.
-	const [state, , pgrp] = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
-	return { state, pgrp: Number(pgrp) }
+	// The command name may hold spaces and parentheses; after its last ")" come state (field 3), ppid,
+	// pgrp, and later starttime (field 22).
+	const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
+	return { state: fields[0], pgrp: Number(fields[2]), start: fields[19] }
 }
 
 /**
@@ -52,6 +65,53 @@ function threadsOf(pid: string, proc: ProcFs): { running: boolean; tids: string[
 		return { running: false, tids: [] }
 	}
 	return { running: tids.some((tid) => !exited(readStat(`/proc/${pid}/task/${tid}/stat`, proc)?.state)), tids }
+}
+
+/**
+ * The start time of `pid` (`/proc` stat field 22, clock ticks since boot) while `/proc` lists it, a
+ * zombie included; undefined once it is gone, and always without `/proc`. A pid and its start time name
+ * one process under one `pidNamespace` token, since a pid handed out again starts later.
+ */
+export function startTime(pid: number, proc: ProcFs = HOST): string | undefined {
+	return PROC ? readStat(`/proc/${pid}/stat`, proc)?.start : undefined
+}
+
+/**
+ * Through an ancestor pid namespace's `/proc`, `NSpid` lists this process once per level, so equal numbers
+ * at two levels cannot pass for this namespace's own `/proc`.
+ */
+function procNumbersOwnNamespace(proc: ProcLinks): boolean {
+	const pids = /^NSpid:\s+(.+)$/m.exec(proc.readFile("/proc/self/status"))?.[1]?.trim().split(/\s+/)
+	return pids?.length === 1 && pids[0] === String(process.pid)
+}
+
+/** A `/proc` mounted with `hidepid` hides live processes, so a missing pid there proves nothing. */
+function procHidesPids(proc: ProcLinks): boolean {
+	// An overmount is listed after the mount it covers, so the last `/proc` line is the one in effect.
+	const mount = proc
+		.readFile("/proc/self/mountinfo")
+		.split("\n")
+		.findLast((line) => line.split(" ")[4] === "/proc")
+	const options = mount?.split(" - ")[1]?.split(" ")[2] ?? ""
+	return options.split(",").some((o) => o.startsWith("hidepid=") && !/^hidepid=(0|off)$/.test(o))
+}
+
+/**
+ * The token under which a pid and its `startTime` name one process: this boot, pid namespace and time
+ * namespace (which offsets field 22 for its readers). Undefined when `/proc` cannot vouch that a pid it
+ * does not list is gone: no `/proc`, a `/proc` that numbers another pid namespace than this process's,
+ * or one mounted with `hidepid`. Another container sharing a directory has another token.
+ */
+export function pidNamespace(proc: ProcLinks = HOST): string | undefined {
+	if (!PROC) return undefined
+	try {
+		if (!procNumbersOwnNamespace(proc) || procHidesPids(proc)) return undefined
+		const boot = proc.readFile("/proc/sys/kernel/random/boot_id").trim()
+		const time = proc.exists("/proc/self/ns/time") ? proc.readlink("/proc/self/ns/time") : ""
+		return `${boot}/${proc.readlink("/proc/self/ns/pid")}/${time}`
+	} catch {
+		return undefined
+	}
 }
 
 /** Every process in `pgid` with its state and command line (`[]` without `/proc`), for a log line. */

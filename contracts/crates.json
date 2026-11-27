@@ -31,7 +31,7 @@
 			"kind": "contract",
 			"parity": true,
 			"txe": {
-				"floor": 67,
+				"floor": 69,
 				"stage": [
 					"contracts/bridge/aztec/bridge_stub/target/bridge_stub-BridgeStub.json",
 					"contracts/bridge/aztec/asp_registry/target/asp_registry-AspRootRegistry.json"
