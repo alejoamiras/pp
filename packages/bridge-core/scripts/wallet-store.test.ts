@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { pidNamespace } from "@pp/run-isolation/process-group"
 import { storeRoot } from "./wallet-store"
 
 const module = join(import.meta.dirname, "wallet-store.ts")
@@ -68,7 +69,9 @@ describe("ownedWalletStore", () => {
 	})
 })
 
-describe.skipIf(process.platform !== "linux")("a new store removes the stores of owners that are gone", () => {
+// Nothing is reaped where /proc cannot vouch for an owner (hidepid, an ancestor's /proc); CI's runners can.
+const reaps = pidNamespace() !== undefined || process.env.CI !== undefined
+describe.skipIf(process.platform !== "linux" || !reaps)("a new store removes the stores of owners that are gone", () => {
 	/** This host's namespace tag, read from the name of a store a child takes and drops. */
 	async function ownTag(): Promise<string> {
 		const c = child("", "")

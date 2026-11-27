@@ -76,12 +76,22 @@ export function startTime(pid: number, proc: ProcFs = HOST): string | undefined 
 	return PROC ? readStat(`/proc/${pid}/stat`, proc)?.start : undefined
 }
 
+/**
+ * Through an ancestor pid namespace's `/proc`, `NSpid` lists this process once per level, so equal numbers
+ * at two levels cannot pass for this namespace's own `/proc`.
+ */
+function procNumbersOwnNamespace(proc: ProcLinks): boolean {
+	const pids = /^NSpid:\s+(.+)$/m.exec(proc.readFile("/proc/self/status"))?.[1]?.trim().split(/\s+/)
+	return pids?.length === 1 && pids[0] === String(process.pid)
+}
+
 /** A `/proc` mounted with `hidepid` hides live processes, so a missing pid there proves nothing. */
 function procHidesPids(proc: ProcLinks): boolean {
+	// An overmount is listed after the mount it covers, so the last `/proc` line is the one in effect.
 	const mount = proc
 		.readFile("/proc/self/mountinfo")
 		.split("\n")
-		.find((line) => line.split(" ")[4] === "/proc")
+		.findLast((line) => line.split(" ")[4] === "/proc")
 	const options = mount?.split(" - ")[1]?.split(" ")[2] ?? ""
 	return options.split(",").some((o) => o.startsWith("hidepid=") && !/^hidepid=(0|off)$/.test(o))
 }
@@ -95,7 +105,7 @@ function procHidesPids(proc: ProcLinks): boolean {
 export function pidNamespace(proc: ProcLinks = HOST): string | undefined {
 	if (!PROC) return undefined
 	try {
-		if (proc.readlink("/proc/self") !== String(process.pid) || procHidesPids(proc)) return undefined
+		if (!procNumbersOwnNamespace(proc) || procHidesPids(proc)) return undefined
 		const boot = proc.readFile("/proc/sys/kernel/random/boot_id").trim()
 		const time = proc.exists("/proc/self/ns/time") ? proc.readlink("/proc/self/ns/time") : ""
 		return `${boot}/${proc.readlink("/proc/self/ns/pid")}/${time}`

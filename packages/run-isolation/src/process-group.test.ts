@@ -169,25 +169,33 @@ describe.skipIf(!proc)("startTime and pidNamespace", () => {
 	})
 
 	it("gives no token where /proc numbers another pid namespace or hides pids", () => {
-		const mounted = (options: string) => `25 1 0:5 / /proc rw,nosuid - proc proc ${options}\n`
-		const scripted = (self: string, options: string): ProcLinks => ({
+		const mounted = (...options: string[]) => options.map((o) => `25 1 0:5 / /proc rw,nosuid - proc proc ${o}\n`).join("")
+		const scripted = (nspid: string, mountinfo: string): ProcLinks => ({
 			readdir: () => [],
-			readFile: (path) => (path.endsWith("mountinfo") ? mounted(options) : "boot\n"),
-			readlink: (path) => (path === "/proc/self" ? self : "pid:[1]"),
+			readFile: (path) =>
+				path.endsWith("mountinfo") ? mountinfo : path.endsWith("status") ? `Pid:\t1\nNSpid:\t${nspid}\n` : "boot\n",
+			readlink: () => "pid:[1]",
 			exists: () => false,
 		})
 		const own = String(process.pid)
-		expect(pidNamespace(scripted(own, "rw"))).toBe("boot/pid:[1]/")
-		expect(pidNamespace(scripted(own, "rw,hidepid=0"))).toBe("boot/pid:[1]/")
-		expect(pidNamespace(scripted(String(process.pid + 1), "rw")), "an ancestor namespace's /proc").toBeUndefined()
-		expect(pidNamespace(scripted(own, "rw,hidepid=invisible"))).toBeUndefined()
-		expect(pidNamespace(scripted(own, "rw,hidepid=2,gid=1"))).toBeUndefined()
+		expect(pidNamespace(scripted(own, mounted("rw")))).toBe("boot/pid:[1]/")
+		expect(pidNamespace(scripted(own, mounted("rw,hidepid=0")))).toBe("boot/pid:[1]/")
+		expect(pidNamespace(scripted(`7\t${own}`, mounted("rw"))), "an ancestor namespace's /proc").toBeUndefined()
+		expect(pidNamespace(scripted(`${own}\t${own}`, mounted("rw"))), "equal pids at two levels").toBeUndefined()
+		expect(pidNamespace(scripted(own, mounted("rw,hidepid=invisible")))).toBeUndefined()
+		expect(pidNamespace(scripted(own, mounted("rw,hidepid=2,gid=1")))).toBeUndefined()
+		expect(pidNamespace(scripted(own, mounted("rw", "rw,hidepid=2"))), "a hidepid overmount").toBeUndefined()
+		expect(pidNamespace(scripted(own, mounted("rw,hidepid=2", "rw")))).toBe("boot/pid:[1]/")
 	})
 
-	it("names this boot, pid namespace and time namespace in its token", () => {
-		const time = existsSync("/proc/self/ns/time") ? readlinkSync("/proc/self/ns/time") : ""
-		expect(pidNamespace()).toBe(
-			`${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}/${readlinkSync("/proc/self/ns/pid")}/${time}`,
-		)
-	})
+	// A host whose /proc the guard refuses (hidepid, an ancestor's /proc) gives no token; CI's runners must.
+	it.skipIf(pidNamespace() === undefined && process.env.CI === undefined)(
+		"names this boot, pid namespace and time namespace in its token",
+		() => {
+			const time = existsSync("/proc/self/ns/time") ? readlinkSync("/proc/self/ns/time") : ""
+			expect(pidNamespace()).toBe(
+				`${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}/${readlinkSync("/proc/self/ns/pid")}/${time}`,
+			)
+		},
+	)
 })

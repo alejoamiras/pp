@@ -55,6 +55,7 @@ function namespaceTag(): string | undefined {
 function reapOrphans(root: string, label: string, tag: string): void {
 	let names: string[]
 	try {
+		// Assumes no other uid can write to an ancestor of `root`, which could swap it after this check.
 		const st = lstatSync(root)
 		const sticky = (st.mode & 0o1000) !== 0
 		if (!st.isDirectory() || (!sticky && (st.uid !== process.getuid?.() || (st.mode & 0o022) !== 0))) return
