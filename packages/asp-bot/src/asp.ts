@@ -138,7 +138,6 @@ function stringEnd(text: string, i: number): number {
 	return i
 }
 
-/** Whether `text` has, outside its strings, more commas than {@link MAX_LEAVES} entries or more than 16 containers. */
 function shapeExceeds(text: string): boolean {
 	let commas = 0
 	let opens = 0
