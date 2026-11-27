@@ -81,6 +81,13 @@ unconstrained fn transfer_public_failure_private_sentinel() {
     transfer_public(s, AztecAddress::from_field(SENTINEL), 5);
 }
 
+// x = 3 is off the curve: 3^3 - 17 is a non-residue.
+#[test(should_fail_with = "invalid recipient")]
+unconstrained fn transfer_public_failure_invalid_recipient() {
+    let s = unshielded();
+    transfer_public(s, AztecAddress::from_field(3), 5);
+}
+
 #[test]
 unconstrained fn burn_public_for_exit_burns() {
     let s = unshielded();

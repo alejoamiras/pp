@@ -125,6 +125,10 @@ async function bench(nodeUrl: string) {
 }
 
 async function main(): Promise<number> {
+	// An attached network is shared: another client can mine or load it mid-measurement.
+	if (process.env.SANDBOX_L1_RPC || process.env.SANDBOX_NODE_URL) {
+		throw new Error("bench:prove boots its own network: unset SANDBOX_L1_RPC and SANDBOX_NODE_URL")
+	}
 	const net = await startLocalNetwork({ runId: `tok-prove-${process.pid}-${Date.now().toString(36)}` })
 	let rows: Record<string, Row>
 	try {

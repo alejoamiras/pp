@@ -107,12 +107,13 @@ pub contract LabelledToken {
         self.storage.private_balances.at(to).add(label, origin, amount);
     }
 
-    /// Moves `amount` of the caller's `label` notes to its public balance. The public step re-checks
-    /// that both registry roots are still current, so any change in either tree reverts the credit
-    /// and the spent notes with it.
+    /// Moves `amount` of the caller's `label` notes to its public balance. The public step checks at
+    /// inclusion that both registry roots are still the anchored ones; a change in either tree
+    /// reverts the credit and the spend together.
     #[external("private")]
     fn unshield(amount: u128, label: Field, path: LabelPath) {
-        // A setup-phase call would credit publicly even if the private part later reverted.
+        // The spend, its change and the queued credit must all be revertible, or a failed public
+        // step could not undo them.
         assert(self.context.in_revertible_phase(), "setup phase");
         let owner = self.msg_sender();
         // Nullify and write the change before the enqueue, so a revert of the public step drops all.
@@ -132,6 +133,8 @@ pub contract LabelledToken {
     #[external("public")]
     fn transfer_public(to: AztecAddress, amount: u128) {
         assert(!to.is_zero(), "zero recipient");
+        // No contract can sit at an off-curve address, so a credit there could never move again.
+        assert(to.is_valid(), "invalid recipient");
         // `Transfer` to the sentinel would read as a move into private balances.
         assert(to != PRIVATE_ADDRESS_MAGIC_VALUE, "private sentinel recipient");
         assert(amount != 0, "zero amount");

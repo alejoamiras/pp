@@ -28,7 +28,6 @@ unconstrained fn transfer_private_exact_spend_has_no_change() {
     assert_labels(s, s.admin, [(L, ORIGIN_POOL, 50)]);
 }
 
-// The spend selects only `label`'s notes, so another label's balance never pays for it.
 #[test(should_fail_with = "Balance too low")]
 unconstrained fn transfer_private_failure_other_label_notes() {
     let s = setup();

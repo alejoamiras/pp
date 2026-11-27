@@ -139,7 +139,7 @@ describe("move: anchor vs inclusion", () => {
 	})
 
 	test("once the reverted unshield is final, its sender's change-making send lands again", async () => {
-		// A block is finalized once a later one exists; every post mines one.
+		// The idle network finalizes nothing until more blocks arrive; each heartbeat post mines one.
 		for (let i = 0; i < 10 && Number(await base.node.getBlockNumber("finalized")) < revertedBlock; i++) await heartbeat()
 		expect(Number(await base.node.getBlockNumber("finalized"))).toBeGreaterThanOrEqual(revertedBlock)
 		await ragequit(racer, 5n).send(sendOpts(racer) as never)

@@ -3,7 +3,7 @@ use crate::{
     note::ORIGIN_POOL,
     test::{
         paths::{BIRTH_ROOT, POOL_ROOT, SOLO_ROOT},
-        utils::{assert_labels, balance, K, L, mint, post_now, ragequit, setup, setup_with_registry, values},
+        utils::{assert_labels, balance, K, L, mint, post, post_now, ragequit, setup, setup_with_registry, t0, values},
     },
 };
 use asp_registry::AspRootRegistry;
@@ -27,7 +27,11 @@ unconstrained fn burn_for_exit_nine_notes_of_revoked_label_in_two_calls() {
     for v in 1..10 {
         mint(s, s.user, v as u128, L);
     }
-    post_now(s, SOLO_ROOT, BIRTH_ROOT);
+    let now = t0(s);
+    post(s, now, 1, POOL_ROOT, BIRTH_ROOT);
+    // Revoked: `L` is in neither tree.
+    post(s, now + 1, 2, SOLO_ROOT, SOLO_ROOT);
+    s.env.mine_block_at(now + 2);
     ragequit(s, s.user, 44, L);
     ragequit(s, s.user, 1, L);
     assert_eq(balance(s, s.user), 0);

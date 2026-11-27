@@ -15,8 +15,8 @@ Stage A is the hold-and-leave surface; stage B adds spends checked against the A
 | `private_balances_by_label(owner, start)` | utility | `(label, origin, balance)` per label, 16 per page, from the `start`-th. Tracks at most 256 labels per owner. |
 | `private_notes_by_label(owner, label, start)` | utility | One label's note values, largest first, 10 per page: the exact chunks a caller can burn. |
 | `transfer_private(to, amount, label, path)` | any holder | Spends the caller's `label` notes as `burn_for_exit` does, then proves `label` is in the registry's tree of those notes' origin at the anchor (`check_label`), which also sets the expiry to anchor + 1800 s. Writes `(label, origin, amount)` to `to` and the change to the caller. Refuses a zero or off-curve `to` and a zero amount. |
-| `unshield(amount, label, path)` | any holder | As `transfer_private`, crediting the caller's public balance instead. Refused in the setup phase. The public step `finish_unshield` (callable only by the token) reverts unless both registry roots are still the ones the spend was checked against; after such a revert the notes stay spendable. |
-| `transfer_public(to, amount)` | any holder | Moves public balance. Refuses a zero `to`, the private-side sentinel address and a zero amount. |
+| `unshield(amount, label, path)` | any holder | As `transfer_private`, crediting the caller's public balance instead. Refused in the setup phase. The public step `finish_unshield` (callable only by the token) reverts unless both registry roots are still the ones the spend was checked against; after such a revert the notes stay spendable, and until that tx is final any spend of the caller's that returns change fails, so it can leave only in exact chunks. |
+| `transfer_public(to, amount)` | any holder | Moves public balance. Refuses a zero or off-curve `to`, the private-side sentinel address and a zero amount. |
 | `burn_public_for_exit(from, amount)` | minter only | Burns `from`'s public balance. |
 | `balance_of_public(owner)` | public view | The owner's public balance. |
 

@@ -1,6 +1,6 @@
-// A setup-phase effect survives an app-phase revert, so the token's checked moves refuse to run
-// before `end_setup`. TXE marks every top-level call revertible and bypasses the account
-// entrypoint, so only a real fee-payment call can put one in the setup phase.
+// `unshield` refuses to run before `end_setup`, where its effects would not revert with its public
+// step. TXE marks every top-level call revertible and bypasses the account entrypoint, so only a
+// real fee-payment call can put it in the setup phase.
 import type { Contract } from "@aztec-labs/aztec.js/contracts"
 import type { FeePaymentMethod } from "@aztec-labs/aztec.js/fee"
 import { mergeExecutionPayloads } from "@aztec-labs/aztec.js/tx"
