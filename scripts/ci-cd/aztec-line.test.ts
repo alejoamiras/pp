@@ -72,16 +72,24 @@ test("every workspace the CI pin readers consult names the same exact pins", () 
 	}
 })
 
+/** Every manifest section a package can be installed from. */
+const SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] as const
+
+/** The Aztec packages `m` declares at anything but their line version. */
+const offLine = (path: string, m: Manifest): string[] =>
+	SECTIONS.flatMap((section) => Object.entries(m[section] ?? {}))
+		.filter(([name, spec]) => expectedVersion(name) !== undefined && spec !== expectedVersion(name))
+		.map(([name, spec]) => `${path}: ${name}@${spec} (want ${expectedVersion(name)})`)
+
 test("every manifest declares each Aztec package at exactly its line version", () => {
-	const off = MANIFESTS.flatMap((path) => {
-		const m = manifest(path)
-		return [m.dependencies, m.devDependencies, m.peerDependencies]
-			.flatMap((section) => Object.entries(section ?? {}))
-			.filter(([name, spec]) => expectedVersion(name) !== undefined && spec !== expectedVersion(name))
-			.map(([name, spec]) => `${path}: ${name}@${spec} (want ${expectedVersion(name)})`)
-	})
 	expect(MANIFESTS.length).toBeGreaterThan(3)
-	expect(off).toEqual([])
+	expect(MANIFESTS.flatMap((path) => offLine(path, manifest(path)))).toEqual([])
+})
+
+test("the manifest scan reads every section a package installs from", () => {
+	for (const section of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
+		expect(offLine("x", { [section]: { "@aztec-labs/aztec.js": "0.0.0" } }), section).toHaveLength(1)
+	}
 })
 
 /**
@@ -187,7 +195,7 @@ test("the app's dependency closure declares and resolves one exact viem", () => 
 	expect([...members]).toEqual(expect.arrayContaining(["@pp/bridge-core", "@pp/bridge-spec"]))
 	const declared = [...members].flatMap((name) => {
 		const m = workspaces.get(name)?.manifest
-		return [m?.dependencies, m?.devDependencies, m?.optionalDependencies, m?.peerDependencies].flatMap(viemSpecs)
+		return SECTIONS.map((section) => m?.[section]).flatMap(viemSpecs)
 	})
 	const overridden = Object.entries(manifest("package.json").overrides ?? {}).flatMap(([name, v]) =>
 		typeof v === "string" ? viemSpecs({ [name]: v }) : viemSpecs(v),
