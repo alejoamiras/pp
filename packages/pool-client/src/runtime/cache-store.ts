@@ -11,11 +11,13 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 	return hex(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>))
 }
 
-// The slice of Cache Storage used here, typed locally so a consumer compiling these sources needs no DOM lib.
-type CacheLike = {
-	match(key: string): Promise<Response | undefined>
-	put(key: string, response: Response): Promise<void>
-	delete(key: string): Promise<boolean>
+/** The slice of Cache Storage used here, typed locally so a consumer compiling these sources needs no DOM lib. */
+export type CacheStorageLike = {
+	open(name: string): Promise<{
+		match(key: string): Promise<Response | undefined>
+		put(key: string, response: Response): Promise<void>
+		delete(key: string): Promise<boolean>
+	}>
 }
 
 /**
@@ -24,7 +26,7 @@ type CacheLike = {
  * instead of failing on a poisoned cache. Storage errors also read as misses: the cache is only a speed-up.
  */
 export function cacheStorageStore(digestOf: (cid: string) => string | undefined): ICacheStore | undefined {
-	const storage = (globalThis as { caches?: { open(name: string): Promise<CacheLike> } }).caches
+	const storage = (globalThis as { caches?: CacheStorageLike }).caches
 	if (storage === undefined) return undefined
 	const open = () => storage.open(ARTIFACT_CACHE_NAME)
 	return {
