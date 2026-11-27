@@ -85,8 +85,14 @@ lockfile and in the TXE server's. The hub's class ids depend on these inputs.
 - **`tokenClassId` ↔ the committed `LabelledToken` artifact.** The hub's `token_class_id` is the
   class id of `contracts/bridge/aztec/labelled_token/target/labelled_token-LabelledToken.json`; every
   L2 token derives from it (`src/hub-token.ts`, class id pinned by `noir-artifact-classids.test.ts`,
-  address vector by `hub-token.test.ts`). An aztec-nr bump moves both class ids, and the sandbox
-  fixture's hub and token addresses with them.
+  address vector by `hub-token.test.ts`). An aztec-nr bump moves both class ids, and with them the
+  hub keystone's `TOKEN_CLASS_ID` and `derive` vectors, the manifest tests' class ids, the token's
+  `bench/handoff.json`, and the sandbox fixture's hub address, token class, `tokenArtifactSha256` and
+  every `l2Token`.
+- **One commit, one generation.** The bridge client's `exitPrivatePayload` builds only for a hub and
+  token of exactly the committed classes (`STAGE_UNSUPPORTED` otherwise), and the web app and the ASP
+  bot load the committed artifacts, so a bump that moves a class id serves only the generation deployed
+  from it: redeploy every network the app points at.
 - **Hub → the protocol's `ContractInstanceRegistry`.** `register_*` calls aztec-nr's
   `publish_contract_instance_for_public_execution`, which the running network must still route. The
   TXE cannot exercise it; the hub network suite (`test:hub`) and the sandbox's first-time
