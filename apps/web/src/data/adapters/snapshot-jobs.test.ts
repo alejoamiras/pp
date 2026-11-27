@@ -2,13 +2,13 @@ import { aspLeaf, buildLeanImt, leanImtRoot } from "@pp/bridge-spec"
 import { MAX_LEAVES, type RootRecord, serializeAspSnapshot } from "@pp/label-paths"
 import { describe, expect, test } from "vitest"
 import { snapshotJobs } from "./snapshot-jobs"
-import { type JobReply, type JobRequest, rootsKey } from "./snapshot-protocol"
+import { type JobReply, type JobRequest, type Lists, listsKey } from "./snapshot-protocol"
 
 const LISTED = [11n, 22n, 33n, 44n]
 const poolLeaves = LISTED.map(aspLeaf)
 const poolRoot = buildLeanImt(poolLeaves).root
 const record: RootRecord = { sequence: 7n, poolRoot, birthRoot: 0n, l1Block: 1n, rootTime: 1_000n, poolSize: 4n, birthSize: 0n }
-const KEY = rootsKey(record)
+const KEY = listsKey(record)
 const text = (sequence = 7n) => serializeAspSnapshot({ sequence, poolRoot, birthRoot: 0n, poolLeaves, birthLeaves: [] })
 
 function rig() {
@@ -19,8 +19,9 @@ function rig() {
 		jobs.handle(req)
 		return [...replies]
 	}
-	const load = (body = text(), roots = { poolRoot, birthRoot: 0n }) => send({ kind: "load", key: KEY, text: body, roots })
-	const check = (label: bigint) => send({ kind: "check", key: KEY, record, label, origin: 0, nowSec: 1_000n })
+	const load = (body = text(), lists: Lists = record) => send({ kind: "load", key: KEY, text: body, lists })
+	const check = (label: bigint, at: RootRecord = record) =>
+		send({ kind: "check", key: listsKey(at), record: at, label, origin: 0, nowSec: 1_000n })
 	return { load, check }
 }
 
@@ -30,10 +31,21 @@ const builds = (replies: JobReply[]) => hashing(replies).filter((r) => r.kind ==
 const outcome = (replies: JobReply[]) => replies.at(-1)
 
 describe("the allow-list worker", () => {
-	test("refuses a list whose declared roots are not the record's before hashing anything", () => {
+	test.each([
+		["declared roots", { ...record, poolRoot: poolRoot + 1n }],
+		["pool list's length", { ...record, poolSize: 5n }],
+		["birth list's length", { ...record, birthSize: 1n }],
+	])("refuses a list whose %s are not the record's before hashing anything", (_, lists) => {
 		const w = rig()
-		expect(w.load(text(), { poolRoot: poolRoot + 1n, birthRoot: 0n })).toEqual([{ kind: "failed", failure: "MISMATCH" }])
+		expect(w.load(text(), lists)).toEqual([{ kind: "failed", failure: "MISMATCH" }])
 		expect(w.check(11n)).toEqual([{ kind: "failed", failure: "NOT_LOADED" }])
+	})
+
+	test("answers no check for a record with the held roots but other lengths: that is another list", () => {
+		const w = rig()
+		expect(w.load()).toEqual([{ kind: "loaded" }])
+		expect(w.check(11n, { ...record, sequence: 8n, poolSize: 5n })).toEqual([{ kind: "failed", failure: "NOT_LOADED" }])
+		expect(outcome(w.check(11n))).toMatchObject({ kind: "checked", result: { state: "ACTIVE" } })
 	})
 
 	test("builds one tree per list, for an absent label too, and answers every later label from it", () => {

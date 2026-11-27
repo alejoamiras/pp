@@ -173,6 +173,17 @@ describe("the stack's allow list", () => {
 		expect(r.s.bot).toHaveLength(2)
 	})
 
+	test("a list refused for its length holds only that record's lists: a record with the same roots and the list's length checks at once", async () => {
+		const r = rig()
+		r.s.snapshots.set(7n, body(7n))
+		r.s.snapshots.set(8n, body(8n))
+		const wrong = { record: { ...recordOf(7n), poolSize: 3n }, nowSec: 1_100n }
+		await expect(r.port.check(wrong, 11n, 0)).rejects.toMatchObject({ code: "LIST_MISMATCH" })
+		const corrected = { record: recordOf(8n, 1_300n), nowSec: 1_400n }
+		await expect(r.port.check(corrected, 11n, 0)).resolves.toMatchObject({ state: "ACTIVE" })
+		expect(r.s.bot).toEqual(["/v1/snapshots/7", "/v1/snapshots/8"])
+	})
+
 	test("a list that declares the record's roots but whose leaves build another never answers absent", async () => {
 		const r = rig()
 		const whole = JSON.parse(body(7n)) as { poolLeaves: string[] }

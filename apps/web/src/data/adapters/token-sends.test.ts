@@ -162,6 +162,25 @@ describe("the token's checked spends", () => {
 		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
 	})
 
+	test("checks again when the record read after its check keeps the roots but commits to another list length", async () => {
+		const r = rig()
+		const view = (sequence: bigint, poolSize: bigint) => ({
+			record: { sequence, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: sequence, poolSize, birthSize: 0n },
+			nowSec: 2n,
+		})
+		const current = vi.fn().mockResolvedValueOnce(view(1n, 1n)).mockResolvedValue(view(2n, 2n))
+		const check = vi.fn().mockResolvedValue(ACTIVE)
+		const sends = stackTokenSends({
+			aztec: r.aztec,
+			allowList: { current, check },
+			sponsoredFpc: FPC,
+			notes: ENOUGH,
+			publicBalance: PUBLIC,
+		})
+		await sends.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())
+		expect(check.mock.calls.map(([v]) => v.record.poolSize)).toEqual([1n, 2n])
+	})
+
 	test("refuses a path whose roots held through the check but aged past spending by the read after it", async () => {
 		const r = rig()
 		// For rootTime 1, 1501 is the last read time still fresh once the proving budget is added.

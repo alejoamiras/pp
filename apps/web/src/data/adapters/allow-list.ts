@@ -1,8 +1,8 @@
 /**
  * The allow list for a stack build: the registry's record and its time read at one Aztec block, and
  * each label checked in the page's one allow-list worker against the bot's snapshot of that record's
- * roots. Work is keyed by the roots, never the sequence: the bot re-posts the same roots under a new
- * sequence every few minutes, and that costs no download and no hash. A list that failed is not
+ * lists. Work is keyed by the lists, both roots and both lengths, never the sequence: the bot re-posts
+ * the same lists under a new sequence every few minutes, and that costs no download and no hash. A list that failed is not
  * fetched again until a manual Check again, which backs off.
  */
 import { type Hex, readRootRecord } from "@pp/label-paths"
@@ -11,7 +11,7 @@ import { type AllowListCode, AllowListError } from "../errors"
 import type { AllowListPort, AllowListProgress, AllowListView, Timer } from "../ports"
 import type { LabelCheck, Origin } from "../stack-types"
 import { type DownloadLimits, downloadSnapshot } from "./snapshot-download"
-import { type JobReply, type JobRequest, type ListFailure, rootsKey } from "./snapshot-protocol"
+import { type JobReply, type JobRequest, type ListFailure, listsKey } from "./snapshot-protocol"
 
 /**
  * Chain seconds a checked spend may take from the anchor to its own proof's anchor: a label is
@@ -150,7 +150,7 @@ class StackAllowList implements AllowListPort {
 	}
 
 	checkAgain(view: AllowListView): boolean {
-		const key = rootsKey(view.record)
+		const key = listsKey(view.record)
 		const held = this.failures.get(key)
 		if (held && this.waitLeft(key, held) > 0) return false
 		this.failures.delete(key)
@@ -209,15 +209,15 @@ class StackAllowList implements AllowListPort {
 		return new AllowListError(code, this.waitLeft(key, held))
 	}
 
-	/** The snapshot of `view`'s roots, from the record's own sequence; after a 404, once more from the latest record's. */
+	/** The snapshot of `view`'s lists, from the record's own sequence; after a 404, once more from the latest record's. */
 	private async snapshotText(view: AllowListView, key: string, signal: AbortSignal): Promise<string> {
 		const url = (sequence: bigint) => `${this.d.botUrl}/v1/snapshots/${sequence}`
 		const deps = { fetch: this.fetchFn, timer: this.d.timer, signal, ...(this.d.limits ? { limits: this.d.limits } : {}) }
 		const text = await downloadSnapshot(url(view.record.sequence), deps)
 		if (text !== null) return text
-		// After a restart the bot serves only what it posts next; a heartbeat keeps the roots.
+		// After a restart the bot serves only what it posts next; a heartbeat keeps the lists.
 		const latest = await readRootRecord({ aztecNode: this.d.nodeUrl, registry: this.d.registry }).catch(() => null)
-		if (latest === null || rootsKey(latest) !== key) throw new AllowListError("LIST_UNAVAILABLE")
+		if (latest === null || listsKey(latest) !== key) throw new AllowListError("LIST_UNAVAILABLE")
 		const again = await downloadSnapshot(url(latest.sequence), deps)
 		if (again === null) throw new AllowListError("LIST_UNAVAILABLE")
 		return again
@@ -227,12 +227,12 @@ class StackAllowList implements AllowListPort {
 		if (this.loaded === key) return
 		this.loaded = null
 		const text = await this.snapshotText(view, key, signal)
-		await this.ask({ kind: "load", key, text, roots: view.record }, signal)
+		await this.ask({ kind: "load", key, text, lists: view.record }, signal)
 		this.loaded = key
 	}
 
 	private async run(view: AllowListView, label: bigint, origin: Origin): Promise<LabelCheck> {
-		const key = rootsKey(view.record)
+		const key = listsKey(view.record)
 		const held = this.failures.get(key)
 		if (held) throw new AllowListError(held.code, this.waitLeft(key, held))
 		const abort = new AbortController()

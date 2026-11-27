@@ -260,7 +260,7 @@ export interface AllowListPort {
 	current(): Promise<AllowListView>
 	/**
 	 * `label`'s state in its origin's list under `view`'s record, with its path when `ACTIVE`, from the
-	 * snapshot of that record's roots. A label the list does not hold is `ABSENT` with no tree built.
+	 * snapshot of that record's lists. A label the list does not hold is `ABSENT` with no tree built.
 	 * Checks run one at a time, in call order. A list that failed (`LIST_TIMEOUT`, `LIST_MISMATCH`,
 	 * `LIST_OVERSIZED`, `LIST_CANCELLED`) keeps failing at once, with no work, until `checkAgain`.
 	 * @throws AllowListError
