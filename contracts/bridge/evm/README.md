@@ -8,13 +8,11 @@ L1 contracts for the ERC-20 bridge. Aztec L1 interfaces resolve to the installed
 
 Foundry **1.7.1** and halmos **0.3.3** (`halmos.version`). A newer Foundry routes test-contract
 creation through a cheatcode halmos 0.3.3 lacks, and every proof fails. `lib/` is gitignored; install
-it at the commits CI pins (`_bridge-contracts.yml`). OpenZeppelin 5.7.0 provides
-`Clones.cloneDeterministicWithImmutableArgs` and `ReentrancyGuardTransient`.
+it at the commits CI pins. OpenZeppelin 5.7.0 provides `Clones.cloneDeterministicWithImmutableArgs`
+and `ReentrancyGuardTransient`.
 
 ```bash
-forge install --no-git \
-  foundry-rs/forge-std@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b \
-  OpenZeppelin/openzeppelin-contracts@cab19933c33c2ad1d4c7a84864a3601dddfd16f3
+bash scripts/install-libs.sh
 ```
 
 ## Build / test

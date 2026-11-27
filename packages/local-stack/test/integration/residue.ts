@@ -68,6 +68,17 @@ function startTime(pid: number): string | undefined {
 	}
 }
 
+/**
+ * Every member of one group, zombies and exiting ones included, as `ps` lists them. Filtered by the
+ * pgid column: procps reads a numeric `ps -g` as a session id.
+ */
+function groupMembers(pgid: number): string {
+	const rows = execFileSync("ps", ["-eo", "pid=,ppid=,pgid=,stat=,etime=,args="], { encoding: "utf8" })
+		.split("\n")
+		.filter((l) => l.trim().split(/\s+/)[2] === String(pgid))
+	return rows.length ? ["  PID  PPID  PGID STAT  ELAPSED ARGS", ...rows].join("\n") : "(no member listed: it exited after the check)"
+}
+
 export function groupAlive(pgid: number): boolean {
 	try {
 		process.kill(-pgid, 0)
@@ -106,7 +117,7 @@ export async function residueOf(r: {
 	tmpDir?: string
 }): Promise<string[]> {
 	const left: string[] = []
-	for (const g of r.pgids) if (groupAlive(g)) left.push(`process group ${g}`)
+	for (const g of r.pgids) if (groupAlive(g)) left.push(`process group ${g}\n${groupMembers(g)}`)
 	for (const p of r.ports) if (!(await portRefuses(p))) left.push(`port ${p} accepts`)
 	for (const row of registryRows())
 		if (row.owner === r.runId || row.owner === `${r.runId}-pool`) left.push(`registry row ${row.port} ${row.owner}`)
