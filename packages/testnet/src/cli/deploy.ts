@@ -6,6 +6,7 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { deployBridgeGeneration, readDeployJournal } from "@pp/bridge-core/deploy"
 import { SANDBOX_ACTOR_SALT } from "@pp/bridge-core/sandbox"
+import { sendRetrying } from "@pp/pp-env/send-retry"
 import { isAddressEqual } from "viem"
 import { l1AddressOf, l2AddressOf } from "../accounts"
 import { deployBuildMismatch } from "../creation"
@@ -37,6 +38,7 @@ await main(async () => {
 	if (existsSync(journalPath)) throw new GuardError("journal", `${journalPath} exists: a resumed deploy is the owner's call`)
 	const u = await deployBridgeGeneration({
 		l1Rpc: d.network.l1Rpc,
+		wrapL1WalletTransport: (t) => sendRetrying(t),
 		aztecNode: d.network.aztecNode,
 		chainId: d.network.l1ChainId,
 		pool: { poolVault: d.pool.poolVault, asset: d.pool.asset },

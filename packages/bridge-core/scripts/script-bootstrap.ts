@@ -24,6 +24,8 @@ export function createL1Clients<TChain extends Chain, TAccount extends Account>(
 	chain: TChain
 	rpcUrl: string
 	account: TAccount
+	/** Wraps the wallet's transport only, the one that sends; the public client stays plain. Default none. */
+	wrapWalletTransport?: (transport: Transport) => Transport
 }): {
 	wallet: WalletClient<Transport, TChain, TAccount>
 	pub: PublicClient<Transport, TChain>
@@ -35,7 +37,7 @@ export function createL1Clients<TChain extends Chain, TAccount extends Account>(
 	const wallet = createWalletClient({
 		account: opts.account,
 		chain: opts.chain,
-		transport: http(opts.rpcUrl),
+		transport: opts.wrapWalletTransport ? opts.wrapWalletTransport(http(opts.rpcUrl)) : http(opts.rpcUrl),
 	}) as unknown as WalletClient<Transport, TChain, TAccount>
 	const pub = createPublicClient({ chain: opts.chain, transport: http(opts.rpcUrl) })
 	return { wallet, pub }
