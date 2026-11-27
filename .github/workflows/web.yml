@@ -105,7 +105,7 @@ jobs:
         run: bun run --cwd apps/web test
       - name: Build
         run: bun run --cwd apps/web build
-      - name: Preview headers
+      - name: Server headers
         run: bun run --cwd apps/web test:headers
       - name: Stack build guard
         run: bun run --cwd apps/web check:stack-build
