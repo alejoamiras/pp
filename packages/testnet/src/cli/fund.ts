@@ -5,7 +5,7 @@
 // (at most 0.8 ETH spent, at least 1.0 ETH kept). A live run refuses a plan that does not, before reading
 // its key, and checks the deployer's live balance against them again before each send. A fork run funds
 // fresh keys from the fork's own ETH, so the limits only show in its quote.
-import { journalTo } from "@pp/pp-env/send-path"
+import { journalTo } from "@pp/pp-env/send-log"
 import { type Address, formatEther, type PublicClient } from "viem"
 import { l1AddressOf } from "../accounts"
 import { assertTopUp, assertWithinLimits, fundingPlan, limitBreach, type Plan, recipientsOf } from "../funding"

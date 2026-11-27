@@ -22,7 +22,8 @@
 			"types": "./types/sepolia.d.ts",
 			"default": "./src/sepolia/index.ts"
 		},
-		"./send-path": "./src/send-path.ts"
+		"./send-path": "./src/send-path.ts",
+		"./send-log": "./src/send-log.ts"
 	},
 	"imports": {
 		"#ppv2/core-sdk": "./.ppv2/packages/core-sdk/dist/index.js",

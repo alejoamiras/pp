@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process"
 import { closeSync, openSync, readFileSync } from "node:fs"
 import { CleanupStack, killGroup, type OwnedChild, own } from "@pp/run-isolation/process"
-import { journalTo, type SendPath, type SendPathOptions } from "../send-path.ts"
+import { journalTo } from "../send-log.ts"
+import type { SendPath, SendPathOptions } from "../send-path.ts"
 import { type RelayTuning, type SendRelay, startSendRelay } from "../send-relay.ts"
 import { tail } from "./tools.ts"
 

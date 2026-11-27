@@ -2,7 +2,7 @@ import { type Account, createPublicClient, createWalletClient, http, type Public
 import { type JournalEntry, SendPath, sendThrough } from "../send-path.ts"
 import { assertSepolia, SEPOLIA, sepolia } from "./chain.ts"
 
-export { journalTo } from "../send-path.ts"
+export { journalTo } from "../send-log.ts"
 
 /** Reads with redirects refused, as every send-path endpoint is fetched. */
 export const readTransport = (rpcUrl: string) => http(rpcUrl, { fetchOptions: { redirect: "error" } })

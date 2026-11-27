@@ -25,7 +25,6 @@
  * the same bytes go to the send endpoint again, until an answer other than an admission or a refusal.
  * Every attempt and answer goes to `journal`. Both endpoints are fetched with redirects refused.
  */
-import { appendFileSync } from "node:fs"
 import { type Address, type Hex, isAddressEqual, keccak256, parseTransaction, recoverTransactionAddress } from "viem"
 
 const KNOWN = /\balready known\b|\balready imported\b/i
@@ -74,12 +73,6 @@ export type JournalEntry = {
 	endpoint: "send" | "read"
 	event: string
 }
-
-/** A journal that appends each entry as a JSON line to `path`, readable by this user only. */
-export const journalTo =
-	(path: string) =>
-	(entry: JournalEntry): void =>
-		appendFileSync(path, `${JSON.stringify(entry)}\n`, { mode: 0o600 })
 
 export type SentTx = { hash: Hex; nonce: number; sender: Address }
 

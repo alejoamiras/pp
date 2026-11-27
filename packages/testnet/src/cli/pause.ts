@@ -10,7 +10,7 @@ import { RUN_KEYS } from "../keys"
 import { PINNED_URLS } from "../network"
 import { pendingToReplace, replaceArgs, type TxReader } from "../pending"
 import { requireSections, type TestnetDeployment } from "../schema"
-import { journalTo } from "@pp/pp-env/send-path"
+import { journalTo } from "@pp/pp-env/send-log"
 import { assertSendChain, cliArgs, clientsOf, loadDeployment, main, report, sendLogPath } from "./common"
 import { l1Wallet } from "./wallet"
 
