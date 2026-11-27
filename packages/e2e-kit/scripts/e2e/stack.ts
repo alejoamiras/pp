@@ -6,6 +6,9 @@
  * only while it is still the one this state dir started, which `<state>/stack.pid` records from the
  * moment of the spawn (`scripts/e2e/stack-owner.ts`). SIGTERM lets the CLI tear down every group it
  * started in order, so the grace is long; SIGKILL is the last resort, and those groups still end with the CLI.
+ * Once the stack is ready `up` also writes `<state>/stack-owned.json`, the ports its services hold.
+ * Once the group is gone, `down` fails while any of them is still held or the CLI logged a failed
+ * teardown, and keeps `stack.pid` until that check passes.
  *
  *   bun scripts/e2e/stack.ts up <state-dir>     bun scripts/e2e/stack.ts down <state-dir>
  */
@@ -18,17 +21,21 @@ import { ANVIL_ACCOUNTS, anvilKey } from "@pp/bridge-core/sandbox"
 import { getAddress } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { type StackRun, stackRun, stackRunFile } from "../../env"
+import { loopbackPorts, ownedPorts } from "./owned"
 import { untilReady } from "./stack-log"
-import { abandonBoot, recordGroup, stopRecorded } from "./stack-owner"
+import { abandonBoot, recordGroup, stopStack } from "./stack-owner"
 
 const CLI = fileURLToPath(import.meta.resolve("@pp/local-stack/cli"))
 /** Longer than the CLI's slowest teardown; its boot steps also finish before a signal takes effect. */
 const STOP_GRACE_MS = 180_000
+/** Longer than a service watcher's grace (the sandbox node's is 15 s), its SIGKILL and a registry lock wait. */
+const SETTLE_MS = 45_000
 const LOCAL_CHAIN_ID = 31337
 
 const files = (stateDir: string) => ({
 	log: join(stateDir, "stack.log"),
 	pid: join(stateDir, "stack.pid"),
+	owned: join(stateDir, "stack-owned.json"),
 	run: stackRunFile({ stateDir }),
 	walletHandle: join(stateDir, "wallet", "handle.json"),
 })
@@ -82,8 +89,10 @@ async function up(stateDir: string): Promise<void> {
 		const { manifest, rollupVersion } = await checkedManifest(manifestPath)
 		const account = (address: string) => ({ address: getAddress(address), index: anvilIndexOf(address) })
 		const run: StackRun = { pgid, manifestPath, circuitsDir, accounts: { user: account(user), sender: account(sender) } }
-		writeFileSync(f.walletHandle, JSON.stringify({ nodeUrl: manifest.aztecNode, l1ChainId: manifest.chainId, rollupVersion }))
+		const handle = { nodeUrl: manifest.aztecNode, l1ChainId: manifest.chainId, rollupVersion }
+		writeFileSync(f.walletHandle, JSON.stringify(handle))
 		writeFileSync(f.run, JSON.stringify(run, null, 2))
+		writeFileSync(f.owned, JSON.stringify(ownedPorts(loopbackPorts([handle, manifest])), null, 2))
 	} catch (err) {
 		try {
 			await abandonBoot(f.pid, pgid, { recorded, unreaped: code === null, cli: CLI, graceMs: STOP_GRACE_MS })
@@ -99,4 +108,5 @@ async function up(stateDir: string): Promise<void> {
 
 const [command, stateDir] = process.argv.slice(2)
 if ((command !== "up" && command !== "down") || !stateDir) throw new Error("usage: bun scripts/e2e/stack.ts up|down <state-dir>")
-await (command === "up" ? up(stateDir) : stopRecorded(files(stateDir).pid, CLI, STOP_GRACE_MS))
+const f = files(stateDir)
+await (command === "up" ? up(stateDir) : stopStack(f, CLI, STOP_GRACE_MS, SETTLE_MS))

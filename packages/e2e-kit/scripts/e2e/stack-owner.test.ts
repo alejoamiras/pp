@@ -1,10 +1,13 @@
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { createServer, type Server } from "node:net"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { claimPort, releasePorts } from "@pp/run-isolation/ports"
 import { endGroup, groupAlive, type ProcFs, pidNamespace, startTime } from "@pp/run-isolation/process-group"
 import { describe, expect, test } from "vitest"
-import { abandonBoot, recordGroup, stopRecorded } from "./stack-owner"
+import { ownedPorts } from "./owned"
+import { abandonBoot, recordGroup, stopRecorded, stopStack } from "./stack-owner"
 
 const procWith = (files: Record<string, string>): ProcFs => ({
 	readdir: () => [],
@@ -174,6 +177,113 @@ describe.skipIf(!existsSync("/proc/self/stat"))("a boot that failed", () => {
 		} finally {
 			await endGroup(pgid, GRACE_MS)
 			rmSync(dir, { recursive: true, force: true })
+		}
+	})
+})
+
+const listen = (port: number) =>
+	new Promise<Server>((resolve, reject) => {
+		const server = createServer()
+		server.once("error", reject)
+		server.listen(port, "127.0.0.1", () => resolve(server))
+	})
+const close = (server: Server) => new Promise<void>((resolve) => server.close(() => resolve()))
+
+describe.skipIf(!existsSync("/proc/self/stat"))("down, once the group is gone", () => {
+	/** A state dir with a private registry, one claimed port with a listener, and its snapshot. */
+	async function held() {
+		const dir = stateDir()
+		const saved = process.env.PP_PORTS_REGISTRY
+		process.env.PP_PORTS_REGISTRY = join(dir, "ports.md")
+		const owner = `stack-owner-test-${process.pid}`
+		const port = await claimPort(owner, "node")
+		const server = await listen(port)
+		const f = { pid: join(dir, "stack.pid"), owned: join(dir, "stack-owned.json"), log: join(dir, "stack.log") }
+		writeFileSync(f.owned, JSON.stringify(ownedPorts([port])))
+		const free = async () => {
+			if (server.listening) await close(server)
+			await releasePorts(owner)
+		}
+		const done = async () => {
+			await free()
+			if (saved === undefined) delete process.env.PP_PORTS_REGISTRY
+			else process.env.PP_PORTS_REGISTRY = saved
+			rmSync(dir, { recursive: true, force: true })
+		}
+		return { f, owner, port, free, done }
+	}
+
+	test("fails while a port the stack held is still held, keeps the record, and passes on a later down once nothing is", async () => {
+		const h = await held()
+		const cli = fakeCli()
+		try {
+			recordGroup(h.f.pid, cli)
+			// The CLI's group ends cleanly, but a service it started still listens and its row stays.
+			await expect(stopStack(h.f, CLI, GRACE_MS, 0)).rejects.toThrow(
+				`stack: its group is gone, but a listener is still on port ${h.port}; ports.md still has rows owned by ${h.owner}`,
+			)
+			expect(groupAlive(cli)).toBe(false)
+			// No pid left for the later down to resolve: the kernel may hand that number out again.
+			expect(readFileSync(h.f.pid, "utf8")).toBe("gone\n")
+			await expect(stopStack(h.f, CLI, GRACE_MS, 0)).rejects.toThrow(`a listener is still on port ${h.port}`)
+			await h.free()
+			await stopStack(h.f, CLI, GRACE_MS, 0)
+			expect(existsSync(h.f.pid)).toBe(false)
+		} finally {
+			await endGroup(cli, GRACE_MS)
+			await h.done()
+		}
+	})
+
+	test("waits out leftovers that clear within the settle window", async () => {
+		const h = await held()
+		const cli = fakeCli()
+		try {
+			recordGroup(h.f.pid, cli)
+			setTimeout(() => void h.free(), 500)
+			await stopStack(h.f, CLI, GRACE_MS, 10_000)
+			expect(existsSync(h.f.pid)).toBe(false)
+		} finally {
+			await endGroup(cli, GRACE_MS)
+			await h.done()
+		}
+	})
+
+	test("fails the first down on the CLI's own teardown-failed line, not on the marker inside another line", async () => {
+		const h = await held()
+		const clean = fakeCli()
+		const failed = fakeCli()
+		try {
+			await h.free()
+			writeFileSync(h.f.log, "[stack] circuits /x/[stack] teardown failed: y\n[stack] ready\n")
+			recordGroup(h.f.pid, clean)
+			await stopStack(h.f, CLI, GRACE_MS, 0)
+			expect(existsSync(h.f.pid)).toBe(false)
+			writeFileSync(h.f.log, "[stack] ready\n[stack] teardown failed: aztec: pgid 7 survived SIGKILL\n")
+			recordGroup(h.f.pid, failed)
+			await expect(stopStack(h.f, CLI, GRACE_MS, 0)).rejects.toThrow("the CLI reported a failed teardown")
+			// The report has failed a run; a later down checks only what is still held.
+			await stopStack(h.f, CLI, GRACE_MS, 0)
+			expect(existsSync(h.f.pid)).toBe(false)
+		} finally {
+			await endGroup(clean, GRACE_MS)
+			await endGroup(failed, GRACE_MS)
+			await h.done()
+		}
+	})
+
+	test("fails on a record it cannot resolve, and signals nothing", async () => {
+		const h = await held()
+		const stranger = fakeCli()
+		try {
+			writeFileSync(h.f.pid, `${stranger} ${Number(startTime(stranger)) + 1} ${pidNamespace()}\n`)
+			await expect(stopStack(h.f, CLI, GRACE_MS, 0)).rejects.toThrow("names no group this kit can stop")
+			expect(groupAlive(stranger)).toBe(true)
+			writeFileSync(h.f.pid, "not a record\n")
+			await expect(stopStack(h.f, CLI, GRACE_MS, 0)).rejects.toThrow("names no group this kit can stop")
+		} finally {
+			await endGroup(stranger, GRACE_MS)
+			await h.done()
 		}
 	})
 })
