@@ -182,6 +182,12 @@ async function tokenAs(d: AztecDeps, owner: AztecAddress): Promise<Contract> {
 	return Contract.at(sdk(d.deployment.token), labelledTokenArtifact, held.wallet)
 }
 
+/**
+ * Note values as the wallet lists them, read as untrusted: anything that is no u128 is dropped, and so
+ * is a zero, which the token never writes and a ragequit cannot burn.
+ */
+export const noteValues = (values: readonly unknown[]): bigint[] => values.map(parseU128).filter((v): v is bigint => v !== null && v > 0n)
+
 /** The token's views over the live connection. */
 export function stackAztec(d: AztecDeps): Pick<AztecPort, "balancesByLabel" | "notesByLabel" | "publicBalance"> {
 	return {
@@ -196,8 +202,7 @@ export function stackAztec(d: AztecDeps): Pick<AztecPort, "balancesByLabel" | "n
 			const token = await tokenAs(d, owner)
 			const from = sdk(owner)
 			const page = async (start: number) => entries(await token.methods.private_notes_by_label(from, label, start).simulate({ from }))
-			const values = await readAllPages(page, NOTES_PAGE)
-			return values.map(parseU128).filter((v): v is bigint => v !== null)
+			return noteValues(await readAllPages(page, NOTES_PAGE))
 		},
 		async publicBalance(owner) {
 			const token = await tokenAs(d, owner)

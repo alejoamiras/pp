@@ -8,7 +8,7 @@ import { stageManifest } from "../capabilities"
 import type { AztecAddress } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
 import { parseGrant } from "../wallet/grant"
-import { type AztecDeps, entries, grantedPayload, registerScoped, sendThroughWallet } from "./aztec"
+import { type AztecDeps, entries, grantedPayload, noteValues, registerScoped, sendThroughWallet } from "./aztec"
 
 const at = (n: string) => `0x${n.repeat(32)}` as AztecAddress
 const [HUB, TOKEN, FPC, ME, STRANGER] = [at("08"), at("09"), at("0c"), at("1c"), at("2d")]
@@ -54,6 +54,10 @@ const payload = (...calls: [AztecAddress, string][]) =>
 const CLAIM = payload([FPC, "sponsor_unconditionally"], [HUB, "claim_from_pool"])
 
 describe("the Aztec adapter", () => {
+	test("keeps only the wallet's note values a ragequit can burn: positive u128s", () => {
+		expect(noteValues([5n, 0n, 0, -1n, 1n << 128n, "7", 3])).toEqual([5n, 3n])
+	})
+
 	test("teaches a fresh wallet the app's granted contracts once each, and nothing it was not granted or the node does not serve", async () => {
 		const r = rig()
 		await registerScoped(r.d, r.held, ["hub", "token"])
