@@ -22,7 +22,7 @@ export class SnapshotBook {
 
 	/**
 	 * Points `/latest` at the registry's current record, or at nothing when this process holds no snapshot
-	 * with its roots and lengths: `set_poster` keeps the sequence but clears the roots.
+	 * with its roots and lengths, as after `set_poster` clears the record at the next sequence.
 	 */
 	setCurrent(r: Pick<RootRecord, "sequence" | "poolRoot" | "birthRoot" | "poolSize" | "birthSize">): void {
 		const h = this.held.get(r.sequence)
@@ -32,9 +32,9 @@ export class SnapshotBook {
 			h.birthRoot === r.birthRoot &&
 			h.poolSize === r.poolSize &&
 			h.birthSize === r.birthSize
-		// A post under this sequence with other roots or lengths means the held body is a send that lost; a zero
-		// pool root is `set_poster`'s clear, after which the held body still serves older anchors.
-		if (h && !same && r.poolRoot !== 0n) this.held.delete(r.sequence)
+		// Another record under this sequence means the held body is a send that lost, to another post or to a
+		// reset; the last post's body, under an older sequence, keeps serving older anchors.
+		if (h && !same) this.held.delete(r.sequence)
 		this.current = same ? r.sequence : null
 	}
 
