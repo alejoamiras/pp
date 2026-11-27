@@ -280,6 +280,18 @@
         "typescript": "catalog:",
       },
     },
+    "packages/testnet": {
+      "name": "@pp/testnet",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@types/node": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
   },
   "patchedDependencies": {
     "@aztec-foundation/noir-acvm_js@6.0.0": "patches/@aztec-foundation%2Fnoir-acvm_js@6.0.0.patch",
@@ -784,6 +796,8 @@
     "@pp/run-isolation": ["@pp/run-isolation@workspace:packages/run-isolation"],
 
     "@pp/sepolia-fork": ["@pp/sepolia-fork@workspace:packages/sepolia-fork"],
+
+    "@pp/testnet": ["@pp/testnet@workspace:packages/testnet"],
 
     "@pp/web": ["@pp/web@workspace:apps/web"],
 

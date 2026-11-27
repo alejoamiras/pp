@@ -25,6 +25,7 @@ test("the all-workspace scripts select every workspace", () => {
 		"@pp/pp-env",
 		"@pp/run-isolation",
 		"@pp/sepolia-fork",
+		"@pp/testnet",
 		"@pp/web",
 	])
 	for (const script of ["typecheck:all", "test:all"]) {
