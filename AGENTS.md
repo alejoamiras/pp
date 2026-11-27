@@ -6,12 +6,13 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 
 | Path | What it is |
 |---|---|
+| [`apps/web`](apps/web/README.md) | `@pp/web`: the label bridge's React app, on a fixture world until the real adapters land; `e2e/` holds its browser specs. |
 | [`contracts/bridge/evm`](contracts/bridge/evm/README.md) | L1 contracts (Foundry): `PortalFactory` and the per-token `ProcessorPortalImpl` clones, each a Privacy Pools processor that holds bridged funds. |
 | [`contracts/bridge/aztec`](contracts/bridge/aztec/README.md) | L2 contracts (Noir): `TokenBridgeHub`, the labelled token and its test minter, the hashing libraries and the TXE runner. |
 | [`contracts/crates.json`](contracts/crates.json) | Every Noir crate, the gates it runs (parity, nargo tests, TXE) and the commit each git dependency tag must resolve to; `scripts/ci-cd/crates.ts` reads it. |
 | [`packages/bridge-core`](packages/bridge-core/README.md) | `@pp/bridge-core`: claim, exit and readiness logic over viem and aztec.js, and the local-network harness (`scripts/sandbox/`). |
 | [`packages/bridge-spec`](packages/bridge-spec/README.md) | `@pp/bridge-spec`: the normative v1 wire format and hashes in TS, and the vectors that bind `BridgeMessageV1` (Solidity) and `bridge_message`/`pp_hash` (Noir) to it. |
-| [`packages/e2e-kit`](packages/e2e-kit/README.md) | `@pp/e2e-kit`: the Playwright kit a web app under `apps/` will use (test wallet, injected Ethereum wallet, egress fence, runner). |
+| [`packages/e2e-kit`](packages/e2e-kit/README.md) | `@pp/e2e-kit`: the Playwright kit `apps/web` runs on (test wallet, injected Ethereum wallet, egress fence, runner). |
 | [`packages/label-paths`](packages/label-paths/README.md) | `@pp/label-paths`: browser-safe ASP snapshots, label paths, `labelState`, and a keyless reader of the registry's record. |
 | [`packages/labelled-token`](packages/labelled-token/README.md) | `@pp/labelled-token`: the labelled token's artifact (browser-safe root), its gate budgets, the hub's derivation vector and its two-device network suite. |
 | [`packages/local-stack`](packages/local-stack/README.md) | `@pp/local-stack`: `bun run demo`, one anvil carrying the Aztec local network and the pool, with its manifest and heartbeat. |
@@ -73,11 +74,12 @@ with warm package and toolchain caches.
 | Bridge stack suite | `bun run --cwd packages/bridge-core test:integration:stack -- deploy` (boots its own stack unless `PP_STACK_MANIFEST` is set) | 2.5 min |
 | E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | 15 s |
 | Pool client, unit | `bun run --cwd packages/pool-client test` and `test:node` | 10 s |
+| Web e2e (sandbox boot, both builds, Playwright) | `bun run --cwd apps/web e2e` | 4 min |
 | Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |
 
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row
 the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml`,
-`pool-client.yml`, `local-stack.yml` and `actionlint.yml`.
+`pool-client.yml`, `local-stack.yml`, `actionlint.yml` and `web.yml`.
 
 Suites too slow for a pull request go in `SUITES` in [`scripts/nightly.ts`](scripts/nightly.ts)
 (`bun run nightly`). `nightly.yml` runs it every day from `bridge-v1` when that branch exists, else
