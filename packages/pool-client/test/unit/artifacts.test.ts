@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { DEFAULT_CIRCUIT_MANIFEST } from "@0xbow/privacy-pools-v2-sdk"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import type { ArtifactFile } from "../../src/errors.ts"
 import { type ArtifactSource, artifactsFor, CIRCUIT_BUNDLES, createArtifacts, type PinnedCircuit } from "../../src/runtime/artifacts.ts"
 import { openPoolClient } from "../../src/index.ts"
@@ -159,24 +159,45 @@ describe("circuit bundles", () => {
 	const pre = CIRCUIT_BUNDLES["pre-ceremony"].circuits.transact_1x1
 	const dir = (path: string, bundle?: "pre-ceremony"): ArtifactSource => ({ kind: "dir", path, ...(bundle && { bundle }) })
 
-	it("check a directory against the named bundle's pins, not the ceremony's", async () => {
-		const path = join(scratch.path, "bundle")
-		const size = (n: number, fill: number) => new Uint8Array(n).fill(fill)
-		// Right sizes for the pre-ceremony pins, wrong bytes: only a check against those pins reads them as a digest failure.
-		const files = {
-			wasm: size(pre.sizes.wasm, 1),
-			provingKey: size(pre.sizes.provingKey, 2),
-			verificationKey: size(pre.sizes.verificationKey, 3),
-		}
-		for (const f of FILES) {
-			const at = join(path, "transact_1x1", ON_DISK[f]("transact_1x1"))
-			mkdirSync(join(at, ".."), { recursive: true })
-			writeFileSync(at, files[f])
-		}
-		await expect(createArtifacts(dir(path, "pre-ceremony"), { chainId: 11_155_111 }).ensure("transact_1x1")).rejects.toThrow(
-			/sha256 differs from the manifest/,
-		)
-		await expect(createArtifacts(dir(path)).ensure("transact_1x1")).rejects.toThrow(/bytes, pinned/)
+	/** The CIDs a source fetches for `transact_1x1`, whose files the named bundle alone decides. */
+	async function requested(src: ArtifactSource, chainId?: number): Promise<string[]> {
+		const cids = new Set<string>()
+		const fetch = (async (input: string | URL | Request) => {
+			cids.add(String(input).split("/").pop()!)
+			return new Response(null, { status: 404 })
+		}) as typeof globalThis.fetch
+		await expect(createArtifacts(src, { fetch, ...(chainId && { chainId }) }).ensure("transact_1x1")).rejects.toThrow(/HTTP 404/)
+		await vi.waitFor(() => expect(cids.size).toBe(3))
+		return [...cids].sort()
+	}
+	const cidsOf = (c: PinnedCircuit) => [c.wasm, c.provingKey, c.verificationKey].sort()
+
+	it("decide which files a source fetches: the ceremony's by default, the named bundle's otherwise", async () => {
+		const gateway = (bundle?: "pre-ceremony"): ArtifactSource => ({ kind: "gateway", urls: [GATEWAY], ...(bundle && { bundle }) })
+		expect(await requested(gateway())).toEqual(cidsOf(CIRCUIT_BUNDLES.ceremony.circuits.transact_1x1))
+		expect(await requested(gateway("pre-ceremony"), 11_155_111)).toEqual(cidsOf(pre))
+	})
+
+	it("read a source once, so a getter cannot pick the unchecked branch after the check", async () => {
+		let reads = 0
+		const flipping = {
+			get kind() {
+				return reads++ === 0 ? "gateway" : "dir"
+			},
+			urls: [GATEWAY],
+			path: "/nowhere",
+		} as unknown as ArtifactSource
+		expect(await requested(flipping)).toEqual(cidsOf(CIRCUIT_BUNDLES.ceremony.circuits.transact_1x1))
+		expect(reads).toBe(1)
+	})
+
+	it("cannot be edited at runtime", () => {
+		const chains = CIRCUIT_BUNDLES["pre-ceremony"].chainIds as unknown as number[]
+		expect(() => chains.push(1)).toThrow()
+		expect(() => {
+			;(pre.sizes as Record<string, number>).wasm = 1
+		}).toThrow()
+		expect(Object.isFrozen(CIRCUIT_BUNDLES.ceremony.circuits.deposit)).toBe(true)
 	})
 
 	it("refuse an unknown name, and the pre-ceremony keys on any chain but Sepolia", () => {

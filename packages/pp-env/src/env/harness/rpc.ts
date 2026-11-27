@@ -9,6 +9,7 @@ export async function rpc<T>(url: string, method: string, params: unknown[] = []
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
 		signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+		redirect: "error",
 	})
 	const body = (await res.json()) as { result?: T; error?: { message: string } }
 	if (body.error || body.result === undefined) throw new Error(`${method}: ${body.error?.message ?? "no result"}`)

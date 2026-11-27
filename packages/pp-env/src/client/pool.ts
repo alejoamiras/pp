@@ -151,7 +151,7 @@ export function snapshot(c: ClientConfig): ClientConfig {
 		deployment,
 		aspUrl: c.aspUrl,
 		circuitsDir: c.circuitsDir,
-		...(bundle && { circuitBundle: bundle }),
+		...(bundle !== undefined && { circuitBundle: bundle }),
 	}
 }
 

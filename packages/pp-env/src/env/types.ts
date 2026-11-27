@@ -71,7 +71,7 @@ export type AttachForkOptions = {
 	postman: Address
 	circuitsDir: string
 	circuitBundle?: CircuitBundleName
-	/** The caller's run; the mock ASP's port row is claimed under `<runId>-pool` and released by `stop()`. */
+	/** The caller's run, which must own `rpcUrl`'s port row; the mock ASP's row is `<runId>-pool`, released by `stop()`. */
 	runId: string
 }
 

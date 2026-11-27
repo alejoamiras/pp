@@ -23,7 +23,13 @@ export type CircuitBundle = {
 	readonly chainIds?: readonly number[]
 }
 
-export const CIRCUIT_BUNDLES = {
+/** The table is a trust root that callers may read; frozen, so nothing in the process can edit a pin. */
+function deepFreeze<T>(value: T): T {
+	if (typeof value === "object" && value !== null) for (const v of Object.values(value)) deepFreeze(v)
+	return Object.freeze(value)
+}
+
+export const CIRCUIT_BUNDLES = deepFreeze({
 	/** The pool's ceremony keys, as the SDK this package depends on ships them. */
 	ceremony: {
 		circuits: {
@@ -67,7 +73,7 @@ export const CIRCUIT_BUNDLES = {
 			},
 		},
 	},
-} as const satisfies Readonly<Record<string, CircuitBundle>>
+} as const satisfies Readonly<Record<string, CircuitBundle>>)
 
 export type CircuitBundleName = keyof typeof CIRCUIT_BUNDLES
 
@@ -79,7 +85,7 @@ export type ArtifactSource =
 	| { kind: "dir"; path: string; bundle?: CircuitBundleName }
 
 export type ArtifactOptions = {
-	/** The chain the proofs are for; a bundle limited to other chains, or to any chain when this is absent, is refused. */
+	/** The chain the proofs are for; a bundle restricted to some chains needs one of them here. */
 	chainId?: number
 	/** Per gateway file, covering the whole body. */
 	deadlineMs?: number
@@ -157,6 +163,15 @@ function boundedHttp(capOf: (cid: string) => number | undefined, deadlineMs: num
 	}
 }
 
+/** A plain copy read once: a getter cannot answer one way here and another at a later read. */
+function readSource(src: ArtifactSource): ArtifactSource {
+	const { kind, bundle } = src
+	const named = bundle === undefined ? {} : { bundle }
+	if (kind === "dir") return { kind, path: String((src as { path: unknown }).path), ...named }
+	if (kind === "gateway") return { kind, urls: [...(src as { urls: readonly string[] }).urls].map(String), ...named }
+	throw new PoolClientError("ARTIFACT_MISMATCH", `unknown artifact source kind ${JSON.stringify(kind)}`)
+}
+
 function sourceLoader(src: ArtifactSource, circuits: Readonly<Record<string, PinnedCircuit>>, opts: ArtifactOptions): ICircuitArtifacts {
 	if (src.kind === "dir") return new LocalCircuitArtifacts({ baseDir: src.path })
 	const caps = new Map<string, number>()
@@ -185,7 +200,8 @@ function sourceLoader(src: ArtifactSource, circuits: Readonly<Record<string, Pin
  * @throws PoolClientError as {@link circuitBundle} does, before any file is read
  */
 export function createArtifacts(src: ArtifactSource, opts: ArtifactOptions = {}): VerifiedArtifacts {
-	return artifactsFor(src, circuitBundle(src.bundle, opts.chainId).circuits, opts)
+	const source = readSource(src)
+	return artifactsFor(source, circuitBundle(source.bundle, opts.chainId).circuits, opts)
 }
 
 /** {@link createArtifacts} over arbitrary pins: tests only, so the package exports it nowhere. */
@@ -194,8 +210,9 @@ export function artifactsFor(
 	circuits: Readonly<Record<string, PinnedCircuit>>,
 	opts: Omit<ArtifactOptions, "chainId"> = {},
 ): VerifiedArtifacts {
-	const { kind } = src
-	const inner = sourceLoader(src, circuits, opts)
+	const source = readSource(src)
+	const { kind } = source
+	const inner = sourceLoader(source, circuits, opts)
 	const loads = new Map<string, Promise<Loaded>>()
 
 	async function readFile(circuit: string, pin: PinnedCircuit, file: ArtifactFile): Promise<Uint8Array> {

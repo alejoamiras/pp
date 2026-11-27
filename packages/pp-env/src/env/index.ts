@@ -18,11 +18,11 @@ import { CleanupStack } from "@pp/run-isolation/process"
 import type { PoolEnv, StartPoolEnvOptions } from "./types.ts"
 import { submitViaStub } from "./stub.ts"
 import { stopAsp } from "./asp.ts"
+import { RUN_ID } from "./run-id.ts"
 
 export type { LocalChainId, PoolDeployment, PoolEnv, StartPoolEnvOptions } from "./types.ts"
 
 export const RUNS_DIR = join(homedir(), ".cache/pp/pp-env/runs")
-const RUN_ID = /^[a-z0-9][a-z0-9-]{0,63}$/
 
 export function localClients(rpcUrl: string, key: Hex): { client: PublicClient; wallet: LocalWallet } {
 	const chain = { ...foundry, rpcUrls: { default: { http: [rpcUrl] } } }

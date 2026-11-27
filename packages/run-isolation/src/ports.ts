@@ -140,6 +140,15 @@ export async function releasePorts(runId: string): Promise<void> {
 	throw new Error(`${registryPath()} stayed locked; the rows owned by ${runId} are still there`)
 }
 
+/** The run whose row lists `port`, if any. */
+export function portOwner(port: number): string | undefined {
+	if (!existsSync(registryPath())) return undefined
+	const row = readFileSync(registryPath(), "utf8")
+		.split("\n")
+		.find((l) => portOf(l) === port)
+	return row?.split("|")[3]?.trim()
+}
+
 export function rowsOwnedBy(runId: string): number {
 	if (!existsSync(registryPath())) return 0
 	return readFileSync(registryPath(), "utf8")

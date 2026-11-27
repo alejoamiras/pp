@@ -15,7 +15,7 @@ export type ClientConfig = {
 	aspUrl: string
 	circuitsDir: string
 	/**
-	 * Which pinned bundle `circuitsDir` must match, for deposits and spends alike; default `ceremony`.
+	 * Which of pool-client's pinned bundles `circuitsDir` must match, for deposits and spends alike; default `ceremony`.
 	 * pool-client refuses a bundle on a chain it is not allowed on.
 	 */
 	circuitBundle?: CircuitBundleName

@@ -3,6 +3,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { anvilKey, LOG_DIR, USER_INDEX } from "../../src/env/harness/anvil.ts"
 import { rowsOwnedBy } from "@pp/run-isolation/ports"
+import { keccak256, toHex } from "viem"
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { rpc } from "../../src/env/harness/rpc.ts"
 import { attachForkPoolEnv } from "../../src/env/fork.ts"
 import { localClients, type PoolEnv, startPoolEnv } from "../../src/env/index.ts"
@@ -25,6 +27,18 @@ const ASSETS_ABI = [
 				],
 			},
 		],
+	},
+] as const
+const GRANT_ROLE_ABI = [
+	{
+		type: "function",
+		name: "grantRole",
+		stateMutability: "nonpayable",
+		inputs: [
+			{ name: "role", type: "bytes32" },
+			{ name: "account", type: "address" },
+		],
+		outputs: [],
 	},
 ] as const
 const ROOT_ABI = [
@@ -115,22 +129,49 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("pool env", () => {
 		await expect(startPoolEnv({ rpcUrl: "http://10.255.255.1:8545" })).rejects.toThrow(/non-loopback/)
 	})
 
-	test("the fork attach publishes as the impersonated postman, and its stop frees only its own row", async () => {
-		const runId = `pp-env-fork-${process.pid}`
-		const { pool, entrypoint, keystore, aspRegistry, deployBlock, postman } = b.deployment
-		const base = { rpcUrl: b.rpcUrl, chainId: b.chainId, postman, circuitsDir: b.clientConfig.circuitsDir, runId }
-		const options = { ...base, deployment: { pool, entrypoint, keystore, aspRegistry, deployBlock } }
+	test("the fork attach publishes as an impersonated postman with no key, and its stop frees only its own row", async () => {
+		const { pool, entrypoint, keystore, aspRegistry, deployBlock, accessRouter } = b.deployment
+		// A postman no local key controls, so only anvil's impersonation can publish as it.
+		const postman = privateKeyToAccount(generatePrivateKey()).address
+		const admin = localClients(b.rpcUrl, anvilKey(b.deployerIndex))
+		const grant = await admin.wallet.writeContract({
+			address: accessRouter,
+			abi: GRANT_ROLE_ABI,
+			functionName: "grantRole",
+			args: [keccak256(toHex("POSTMAN_ROLE")), postman],
+		})
+		expect((await admin.client.waitForTransactionReceipt({ hash: grant })).status).toBe("success")
 		const clientVersion = await rpc<string>(b.rpcUrl, "web3_clientVersion")
+		const options = {
+			rpcUrl: b.rpcUrl,
+			chainId: b.chainId,
+			postman,
+			circuitsDir: b.clientConfig.circuitsDir,
+			deployment: { pool, entrypoint, keystore, aspRegistry, deployBlock },
+			clientVersion,
+			runId: b.runId,
+		}
 		await expect(attachForkPoolEnv({ ...options, clientVersion: `${clientVersion}-other` })).rejects.toThrow(/expected exactly/)
-		expect(rowsOwnedBy(`${runId}-pool`)).toBe(0)
-		const fork = await attachForkPoolEnv({ ...options, clientVersion })
-		const { client } = localClients(b.rpcUrl, anvilKey(USER_INDEX))
-		const root = await fork.asp.approveLabel(789n)
-		expect(await client.readContract({ address: aspRegistry, abi: ROOT_ABI, functionName: "latestASPRoot" })).toBe(root)
-		expect(fork.clientConfig.aspUrl).toBe(fork.asp.url)
-		await Promise.all([fork.stop(), fork.stop()])
-		expect(rowsOwnedBy(`${runId}-pool`)).toBe(0)
+		await expect(attachForkPoolEnv({ ...options, runId: a.runId })).rejects.toThrow(`registered to ${b.runId}, not ${a.runId}`)
+		expect(rowsOwnedBy(`${b.runId}-pool`)).toBe(0)
+		const fork = await attachForkPoolEnv(options)
+		try {
+			await expect(attachForkPoolEnv(options)).rejects.toThrow("already has a fork attach")
+			const root = await fork.asp.approveLabel(789n)
+			expect(await admin.client.readContract({ address: aspRegistry, abi: ROOT_ABI, functionName: "latestASPRoot" })).toBe(root)
+			expect(fork.clientConfig.aspUrl).toBe(fork.asp.url)
+		} finally {
+			await Promise.all([fork.stop(), fork.stop()])
+		}
+		await expect(fork.asp.approveLabel(790n)).rejects.toThrow("stopped")
+		expect(rowsOwnedBy(`${b.runId}-pool`)).toBe(0)
 		expect(rowsOwnedBy(b.runId)).toBe(2)
+		expect(
+			await fetch(fork.asp.url).then(
+				() => true,
+				() => false,
+			),
+		).toBe(false)
 		expect(await alive(b.rpcUrl)).toBe(true)
 	})
 

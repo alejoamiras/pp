@@ -23,9 +23,9 @@ await env.submitViaStub(stub, spend, 12)
 await env.stop()
 ```
 
-`@pp/pp-env/client` holds the user-side helpers alone (key derivation from a wallet signature, the SDK wiring for registration, deposits and note discovery), with no dependency on the environment. Spends are proved and checked by `@pp/pool-client`. `ClientConfig.circuitBundle` names one of pool-client's pinned bundles; when it is set, deposits read their circuit files through pool-client too, hashed against that bundle.
+`@pp/pp-env/client` holds the user-side helpers alone (key derivation from a wallet signature, the SDK wiring for registration, deposits and note discovery), with no dependency on the environment. Spends are proved and checked by `@pp/pool-client`. `ClientConfig.circuitBundle` names one of pool-client's pinned bundles (default `ceremony`); deposits read their circuit files through pool-client too, hashed against that bundle.
 
-`@pp/pp-env/fork` serves a fork of a live chain that the caller owns. `attachForkPoolEnv` refuses any node but a loopback anvil reporting the exact `clientVersion` and chain the caller names. It then starts a mock ASP that publishes as the registry's real postman through anvil impersonation, and returns a `ClientConfig` for `createPoolUser`. It starts no anvil and holds no key. Its `stop()` closes the ASP and releases only the `<runId>-pool` port row.
+`@pp/pp-env/fork` serves a fork of a live chain that the caller owns. `attachForkPoolEnv` refuses any node but a loopback anvil on a port registered to the caller's `runId`, reporting the exact `clientVersion` and chain the caller names. It then starts a mock ASP that publishes as the registry's real postman through anvil impersonation, and returns a `ClientConfig` for `createPoolUser`. It starts no anvil and holds no key. Its `stop()` closes the ASP and releases only the `<runId>-pool` port row.
 
 How `prepareSpend` refuses:
 
@@ -37,7 +37,7 @@ How `prepareSpend` refuses:
 
 A zero spend is always refused.
 
-Both entries load under Bun and under native Node with type stripping on by default (22.18+ or 23.6+), since the SDK resolves through `package.json#imports` (`#ppv2/*`) rather than tsconfig paths. Proving and `startPoolEnv` still call Bun's APIs, so they run under Bun only.
+All three entries load under Bun and under native Node with type stripping on by default (22.18+ or 23.6+), since the SDK resolves through `package.json#imports` (`#ppv2/*`) rather than tsconfig paths. Proving and `startPoolEnv` still call Bun's APIs, so they run under Bun only.
 
 Everything after `fetch` runs offline. Each start re-verifies the fetched tree against its pins.
 

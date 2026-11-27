@@ -24,7 +24,7 @@ export function poolClientOptions(
 		},
 		l1Address: owner,
 		signature,
-		artifacts: { kind: "dir", path: config.circuitsDir, ...(config.circuitBundle && { bundle: config.circuitBundle }) },
+		artifacts: { kind: "dir", path: config.circuitsDir, ...(config.circuitBundle !== undefined && { bundle: config.circuitBundle }) },
 	}
 }
 
