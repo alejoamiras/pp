@@ -11,6 +11,12 @@ inputs:
     description: Repository root, relative to the workspace.
     required: false
     default: "."
+  cache-save:
+    description: >
+      "false" restores the checkout cache without saving it, for a job that runs code from a branch
+      other than the one whose cache scope it writes to.
+    required: false
+    default: "true"
 
 outputs:
   target:
@@ -73,7 +79,9 @@ runs:
     # the tree holds executable code that its manifest alone cannot vouch for. PRs restore what a
     # push or dispatch run saved.
     - name: Save the checkout
-      if: steps.restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+      if: >-
+        steps.restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request' &&
+        inputs.cache-save != 'false'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.paths.outputs.target }}

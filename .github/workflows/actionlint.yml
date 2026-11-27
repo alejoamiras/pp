@@ -38,6 +38,7 @@ jobs:
             workflows:
               - '.github/workflows/**'
               - '.github/actions/**'
+              - '.github/actionlint.yaml'
             shell:
               - 'scripts/**/*.sh'
               - 'packages/e2e-kit/scripts/**/*.sh'

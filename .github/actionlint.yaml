@@ -1,0 +1,6 @@
+# actionlint 1.7.12 predates the `cache-mode` job key GitHub documents for dependency caching;
+# drop this once actionlint knows it.
+paths:
+  .github/workflows/nightly.yml:
+    ignore:
+      - 'unexpected key "cache-mode" for "job" section'

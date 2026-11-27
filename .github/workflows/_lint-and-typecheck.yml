@@ -36,22 +36,20 @@ jobs:
       - name: Typecheck all packages
         run: bun run typecheck:all
 
-      # Advisory: the findings go to the step summary and never fail the job. The exit code is
-      # captured so a tool failure (anything but 0 or 1) is told apart from a run with findings.
+      # Advisory: the findings go to the step summary as a table, our own exposed copies first, and
+      # never fail the job. The exit code is captured so a tool failure (anything but 0 or 1) is told
+      # apart from a run with findings.
       - name: bun audit (advisory)
         if: always()
         run: |
           set +e
-          bun audit --audit-level=moderate > "$RUNNER_TEMP/audit.txt" 2>&1
+          bun audit --json > "$RUNNER_TEMP/audit.json" 2> "$RUNNER_TEMP/audit.err"
           code=$?
           set -e
-          {
-            echo "## bun audit (advisory, exit=$code)"
-            echo ""
-            echo '```'
-            cat "$RUNNER_TEMP/audit.txt"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
           if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
             echo "::warning::bun audit exited with unexpected code $code (advisory step; not failing the job)"
+            cat "$RUNNER_TEMP/audit.err"
+            exit 0
           fi
+          bun scripts/ci-cd/audit-summary.ts "$RUNNER_TEMP/audit.json" "$code" >> "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::could not render the audit summary (advisory step; not failing the job)"

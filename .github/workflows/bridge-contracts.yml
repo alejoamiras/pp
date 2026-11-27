@@ -46,6 +46,8 @@ jobs:
           filters: |
             contracts:
               - 'contracts/bridge/**'
+              - 'contracts/crates.json'
+              - 'scripts/ci-cd/crates.ts'
               - 'packages/bridge-core/**'
               - 'packages/bridge-spec/src/**'
               - 'packages/bridge-spec/package.json'

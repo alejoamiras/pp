@@ -14,6 +14,12 @@ inputs:
       a newer nargo fails inside upstream's own macros.
     required: false
     default: ""
+  cache-save:
+    description: >
+      "false" restores the CLI cache without saving it, for a job that runs code from a branch other
+      than the one whose cache scope it writes to.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -53,15 +59,25 @@ runs:
     # Cache key suffix v2: bumped when the foundry-toolchain step was removed so
     # one cold install certified the fresh path under the toolchain preflight.
     - name: Cache Aztec CLI
-      if: inputs.skip_cli != 'true'
+      if: inputs.skip_cli != 'true' && inputs.cache-save != 'false'
       id: cache-aztec
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.aztec/versions/${{ steps.detect.outputs.version }}
         key: ${{ runner.os }}-aztec-${{ steps.detect.outputs.version }}-v2
 
+    - name: Restore Aztec CLI
+      if: inputs.skip_cli != 'true' && inputs.cache-save == 'false'
+      id: restore-aztec
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.aztec/versions/${{ steps.detect.outputs.version }}
+        key: ${{ runner.os }}-aztec-${{ steps.detect.outputs.version }}-v2
+
     - name: Install Aztec CLI
-      if: inputs.skip_cli != 'true' && steps.cache-aztec.outputs.cache-hit != 'true'
+      if: >-
+        inputs.skip_cli != 'true' && steps.cache-aztec.outputs.cache-hit != 'true' &&
+        steps.restore-aztec.outputs.cache-hit != 'true'
       shell: bash
       env:
         AZTEC_VERSION: ${{ steps.detect.outputs.version }}

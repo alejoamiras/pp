@@ -1,5 +1,5 @@
 import type { TestProject } from "vitest/node"
-import { assertNothingLeft, startLocalNetwork } from "../../../scripts/sandbox/local-network"
+import { startLocalNetwork, teardownNetwork } from "../../../scripts/sandbox/local-network"
 
 declare module "vitest" {
 	export interface ProvidedContext {
@@ -17,14 +17,5 @@ export default async function setup(project: TestProject): Promise<() => Promise
 	const net = await startLocalNetwork({ runId })
 	project.provide("nodeUrl", net.nodeUrl)
 	project.provide("attached", attached)
-	return async () => {
-		try {
-			await net.stop()
-			assertNothingLeft(net)
-		} catch (e) {
-			// vitest logs a throwing global teardown and still exits 0.
-			process.exitCode = 1
-			throw e
-		}
-	}
+	return () => teardownNetwork(net)
 }

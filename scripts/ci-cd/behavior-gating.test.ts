@@ -275,6 +275,71 @@ test("Commitlint lints only the PR's own commits, excluding its base and main", 
   expect(job.steps.map((s: { run?: string }) => s.run)).toContain('bash scripts/ci-cd/commitlint-own.sh "$HEAD_SHA" "$BASE_SHA" origin/main')
 })
 
+describe("Noir crate manifest", () => {
+  test("bridge-contracts gates every crate in contracts/crates.json, the manifest and its reader", async () => {
+    const { loadManifest } = await import("./crates")
+    const contracts = filtersOf("bridge-contracts.yml")["contracts"]
+    const gated = (path: string) => contracts.some((pattern) => new Bun.Glob(pattern).match(path))
+    for (const path of ["contracts/crates.json", "scripts/ci-cd/crates.ts"]) expect(gated(path), path).toBe(true)
+    for (const crate of loadManifest().crates) {
+      expect(gated(`${crate.path}/Nargo.toml`), crate.name).toBe(true)
+      if (crate.nargo && "check" in crate.nargo) expect(gated(crate.nargo.check), crate.nargo.check).toBe(true)
+    }
+  })
+
+  test("the Noir jobs take their crates from the manifest", () => {
+    const jobs = workflow("_bridge-contracts.yml").jobs
+    expect(jobs.parity.strategy.matrix.crate).toBe("${{ fromJSON(needs.crates.outputs.parity) }}")
+    expect(jobs.txe.strategy.matrix.crate).toBe("${{ fromJSON(needs.crates.outputs.txe) }}")
+    const runs = (job: string) => jobs[job].steps.map((step: { run?: string }) => step.run ?? "")
+    expect(runs("noir")).toContain("bun scripts/ci-cd/crates.ts nargo-test")
+    // Each job that fetches Noir dependencies checks its own fetch against the pins.
+    for (const job of ["noir", "parity", "txe"])
+      expect(runs(job).some((run: string) => /^ *bun scripts\/ci-cd\/crates\.ts check-pins "/m.test(run)), job).toBe(true)
+  })
+})
+
+// The nightly runs integration-branch code in main's cache scope: a cache it saved could poison
+// main's own workflows, and a persisted token or secret would be in reach of that code.
+test("the nightly reads only: restore-only caches, this commit's actions, no credentials, a timeout", () => {
+  const text = readFileSync(join(ROOT, ".github/workflows/nightly.yml"), "utf8")
+  const wf = workflow("nightly.yml")
+  expect(wf.permissions).toEqual({ contents: "read" })
+  expect(text).not.toContain("secrets.")
+  expect(Object.keys(wf.on).sort()).toEqual(["schedule", "workflow_dispatch"])
+  for (const [name, job] of Object.entries(wf.jobs) as [string, { "timeout-minutes"?: number; "cache-mode"?: string; steps: { uses?: string; run?: string; with?: Record<string, unknown> }[] }][]) {
+    expect(job["timeout-minutes"], name).toBeGreaterThan(0)
+    expect(job["cache-mode"], `${name}: only reads caches`).toBe("read")
+    for (const step of job.steps.filter((s) => s.uses)) {
+      const uses = step.uses as string
+      expect(uses, `${name}: actions/cache saves`).not.toMatch(/^actions\/cache@/)
+      if (uses.startsWith("actions/checkout@")) expect(step.with?.["persist-credentials"], uses).toBe(false)
+      if (uses.startsWith("./")) {
+        expect(uses, "composite actions come from this workflow's commit").toMatch(/^\.\/\.nightly-ci\//)
+        expect(step.with?.["cache-save"], uses).toBe("false")
+      }
+      if (uses.startsWith("foundry-rs/foundry-toolchain@")) expect(step.with?.cache, uses).toBe(false)
+    }
+    expect(job.steps.map((s) => s.run)).toContain("bun run nightly")
+  }
+  // Every composite action the job calls, so a new one cannot bring a saving cache along.
+  const actions = Object.values(wf.jobs as Record<string, { steps: { uses?: string }[] }>)
+    .flatMap((job) => job.steps.map((s) => s.uses?.match(/^\.\/\.nightly-ci\/\.github\/actions\/([^/]+)$/)?.[1]))
+    .filter((name): name is string => Boolean(name))
+  expect(actions).toContain("ppv2-fetch")
+  for (const action of actions) {
+    type Step = { if?: string; uses?: string; with?: Record<string, unknown> }
+    const steps: Step[] = Bun.YAML.parse(readFileSync(join(ROOT, ".github/actions", action, "action.yml"), "utf8")).runs.steps
+    for (const step of steps) {
+      const uses = step.uses ?? ""
+      if (/^actions\/cache(\/save)?@/.test(uses))
+        expect(step.if, `${action}: a saving cache step must be off when cache-save is false`).toContain("inputs.cache-save != 'false'")
+      if (uses.startsWith("oven-sh/setup-bun@")) expect(step.with?.["no-cache"], action).toBe("${{ inputs.cache-save == 'false' }}")
+      if (uses.startsWith("foundry-rs/foundry-toolchain@")) expect(step.with?.cache, action).toBe(false)
+    }
+  }
+})
+
 test("the unit-test workflow runs this suite", () => {
   const steps: { run?: string }[] = workflow("_unit-tests.yml").jobs["unit-tests"].steps
   expect(steps.map((step) => step.run)).toContain("bun run test:ci-gating")

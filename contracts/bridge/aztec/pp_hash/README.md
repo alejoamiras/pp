@@ -10,9 +10,9 @@ cases. The wire-format README in `packages/bridge-spec` is normative.
 
 - aztec-nr v6.0.0, spelled exactly as every crate spells it, so `LabelPath`'s `Serialize` and
   `Deserialize` are the traits a contract argument needs.
-- noir-lang/poseidon v0.3.0 commit: `0880c371e88e583d39515fd3f877538657ac41eb`. aztec-nr pins the
-  same tag, and its bn254 sources equal v0.4.0's (which protocol_types pins). Nargo has no
-  lockfile, so CI compares this commit with the one nargo resolves.
+- noir-lang/poseidon v0.3.0, the tag aztec-nr pins; its bn254 sources equal v0.4.0's (which
+  protocol_types pins). Nargo has no lockfile, so `contracts/crates.json` records the commit the tag
+  must resolve to and `crates.ts check-pins` compares it with the one nargo fetched.
 
 ## Cost
 

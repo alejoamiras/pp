@@ -66,7 +66,8 @@ The sandbox has no Privacy Pools vault yet: the generation binds a placeholder a
   hash is public on L1 and the amount is public, so a weak salt lets an observer brute-force the
   recipient.
 - **Tests run under vitest, not `bun:test`.** `@aztec-labs/foundation` calls `expect.addEqualityTesters`
-  at import, which `bun:test`'s `expect` lacks.
+  at import, which `bun:test`'s `expect` lacks. A warm Bun transpiler cache hides the failure and every
+  CI runner starts cold, so the root gate scripts set `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0`.
 - **Scripts spawn other programs only through `scripts/run.ts`**: argv arrays, never a shell string.
 - **The deploy journal is the resume record.** Every irreversible generation step is appended after its
   receipt, stamped with the chain, rollup and deployer; a re-run skips journalled steps and adopts a
