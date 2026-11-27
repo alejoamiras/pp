@@ -1,51 +1,24 @@
 /**
- * Connect, on the production bundle against the sandbox: the wallet SDK, its iframe, cross-origin
- * isolation and the CSP working together, which jsdom cannot show. Payer: none; the connect grants
- * accounts only, and the wallet frame reports that it handed the node no transaction.
+ * Connect, on the production bundle against the sandbox. Each test proves a part of the wallet SDK,
+ * its iframe, cross-origin isolation and the CSP working together, which jsdom cannot show. Payer:
+ * none; a connect sends nothing, and each test reads from the wallet frame that it handed the node no
+ * transaction. Dispatch per granted scope is the unit suite's; here, what the page shows for a grant.
  */
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import type { Frame, Page } from "@playwright/test"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
-import type { TestWalletControl } from "@pp/e2e-kit/test-wallet/globals"
+import { messageOf } from "../src/data/errors"
+import { chooseWallet, connectWallet, declineNextGrant, signInToPool, submitted, walletOption, watchPage } from "./support"
 
-test.use({ family: "connect", cells: 1, spares: 0 })
+test.use({ family: "connect", cells: 3, spares: 0 })
 
-declare global {
-	interface Window {
-		__ppCspViolations?: string[]
-	}
-}
+/** The seeded approved pool note's commitment, as its row carries it. */
+const BRIDGEABLE_NOTE = "4097"
 
-/** Every policy violation the document reports, from its first script on. */
-async function collectCspViolations(page: Page): Promise<void> {
-	await page.addInitScript(() => {
-		window.__ppCspViolations = []
-		document.addEventListener("securitypolicyviolation", (e) => {
-			window.__ppCspViolations?.push(`${e.effectiveDirective} ${e.blockedURI} ${e.sourceFile}:${e.lineNumber}`)
-		})
-	})
-}
-
-function walletFrame(page: Page, origin: string): Frame {
-	const frame = page.frames().find((f) => f.url().startsWith(`${origin}/`))
-	if (!frame) throw new Error(`no frame at ${origin}; frames: ${page.frames().map((f) => f.url())}`)
-	return frame
-}
-
-/** Every transaction the wallet in `frame` handed the node since it booted. */
-function submitted(frame: Frame): ReturnType<TestWalletControl["submitted"]> {
-	return frame.evaluate(() => {
-		const control = window.__ppTestWallet
-		if (!control) throw new Error("the wallet frame exposes no __ppTestWallet")
-		return control.submitted()
-	})
-}
-
+// Fails if the page or the wallet frame is not cross-origin isolated, the served headers drift from
+// the built ones, or the SDK, Radix or zod trip the CSP.
 test("connects the plain wallet in an isolated page and frame, under the CSP, sending nothing", async ({ page, run, actor }) => {
-	await collectCspViolations(page)
-	const pageErrors: string[] = []
-	page.on("pageerror", (err) => pageErrors.push(err.message))
+	const watch = await watchPage(page)
 
 	const response = await page.goto("/")
 	const served = response?.headers() ?? {}
@@ -56,16 +29,59 @@ test("connects the plain wallet in an isolated page and frame, under the CSP, se
 	expect(served["content-security-policy"]).toContain(`frame-src ${run.testWalletOrigins.plain} ${run.testWalletOrigins.full}`)
 	expect(await page.evaluate(() => crossOriginIsolated)).toBe(true)
 
-	await page.getByTestId("connect-button").click()
-	await page.locator('[data-testid="wallet-option"][data-wallet-id="test-wallet-plain"]').click()
-	await expect(page.getByTestId("emoji-cell")).toHaveCount(9)
-	await page.getByTestId("emoji-confirm").click()
-	await expect(page.locator(`[data-testid="aztec-account"][data-address="${actor.address.toLowerCase()}"]`)).toBeVisible()
-
-	const frame = walletFrame(page, run.testWalletOrigins.plain)
+	const frame = await connectWallet(page, { profile: "plain", origin: run.testWalletOrigins.plain, account: actor.address })
 	expect(await frame.evaluate(() => crossOriginIsolated)).toBe(true)
 	expect(await submitted(frame)).toEqual([])
+	await watch.clean()
+})
 
-	expect(await page.evaluate(() => window.__ppCspViolations)).toEqual([])
-	expect(pageErrors).toEqual([])
+// Fails if discovery misses a frame-src origin (each profile is its own), a probe answer is dropped, or
+// the secure channel to the second origin does not reach its emoji check.
+test("discovers both wallet profiles and connects the full one after its emoji check", async ({ page, run, actor }) => {
+	const watch = await watchPage(page)
+	await page.goto("/")
+	await page.getByTestId("connect-button").click()
+	for (const profile of ["plain", "full"] as const) {
+		await expect(walletOption(page, profile)).toContainText(`Test wallet (${profile})`)
+		await expect(walletOption(page, profile)).toContainText("Web wallet")
+	}
+
+	const frame = await chooseWallet(page, { profile: "full", origin: run.testWalletOrigins.full, account: actor.address })
+	await expect(page.getByTestId("aztec-wallet-name")).toHaveText("Test wallet (full)")
+	expect(await frame.evaluate(() => crossOriginIsolated)).toBe(true)
+	expect(await submitted(frame)).toEqual([])
+	await watch.clean()
+})
+
+// Fails if the page reads a grant it was not given: a declined contract scope must close the bridge and
+// every token action, with a reason, and a later full grant must lift exactly that refusal.
+test("a declined grant closes the bridge and token actions with a reason; granting again opens them", async ({ page, run, actor }) => {
+	const watch = await watchPage(page)
+	await page.goto("/")
+	await signInToPool(page)
+	const bridge = page
+		.locator(`[data-testid="note-row"][data-commitment="${BRIDGEABLE_NOTE}"]`)
+		.getByRole("button", { name: "Bridge to Aztec" })
+	const publicRow = page.getByTestId("public-row")
+	const tokenActions = ["Shield", "Withdraw to Ethereum"].map((name) => publicRow.getByRole("button", { name, exact: true }))
+	const wallet = { profile: "plain", origin: run.testWalletOrigins.plain, account: actor.address } as const
+
+	const declined = await connectWallet(page, { ...wallet, whileVerifying: declineNextGrant })
+	await expect(page.getByTestId("connect-panel")).toContainText("Your balances are hidden from this page")
+	await expect(bridge).toBeDisabled()
+	await expect(bridge).toHaveAccessibleDescription("Your Aztec wallet did not allow claiming. Connect again and allow it.")
+	for (const action of tokenActions) {
+		await expect(action).toBeDisabled()
+		await expect(action).toHaveAccessibleDescription(messageOf("NOT_GRANTED"))
+	}
+	expect(await submitted(declined)).toEqual([])
+
+	await page.getByTestId("disconnect-button").click()
+	const granted = await connectWallet(page, wallet)
+	await expect(page.getByTestId("connect-panel")).toContainText("No private balance on this account yet")
+	await expect(bridge).toBeEnabled()
+	// The grant no longer closes them; the account's empty public balance is the reason now.
+	for (const action of tokenActions) await expect(action).toHaveAccessibleDescription("Your public balance is empty.")
+	expect(await submitted(granted)).toEqual([])
+	await watch.clean()
 })
