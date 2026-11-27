@@ -1,15 +1,52 @@
 import { randomBytes } from "node:crypto"
-import { closeSync, openSync, readFileSync, statSync, unlinkSync, utimesSync, writeSync } from "node:fs"
+import { closeSync, linkSync, openSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeSync } from "node:fs"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-function tryAcquire(lock: string, staleMs: number, token: string): boolean {
+/** The calls that reclaim a stale lock, passed in so a test can stall one where the scheduler won't on demand. */
+export interface LockFs {
+	stat(path: string): { mtimeMs: number }
+	rename(from: string, to: string): void
+	link(existing: string, path: string): void
+	unlink(path: string): void
+}
+
+const HOST: LockFs = {
+	stat: (path) => statSync(path),
+	rename: (from, to) => renameSync(from, to),
+	link: (existing, path) => linkSync(existing, path),
+	unlink: (path) => unlinkSync(path),
+}
+
+const isStale = (path: string, staleMs: number, fs: LockFs) => Date.now() - fs.stat(path).mtimeMs > staleMs
+
+/**
+ * Removes a dead holder's lock. Another reclaimer may replace the lock between the stat and the
+ * removal, so the lock is moved to a name only this call uses and judged again there; one that turns
+ * out live, or cannot be judged, goes back under its name, unless an acquirer took the name in that gap.
+ */
+function reclaim(lock: string, staleMs: number, token: string, fs: LockFs): void {
+	if (!isStale(lock, staleMs, fs)) return
+	const aside = `${lock}.${token.replace(":", "-")}.reclaim`
+	fs.rename(lock, aside)
+	let stale = false
+	try {
+		stale = isStale(aside, staleMs, fs)
+	} catch {}
+	try {
+		if (!stale) fs.link(aside, lock)
+	} finally {
+		fs.unlink(aside)
+	}
+}
+
+function tryAcquire(lock: string, staleMs: number, token: string, fs: LockFs): boolean {
 	let fd: number
 	try {
 		fd = openSync(lock, "wx", 0o600)
 	} catch {
 		try {
-			if (Date.now() - statSync(lock).mtimeMs > staleMs) unlinkSync(lock)
+			reclaim(lock, staleMs, token, fs)
 		} catch {}
 		return false
 	}
@@ -39,10 +76,11 @@ export async function withFileLock<T>(
 	lock: string,
 	o: { staleMs: number; waitMs: number },
 	fn: () => Promise<T> | T,
+	fs: LockFs = HOST,
 ): Promise<{ value: T } | undefined> {
 	const token = `${process.pid}:${randomBytes(8).toString("hex")}`
 	const deadline = Date.now() + o.waitMs
-	while (!tryAcquire(lock, o.staleMs, token)) {
+	while (!tryAcquire(lock, o.staleMs, token, fs)) {
 		if (Date.now() >= deadline) return undefined
 		await sleep(100)
 	}
