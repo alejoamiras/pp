@@ -3,6 +3,7 @@ import {
 	createPublicClient,
 	getAddress,
 	type Hex,
+	hexToBigInt,
 	http,
 	isAddressEqual,
 	isHex,
@@ -233,8 +234,13 @@ export function changeInReceipt(receipt: TransactionReceipt, nullifier: bigint, 
 	return null
 }
 
+/** Not `getBlockNumber`: viem may answer that from its head cache or a head request in flight, even at `cacheTime: 0`. */
+export async function freshHead(client: Pick<PublicClient, "request">): Promise<bigint> {
+	return hexToBigInt(await client.request({ method: "eth_blockNumber" }))
+}
+
 async function changeOpeningOf(nullifier: bigint, pool: PoolConfig, publicClient: PublicClient, keys: SpendKeys): Promise<ChangeOpening> {
-	const latest = await publicClient.getBlockNumber()
+	const latest = await freshHead(publicClient)
 	for (let from = pool.deployBlock; from <= latest; from += LOG_WINDOW) {
 		const to = from + LOG_WINDOW - 1n < latest ? from + LOG_WINDOW - 1n : latest
 		const logs = await publicClient.getLogs({ address: pool.poolVault, event: POOL_VAULT_EVENTS_ABI[0], fromBlock: from, toBlock: to })
@@ -259,12 +265,15 @@ export async function openPoolClient(a: {
 }): Promise<PoolClient> {
 	const signature = normaliseSignature(a.signature)
 	const owner = getAddress(a.l1Address)
+	// Read once, field by field so prototype getters count: the chain the bundle is allowed for is the one the
+	// RPC is held to and the session runs on.
+	const { chainId: poolChain, l1Rpc, poolVault, entrypoint, aspRegistry, keystore, asset, deployBlock, aspApiUrl } = a.pool
+	const pool: PoolConfig = { chainId: poolChain, l1Rpc, poolVault, entrypoint, aspRegistry, keystore, asset, deployBlock, aspApiUrl }
+	const artifacts = createArtifacts(a.artifacts, { chainId: pool.chainId })
 	await verifySigner(owner, signature)
-	const publicClient = createPublicClient({ transport: http(a.pool.l1Rpc) })
+	const publicClient = createPublicClient({ transport: http(pool.l1Rpc) })
 	const chainId = await publicClient.getChainId()
-	if (chainId !== a.pool.chainId)
-		throw new PoolClientError("CHAIN_MISMATCH", `RPC serves chain ${chainId}, the pool is on ${a.pool.chainId}`)
-	const artifacts = createArtifacts(a.artifacts)
-	const sdk = await createSession({ pool: a.pool, owner, keys: deriveKeys(owner, signature), artifacts, publicClient, prover: a.prover })
-	return client(a.pool, owner, signature, sdk, publicClient, artifacts)
+	if (chainId !== pool.chainId) throw new PoolClientError("CHAIN_MISMATCH", `RPC serves chain ${chainId}, the pool is on ${pool.chainId}`)
+	const sdk = await createSession({ pool, owner, keys: deriveKeys(owner, signature), artifacts, publicClient, prover: a.prover })
+	return client(pool, owner, signature, sdk, publicClient, artifacts)
 }

@@ -23,7 +23,7 @@ test(
 		const merkleService = new MerkleService({ hashService })
 		const noteComputationService = new NoteComputationService({ hashService, cryptoService: new CryptoService() })
 		const witnesses = new WitnessPreparationService({ noteComputationService, hashService, merkleService })
-		const proofs = createProofService(checkout().circuits)
+		const proofs = createProofService({ circuitsDir: checkout().circuits, chainId: 31_337 })
 		const witness = await witnesses.buildDepositWitness({
 			noteAddressHash: noteComputationService.computeNoteAddressHash(
 				"0x742d35cc6634c0532925a3b844bc9e7fe0c0f392" as Hex,

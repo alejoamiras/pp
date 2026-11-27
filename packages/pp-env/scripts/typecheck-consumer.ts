@@ -18,6 +18,7 @@ const CONSUMER = `import {
 	TRANSACT_ABI,
 } from "@pp/pp-env"
 import { type ClientConfig, secretDerivationTypedData } from "@pp/pp-env/client"
+import { attachForkPoolEnv, type ForkPoolEnv } from "@pp/pp-env/fork"
 
 export async function use(): Promise<bigint> {
 	const env: PoolEnv = await startPoolEnv({ signals: false })
@@ -25,12 +26,15 @@ export async function use(): Promise<bigint> {
 	// @ts-expect-error the env is typed precisely, not any
 	env.chainId = 1
 	const config: ClientConfig = env.clientConfig
+	const fork: ForkPoolEnv = await attachForkPoolEnv({ ...config, clientVersion: "anvil/v1.7.1", postman: env.asset, runId: "r" })
+	// @ts-expect-error only the pinned bundle names are accepted
+	const bundle: ClientConfig["circuitBundle"] = "mainnet"
 	const user = await createPoolUser(config, { wallet: undefined as never })
 	const spend: PreparedSpend = await user.prepareSpend({ processor: env.asset, data: "0x", asset: env.asset, amountOut: 1n })
 	const [proof] = spend.args
 	// @ts-expect-error pubSignals rows are bigint arrays
 	const wrong: string = proof.pubSignals[0]
-	void [chain, wrong, STUB_PROCESSOR_ABI.length, TRANSACT_ABI.length, secretDerivationTypedData(env.asset).primaryType]
+	void [fork.clientConfig.circuitBundle, bundle, chain, wrong, STUB_PROCESSOR_ABI.length, TRANSACT_ABI.length, secretDerivationTypedData(env.asset).primaryType]
 	return spend.nullifier
 }
 `

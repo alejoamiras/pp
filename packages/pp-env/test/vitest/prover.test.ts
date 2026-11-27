@@ -22,7 +22,7 @@ const unverifiable = {
 test("a deposit verifies on the single-thread curve under vite's module runner", async () => {
 	const slot = globalThis as { curve_bn128?: unknown }
 	slot.curve_bn128 = undefined
-	await createProofService(checkout().circuits)
+	await createProofService({ circuitsDir: checkout().circuits, chainId: 31_337 })
 		.verifyDeposit(unverifiable as never)
 		.catch(() => undefined)
 	expect(slot.curve_bn128).toBeTruthy()

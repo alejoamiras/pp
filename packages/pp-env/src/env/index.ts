@@ -17,11 +17,12 @@ import { claimPort, releasePorts } from "@pp/run-isolation/ports"
 import { CleanupStack } from "@pp/run-isolation/process"
 import type { PoolEnv, StartPoolEnvOptions } from "./types.ts"
 import { submitViaStub } from "./stub.ts"
+import { stopAsp } from "./asp.ts"
+import { RUN_ID } from "./run-id.ts"
 
 export type { LocalChainId, PoolDeployment, PoolEnv, StartPoolEnvOptions } from "./types.ts"
 
 export const RUNS_DIR = join(homedir(), ".cache/pp/pp-env/runs")
-const RUN_ID = /^[a-z0-9][a-z0-9-]{0,63}$/
 
 export function localClients(rpcUrl: string, key: Hex): { client: PublicClient; wallet: LocalWallet } {
 	const chain = { ...foundry, rpcUrls: { default: { http: [rpcUrl] } } }
@@ -29,25 +30,6 @@ export function localClients(rpcUrl: string, key: Hex): { client: PublicClient; 
 	const client = createPublicClient({ chain, transport, pollingInterval: 100 }) as PublicClient
 	const wallet = createWalletClient({ chain, transport, account: privateKeyToAccount(key) })
 	return { client, wallet }
-}
-
-/**
- * Bun 1.4.2's `closeAllConnections()` also stops the listener (Node's does not), so the mock ASP's
- * `stop()` then fails in `close()` although its port is already free. Accepted only once the port refuses.
- */
-async function stopAsp(asp: { url: string; stop(): Promise<void> }): Promise<void> {
-	try {
-		await asp.stop()
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") throw err
-		if (
-			await fetch(asp.url).then(
-				() => true,
-				() => false,
-			)
-		)
-			throw err
-	}
 }
 
 const alive = (pid: number): boolean => {

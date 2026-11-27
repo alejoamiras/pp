@@ -9,23 +9,100 @@ import {
 } from "../sdk.ts"
 import { cacheStorageStore, sha256Hex } from "./cache-store.ts"
 
-export type ArtifactSource = { kind: "gateway"; urls: readonly string[] } | { kind: "dir"; path: string }
-
 /** A manifest entry plus each file's byte size: the gateway reader needs a cap before it buffers. */
 export type PinnedCircuit = CircuitArtifactCIDs & { sizes: Readonly<Record<ArtifactFile, number>> }
 
-export const PINNED_CIRCUITS: Readonly<Record<string, PinnedCircuit>> = {
-	transact_1x1: {
-		...DEFAULT_CIRCUIT_MANIFEST.transact_1x1!,
-		sizes: { wasm: 3_239_462, provingKey: 18_144_961, verificationKey: 4_528 },
-	},
+/**
+ * Pins for every circuit a bundle proves. The witness generator and proving key run over the user's
+ * pool keys, which are the same on every chain, so bundles are reviewed code chosen by name, never
+ * a manifest a caller builds.
+ */
+export type CircuitBundle = {
+	readonly circuits: Readonly<Record<string, PinnedCircuit>>
+	/** The only chains it may prove for; absent means any. */
+	readonly chainIds?: readonly number[]
 }
 
+/** The table is a trust root that callers may read; frozen, so nothing in the process can edit a pin. */
+function deepFreeze<T>(value: T): T {
+	if (typeof value === "object" && value !== null) for (const v of Object.values(value)) deepFreeze(v)
+	return Object.freeze(value)
+}
+
+export const CIRCUIT_BUNDLES = deepFreeze({
+	/** The pool's ceremony keys, as the SDK this package depends on ships them. */
+	ceremony: {
+		circuits: {
+			transact_1x1: {
+				...DEFAULT_CIRCUIT_MANIFEST.transact_1x1!,
+				sizes: { wasm: 3_239_462, provingKey: 18_144_961, verificationKey: 4_528 },
+			},
+			deposit: {
+				...DEFAULT_CIRCUIT_MANIFEST.deposit!,
+				sizes: { wasm: 2_337_270, provingKey: 1_234_244, verificationKey: 3_741 },
+			},
+		},
+	},
+	/**
+	 * The keys of the pool's Sepolia deployments, from a single-party setup that predates its ceremony:
+	 * whoever ran that setup can forge proofs these verifiers accept, so it is refused off Sepolia.
+	 * CIDs and digests are `DEFAULT_CIRCUIT_MANIFEST` of npm `@0xbow/privacy-pools-v2-sdk@1.0.0` (tarball
+	 * sha256 c20f251e4813b4db354010521f042d1b9de84115ac230cbd63591e106a763a2d); sizes are those files'.
+	 * The two wasm files are byte-identical to the ceremony's.
+	 */
+	"pre-ceremony": {
+		chainIds: [11_155_111],
+		circuits: {
+			deposit: {
+				wasm: "QmbFwUiZywpkCd9AYr3xiVJN2K99ma7raz5FvAS8A8j8DD",
+				wasmSha256: "833e7b3c44a900a95496009a36284e11f57ba0385fab6b63f92075750817550a",
+				provingKey: "QmapgvDJc2ZSA3FLi9YwA7vd7QNThD2LKa17Zyn4pnDQ6S",
+				provingKeySha256: "0e64b6d15ea540b3ab04d5596ab45d1ed6df0872e0261a850039372104837b30",
+				verificationKey: "QmPiRu7icgKrxer7DRHwiWHwpyT2UxCfm475FSA5z8APuM",
+				verificationKeySha256: "cc0c1647983f2ca75b192e5c671b9b2932fd690709922bf32443a4053cd0912a",
+				sizes: { wasm: 2_337_270, provingKey: 1_031_707, verificationKey: 3_744 },
+			},
+			transact_1x1: {
+				wasm: "QmYLFBpsJzeKXDfxcKdwz4rrhZTDoWiYyHNkDyreFrFrau",
+				wasmSha256: "bd13ab4130320f095cdee83b42e27877fc6c17f18be3fbdfc55436d33689d262",
+				provingKey: "QmTwJqccgYF7bVvVDVHFGnB96tXQLyhRLohaFm3drKs1hr",
+				provingKeySha256: "ba00dc63d1ef0b09a49dbf9348430362ef18dca5309ad5b6f06a896349c4c80a",
+				verificationKey: "QmfN4QBhkz5NAoo9yd4L8gKjNkap2R4LSKE6yVNS26m4Rh",
+				verificationKeySha256: "e429d3e895de5cc9d2839a3fd8303fadd30be3759bac06ce7fb063ceda198308",
+				sizes: { wasm: 3_239_462, provingKey: 17_942_432, verificationKey: 4_531 },
+			},
+		},
+	},
+} as const satisfies Readonly<Record<string, CircuitBundle>>)
+
+export type CircuitBundleName = keyof typeof CIRCUIT_BUNDLES
+
+export const PINNED_CIRCUITS: Readonly<Record<string, PinnedCircuit>> = CIRCUIT_BUNDLES.ceremony.circuits
+
+/** Where circuit files come from, and which bundle pins them (default `ceremony`). */
+export type ArtifactSource =
+	| { kind: "gateway"; urls: readonly string[]; bundle?: CircuitBundleName }
+	| { kind: "dir"; path: string; bundle?: CircuitBundleName }
+
 export type ArtifactOptions = {
-	circuits?: Readonly<Record<string, PinnedCircuit>>
+	/** The chain the proofs are for; a bundle restricted to some chains needs one of them here. */
+	chainId?: number
 	/** Per gateway file, covering the whole body. */
 	deadlineMs?: number
 	fetch?: typeof fetch
+}
+
+/**
+ * The named bundle, if it may prove for `chainId`. A name from untyped data is checked as well.
+ * @throws PoolClientError `ARTIFACT_MISMATCH` for an unknown name, `CHAIN_MISMATCH` for a chain the bundle excludes
+ */
+export function circuitBundle(name: CircuitBundleName = "ceremony", chainId?: number): CircuitBundle {
+	if (!Object.hasOwn(CIRCUIT_BUNDLES, name))
+		throw new PoolClientError("ARTIFACT_MISMATCH", `unknown circuit bundle ${JSON.stringify(name)}`)
+	const bundle: CircuitBundle = CIRCUIT_BUNDLES[name]
+	if (bundle.chainIds !== undefined && (chainId === undefined || !bundle.chainIds.includes(chainId)))
+		throw new PoolClientError("CHAIN_MISMATCH", `circuit bundle ${name} may not prove for chain ${chainId ?? "unspecified"}`)
+	return bundle
 }
 
 export interface VerifiedArtifacts extends ICircuitArtifacts {
@@ -86,6 +163,15 @@ function boundedHttp(capOf: (cid: string) => number | undefined, deadlineMs: num
 	}
 }
 
+/** A plain copy read once: a getter cannot answer one way here and another at a later read. */
+function readSource(src: ArtifactSource): ArtifactSource {
+	const { kind, bundle } = src
+	const named = bundle === undefined ? {} : { bundle }
+	if (kind === "dir") return { kind, path: String((src as { path: unknown }).path), ...named }
+	if (kind === "gateway") return { kind, urls: [...(src as { urls: readonly string[] }).urls].map(String), ...named }
+	throw new PoolClientError("ARTIFACT_MISMATCH", `unknown artifact source kind ${JSON.stringify(kind)}`)
+}
+
 function sourceLoader(src: ArtifactSource, circuits: Readonly<Record<string, PinnedCircuit>>, opts: ArtifactOptions): ICircuitArtifacts {
 	if (src.kind === "dir") return new LocalCircuitArtifacts({ baseDir: src.path })
 	const caps = new Map<string, number>()
@@ -108,13 +194,25 @@ function sourceLoader(src: ArtifactSource, circuits: Readonly<Record<string, Pin
 }
 
 /**
- * Circuit files checked against the pinned manifest in every runtime. The gateway loader verifies
+ * Circuit files checked against `src.bundle`'s pins in every runtime. The gateway loader verifies
  * digests itself and, in a browser, keeps files across page loads; files from a directory are hashed here.
+ * Reads `src` once, before returning.
+ * @throws PoolClientError as {@link circuitBundle} does, before any file is read
  */
 export function createArtifacts(src: ArtifactSource, opts: ArtifactOptions = {}): VerifiedArtifacts {
-	const circuits = opts.circuits ?? PINNED_CIRCUITS
-	const { kind } = src
-	const inner = sourceLoader(src, circuits, opts)
+	const source = readSource(src)
+	return artifactsFor(source, circuitBundle(source.bundle, opts.chainId).circuits, opts)
+}
+
+/** {@link createArtifacts} over arbitrary pins: tests only, so the package exports it nowhere. */
+export function artifactsFor(
+	src: ArtifactSource,
+	circuits: Readonly<Record<string, PinnedCircuit>>,
+	opts: Omit<ArtifactOptions, "chainId"> = {},
+): VerifiedArtifacts {
+	const source = readSource(src)
+	const { kind } = source
+	const inner = sourceLoader(source, circuits, opts)
 	const loads = new Map<string, Promise<Loaded>>()
 
 	async function readFile(circuit: string, pin: PinnedCircuit, file: ArtifactFile): Promise<Uint8Array> {
