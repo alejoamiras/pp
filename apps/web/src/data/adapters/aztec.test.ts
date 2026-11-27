@@ -71,6 +71,12 @@ describe("the Aztec adapter", () => {
 		await expect(send()).resolves.toEqual({ status: "unconfirmed" })
 		r.wallet.sendTx.mockRejectedValueOnce(new ProviderError(4001, "User rejected the request."))
 		await expect(send()).rejects.toMatchObject({ code: 4001 })
+		const reject = { code: 4001, message: "User rejected", data: { walletErrorCode: "USER_REJECTED", walletTraceId: "1" } }
+		r.wallet.sendTx.mockRejectedValueOnce(new Error(JSON.stringify(reject)))
+		await expect(send()).rejects.toThrow(/USER_REJECTED/)
+		// Wording is no proof past the handoff.
+		r.wallet.sendTx.mockRejectedValueOnce(new Error("User rejected the request"))
+		await expect(send()).resolves.toEqual({ status: "unconfirmed" })
 	})
 
 	test("reads its own transaction's receipt as included, reverted at its block, or pending while not mined; another's is no answer", async () => {

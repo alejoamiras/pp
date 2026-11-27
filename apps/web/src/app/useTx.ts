@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react"
 import type { Hex } from "viem"
 import type { AztecAddress } from "../data/stack-types"
-import { isUserRejection, type UiCode } from "../data/errors"
+import { isWalletRefusal, type UiCode } from "../data/errors"
 import type { Sent } from "../data/ports"
 import type { DataSource } from "../data/source"
 import { isFinal, MAKES_CHANGE, sentOutcome, type TxAction, type TxOutcome, thrownOutcome } from "../data/tx"
@@ -86,8 +86,9 @@ export function useTx(source: DataSource, refresh: () => void) {
 				})
 				return answered(action, from, sent, recipient)
 			} catch (err) {
-				// Past the handoff, anything but the wallet's no may hide a send that went out.
-				if (!handed || isUserRejection(err)) return thrownOutcome(err)
+				if (!handed) return thrownOutcome(err)
+				// Past the handoff, only a trusted refusal shape is a no; anything else may hide a send that went out.
+				if (isWalletRefusal(err)) return { ok: false, code: "WALLET_REJECTED" }
 				hold(from, { action })
 				return { ok: false, code: "UNKNOWN" }
 			} finally {

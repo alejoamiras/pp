@@ -4,7 +4,7 @@ import { type CollectFailure, useApp } from "../../app/context"
 import { type LiveStore, useLive } from "../../app/live"
 import { exitKey, useExits } from "../../app/queries"
 import type { ExitStatus } from "../../data/stack-types"
-import { BridgeFailure, codeOf, isUserRejection, messageOf, PAYEE_MESSAGES, type UiCode } from "../../data/errors"
+import { BridgeFailure, codeOf, isWalletRefusal, messageOf, PAYEE_MESSAGES, type UiCode } from "../../data/errors"
 import { parsePayee } from "../../data/parse"
 import type { ExitView } from "../../data/ports"
 import { bindL1Send } from "../../data/sends"
@@ -33,7 +33,7 @@ const hashOf = (err: unknown): Hash | undefined => {
 function failureOf(err: unknown, refused: "owner" | "context" | null): Failed {
 	if (refused === "owner") return { code: "SENDER_IS_OWNER" }
 	if (refused === "context") return { code: "CONTEXT_CHANGED" }
-	if (isUserRejection(err)) return { code: "WALLET_REJECTED" }
+	if (isWalletRefusal(err)) return { code: "WALLET_REJECTED" }
 	const txHash = hashOf(err)
 	return { code: codeOf(err) ?? "RPC_FAILED", ...(txHash ? { txHash } : {}) }
 }

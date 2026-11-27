@@ -162,13 +162,60 @@ function* chain(err: unknown): Generator<Record<string, unknown>> {
 
 const REJECTION_WORDS = /rejected by user|user rejected|user denied|denied by user|user cancel/i
 
-/** An explicit no from the user (EIP-1193 4001, viem's rejection, the wallet's wording); never an outage. */
+/**
+ * An explicit no from the user (EIP-1193 4001, viem's rejection, the wallet's wording); never an outage.
+ * Only for a failure before a send was handed over: past the handoff, wording is no proof, so
+ * `isWalletRefusal` decides.
+ */
 export function isUserRejection(err: unknown): boolean {
 	for (const e of chain(err)) {
 		if (e.code === 4001 || e.name === "UserRejectedRequestError") return true
 		if (typeof e.message === "string" && REJECTION_WORDS.test(e.message)) return true
 	}
 	return false
+}
+
+/** wallet-sdk 6.0.0's extension transport throws each wallet error as `new Error(JSON.stringify(error))`. */
+function sdkEnvelope(message: unknown): Record<string, unknown> | null {
+	if (typeof message !== "string" || !message.startsWith("{")) return null
+	try {
+		const parsed: unknown = JSON.parse(message)
+		return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null
+	} catch {
+		return null
+	}
+}
+
+/**
+ * The refusals the page trusts once a send was handed to the wallet, where any other failure may hide
+ * a broadcast. Each is a typed signal or a tested wallet's exact error, read on the thrown error itself,
+ * never a phrase inside a message. The kit's test wallet has no decline, so it has no entry: an injected
+ * failure there holds like any other.
+ */
+export const REFUSAL_SHAPES: readonly { readonly wallet: string; matches(e: Record<string, unknown>): boolean }[] = [
+	{ wallet: "EIP-1193 provider (4001)", matches: (e) => e.code === 4001 },
+	{ wallet: "viem", matches: (e) => e.name === "UserRejectedRequestError" },
+	{
+		// Measured on wallet v1.3.0's Reject; its other 4001s (a cancelled job) are not shown to send nothing.
+		wallet: "wallet-sdk 6.0.0 extension (released wallet)",
+		matches: (e) => {
+			const env = sdkEnvelope(e.message)
+			const data = env?.data
+			return (
+				env?.code === 4001 &&
+				typeof data === "object" &&
+				data !== null &&
+				(data as Record<string, unknown>).walletErrorCode === "USER_REJECTED"
+			)
+		},
+	},
+]
+
+/** Whether `err` is a refusal past the handoff: one of `REFUSAL_SHAPES`, else the send may have gone out. */
+export function isWalletRefusal(err: unknown): boolean {
+	if (typeof err !== "object" || err === null) return false
+	const e = err as Record<string, unknown>
+	return REFUSAL_SHAPES.some((s) => s.matches(e))
 }
 
 /** The EIP-1193 provider code in `err`'s chain: 4001, 4100, 4200, 4900 or 4901. */

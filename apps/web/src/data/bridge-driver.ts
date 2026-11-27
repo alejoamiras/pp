@@ -8,7 +8,7 @@ import { type Address, type Hex, isAddressEqual } from "viem"
 import type { AztecAddress, BridgeRecordView, PoolNoteView } from "./stack-types"
 import type { BridgeEvent, Failure } from "./bridge-machine"
 import { offerFor } from "./bridge-machine"
-import { codeOf, isUserRejection, type UiCode } from "./errors"
+import { codeOf, isUserRejection, isWalletRefusal, type UiCode } from "./errors"
 import { parseAztecAddress } from "./parse"
 import type { Attempt, Deployment, Proved, Sent, Session, SubmitHooks, Timer } from "./ports"
 import { checkAttempt, type Found, type PriorKind, priorAttempt } from "./reconcile"
@@ -257,7 +257,7 @@ function outcome(st: State, err: unknown, a: Attempt, during: Failure["during"],
 	if (err instanceof ProveTimeout) return failure("PROVE_TIMEOUT", "preparing")
 	if (!handedOff && !st.deps.canClaim()) return failure("NOT_GRANTED", during)
 	if (!handedOff && !isCurrent(a, st.deps.context())) return failure("CONTEXT_CHANGED", during)
-	if (handedOff && isUserRejection(err)) return { type: "declined" }
+	if (handedOff && isWalletRefusal(err)) return { type: "declined" }
 	// Past the handoff, an error without a code may hide a sent transaction with no hash: UNCERTAIN.
 	const code = codeOf(err) ?? (handedOff ? "UNCERTAIN" : during === "preparing" ? "PROVE_FAILED" : "RPC_FAILED")
 	remember(st, code, a.note)
@@ -436,9 +436,9 @@ function claimRefusal(st: State, record: BridgeRecordView, ctx: LiveContext): Ui
 }
 
 function claimOutcome(st: State, err: unknown, c: ClaimContext, handedOff: boolean): BridgeEvent {
+	// Past the handoff, only a trusted refusal shape is a no; anything else may hide a claim that went out.
+	if (handedOff) return isWalletRefusal(err) ? { type: "claim-declined" } : { type: "claim-pending", txHash: null }
 	if (isUserRejection(err)) return { type: "claim-declined" }
-	// Past the handoff, anything but the wallet's no may hide a claim that went out.
-	if (handedOff) return { type: "claim-pending", txHash: null }
 	if (!st.deps.canClaim()) return failure("NOT_GRANTED", "claiming", { offer: "claim" })
 	if (!claimCurrent(c, st.deps.context())) return failure("CONTEXT_CHANGED", "claiming", { offer: "claim" })
 	return failure(codeOf(err) ?? "CLAIM_FAILED", "claiming", { offer: "claim" })
