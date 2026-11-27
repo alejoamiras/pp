@@ -35,7 +35,8 @@ function RegisterFailed({ failed, onCheck }: { failed: Failed; onCheck(): void }
 			<p>{REGISTER_MESSAGES[failed.code] ?? messageOf(failed.code)}</p>
 			{failed.done ? (
 				<p className="text-xs" title={failed.done}>
-					An earlier transaction of this registration mined and set its key: {shortHex(failed.done)}.
+					The keystore now holds the key an earlier transaction of this registration was for, and that transaction mined:{" "}
+					{shortHex(failed.done)}.
 				</p>
 			) : null}
 			{failed.txHash ? (

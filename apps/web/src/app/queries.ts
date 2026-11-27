@@ -11,7 +11,7 @@ import { readPool } from "../data/reconcile"
 import type { DataSource } from "../data/source"
 
 export const POOL_KEY = "pool"
-/** The owner's keystore step, and its runs as mutations; a sign-out drops the step and every settled run. */
+/** The owner's keystore step, and its runs as mutations; a sign-out drops the step, never a run's outcome. */
 export const REGISTRATION_KEY = "registration"
 
 /**

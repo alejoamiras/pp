@@ -101,7 +101,10 @@ export async function registerOwner(d: RegisterDeps): Promise<RegisterResult> {
 	}
 }
 
-/** The run's first call known to have set its key: at its own successful receipt, or once the chain moved past it. */
+/**
+ * The run's first call that mined while its key got set: at its own successful receipt, or, for a
+ * replacement, once the chain moved past its step (the key is then set, if not necessarily by it).
+ */
 function progress() {
 	let done: Hash | undefined
 	return {
@@ -133,6 +136,7 @@ async function readStep(d: RegisterDeps, after: bigint | undefined): Promise<Reg
 /** The chain asking again for the call that just mined, or for a third call, stops the run. */
 function stopBefore(next: RegistrationCall, last: Mined | undefined, calls: number): Failed | null {
 	if (last?.fn !== next.function && calls < MAX_CALLS) return null
-	const code: UiCode = last?.replaced ? "REGISTRATION_REPLACED" : last?.reverted ? "REVERTED" : "RPC_INCONSISTENT"
+	const again = last?.fn === next.function
+	const code: UiCode = again && last.replaced ? "REGISTRATION_REPLACED" : again && last.reverted ? "REVERTED" : "RPC_INCONSISTENT"
 	return { ok: false, code, ...(last ? { txHash: last.hash } : {}) }
 }

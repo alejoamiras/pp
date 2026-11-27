@@ -160,6 +160,17 @@ describe("registerOwner", () => {
 		expect(w.asked).toEqual(["setAuthPolicy"])
 	})
 
+	it("reads a third call asked for as inconsistent, whatever replaced the second", async () => {
+		const w = world({ wallets: ["send", "speed-up"] })
+		// At the second receipt, a reorg drops the first call.
+		w.afterReceipt.push(() =>
+			w.afterReceipt.push(() => {
+				w.chain.auth = false
+			}),
+		)
+		expect(await w.run()).toEqual({ ok: false, code: "RPC_INCONSISTENT", txHash: REPLACEMENT, done: hash(1) })
+	})
+
 	it("goes on from a call the wallet sped up, under the replacement's hash", async () => {
 		const w = world({ wallets: ["speed-up"] })
 		expect(await w.run()).toEqual({ ok: true })

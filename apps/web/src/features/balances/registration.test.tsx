@@ -70,17 +70,16 @@ describe("the pool registration step", () => {
 		expect(screen.queryByText("Notes by label")).toBeNull()
 	})
 
-	test("shows a sign-in afresh, without the outcome of a run from before a sign-out", async () => {
+	test("keeps an unconfirmed call's warning across a sign-out and back, since the call may still land", async () => {
 		const { user, control } = unregistered()
 		await clickSignIn(user)
 		await screen.findByTestId("register-step")
-		control.failNext("send", "REJECTED")
+		control.failNext("send", "PENDING")
 		await user.click(registerButton())
-		await screen.findByTestId("register-failed")
+		expect((await screen.findByTestId("register-failed")).dataset.code).toBe("TX_UNCONFIRMED")
 		await user.click(screen.getByRole("button", { name: "Sign out" }))
 		await clickSignIn(user)
-		await screen.findByTestId("register-step")
-		expect(screen.queryByTestId("register-failed")).toBeNull()
+		expect((await screen.findByTestId("register-failed")).dataset.code).toBe("TX_UNCONFIRMED")
 	})
 
 	test("stays blocked across a sign-out and back while the wallet still holds the call", async () => {

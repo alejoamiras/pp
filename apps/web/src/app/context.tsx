@@ -102,11 +102,8 @@ export function AppProvider({ source, frame, children }: Props) {
 	useEffect(() => {
 		if (session === null) {
 			queryClient.removeQueries({ queryKey: [POOL_KEY] })
+			// The step only: a run's outcome stays with its owner, so an unconfirmed call's warning outlives a sign-out.
 			queryClient.removeQueries({ queryKey: [REGISTRATION_KEY] })
-			// A run still pending stays: its call may still be with the wallet, so Register stays blocked.
-			const runs = queryClient.getMutationCache()
-			for (const m of runs.findAll({ mutationKey: [REGISTRATION_KEY], predicate: (m) => m.state.status !== "pending" }))
-				runs.remove(m)
 		}
 	}, [session, queryClient])
 
