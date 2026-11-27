@@ -47,7 +47,9 @@ export declare function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPoo
 export declare function startMockAsp(o: StartMockAspOptions): Promise<MockAsp>
 
 /**
- * Compares, at one block, the runtime code of every contract the pool deploy produced with the fetched
- * build, immutables masked, and returns each address checked. Refuses any other chain.
+ * Compares, at one block, the runtime code of every contract the pool deploy produced, the test token
+ * included, with the fetched build, and returns each address checked. Immutables are masked in the
+ * comparison, then each must hold the targets' wiring as its getter reads it, and every transact route
+ * must call its verifier's own selector. Refuses any other chain.
  */
 export declare function verifyPoolCode(o: { rpcUrl: string; chainId: SepoliaChainId; deployment: PoolCodeTargets }): Promise<CodeMatch[]>

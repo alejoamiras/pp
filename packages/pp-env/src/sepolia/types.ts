@@ -30,7 +30,10 @@ export type SepoliaPool = {
 }
 
 /** The deployed contracts whose runtime code `verifyPoolCode` compares with the fetched build. */
-export type PoolCodeTargets = Pick<PoolDeployment, "accessRouter" | "keystore" | "aspRegistry" | "pool" | "entrypoint" | "relay">
+export type PoolCodeTargets = Pick<PoolDeployment, "accessRouter" | "keystore" | "aspRegistry" | "pool" | "entrypoint" | "relay"> & {
+	/** The test token `deployPoolOn` deploys, compared with pp-env's own `TestToken` build. */
+	asset: Address
+}
 
 /** One address whose code matched the build: a contract, a proxy, its implementation, a verifier or a linked library. */
 export type CodeMatch = { name: string; address: Address }

@@ -51,7 +51,7 @@ export async function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool>
 	await enableAsset(wallet, client, deployment.entrypoint, asset)
 	await mintTestToken(wallet, client, asset, o.mint.to, o.mint.amount)
 	log(`test token ${asset} enabled; ${o.mint.amount} minted to ${o.mint.to}`)
-	await verifyPoolCode({ rpcUrl: o.rpcUrl, chainId: o.chainId, deployment })
+	await verifyPoolCode({ rpcUrl: o.rpcUrl, chainId: o.chainId, deployment: { ...deployment, asset } })
 	log("every deployed contract's runtime code matches the build")
 	return { deployment, asset, spentWei: before - (await client.getBalance({ address: account.address })) }
 }

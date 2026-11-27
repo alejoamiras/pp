@@ -195,7 +195,7 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("@pp/pp-env/sepolia on a chain-
 	test("code that is not the build's is named", async () => {
 		const relay = pool.deployment.relay as Address
 		await rpc(rpcUrl, "anvil_setCode", [relay, await client.getCode({ address: ANNOUNCER })])
-		await expect(verifyPoolCode({ rpcUrl, chainId: CHAIN, deployment: pool.deployment })).rejects.toThrow(
+		await expect(verifyPoolCode({ rpcUrl, chainId: CHAIN, deployment: { ...pool.deployment, asset: pool.asset } })).rejects.toThrow(
 			`PrivacyPoolRelay at ${relay} is not the build's`,
 		)
 	})
