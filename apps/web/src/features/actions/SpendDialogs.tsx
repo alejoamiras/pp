@@ -39,7 +39,7 @@ export function SendDialog({ account, balance, onClose }: Props) {
 		if (!recipient || amount.amount === null) return
 		const a = { to: recipient, amount: amount.amount, label: balance.label, origin: balance.origin }
 		const on = bound(live, account, act)
-		if (on) void act.send("transferPrivate", () => aztec.transferPrivate(account, a, on), recipient)
+		if (on) void act.send("transferPrivate", (guard) => aztec.transferPrivate(account, a, guard(on)), recipient)
 	}
 	const missing = recipient === null ? "Enter the recipient first." : amount.amount === null ? "Enter an amount first." : null
 	return (
@@ -75,7 +75,7 @@ export function UnshieldDialog({ account, balance, onClose }: Props) {
 		if (amount.amount === null) return
 		const a = { amount: amount.amount, label: balance.label, origin: balance.origin }
 		const on = bound(live, account, act)
-		if (on) void act.send("unshield", () => aztec.unshield(account, a, on))
+		if (on) void act.send("unshield", (guard) => aztec.unshield(account, a, guard(on)))
 	}
 	return (
 		<ActionShell

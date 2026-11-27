@@ -96,7 +96,10 @@ export async function registerScoped(d: AztecDeps, held: HeldWallet, which: read
 	}
 }
 
-/** Waits for a proposed block. A dropped transaction is an answer; a timeout or a failed read is not. */
+/**
+ * Waits for a proposed block. A dropped transaction is an answer; a timeout or a failed read is not,
+ * and keeps the hash the wallet returned as `unconfirmed`.
+ */
 async function settle(node: AztecDeps["node"], txHash: TxHash): Promise<Sent> {
 	const hash = txHash.toString() as Hex
 	const opts = { waitForStatus: TxStatus.PROPOSED, dontThrowOnRevert: true, timeout: SEND_TIMEOUT_S }
@@ -105,9 +108,9 @@ async function settle(node: AztecDeps["node"], txHash: TxHash): Promise<Sent> {
 		if (receipt.hasExecutionSucceeded()) return { txHash: hash, status: "success" }
 		if (!receipt.isMined()) throw new BridgeFailure("RPC_INCONSISTENT")
 		return { txHash: hash, status: "reverted", block: Number(receipt.blockNumber) }
-	} catch (err) {
-		if ((await node.getTxReceipt(txHash)).isDropped()) return { txHash: hash, status: "dropped" }
-		throw err
+	} catch {
+		const receipt = await node.getTxReceipt(txHash).catch(() => null)
+		return { txHash: hash, status: receipt?.isDropped() ? "dropped" : "unconfirmed" }
 	}
 }
 

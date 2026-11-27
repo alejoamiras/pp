@@ -1,34 +1,74 @@
-import { type ReactNode, useState } from "react"
-import { type Address, isAddressEqual } from "viem"
+import { type ReactNode, useEffect, useRef, useState } from "react"
+import { type Address, type Hex, isAddressEqual } from "viem"
 import { useApp } from "../../app/context"
 import { useLive } from "../../app/live"
-import { messageOf, PAYEE_MESSAGES, revertCopy, type UiCode } from "../../data/errors"
+import { BridgeFailure, messageOf, PAYEE_MESSAGES, revertCopy, type UiCode } from "../../data/errors"
 import { parseAmount, parsePayee } from "../../data/parse"
-import type { Sent } from "../../data/ports"
-import type { TxAction } from "../../data/tx"
-import { ActionButton, Callout, Field, Modal, plainAmount } from "../../ui"
+import type { AztecSendHooks, Sent } from "../../data/ports"
+import type { TxAction, TxOutcome } from "../../data/tx"
+import { ActionButton, Callout, Field, Modal, plainAmount, shortHex } from "../../ui"
 
-export type ActionState = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; code: UiCode; reason?: string } | { kind: "done" }
+/** `handedOff`: the wallet holds the request, so closing the dialog no longer stops the send. */
+export type ActionState =
+	| { kind: "idle" }
+	| { kind: "sending"; handedOff: boolean }
+	| { kind: "failed"; code: UiCode; reason?: string; txHash?: Hex }
+	| { kind: "done" }
 
-/** Runs one send through the page's send lock and keeps its outcome for the dialog. */
+/** Wraps a send's hooks so its handoff refuses once the attempt was stopped. */
+export type Guard = <H extends AztecSendHooks>(on: H) => H
+
+/**
+ * Runs one send through the page's send lock and keeps its outcome for the dialog. The lock is taken
+ * at the click, before any read the send makes; Back, `stop` or closing the dialog stops the attempt,
+ * and a stopped attempt's handoff refuses, so nothing reaches the wallet after it.
+ */
 export function useAction() {
 	const { tx } = useApp()
 	const [state, setState] = useState<ActionState>({ kind: "idle" })
+	const attempt = useRef(0)
+	const mounted = useRef(true)
+	useEffect(() => {
+		mounted.current = true
+		return () => {
+			mounted.current = false
+			attempt.current++
+		}
+	}, [])
+	const setFor = (n: number, s: ActionState) => {
+		if (mounted.current && attempt.current === n) setState(s)
+	}
 	return {
 		state,
-		async send(action: TxAction, call: () => Promise<Sent>, recipient?: Parameters<typeof tx.run>[2]): Promise<boolean> {
-			setState({ kind: "sending" })
-			const outcome = await tx.run(action, call, recipient)
-			setState(
-				outcome.ok
-					? { kind: "done" }
-					: { kind: "failed", code: outcome.code, ...(outcome.reason ? { reason: outcome.reason } : {}) },
-			)
-			return outcome.ok
+		async send(action: TxAction, call: (guard: Guard) => Promise<Sent>, recipient?: Parameters<typeof tx.run>[2]): Promise<boolean> {
+			const n = ++attempt.current
+			setState({ kind: "sending", handedOff: false })
+			const guard: Guard = (on) => ({
+				...on,
+				handoff() {
+					if (attempt.current !== n) throw new BridgeFailure("CONTEXT_CHANGED")
+					on.handoff()
+					setFor(n, { kind: "sending", handedOff: true })
+				},
+			})
+			const outcome = await tx.run(action, () => call(guard), recipient)
+			setFor(n, outcome.ok ? { kind: "done" } : { kind: "failed", code: outcome.code, ...detailOf(outcome) })
+			return outcome.ok && attempt.current === n
 		},
 		fail: (code: UiCode) => setState({ kind: "failed", code }),
+		/** Stops the attempt in progress unless the wallet already holds it, and clears its outcome. */
+		stop() {
+			if (state.kind === "sending" && state.handedOff) return
+			attempt.current++
+			setState({ kind: "idle" })
+		},
 	}
 }
+
+const detailOf = (o: Extract<TxOutcome, { ok: false }>) => ({
+	...(o.reason ? { reason: o.reason } : {}),
+	...(o.txHash ? { txHash: o.txHash } : {}),
+})
 
 /** A typed amount in base units, checked against `0 < amount ≤ max`; the error shows once something is typed. */
 export function useAmount(max: bigint) {
@@ -112,6 +152,9 @@ interface ShellProps {
 	children: ReactNode
 }
 
+/** Outcomes where the transaction may be on Aztec: never titled as one that did not go through. */
+const UNCONFIRMED: ReadonlySet<UiCode> = new Set(["TX_UNCONFIRMED", "TX_DROPPED", "UNKNOWN"])
+
 /** The dialog frame every action shares: its form, then the outcome with what to do next. */
 export function ActionShell({ title, description, action, state, onClose, done, children }: ShellProps) {
 	return (
@@ -132,8 +175,9 @@ export function ActionShell({ title, description, action, state, onClose, done, 
 				children
 			)}
 			{state.kind === "failed" ? (
-				<Callout tone="bad" title="It did not go through" role="alert">
+				<Callout tone="bad" title={UNCONFIRMED.has(state.code) ? "Not confirmed" : "It did not go through"} role="alert">
 					<p>{messageOf(state.code)}</p>
+					{state.txHash ? <p className="font-mono text-meta">Transaction {shortHex(state.txHash)}</p> : null}
 					<RevertLine reason={state.reason} />
 				</Callout>
 			) : null}
@@ -141,7 +185,9 @@ export function ActionShell({ title, description, action, state, onClose, done, 
 				<Callout tone="wait" busy role="status" title="Approve the transaction in your Aztec wallet" />
 			) : null}
 			<div className="flex justify-end">
-				<ActionButton onClick={onClose}>{state.kind === "done" ? "Close" : "Cancel"}</ActionButton>
+				<ActionButton onClick={onClose}>
+					{state.kind === "done" || (state.kind === "sending" && state.handedOff) ? "Close" : "Cancel"}
+				</ActionButton>
 			</div>
 		</Modal>
 	)

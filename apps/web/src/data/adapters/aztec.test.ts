@@ -54,6 +54,14 @@ const payload = (...calls: [AztecAddress, string][]) =>
 const CLAIM = payload([FPC, "sponsor_unconditionally"], [HUB, "claim_from_pool"])
 
 describe("the Aztec adapter", () => {
+	test("keeps the wallet's hash as unconfirmed when the outcome cannot be read after the send", async () => {
+		const r = rig()
+		r.node.getTxReceipt.mockRejectedValue(new Error("node down"))
+		const sent = sendThroughWallet(r.d, { epoch: 3, from: ME, payload: CLAIM, contracts: ["hub", "token"], handoff: () => {} })
+		await expect(sent).resolves.toEqual({ txHash: at("dd"), status: "unconfirmed" })
+		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
+	}, 10_000)
+
 	test("keeps only the wallet's note values a ragequit can burn: positive u128s", () => {
 		expect(noteValues([5n, 0n, 0, -1n, 1n << 128n, "7", 3])).toEqual([5n, 3n])
 	})

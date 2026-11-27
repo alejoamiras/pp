@@ -3,16 +3,18 @@
  * the user's call once the balances say what happened.
  */
 import { codeOf, isUserRejection, type UiCode } from "./errors"
+import type { Hex } from "viem"
 import type { Sent } from "./ports"
 
 export type TxAction = "transferPrivate" | "unshield" | "shield" | "ragequit" | "exitPublic"
 
 /** `reason` is untrusted chain text: it reaches the screen only through `revertCopy`. */
-export type TxOutcome = { ok: true } | { ok: false; code: UiCode; reason?: string }
+export type TxOutcome = { ok: true } | { ok: false; code: UiCode; reason?: string; txHash?: Hex }
 
 export function sentOutcome(action: TxAction, sent: Sent): TxOutcome {
 	if (sent.status === "success") return { ok: true }
 	if (sent.status === "dropped") return { ok: false, code: "TX_DROPPED" }
+	if (sent.status === "unconfirmed") return { ok: false, code: "TX_UNCONFIRMED", txHash: sent.txHash }
 	return { ok: false, code: action === "unshield" ? "UNSHIELD_REVERTED" : "TX_REVERTED", ...(sent.reason ? { reason: sent.reason } : {}) }
 }
 

@@ -22,6 +22,7 @@ export type AppCode =
 	| "TX_REVERTED"
 	| "UNSHIELD_REVERTED"
 	| "TX_DROPPED"
+	| "TX_UNCONFIRMED"
 	| "WAIT_FINALITY"
 	| "TX_BUSY"
 	| "BRIDGE_UNAVAILABLE"
@@ -81,6 +82,8 @@ const MESSAGES: Record<UiCode, string> = {
 	UNSHIELD_REVERTED:
 		"The unshield reverted: the fee was paid; your notes are safe. Sending and unshielding wait until that transaction is final.",
 	TX_DROPPED: "Aztec has not included the transaction yet. The page will not send it again; refresh your balances before you retry.",
+	TX_UNCONFIRMED:
+		"Your wallet sent the transaction, but the page could not read whether it landed. It will not send it again; refresh your balances before you retry, or the same amount can go out twice.",
 	WAIT_FINALITY: "Send and Unshield wait for finality: the reverted unshield's block must be proven first. Refresh to check.",
 	TX_BUSY: "Wait for your last Aztec transaction to finish.",
 	BRIDGE_UNAVAILABLE: "Bridging is not available in this version of the app yet. Your notes stay in the pool.",

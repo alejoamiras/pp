@@ -21,8 +21,9 @@ import type { AztecConnection, ConfirmEmoji, WalletOption } from "./wallet/types
  * An Aztec send as the chain reports it. `reason` is untrusted text; `block` is the block a reverted
  * send landed in, which the finality wait compares with the node's proven block.
  */
+/** `unconfirmed`: the wallet returned the hash, but its outcome could not be read. */
 export type Sent =
-	| { txHash: Hex; status: "success" | "dropped"; reason?: string }
+	| { txHash: Hex; status: "success" | "dropped" | "unconfirmed"; reason?: string }
 	| { txHash: Hex; status: "reverted"; block: number; reason?: string }
 
 /**

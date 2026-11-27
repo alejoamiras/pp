@@ -58,6 +58,40 @@ describe("the action dialogs", () => {
 		expect(app.control.state().exits).toEqual([])
 	})
 
+	test("a ragequit holds its lock from the click: a second click waits, and Back during the note read sends nothing", async () => {
+		let hold = false
+		const held: (() => void)[] = []
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				aztec: {
+					...s.aztec,
+					notesByLabel: (...a: Parameters<typeof s.aztec.notesByLabel>) =>
+						hold ? new Promise((r) => held.push(() => r(s.aztec.notesByLabel(...a)))) : s.aztec.notesByLabel(...a),
+				},
+			}),
+		})
+		await signIn(app.user)
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		const dialog = await openDialog(app, LABELS.active, /Leave to Ethereum/)
+		await app.user.click(await dialog.findByLabelText(/40\.00 USDC/))
+		const payee = dialog.getByLabelText("Payee on Ethereum")
+		await app.user.clear(payee)
+		await app.user.type(payee, ACCOUNTS.sender)
+		await app.user.click(await dialog.findByRole("button", { name: "Review" }))
+		const leave = () => within(dialog.getByTestId("exit-review")).getByRole("button", { name: /Leave to Ethereum/ })
+		hold = true
+		await app.user.click(leave())
+		expect(disabled(leave())).toBe(true)
+		await app.user.click(dialog.getByRole("button", { name: "Back" }))
+		await act(async () => {
+			for (const release of held.splice(0)) release()
+		})
+		expect(app.control.state().exits).toEqual([])
+		expect(dialog.queryByRole("alert")).toBeNull()
+	})
+
 	test("a private send refuses the zero address and an address off the curve, neither of which can receive notes", async () => {
 		const app = renderApp()
 		await connectAztec(app.user)
@@ -75,6 +109,26 @@ describe("the action dialogs", () => {
 		await app.user.type(to, OTHER)
 		expect(disabled(dialog.getByRole("button", { name: "Send" }))).toBe(false)
 		expect(app.control.state().sent.aztec).toBe(0)
+	})
+
+	test("a send whose outcome could not be read is not confirmed, not failed, and keeps its hash on screen", async () => {
+		const hash = `0x${"5e".repeat(32)}` as const
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				aztec: { ...s.aztec, transferPrivate: async () => ({ txHash: hash, status: "unconfirmed" as const }) },
+			}),
+		})
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		const dialog = await openDialog(app, LABELS.active, "Send privately")
+		await app.user.type(dialog.getByLabelText(/Amount/), "5")
+		await app.user.type(dialog.getByLabelText("Recipient on Aztec"), OTHER)
+		await app.user.click(dialog.getByRole("button", { name: "Send" }))
+		const alert = within(await dialog.findByRole("alert"))
+		alert.getByText("Not confirmed")
+		alert.getByText(messageOf("TX_UNCONFIRMED"))
+		alert.getByText(/Transaction 0x5e5e/)
 	})
 
 	test("a revert reason the page does not list never renders, and a listed one shows only its own sentence", async () => {
