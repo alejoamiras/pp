@@ -1,6 +1,5 @@
-import { spawn } from "node:child_process"
-import { closeSync, openSync, readFileSync } from "node:fs"
-import { killGroup, type OwnedChild, own } from "@pp/run-isolation/process"
+import { readFileSync } from "node:fs"
+import { killGroup, type OwnedChild, spawnOwned } from "@pp/run-isolation/process"
 import { journalTo } from "../send-path.ts"
 import { type SendRelay, type SendRelayOptions, startSendRelay } from "../send-relay.ts"
 import { tail } from "./tools.ts"
@@ -20,10 +19,12 @@ function failure(why: string, relay: SendRelay, o: RelayedScriptOptions, out: st
 
 /**
  * Runs `cmd(url)` with `url` a loopback {@link startSendRelay} over `readUrl` that listens before the
- * command starts and stops when it exits. The command leads a process group of its own, which is ended
- * when the relay serves no new receipt for `noReceiptMs`. Nothing is restarted or resumed.
+ * command starts and stops when it exits. The command runs in a watched process group of its own, which
+ * ends with this process however it dies, and is ended when the relay serves no new receipt for
+ * `noReceiptMs`. Nothing is restarted or resumed.
  * @returns the command's combined output, from `logFile`
- * @throws Error on a non-zero exit or a stall, naming how many transactions landed and the last send not admitted
+ * @throws Error on a non-zero exit or a stall, naming how many transactions landed and the last send not
+ *   admitted; else Error when the relay's port row could not be dropped
  */
 export async function runRelayed(o: {
 	readUrl: string
@@ -34,33 +35,41 @@ export async function runRelayed(o: {
 	relay: RelayedScriptOptions
 }): Promise<string> {
 	const relay = await startSendRelay({ ...o.relay, readUrl: o.readUrl, journal: journalTo(o.relay.journalPath) })
+	let out: string
 	try {
-		const [bin, ...args] = o.cmd(relay.url)
-		if (!bin) throw new Error("no command to run")
-		const fd = openSync(o.logFile, "a", 0o600)
-		let child: OwnedChild
-		try {
-			child = own(spawn(bin, args, { cwd: o.cwd, env: o.env, detached: true, stdio: ["ignore", fd, fd] }))
-		} finally {
-			closeSync(fd)
-		}
-		const limit = o.relay.noReceiptMs ?? 600_000
-		let stalled = false
-		const timer = setInterval(
-			() => {
-				if (stalled || Date.now() - relay.lastProgressAt() < limit) return
-				stalled = true
-				void killGroup(child)
-			},
-			Math.min(5_000, limit / 4),
-		)
-		await child.exited
-		clearInterval(timer)
-		const out = readFileSync(o.logFile, "utf8")
-		if (stalled) throw failure(`saw no new receipt for ${limit / 1000} s, so its process group was ended`, relay, o.relay, out)
-		if (child.exitReason() !== "exit code 0") throw failure(`ended with ${child.exitReason()}`, relay, o.relay, out)
-		return out
-	} finally {
-		await relay.stop()
+		out = await supervise(o, relay)
+	} catch (e) {
+		await relay.stop().catch(() => {})
+		throw e
 	}
+	await relay.stop()
+	return out
+}
+
+/** Runs the command to its end under the no-receipt deadline; the group is gone when this settles. */
+async function supervise(o: Parameters<typeof runRelayed>[0], relay: SendRelay): Promise<string> {
+	const [bin, ...args] = o.cmd(relay.url)
+	if (!bin) throw new Error("no command to run")
+	const child: OwnedChild = spawnOwned(bin, args, o.logFile, o.env, {}, o.cwd)
+	const limit = o.relay.noReceiptMs ?? 600_000
+	let stall: Promise<boolean> | undefined
+	const timer = setInterval(
+		() => {
+			if (stall === undefined && Date.now() - relay.lastProgressAt() >= limit) stall = killGroup(child)
+		},
+		Math.min(5_000, limit / 4),
+	)
+	await child.exited
+	clearInterval(timer)
+	const gone = stall === undefined || (await stall)
+	const out = readFileSync(o.logFile, "utf8")
+	if (stall !== undefined)
+		throw failure(
+			`saw no new receipt for ${limit / 1000} s, so its process group was ended${gone ? "" : " (a member survived SIGKILL)"}`,
+			relay,
+			o.relay,
+			out,
+		)
+	if (child.exitReason() !== "exit code 0") throw failure(`ended with ${child.exitReason()}`, relay, o.relay, out)
+	return out
 }

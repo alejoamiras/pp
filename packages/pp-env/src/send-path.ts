@@ -2,31 +2,46 @@
  * The send rules every keyed L1 send follows, whether forge's (through the loopback relay) or a viem
  * wallet's: `eth_sendRawTransaction` goes to the send endpoint, every other call to the read endpoint.
  *
- * Before a send leaves, its envelope is decoded: the chain id must be the expected one and the recovered
- * sender one of the expected addresses. Only the bytes received are forwarded, and its hash is computed
- * here. Each answer is classified:
+ * Before a send leaves, its envelope is decoded: it must be of type 0, 1 or 2, for the expected chain id,
+ * signed by one of the expected addresses, and no other transaction of that sender's at that nonce may
+ * have gone out through this path. Only the bytes received are forwarded, and their hash is computed
+ * here. Success is an allow-list: the endpoint answered the local hash, or "already known" or "already
+ * imported" (a hash commits to the exact signed bytes), or a lookup found the hash. Each answer is
+ * classified:
  *
  * - the local hash: admitted. Another hash: refused at once.
- * - "already known": admitted, since a hash commits to the exact signed bytes.
+ * - "already known" or "already imported", word for word: admitted.
  * - "nonce too low" or "replacement underpriced": admitted if either endpoint knows the local hash; else a
  *   conflict, reported with the hash and nonce.
- * - refused (HTTP 429 or 503, JSON-RPC -32005 or 429, a connection refused before the write) and ambiguous
- *   (a timeout, a reset, HTTP 500, 502 or 504, an unreadable body): the same bytes go again, inside one
- *   budget shorter than forge's 45 s request timeout. When the budget ends, either endpoint knowing the
- *   hash makes it admitted; else it fails, with the hash and nonce.
- * - anything else (insufficient funds, intrinsic gas, a refused gas limit, a bad signature or chain id,
- *   invalid params): final, passed through at once.
+ * - refused (HTTP 429 or 503, a JSON-RPC code or message alloy retries as a rate limit, a connection
+ *   refused before the write) and ambiguous (a timeout, a reset, HTTP 500, 502 or 504, an unreadable body):
+ *   the same bytes go again, inside one budget shorter than forge's 45 s request timeout, the last attempt
+ *   just before it ends. Then either endpoint knowing the hash makes it admitted; else it fails, with the
+ *   hash and nonce.
+ * - anything else, worded or not as any client words it today: final, passed through at once.
  *
+ * An endpoint knows a transaction when it answers `eth_getTransactionByHash` with HTTP 200 and that hash.
  * After an admission the read endpoint must show the hash within `visibilityMs`; each time it does not,
- * the same bytes go to the send endpoint again. Every attempt and answer goes to `journal`. Both
- * endpoints are fetched with redirects refused.
+ * the same bytes go to the send endpoint again, until an answer other than an admission or a refusal.
+ * Every attempt and answer goes to `journal`. Both endpoints are fetched with redirects refused.
  */
 import { appendFileSync } from "node:fs"
 import { type Address, type Hex, isAddressEqual, keccak256, parseTransaction, recoverTransactionAddress } from "viem"
 
-const KNOWN = /already known|alreadyknown|known transaction|already imported/i
-const CONFLICT = /nonce too low|oldnonce|replacement (?:transaction )?underpriced/i
-const REFUSED_CODES = new Set([-32005, 429])
+const KNOWN = /\balready known\b|\balready imported\b/i
+const CONFLICT = /\bnonce too low\b|\breplacement transaction underpriced\b/i
+/**
+ * The JSON-RPC codes and messages alloy's retry layer repeats on its own (`ErrorPayload::is_retry_err`);
+ * here they are refusals, re-sent inside the budget, so no client re-sends behind the path.
+ */
+const REFUSED_CODES = new Set([-32005, -32055, 429, 1008])
+const REFUSED_MESSAGE =
+	/rate limit|rate exceeded|too many requests|credits|request limit|maximum number of concurrent requests|header not found|daily request count exceeded/i
+/** Typed envelopes a send may carry: legacy, EIP-2930, EIP-1559. */
+const TYPES: ReadonlySet<string> = new Set(["legacy", "eip2930", "eip1559"])
+/** Upstream words go to the send log; a raw transaction an endpoint echoes back is cut to its length. */
+const LONG_HEX = /0x[0-9a-fA-F]{80,}/g
+const MAX_DETAIL = 300
 const REFUSED_STATUS = new Set([429, 503])
 const JSON_HEADERS = { "content-type": "application/json" }
 
@@ -68,7 +83,7 @@ export const journalTo =
 
 export type SentTx = { hash: Hex; nonce: number; sender: Address }
 
-export type SendPathErrorKind = "envelope" | "final" | "other-hash" | "conflict" | "budget"
+export type SendPathErrorKind = "envelope" | "nonce" | "final" | "other-hash" | "conflict" | "budget" | "closed"
 
 /**
  * Why a send was not admitted. `upstream` holds a final answer as the endpoint gave it; `data` the
@@ -110,12 +125,16 @@ export function parseAnswer(text: string): Answer | undefined {
 	}
 }
 
+/** Whether an error answer is a refusal alloy would repeat on its own. */
+export const isRefusal = (error: NonNullable<Answer["error"]>): boolean =>
+	REFUSED_CODES.has(Number(error.code)) || REFUSED_MESSAGE.test(String(error.message ?? ""))
+
 function classifyError(status: number, text: string, error: NonNullable<Answer["error"]>): Outcome {
 	const message = String(error.message ?? "")
 	const detail = `${error.code} ${message}`
 	if (KNOWN.test(message)) return { kind: "known" }
 	if (CONFLICT.test(message)) return { kind: "conflict", detail }
-	if (REFUSED_CODES.has(Number(error.code))) return { kind: "refused", detail }
+	if (isRefusal(error)) return { kind: "refused", detail }
 	return { kind: "final", status, body: text, detail }
 }
 
@@ -140,7 +159,7 @@ export function classifyThrown(e: unknown): Outcome {
 /**
  * The transaction a raw send carries, if it may be sent: its chain id is `chainId` and its recovered
  * sender is one of `senders`.
- * @throws SendPathError (`envelope`) for undecodable bytes, another or no chain id, or another sender
+ * @throws SendPathError (`envelope`) for undecodable bytes, a type other than 0, 1 or 2, another or no chain id, or another sender
  */
 export async function checkEnvelope(raw: Hex, chainId: number, senders: readonly Address[]): Promise<SentTx> {
 	let tx: ReturnType<typeof parseTransaction>
@@ -154,6 +173,8 @@ export async function checkEnvelope(raw: Hex, chainId: number, senders: readonly
 		throw new SendPathError("envelope", `refused: the raw transaction does not decode (${(e as Error).message.split("\n")[0]})`)
 	}
 	const hash = keccak256(raw)
+	if (!TYPES.has(String(tx.type)))
+		throw new SendPathError("envelope", `refused: ${hash} is a ${tx.type} transaction; only types 0, 1 and 2 are sent`)
 	const nonce = Number(tx.nonce ?? 0)
 	if (tx.chainId !== chainId) throw new SendPathError("envelope", `refused: ${hash} is for chain ${tx.chainId ?? "none"}, not ${chainId}`)
 	if (!senders.some((s) => isAddressEqual(s, sender)))
@@ -167,6 +188,14 @@ export async function postJson(url: string, body: string, timeoutMs: number): Pr
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, Math.max(0, ms)))
+const short = (event: string) => event.replace(LONG_HEX, (h) => `${h.slice(0, 10)}…(${(h.length - 2) / 2} bytes)`).slice(0, MAX_DETAIL)
+/** Whether an `eth_getTransactionByHash` answer names `hash`: anything else is no proof. */
+const names = (status: number, text: string, hash: Hex) => {
+	const r = parseAnswer(text)?.result as { hash?: unknown } | null | undefined
+	return status === 200 && typeof r?.hash === "string" && r.hash.toLowerCase() === hash
+}
+/** A block tag a nonce floor applies to: the latest or pending count, not a historical one. */
+export const isHead = (tag: unknown) => tag === undefined || tag === "latest" || tag === "pending"
 /** A wait that does not hold the process open, for the watches that outlive a command's last send. */
 const idle = (ms: number) =>
 	new Promise<void>((r) => {
@@ -198,6 +227,8 @@ export class SendPath {
 	readonly o: Resolved
 	/** Every admitted transaction, by hash; the relay's nonce floor reads it. */
 	readonly sent = new Map<Hex, SentTx>()
+	/** The one hash each sender's nonce may go out as, from its first attempt on. */
+	private readonly claimed = new Map<string, Hex>()
 	private readonly watches = new Map<Hex, Promise<number | undefined>>()
 	private closed = false
 
@@ -206,7 +237,7 @@ export class SendPath {
 	}
 
 	private note(tx: SentTx, endpoint: JournalEntry["endpoint"], event: string): void {
-		this.o.journal({ at: new Date().toISOString(), hash: tx.hash, nonce: tx.nonce, endpoint, event })
+		this.o.journal({ at: new Date().toISOString(), hash: tx.hash, nonce: tx.nonce, endpoint, event: short(event) })
 	}
 
 	private async attempt(raw: Hex, tx: SentTx, n: number, timeoutMs: number): Promise<Outcome> {
@@ -230,8 +261,8 @@ export class SendPath {
 			["send", this.o.sendUrl],
 		] as const) {
 			try {
-				const r = parseAnswer((await postJson(url, body, LOOKUP_TIMEOUT_MS)).text)
-				const found = r?.result !== null && typeof r?.result === "object"
+				const { status, text } = await postJson(url, body, LOOKUP_TIMEOUT_MS)
+				const found = names(status, text, tx.hash)
 				this.note(tx, endpoint, found ? "lookup: found" : "lookup: not found")
 				if (found) return true
 			} catch (e) {
@@ -269,18 +300,50 @@ export class SendPath {
 	 * Sends `raw` under the rules above and resolves to its local hash once it is admitted.
 	 * @throws SendPathError naming the hash and nonce of a send that was not admitted
 	 */
+	/** Claims `tx`'s sender and nonce for its hash; another hash at that nonce never leaves. */
+	private claim(tx: SentTx): void {
+		const key = `${tx.sender.toLowerCase()}:${tx.nonce}`
+		const held = this.claimed.get(key)
+		if (held !== undefined && held !== tx.hash)
+			throw new SendPathError(
+				"nonce",
+				`refused: ${tx.hash} would reuse nonce ${tx.nonce}; this command already sent ${held} at that nonce and is waiting on it`,
+				tx,
+			)
+		this.claimed.set(key, tx.hash)
+	}
+
+	/** One past the highest nonce `sender` was admitted at, if any. */
+	nextNonce(sender: string): number | undefined {
+		let next: number | undefined
+		for (const t of this.sent.values()) if (isAddressEqual(t.sender, sender as Address)) next = Math.max(next ?? 0, t.nonce + 1)
+		return next
+	}
+
+	/** A head transaction count for one of the senders, raised to {@link nextNonce} when the endpoint answers below it. */
+	floorCount(params: unknown, count: unknown): unknown {
+		const [who, tag] = Array.isArray(params) ? params : []
+		const next = typeof who === "string" && isHead(tag) ? this.nextNonce(who) : undefined
+		if (next === undefined || typeof count !== "string" || BigInt(count) >= BigInt(next)) return count
+		return `0x${next.toString(16)}`
+	}
+
 	async send(raw: Hex): Promise<Hex> {
 		const tx = await checkEnvelope(raw, this.o.chainId, this.o.senders)
+		this.claim(tx)
 		const deadline = Date.now() + this.o.budgetMs
+		// What the last attempt gets of the budget at least; a shorter one could not be answered.
+		const reserve = Math.min(1_000, this.o.budgetMs / 10)
 		let first: string | undefined
 		for (let n = 1; ; n++) {
+			if (this.closed) throw new SendPathError("closed", `${tx.hash} (nonce ${tx.nonce}) was not admitted: the send path closed`, tx)
 			const out = await this.attempt(raw, tx, n, Math.min(this.o.attemptTimeoutMs, Math.max(1, deadline - Date.now())))
 			const end = await this.settle(raw, tx, out)
 			if (typeof end === "string") return end
 			if (end) throw end
 			first ??= "detail" in out ? out.detail : out.kind
-			const wait = Math.min(this.o.delayMs * 2 ** (n - 1), 4_000)
-			if (Date.now() + wait >= deadline) break
+			const wait = Math.min(this.o.delayMs * 2 ** (n - 1), 4_000, deadline - Date.now() - reserve)
+			if (wait < 0) break
 			await sleep(wait)
 		}
 		if (await this.known(tx)) return this.admitted(raw, tx)
@@ -296,8 +359,8 @@ export class SendPath {
 	private async visibleOnRead(tx: SentTx): Promise<boolean> {
 		const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionByHash", params: [tx.hash] })
 		try {
-			const r = parseAnswer((await postJson(this.o.readUrl, body, LOOKUP_TIMEOUT_MS)).text)
-			return r?.result !== null && typeof r?.result === "object"
+			const { status, text } = await postJson(this.o.readUrl, body, LOOKUP_TIMEOUT_MS)
+			return names(status, text, tx.hash)
 		} catch {
 			return false
 		}
@@ -317,7 +380,11 @@ export class SendPath {
 				if (pushes === this.o.rePushes) break
 				pushes++
 				pushedAt = Date.now()
-				await this.attempt(raw, tx, 100 + pushes, LOOKUP_TIMEOUT_MS)
+				const out = await this.attempt(raw, tx, 100 + pushes, LOOKUP_TIMEOUT_MS)
+				if (!["admitted", "known", "refused", "ambiguous"].includes(out.kind)) {
+					this.note(tx, "read", `watch ended: a re-push was answered ${out.kind}`)
+					return undefined
+				}
 			}
 			await idle(this.o.visibilityPollMs)
 		}
@@ -330,7 +397,7 @@ export class SendPath {
 		return this.watches.get(hash) ?? Promise.resolve(undefined)
 	}
 
-	/** Ends every visibility watch. */
+	/** Ends every visibility watch, and every send still re-sending before its next attempt. */
 	close(): void {
 		this.closed = true
 	}
@@ -341,13 +408,16 @@ type Request = (args: Args, options?: { retryCount?: number }) => Promise<unknow
 type TransportLike = (args: never) => { request: Request }
 
 /**
- * Wraps a viem transport over the read endpoint so its `eth_sendRawTransaction` takes `path` instead.
- * It is generic over the transport's type, so a caller on another viem copy wraps its own.
+ * Wraps a viem transport over the read endpoint so its `eth_sendRawTransaction` takes `path` instead, and
+ * a sender's head transaction count is never below one past its last admitted send: a lagging backend
+ * would otherwise have viem sign the next transaction at a nonce already used. It is generic over the
+ * transport's type, so a caller on another viem copy wraps its own.
  */
 export function sendThrough<T extends TransportLike>(transport: T, path: SendPath): T {
 	return ((args: never) => {
 		const t = transport(args)
 		const request: Request = (r, o) => {
+			if (r.method === "eth_getTransactionCount") return t.request(r, o).then((n) => path.floorCount(r.params, n))
 			if (r.method !== "eth_sendRawTransaction") return t.request(r, o)
 			const raw = Array.isArray(r.params) ? r.params[0] : undefined
 			if (typeof raw !== "string") return Promise.reject(new SendPathError("envelope", "refused: no raw transaction"))

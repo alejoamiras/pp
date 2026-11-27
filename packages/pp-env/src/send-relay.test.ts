@@ -66,24 +66,44 @@ describe("the send relay", () => {
 		])
 	})
 
-	it("never answers a sender's nonce below one past its last receipt the relay served, and asks a failed estimate again just after it", async () => {
+	it("never answers a sender's head nonce below one past its last receipt the relay served, and asks a failed estimate again just after it", async () => {
 		admitAll()
 		const raw = await signed(5)
 		const hash = await call("eth_sendRawTransaction", [raw])
 		let estimates = 0
+		let receipt: unknown = {}
 		read.set((m) => {
-			if (m === "eth_getTransactionReceipt") return { result: { transactionHash: hash.result, status: "0x1" } }
+			if (m === "eth_getTransactionReceipt") return { result: receipt }
 			if (m === "eth_getTransactionCount") return { result: "0x3" }
 			if (m === "eth_estimateGas")
 				return ++estimates < 3 ? { error: { code: -32000, message: "execution reverted" } } : { result: "0x5208" }
 			return { result: null }
 		})
+		// Neither an empty object nor another transaction's receipt is this one's.
+		for (receipt of [{}, { transactionHash: `0x${"cd".repeat(32)}`, blockNumber: "0x1" }])
+			await call("eth_getTransactionReceipt", [hash.result])
+		expect((await call("eth_getTransactionCount", [SENDER.address, "latest"])).result).toBe("0x3")
+		receipt = { transactionHash: hash.result, blockNumber: "0x1", status: "0x1" }
 		await call("eth_getTransactionReceipt", [hash.result])
 		expect((await call("eth_getTransactionCount", [SENDER.address, "latest"])).result).toBe("0x6")
+		expect((await call("eth_getTransactionCount", [SENDER.address, "0x2"])).result).toBe("0x3")
 		expect((await call("eth_estimateGas", [{}])).result).toBe("0x5208")
 		await Bun.sleep(350)
 		estimates = 0
 		expect((await call("eth_estimateGas", [{}])).error?.message).toBe("execution reverted")
+	})
+
+	it("answers a revert it asked again about as the revert, not as the refusal that followed it", async () => {
+		admitAll()
+		const hash = (await call("eth_sendRawTransaction", [await signed(7)])).result
+		let estimates = 0
+		read.set((m) => {
+			if (m === "eth_getTransactionReceipt") return { result: { transactionHash: hash, blockNumber: "0x1" } }
+			if (m === "eth_estimateGas") return ++estimates === 1 ? { error: { code: 3, message: "execution reverted" } } : { status: 503 }
+			return { result: null }
+		})
+		await call("eth_getTransactionReceipt", [hash])
+		expect([(await call("eth_estimateGas", [{}])).error?.message, estimates > 1]).toEqual(["execution reverted", true])
 	})
 
 	it("asks again a null receipt of a transaction it sent, and passes any other one at once", async () => {

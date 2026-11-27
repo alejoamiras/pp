@@ -4,27 +4,30 @@
  * `--skip-simulation` re-sends a failed send without its gas limit and hangs on a sent transaction the
  * read endpoint never shows, so the relay keeps the read side from ever looking older than what it served:
  *
- * - a sender's nonce is never answered below one past the last of its transactions whose receipt the relay
- *   served;
- * - an `eth_estimateGas` error within `freshMs` of such a receipt is asked again until `freshMs` has passed
- *   or the request's budget ends;
+ * - a sender's latest or pending nonce is never answered below one past the last of its transactions whose
+ *   receipt the relay served, a receipt counting only when it names that transaction's hash and a block;
+ * - an `eth_estimateGas` error within `freshMs` of such a receipt's first serving is asked again until
+ *   `freshMs` has passed or the request's budget ends; an error it then gives up on is answered as it came;
  * - a null receipt of a transaction the relay sent is asked again until it is not null or the request's
  *   budget ends: forge asks three times without a pause once it has seen the transaction in a block, and a
  *   backend whose nodes lag each other can answer null all three times;
- * - a read the endpoint refused or answered ambiguously (HTTP 429 or 5xx, JSON-RPC -32005 or 429, a broken
+ * - a read the endpoint refused or answered ambiguously (HTTP 429 or 5xx, a refusal alloy repeats, a broken
  *   connection, an unreadable body) is asked again inside the request's budget.
+ *
+ * The listener holds a request for as long as its budget, past Bun's default idle timeout.
  *
  * Whatever the relay gives up on answers JSON-RPC -32000 with the endpoint's words in `data`, a shape
  * neither alloy's nor viem's retries repeat, so the relay is the one place that re-sends.
  */
 import { claimPort, releaseNamed } from "@pp/run-isolation/ports"
 import type { Hex } from "viem"
-import { classifyThrown, parseAnswer, postJson, SendPath, SendPathError, type SendPathOptions } from "./send-path.ts"
+import { classifyThrown, isHead, isRefusal, parseAnswer, postJson, SendPath, SendPathError, type SendPathOptions } from "./send-path.ts"
 
 const SERVICE = "send-relay"
 const JSON_HEADERS = { "content-type": "application/json" }
 const MAX_BODY = 4 * 1024 * 1024
-const RETRY_CODES = new Set([-32005, 429])
+/** Seconds a connection may wait on its answer: above forge's 45 s request timeout and every budget here. */
+const IDLE_TIMEOUT_S = 60
 
 export type SendRelayOptions = SendPathOptions & {
 	/** The registry owner of the relay's port row; default one per process. */
@@ -45,7 +48,10 @@ export type SendRelay = {
 	landed(): number
 	/** Every send the path did not admit, in order. */
 	failures(): readonly SendPathError[]
-	/** Closes the listener, ends the path's watches and drops the port row. Idempotent. */
+	/**
+	 * Closes the listener, ends the path's watches and sends, and drops the port row. Idempotent.
+	 * @throws Error when the registry did not drop the row; the row's liveness reaping still frees it
+	 */
 	stop(): Promise<void>
 }
 
@@ -84,7 +90,7 @@ class Relay {
 			if (r.status !== 200) return r
 			const a = parseAnswer(r.text)
 			if (a === undefined) return "an unreadable body"
-			if (a.error && RETRY_CODES.has(Number(a.error.code))) return `${a.error.code} ${String(a.error.message ?? "")}`
+			if (a.error && isRefusal(a.error)) return `${a.error.code} ${String(a.error.message ?? "")}`
 			return r
 		} catch (e) {
 			return classifyThrown(e).kind
@@ -96,12 +102,18 @@ class Relay {
 		const body = JSON.stringify(c)
 		const deadline = Date.now() + this.readBudgetMs
 		let last: Reply | string = "no answer"
+		// The last real answer, which outranks a later refusal: a revert must not come back as a 503.
+		let answered: Reply | undefined
 		for (let wait = this.path.o.delayMs; Date.now() < deadline; wait = Math.min(wait * 2, 2_000)) {
 			last = await this.readOnce(body, Math.max(1, deadline - Date.now()))
-			if (typeof last !== "string" && !again(last)) return last
+			if (typeof last !== "string") {
+				if (!again(last)) return last
+				answered = last
+			}
 			if (Date.now() + wait >= deadline) break
 			await sleep(wait)
 		}
+		if (answered) return answered
 		return typeof last === "string" ? gaveUp(c.id, `${String(c.method)} was not answered within ${this.readBudgetMs} ms`, last) : last
 	}
 
@@ -119,7 +131,8 @@ class Relay {
 	}
 
 	private nonceFloor(c: Call, r: Reply): Reply {
-		const who = Array.isArray(c.params) && typeof c.params[0] === "string" ? c.params[0].toLowerCase() : ""
+		const [address, tag] = Array.isArray(c.params) ? c.params : []
+		const who = typeof address === "string" && isHead(tag) ? address.toLowerCase() : ""
 		const floor = this.floor.get(who)
 		const a = parseAnswer(r.text)
 		if (floor === undefined || typeof a?.result !== "string" || BigInt(a.result) >= BigInt(floor)) return r
@@ -134,15 +147,14 @@ class Relay {
 
 	private noteReceipt(c: Call, r: Reply): void {
 		const tx = this.sentTx(c)
-		const a = parseAnswer(r.text)
-		if (!tx || a?.result === null || typeof a?.result !== "object") return
+		const receipt = parseAnswer(r.text)?.result as { transactionHash?: unknown; blockNumber?: unknown } | null | undefined
+		const names = typeof receipt?.transactionHash === "string" && receipt.transactionHash.toLowerCase() === tx?.hash
+		if (!tx || !names || typeof receipt?.blockNumber !== "string" || this.receipted.has(tx.hash)) return
 		const who = tx.sender.toLowerCase()
 		this.floor.set(who, Math.max(this.floor.get(who) ?? 0, tx.nonce + 1))
+		this.receipted.add(tx.hash)
 		this.lastReceiptAt = Date.now()
-		if (!this.receipted.has(tx.hash)) {
-			this.receipted.add(tx.hash)
-			this.progressAt = Date.now()
-		}
+		this.progressAt = Date.now()
 	}
 
 	async one(c: Call): Promise<Reply> {
@@ -196,7 +208,13 @@ export async function startSendRelay(o: SendRelayOptions): Promise<SendRelay> {
 	const release = () => releaseNamed([{ port, service: SERVICE, owner }])
 	let server: ReturnType<typeof Bun.serve>
 	try {
-		server = Bun.serve({ hostname: "127.0.0.1", port, maxRequestBodySize: MAX_BODY, fetch: (req) => handle(relay, req) })
+		server = Bun.serve({
+			hostname: "127.0.0.1",
+			port,
+			maxRequestBodySize: MAX_BODY,
+			idleTimeout: IDLE_TIMEOUT_S,
+			fetch: (req) => handle(relay, req),
+		})
 	} catch (e) {
 		await release()
 		throw e
@@ -213,7 +231,7 @@ export async function startSendRelay(o: SendRelayOptions): Promise<SendRelay> {
 			stopped = true
 			path.close()
 			await server.stop(true)
-			await release()
+			if (!(await release())) throw new Error(`the port registry did not drop the send relay's row for port ${port}`)
 		},
 	}
 }
