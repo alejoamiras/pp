@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { connect } from "node:net"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
-import { groupAlive, groupMembers } from "@pp/run-isolation/process-group"
+import { groupAlive, groupMembers, type ProcFs } from "@pp/run-isolation/process-group"
 
 const CACHE = join(homedir(), ".cache", "pp")
 const REGISTRY = join(homedir(), ".agents", "ports.md")
@@ -131,14 +131,49 @@ export function isBbHelper(m: Member): boolean {
 /** A `/proc/<pid>/cmdline` as argv; one not ending in NUL (a zombie's empty one included) is `[]`. */
 export const parseCmdline = (raw: string): string[] => (raw.endsWith("\0") ? raw.slice(0, -1).split("\0") : [])
 
-function member(pid: number): Member {
+const HOST: ProcFs = { readdir: (p) => readdirSync(p), readFile: (p) => readFileSync(p, "utf8") }
+
+function stat(path: string, proc: ProcFs): { state: string; ppid: number; pgrp: number } | undefined {
+	let s: string
 	try {
-		const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
-		const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1])
-		return { pid, ppid, argv: parseCmdline(readFileSync(`/proc/${pid}/cmdline`, "utf8")) }
+		s = proc.readFile(path)
 	} catch {
-		return { pid, ppid: -1, argv: [] }
+		return undefined
 	}
+	const f = s.slice(s.lastIndexOf(")") + 2).split(" ")
+	return { state: f[0] ?? "", ppid: Number(f[1]), pgrp: Number(f[2]) }
+}
+
+const ended = (state: string | undefined) => state === undefined || state === "Z" || state === "X"
+
+/** A zombie still runs while one of its threads does: a leader whose main thread returned first. */
+function runs(pid: string, state: string, proc: ProcFs): boolean {
+	if (!ended(state)) return true
+	try {
+		return proc.readdir(`/proc/${pid}/task`).some((t) => !ended(stat(`/proc/${pid}/task/${t}/stat`, proc)?.state))
+	} catch {
+		return false
+	}
+}
+
+/**
+ * The running members of `pgid` in one pass, each one's command line read right after its stat, so a
+ * helper that exits mid-pass is either listed whole or not at all. One that vanishes between the two
+ * reads has an empty argv and so counts as a member that is not a helper.
+ */
+function runningMembers(pgid: number, proc: ProcFs): Member[] {
+	const out: Member[] = []
+	for (const pid of proc.readdir("/proc")) {
+		if (!/^\d+$/.test(pid)) continue
+		const st = stat(`/proc/${pid}/stat`, proc)
+		if (st?.pgrp !== pgid || !runs(pid, st.state, proc)) continue
+		let raw = ""
+		try {
+			raw = proc.readFile(`/proc/${pid}/cmdline`)
+		} catch {}
+		out.push({ pid: Number(pid), ppid: st.ppid, argv: parseCmdline(raw) })
+	}
+	return out
 }
 
 export type Seen = "gone" | "helpers" | "running"
@@ -147,51 +182,59 @@ export type Seen = "gone" | "helpers" | "running"
 export const classify = (pgid: number, running: readonly Member[]): Exclude<Seen, "gone"> =>
 	running.length > 0 && running.every((m) => m.pid !== pgid && isBbHelper(m)) ? "helpers" : "running"
 
-function look(pgid: number): Seen {
-	if (!groupAlive(pgid)) return "gone"
-	const running = groupMembers(pgid)
-		.filter((m) => m.state !== "Z" && m.state !== "X")
-		.map((m) => member(m.pid))
-	if (running.length === 0 && !groupAlive(pgid)) return "gone"
-	return classify(pgid, running)
+/** A pass that lists no running member defers to `groupAlive`; a member only it finds was never classified, so it counts as running. */
+export function look(pgid: number, proc: ProcFs = HOST): Seen {
+	const running = runningMembers(pgid, proc)
+	if (running.length > 0) return classify(pgid, running)
+	return groupAlive(pgid, proc) ? "running" : "gone"
 }
 
-export type Settle = { boundMs?: number; look?: (pgid: number) => Seen; now?: () => number; sleep?: (ms: number) => Promise<unknown> }
+export type Settle = {
+	boundMs?: number
+	look?: (pgid: number) => Seen
+	now?: () => number
+	sleep?: (ms: number) => Promise<unknown>
+}
+
+type Outcome = "gone" | "a member that is not a helper" | "the bound"
 
 /**
- * Looks at every group of `pgids` now. `settle()` then gives each one seen alive only through helpers
- * until `boundMs` after that look to be seen gone, and resolves to the groups kept: those seen running
- * anything else at any look, or not seen gone by the bound. Every wait is logged with what it saw and
- * how long it took, so a slow exit is an observation rather than a silent pass.
+ * Looks at every group of `pgids` now. `settle()` then gives the groups seen alive only through helpers
+ * until `boundMs` after the first look began to be seen gone, looking at all of them every 10 ms, and
+ * resolves to the groups kept: those seen running anything else at any look, or not seen gone by a look
+ * that ended within the bound. Every wait is logged with what it saw and how long it took, so a slow exit
+ * is an observation rather than a silent pass.
  */
 export function lookAtGroups(pgids: Iterable<number>, o: Settle = {}): { settle(): Promise<number[]> } {
 	const { boundMs = SETTLE_MS, look: see = look, now = () => performance.now(), sleep: pause = sleep } = o
-	const first = [...pgids].map((g) => ({ g, seen: see(g), held: describeMembers(g) }))
 	const start = now()
 	const deadline = start + boundMs
-	const waitOut = async (g: number): Promise<"gone" | "a member that is not a helper" | "the bound"> => {
-		for (;;) {
-			if (deadline - now() <= 0) return "the bound"
-			await pause(Math.min(10, deadline - now()))
-			if (now() > deadline) return "the bound"
-			const seen = see(g)
-			if (seen === "gone") return "gone"
-			if (seen === "running") return "a member that is not a helper"
-		}
-	}
+	const first = [...pgids].map((g) => ({ g, seen: see(g), held: describeMembers(g) }))
+	const held = new Map(first.map((f) => [f.g, f.held]))
+	// Read after the look it judges, so a look that ends past the deadline counts as the bound.
+	const OUTCOME: Record<Seen, Outcome | undefined> = { gone: "gone", running: "a member that is not a helper", helpers: undefined }
+	const decide = (seen: Seen) => (now() >= deadline ? "the bound" : OUTCOME[seen])
 	return {
 		async settle() {
-			const kept: number[] = []
-			for (const { g, seen, held } of first) {
-				if (seen === "gone") continue
-				if (seen === "running") {
-					kept.push(g)
-					continue
+			const kept = first.filter((f) => f.seen === "running").map((f) => f.g)
+			const decided = new Map<number, [Outcome, number]>()
+			let pending = first.filter((f) => f.seen === "helpers").map((f) => f.g)
+			const judge = (seen: (g: number) => Seen) => {
+				for (const g of pending) {
+					const d = decide(seen(g))
+					if (d) decided.set(g, [d, now()])
 				}
-				const outcome = await waitOut(g)
+				pending = pending.filter((g) => !decided.has(g))
+			}
+			judge(() => "helpers")
+			while (pending.length > 0) {
+				await pause(Math.max(0, Math.min(10, deadline - now())))
+				judge(see)
+			}
+			for (const [g, [outcome, at]] of decided) {
 				if (outcome !== "gone") kept.push(g)
 				const what = outcome === "gone" ? "emptied" : `kept at ${outcome}`
-				console.warn(`[residue] group ${g} ${what} after ${Math.round(now() - start)} ms; it held ${held}`)
+				console.warn(`[residue] group ${g} ${what} after ${Math.round(at - start)} ms; it held ${held.get(g)}`)
 			}
 			return kept
 		},

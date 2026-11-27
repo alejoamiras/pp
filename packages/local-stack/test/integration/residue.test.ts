@@ -2,8 +2,9 @@ import { spawn } from "node:child_process"
 import { once } from "node:events"
 import { existsSync, readFileSync } from "node:fs"
 import { setTimeout as sleep } from "node:timers/promises"
-import { describe, expect, it, vi } from "vitest"
-import { classify, isBbHelper, lookAtGroups, parseCmdline, residueOf, type Seen } from "./residue.ts"
+import type { ProcFs } from "@pp/run-isolation/process-group"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { classify, isBbHelper, look, lookAtGroups, parseCmdline, residueOf, type Seen } from "./residue.ts"
 
 const state = (pid: number) => {
 	try {
@@ -48,8 +49,11 @@ describe.skipIf(!existsSync("/proc/self/stat") && process.env.CI === undefined)(
 })
 
 describe("lookAtGroups", () => {
-	/** A scripted group: each look returns the next entry, and each pause advances the clock by what it was asked for plus `late`. */
-	function script(looks: Record<number, Seen[]>, late = 0) {
+	/**
+	 * Scripted groups on a fake clock: each look returns the group's next entry (the last one repeats) and
+	 * takes `cost` ms; each pause takes what it was asked for plus `late`.
+	 */
+	function script(looks: Record<number, Seen[]>, { late = 0, cost = 0 } = {}) {
 		let clock = 0
 		const order: string[] = []
 		const settle = {
@@ -61,54 +65,44 @@ describe("lookAtGroups", () => {
 			},
 			look: (g: number) => {
 				order.push(`look ${g}`)
-				return (looks[g] as Seen[]).length > 1 ? ((looks[g] as Seen[]).shift() as Seen) : ((looks[g] as Seen[])[0] as Seen)
+				clock += cost
+				const q = looks[g] as Seen[]
+				return (q.length > 1 ? q.shift() : q[0]) as Seen
 			},
 		}
 		return { settle, order, at: () => clock }
 	}
-	const quiet = () => vi.spyOn(console, "warn").mockImplementation(() => {})
+	const helpers = (n: number): Seen[] => Array(n).fill("helpers")
+	let warn: ReturnType<typeof vi.spyOn>
+	beforeEach(() => {
+		warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+	})
+	afterEach(() => warn.mockRestore())
 
-	it("lets a helpers-only group empty within the bound, and logs the wait", async () => {
-		const warn = quiet()
-		try {
-			const s = script({ 7: ["helpers", "helpers", "helpers", "helpers", "helpers", "gone"] })
-			expect(await lookAtGroups([7], s.settle).settle()).toEqual([])
-			expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[residue\] group 7 emptied after 50 ms; it held /))
-		} finally {
-			warn.mockRestore()
-		}
+	it("lets a helpers-only group empty within the bound while another waits out the bound, and logs both", async () => {
+		const s = script({ 7: [...helpers(5), "gone"], 8: helpers(1) })
+		expect(await lookAtGroups([8, 7], s.settle).settle()).toEqual([8])
+		expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[residue\] group 7 emptied after 50 ms; it held /))
+		expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[residue\] group 8 kept at the bound after 1000 ms; it held /))
+		expect(s.order.slice(0, 2), "every group is looked at before any pause").toEqual(["look 8", "look 7"])
 	})
 
 	it("keeps a group seen running anything else, at the first look or any later one, even if it then empties", async () => {
-		const warn = quiet()
-		try {
-			const s = script({ 1: ["running"], 2: ["helpers", "running", "gone"] })
-			expect(await lookAtGroups([1, 2], s.settle).settle()).toEqual([1, 2])
-			expect(s.order.filter((o) => o === "look 1")).toHaveLength(1)
-			expect(warn).toHaveBeenCalledWith(
-				expect.stringMatching(/^\[residue\] group 2 kept at a member that is not a helper after 10 ms/),
-			)
-		} finally {
-			warn.mockRestore()
-		}
+		const s = script({ 1: ["running"], 2: ["helpers", "running", "gone"] })
+		expect(await lookAtGroups([1, 2], s.settle).settle()).toEqual([1, 2])
+		expect(s.order.filter((o) => o === "look 1")).toHaveLength(1)
+		expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[residue\] group 2 kept at a member that is not a helper after 10 ms/))
 	})
 
-	it("keeps a helper not seen gone by the bound, a late pause included, and looks at every group before waiting", async () => {
-		const warn = quiet()
-		try {
-			const s = script({ 3: ["helpers"], 4: ["helpers"] })
-			expect(await lookAtGroups([3, 4], s.settle).settle()).toEqual([3, 4])
-			expect(s.order.slice(0, 2)).toEqual(["look 3", "look 4"])
-			expect(s.at()).toBeLessThanOrEqual(1_000)
-			const late = script({ 5: ["helpers", "gone"] }, 995)
-			expect(await lookAtGroups([5], late.settle).settle(), "a look after the bound proves nothing").toEqual([5])
-		} finally {
-			warn.mockRestore()
-		}
+	it("keeps a group whose emptying is seen only by a look or pause that ends past the bound", async () => {
+		const late = script({ 5: ["helpers", "gone"] }, { late: 995 })
+		expect(await lookAtGroups([5], late.settle).settle()).toEqual([5])
+		const slow = script({ 6: ["helpers", "gone"] }, { cost: 600 })
+		expect(await lookAtGroups([6], slow.settle).settle(), "the bound counts from before the first look").toEqual([6])
 	})
 })
 
-describe("isBbHelper and classify", () => {
+describe("isBbHelper, classify and look", () => {
 	const bb = "/repo/node_modules/.bun/@aztec-foundation+bb.js@6.0.0/node_modules/@aztec-foundation/bb.js/build/amd64-linux/bb"
 	const argv = [bb, "msgpack", "run", "--input", "bb-sync-3650-0-0.shm", "--request-ring-size", "4194304"]
 	const helper = { pid: 3673, ppid: 1, argv }
@@ -144,4 +138,35 @@ describe("isBbHelper and classify", () => {
 		expect(parseCmdline(`${argv.join("\0")}\0extra`)).toEqual([])
 		expect(parseCmdline("")).toEqual([])
 	})
+
+	it("reads each running member's stat and command line from /proc in one pass", () => {
+		// Above PID_MAX_LIMIT, so the kernel has no such group and only the scripted /proc speaks for it.
+		const PG = 4_194_305
+		const st = (pid: number, state: string, pgrp = PG) => `${pid} (x y) ${state} 1 ${pgrp} 0 0`
+		const files: Record<string, string | string[]> = {
+			"/proc": ["1", "100", "101", "self"],
+			"/proc/1/stat": st(1, "S", 1),
+			"/proc/100/stat": st(100, "Z"),
+			"/proc/100/task": ["100"],
+			"/proc/100/task/100/stat": st(100, "Z"),
+			"/proc/101/stat": st(101, "S"),
+			"/proc/101/cmdline": `${argv.join("\0")}\0`,
+		}
+		const proc = (edit: Record<string, string | string[] | undefined> = {}): ProcFs => {
+			const f = { ...files, ...edit }
+			const get = (p: string) => f[p] ?? raise(p)
+			return { readdir: (p) => get(p) as string[], readFile: (p) => get(p) as string }
+		}
+		expect(look(PG, proc())).toBe("helpers")
+		expect(look(PG, proc({ "/proc/101/cmdline": undefined })), "it exited between its stat and argv").toBe("running")
+		expect(
+			look(PG, proc({ "/proc/100/task": ["100", "102"], "/proc/100/task/102/stat": st(102, "S") })),
+			"a zombie leader with a thread running",
+		).toBe("running")
+		expect(look(PG, proc({ "/proc/101/stat": undefined }))).toBe("gone")
+	})
 })
+
+function raise(path: string): never {
+	throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" })
+}
