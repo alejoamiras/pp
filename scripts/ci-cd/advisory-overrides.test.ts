@@ -19,14 +19,19 @@ const ADVISORY_OVERRIDES: Record<string, Advisory> = {
 	jsonpath: { child: "underscore", fixed: "1.13.8" },
 }
 
-type Entry = [string, string?, { dependencies?: Record<string, string> }?, string?]
+const DEP_FIELDS = ["dependencies", "optionalDependencies", "peerDependencies"] as const
+type Meta = Partial<Record<(typeof DEP_FIELDS)[number], Record<string, string>>>
+type Entry = [string, string?, Meta?, string?]
 type Lock = { packages: Record<string, Entry> }
 type Root = { overrides?: Record<string, unknown> }
 
 const EXACT = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 
-/** The name in a resolved `name@version` id. */
-const idName = (id: string) => id.slice(0, id.lastIndexOf("@"))
+/** The name in a resolved id, split as bun does at the first `@` past a scope's, since a tarball version may hold more. */
+function idName(id: string): string {
+	const at = id.indexOf("@", 1)
+	return at < 0 ? id : id.slice(0, at)
+}
 
 /** Every override key path, at any depth, whose key mentions `child`. */
 function pathsNaming(rules: Record<string, unknown>, child: string, at: string[] = []): string[][] {
@@ -61,14 +66,18 @@ function resolveFrom(lock: Lock, key: string, child: string): string | undefined
 }
 
 /** Why the parent's own spec no longer needs the override, or an empty list. */
-function pinProblems(parent: string, child: string, fixed: string, declared: string | undefined): string[] {
-	if (declared === undefined) return [`${parent} no longer depends on ${child}: delete the override`]
-	if (!EXACT.test(declared))
-		return [
-			`${parent} declares ${child} "${declared}", not an exact pin: delete the override if that admits ${fixed}, else re-check it`,
-		]
-	if (Bun.semver.order(declared, fixed) >= 0) return [`${parent} now pins ${child} ${declared}, at or past ${fixed}: delete the override`]
-	return []
+function pinProblems(parent: string, child: string, fixed: string, meta: Meta | undefined): string[] {
+	const specs = new Set(DEP_FIELDS.flatMap((field) => meta?.[field]?.[child] ?? []))
+	if (specs.size === 0) return [`${parent} no longer depends on ${child}: delete the override`]
+	return [...specs].flatMap((declared) => {
+		if (!EXACT.test(declared))
+			return [
+				`${parent} declares ${child} "${declared}", not an exact pin: delete the override if that admits ${fixed}, else re-check it`,
+			]
+		if (Bun.semver.order(declared, fixed) >= 0)
+			return [`${parent} now pins ${child} ${declared}, at or past ${fixed}: delete the override`]
+		return []
+	})
 }
 
 /** Why one advisory override is wrong, or an empty list. */
@@ -89,7 +98,7 @@ function overrideProblems(root: Root, lock: Lock, parent: string, { child, fixed
 		return problems
 	}
 	const [key, [, , meta]] = parents[0]
-	problems.push(...pinProblems(parent, child, fixed, meta?.dependencies?.[child]))
+	problems.push(...pinProblems(parent, child, fixed, meta))
 	const got = resolveFrom(lock, key, child)
 	if (got !== `${child}@${value}`) problems.push(`${parent} resolves ${child} to ${got ?? "nothing"}, not ${child}@${value}`)
 	const copies = Object.values(lock.packages)
@@ -141,6 +150,16 @@ test("the advisory override check fails closed on each way an override stops hol
 			["overrides naming child: parent > child, parent@1.0.0 > child; want only parent > child"],
 		],
 		[held, lock("1.0.0", { "other/child": "child@1.0.0" }), ["child: the lock resolves child@1.0.2, child@1.0.0, not only 1.0.2"]],
+		[
+			held,
+			lock("1.0.0", { "other/child": "child@https://r.example/child-1.0.1.tgz?source=@npm" }),
+			["child: the lock resolves child@1.0.2, child@https://r.example/child-1.0.1.tgz?source=@npm, not only 1.0.2"],
+		],
+		[
+			held,
+			{ packages: { parent: ["parent@1.0.0", "", { optionalDependencies: { child: "1.0.0" } }, ""], child: entry("child@1.0.2") } },
+			[],
+		],
 	]
 	for (const [root, lockfile, want] of cases) expect(advisoryProblems(root, lockfile, table)).toEqual(want)
 })
