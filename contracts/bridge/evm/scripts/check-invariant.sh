@@ -3,8 +3,10 @@
 # ProcessorPortalInvariant appends `replays,forgedLanded,capHits,reserveHits,guardHits,calls,reverts`
 # to a stats file this invocation owns. A campaign in which the Outbox never refused a replay, no
 # forged payout landed, or the cap, the reserve or the reentrancy guard never refused proves nothing
-# about those paths, so each total must be non-zero, and every `invariant_` under test/ must have run. Needs lib/, remappings.txt and
-# the pinned Foundry on PATH (see the README).
+# about those paths, so each total must be non-zero, and every `invariant_` under test/ must have run.
+# The selection is by test name, so it complements CI's hermetic run (`--no-match-test '^invariant_'`)
+# whatever the contracts are called. Needs lib/, remappings.txt and the pinned Foundry on PATH (see
+# the README).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=SCRIPTDIR/forge-ran.sh
@@ -14,7 +16,7 @@ mkdir -p out/invariant-stats
 stats=$(mktemp out/invariant-stats/ProcessorPortalInvariant.XXXXXX)
 log=$(mktemp out/invariant-stats/forge.XXXXXX)
 trap 'rm -f "$stats" "$log"' EXIT
-PORTAL_INVARIANT_STATS=$stats forge test --match-contract Invariant | tee "$log"
+PORTAL_INVARIANT_STATS=$stats forge test --match-test '^invariant_' --no-match-contract Fork | tee "$log"
 require_ran "$log" invariant_
 if [ ! -s "$stats" ]; then
 	echo "::error::ProcessorPortalInvariant wrote no campaign stats"
