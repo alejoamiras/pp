@@ -98,7 +98,10 @@ async function pinnedReply(cid: string, entry: { circuit: string; get: Getter },
 	}
 }
 
-/** The file under `outDir` a path names, or `null`; nothing outside `outDir` is ever read. */
+/**
+ * The file under `outDir` a path names, or `null`; `/` names `index.html` whatever the request accepts.
+ * Nothing outside `outDir` is ever read.
+ */
 function distFile(outDir: string, pathname: string): string | null {
 	let rel: string
 	try {
@@ -106,7 +109,7 @@ function distFile(outDir: string, pathname: string): string | null {
 	} catch {
 		return null
 	}
-	const path = resolve(outDir, rel)
+	const path = resolve(outDir, rel === "" ? "index.html" : rel)
 	const inside = relative(outDir, path)
 	if (inside.startsWith("..") || isAbsolute(inside)) return null
 	try {

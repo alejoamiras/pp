@@ -3,7 +3,7 @@
  * `--config`, only `PP_SANDBOX_ARTIFACTS` in the environment) and the app's own `serve` (only
  * `PP_CIRCUITS_DIR`, an empty scratch directory). Over `dist/` each must answer `/`, an asset and an
  * unknown route (and `serve` each pinned proving file's route, 503 here without the files) with
- * exactly the build's header set, and over a copy whose `security-headers.json` is missing,
+ * exactly the build's header set, `/` with `index.html` whatever the request accepts, and over a copy whose `security-headers.json` is missing,
  * malformed, incomplete or weakened it must refuse to start. `serve` must also refuse with
  * `PP_CIRCUITS_DIR` unset, empty, relative or naming a file. Run after `bun run build`.
  */
@@ -82,6 +82,19 @@ async function assertServed(name: string, port: number, path: string, expected: 
 	console.log(`ok   ${name} ${path} (HTTP ${res.status}) carries all ${Object.keys(expected).length} headers`)
 }
 
+/** `/` is the app whatever the request accepts: curl, a bare fetch and health probes send no text/html. */
+async function assertRoot(name: string, port: number): Promise<void> {
+	const index = readFileSync(join(DIST, "index.html"), "utf8")
+	for (const method of ["GET", "HEAD"] as const) {
+		const res = await fetch(`http://127.0.0.1:${port}/`, { method, headers: { accept: "*/*" } })
+		const body = await res.text()
+		const html = res.headers.get("content-type")?.startsWith("text/html") === true
+		if (res.status !== 200 || !html || (method === "GET" && body !== index))
+			throw new Error(`${name} ${method} / without text/html: HTTP ${res.status}, ${res.headers.get("content-type")}, not index.html`)
+		console.log(`ok   ${name} ${method} / without text/html serves index.html`)
+	}
+}
+
 const BROKEN: Record<string, (file: string) => void> = {
 	missing: (file) => unlinkSync(file),
 	malformed: (file) => writeFileSync(file, "{"),
@@ -132,6 +145,7 @@ async function assertServer(name: string, server: Server, port: number, expected
 	try {
 		await untilUp(name, port, g)
 		for (const path of ["/", `/assets/${asset}`, "/no/such/route", ...server.extraPaths]) await assertServed(name, port, path, expected)
+		await assertRoot(name, port)
 	} finally {
 		await g.stop()
 	}
