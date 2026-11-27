@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import {
 	aztecVersion,
 	cratesWith,
@@ -66,6 +66,36 @@ describe("contracts/crates.json", () => {
 		const m = parseManifest({ crates: [{ ...probe, txe: { floor: 1, stage } }, registry], pins: [] })
 		expect(txeBuild(m, "probe")).toEqual(["registry", "probe"])
 		for (const c of cratesWith(manifest, "txe")) expect(txeBuild(manifest, c.name).at(-1)).toBe(c.name)
+	})
+
+	// A suite deploys a path dependency's artifact in place, from that crate's own target/.
+	test("a TXE suite rebuilds what it stages and each parity crate nargo resolves a path dependency to, never a library", () => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "crates-")))
+		try {
+			const crate = (dir: string, type: string, parity = type === "contract") => {
+				mkdirSync(join(root, dir), { recursive: true })
+				writeFileSync(join(root, dir, "Nargo.toml"), `[package]\nname = "${dir}"\ntype = "${type}"\n`)
+				return { name: dir, path: dir, kind: type, parity }
+			}
+			const base = [crate("tok", "contract"), crate("other", "contract"), crate("lib", "lib"), crate("solo", "contract", false)]
+			const hub = { ...crate("hub", "contract"), txe: { floor: 1, stage: ["other/target/other-Other.json"] } }
+			writeFileSync(join(root, "hub", "txe-manifest.txt"), "a_test\n")
+			symlinkSync(join(root, "tok"), join(root, "alias"))
+			const build = (path: string) => {
+				const deps = `dep = { path = "${path}" }\nlib = { path = "../lib" }\nfar = { git = "https://github.com/o/r", tag = "v1" }\n`
+				writeFileSync(join(root, "hub", "Nargo.toml"), `[package]\nname = "hub"\ntype = "contract"\n[dependencies]\n${deps}`)
+				return txeBuild(parseManifest({ crates: [...base, hub], pins: [] }, root), "hub", root)
+			}
+			for (const path of ["../tok/", `${root}/tok`, `../../${basename(root)}/tok`, "../alias"])
+				expect(build(path), path).toEqual(["tok", "other", "hub"])
+			expect(build("../outside")).toEqual(["other", "hub"])
+			expect(() => build("../solo")).toThrow(/a contract crate with no parity entry/)
+			mkdirSync(join(root, "loose"))
+			writeFileSync(join(root, "loose", "Nargo.toml"), '[package]\nname = "loose"\npackage_type = "contract"\n')
+			expect(() => build("../loose")).toThrow(/a contract crate with no parity entry/)
+		} finally {
+			rmSync(root, { recursive: true, force: true })
+		}
 	})
 
 	test("refuses an entry that disagrees with the crate or the schema", () => {
