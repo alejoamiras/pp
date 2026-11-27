@@ -81,8 +81,8 @@ describe("node recorder", () => {
 		await post({ jsonrpc: "2.0", id: 3, method: "aztec_sendTx", params: [{ data: "x" }] })
 
 		expect(rec.nullifierQueries()).toEqual([
-			{ value: "0x02", found: false, seq: 0 },
-			{ value: "0x01", found: true, seq: 1 },
+			{ value: "0x02", found: false, seq: 0, answered: 2 },
+			{ value: "0x01", found: true, seq: 1, answered: 2 },
 		])
 		expect(rec.sentTxHashes()).toEqual(['hash-of-{"data":"x"}'])
 	})
@@ -128,6 +128,39 @@ describe("node recorder", () => {
 		expect(await post({ jsonrpc: "2.0", id: 1, method: "aztec_sendTx", params: [{}] })).toBe(502)
 		await post({ jsonrpc: "2.0", id: 2, method: "aztec_getNullifierMembershipWitness", params: ["latest", "0x02"] })
 		expect(rec.sentTxHashes()).toEqual(["0xabc"])
-		expect(rec.nullifierQueries()).toEqual([{ value: "0x02", found: undefined, seq: 2 }])
+		expect(rec.nullifierQueries()).toMatchObject([{ value: "0x02", found: undefined }])
+	})
+
+	it("orders each witness answer against the send, and takes no answer from a failed response", async () => {
+		let release = () => {}
+		const sendSeen = new Promise<void>((r) => {
+			release = r
+		})
+		const upstream = await serve((req, res) => {
+			let body = ""
+			req.on("data", (d) => {
+				body += d
+			})
+			req.on("end", async () => {
+				const msg = JSON.parse(body)
+				if (msg.method === "aztec_sendTx") release()
+				else if (msg.params[1] === "0x03") await sendSeen
+				res.statusCode = msg.params?.[1] === "0x04" ? 500 : 200
+				res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: null }))
+			})
+		})
+		const rec = await startNodeRecorder(`http://127.0.0.1:${upstream}`, async () => "0xabc")
+		open.push(rec)
+		const post = (body: unknown) => fetch(rec.url, { method: "POST", body: JSON.stringify(body) })
+		await post({ jsonrpc: "2.0", id: 1, method: "aztec_getNullifierMembershipWitness", params: ["latest", "0x04"] })
+		const late = post({ jsonrpc: "2.0", id: 2, method: "aztec_getNullifierMembershipWitness", params: ["latest", "0x03"] })
+		await new Promise((r) => setTimeout(r, 50))
+		await post({ jsonrpc: "2.0", id: 3, method: "aztec_sendTx", params: [{}] })
+		await late
+		const send = rec.calls().find((c) => c.name === "sendTx")
+		const [failed, answeredLate] = rec.nullifierQueries()
+		expect(failed).toMatchObject({ value: "0x04", found: undefined, answered: undefined })
+		expect(answeredLate?.seq).toBeLessThan(send?.seq ?? 0)
+		expect(answeredLate?.answered).toBeGreaterThan(send?.seq ?? 0)
 	})
 })

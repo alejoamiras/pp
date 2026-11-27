@@ -9,7 +9,10 @@ import { createServer, type IncomingMessage, request } from "node:http"
 import type { Socket } from "node:net"
 
 export interface NodeCall {
+	/** When the request arrived, on the clock `answered` shares. */
 	seq: number
+	/** When a successful answer to it came back. */
+	answered?: number
 	method: string
 	/** `method` without its namespace prefix. */
 	name: string
@@ -27,7 +30,7 @@ export interface NodeRecorder {
 	port: number
 	calls(): NodeCall[]
 	sentTxHashes(): string[]
-	nullifierQueries(): { value: string; found: boolean | undefined; seq: number }[]
+	nullifierQueries(): { value: string; found: boolean | undefined; seq: number; answered: number | undefined }[]
 	close(): Promise<void>
 }
 
@@ -92,12 +95,17 @@ interface RpcMsg {
 }
 
 /** Records each call before it is forwarded, so a send the node took is counted even if its answer is lost. */
-async function recordRequests(calls: NodeCall[], reqJson: unknown, txHashOf: TxHashOf): Promise<{ id: unknown; call: NodeCall }[]> {
+async function recordRequests(
+	calls: NodeCall[],
+	tick: () => number,
+	reqJson: unknown,
+	txHashOf: TxHashOf,
+): Promise<{ id: unknown; call: NodeCall }[]> {
 	const reqs = (Array.isArray(reqJson) ? reqJson : [reqJson]) as RpcMsg[]
 	const out: { id: unknown; call: NodeCall }[] = []
 	for (const r of reqs) {
 		if (typeof r?.method !== "string") continue
-		const call: NodeCall = { seq: calls.length, method: r.method, name: r.method.slice(r.method.indexOf("_") + 1) }
+		const call: NodeCall = { seq: tick(), method: r.method, name: r.method.slice(r.method.indexOf("_") + 1) }
 		calls.push(call)
 		const params = Array.isArray(r.params) ? r.params : []
 		if (JSON.stringify(params).length <= SMALL_PARAMS) call.params = params
@@ -107,12 +115,16 @@ async function recordRequests(calls: NodeCall[], reqJson: unknown, txHashOf: TxH
 	return out
 }
 
-function recordResponses(pending: { id: unknown; call: NodeCall }[], resJson: unknown): void {
+function recordResponses(pending: { id: unknown; call: NodeCall }[], tick: () => number, status: number, resJson: unknown): void {
 	const ress = (Array.isArray(resJson) ? resJson : [resJson]) as RpcMsg[]
+	const at = tick()
 	for (const { id, call } of pending) {
 		const res = ress.find((x) => x?.id === id)
 		if (res?.error !== undefined) call.error = JSON.stringify(res.error).slice(0, 500)
-		else if (call.name === "getNullifierMembershipWitness" && res && "result" in res) call.found = res.result !== null
+		else if (status >= 200 && status < 300 && res && "result" in res) {
+			call.answered = at
+			if (call.name === "getNullifierMembershipWitness") call.found = res.result !== null
+		}
 	}
 }
 
@@ -120,6 +132,8 @@ function recordResponses(pending: { id: unknown; call: NodeCall }[], resJson: un
 export async function startNodeRecorder(target: string, txHashOf: TxHashOf = stdlibTxHash): Promise<NodeRecorder> {
 	const upstream = new URL(target)
 	const calls: NodeCall[] = []
+	let clock = 0
+	const tick = () => clock++
 	const sockets = new Set<Socket>()
 	const server = createServer((req, res) => {
 		void (async () => {
@@ -130,13 +144,13 @@ export async function startNodeRecorder(target: string, txHashOf: TxHashOf = std
 			const target = new URL(upstream.origin + path)
 			if (target.host !== upstream.host) throw new Error(`node recorder: refused request target ${path.slice(0, 100)}`)
 			const body = await readCapped(req)
-			const pending = await recordRequests(calls, parse(body), txHashOf)
+			const pending = await recordRequests(calls, tick, parse(body), txHashOf)
 			const up = await forward(target, req, body)
-			recordResponses(pending, parse(up.body))
+			recordResponses(pending, tick, up.status, parse(up.body))
 			res.writeHead(up.status, { ...up.headers, "content-length": String(up.body.length) })
 			res.end(up.body)
 		})().catch((e: Error) => {
-			calls.push({ seq: calls.length, method: "(proxy)", name: "(proxy)", error: e.message.slice(0, 500) })
+			calls.push({ seq: tick(), method: "(proxy)", name: "(proxy)", error: e.message.slice(0, 500) })
 			if (!res.headersSent) res.writeHead(502)
 			res.end()
 		})
@@ -159,7 +173,7 @@ export async function startNodeRecorder(target: string, txHashOf: TxHashOf = std
 		nullifierQueries: () =>
 			calls
 				.filter((c) => c.name === "getNullifierMembershipWitness" && Array.isArray(c.params))
-				.map((c) => ({ value: String((c.params as unknown[])[1]), found: c.found, seq: c.seq })),
+				.map((c) => ({ value: String((c.params as unknown[])[1]), found: c.found, seq: c.seq, answered: c.answered })),
 		close: () =>
 			new Promise((resolve) => {
 				for (const s of sockets) s.destroy()

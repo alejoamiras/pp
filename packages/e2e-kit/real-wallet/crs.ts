@@ -7,7 +7,7 @@
  *
  *   bun real-wallet/crs.ts --pin      (bump-time: measures and prints crs-pin.json from a cold download)
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { downloadPinned, SHA256_HEX, sha256 } from "./download"
@@ -40,7 +40,15 @@ export interface SeedArrays {
 
 type Decompress = (crsDir: string) => Promise<void>
 
+/** What bb.js finds in `crsPath` and uses; a file missing or shorter it downloads itself, unchecked. */
+const BB_INPUTS = { "bn254_g1_compressed.dat": G1_POINTS * 32, "bn254_g2.dat": 128, "grumpkin_g1_v2.flat.dat": GRUMPKIN_POINTS * 64 }
+
 const bbDecompress: Decompress = async (crsDir) => {
+	for (const [name, bytes] of Object.entries(BB_INPUTS)) {
+		const path = join(crsDir, name)
+		if (!existsSync(path) || statSync(path).size !== bytes)
+			throw new Error(`crs: ${name} is not the ${bytes} bytes bb.js would otherwise fetch`)
+	}
 	const { Barretenberg, BackendType } = await import("@aztec-foundation/bb.js")
 	const bb = await Barretenberg.new({ backend: BackendType.Wasm, crsPath: crsDir, srsSize: G1_POINTS })
 	await bb.destroy()
@@ -107,9 +115,9 @@ async function measurePin(): Promise<void> {
 	const unpinned: CrsPin = {
 		bb: "6.0.0",
 		inputs: {
-			"bn254_g1_compressed.dat": input("g1_compressed.dat", G1_POINTS * 32, true),
-			"bn254_g2.dat": input("g2.dat", 128, false),
-			"grumpkin_g1_v2.flat.dat": input("grumpkin_g1_v2.dat", GRUMPKIN_POINTS * 64, true),
+			"bn254_g1_compressed.dat": input("g1_compressed.dat", BB_INPUTS["bn254_g1_compressed.dat"], true),
+			"bn254_g2.dat": input("g2.dat", BB_INPUTS["bn254_g2.dat"], false),
+			"grumpkin_g1_v2.flat.dat": input("grumpkin_g1_v2.dat", BB_INPUTS["grumpkin_g1_v2.flat.dat"], true),
 		},
 		g1Uncompressed: { bytes: G1_POINTS * 64, sha256: "" },
 	}

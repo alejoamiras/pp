@@ -131,6 +131,7 @@ describe("fetchWallet", () => {
 	it.each([
 		["no hash", { sha256: undefined }],
 		["a hash that is a path", { sha256: "../x" }],
+		["a hash inside an array", { sha256: [pin.sha256] }],
 		["no size", { size: undefined }],
 	])("refuses a pin with %s before downloading", async (_why, broken) => {
 		const fetchImpl = vi.fn(serve(body))

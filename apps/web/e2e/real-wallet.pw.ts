@@ -20,6 +20,8 @@ const CLAIMED_MS = 12 * 60_000
 const CRS_HOST = /^crs\.aztec/
 /** The wallet's local Presto prover; refused, so it proves in WASM. */
 const PRESTO_PORTS = [59833, 59834]
+/** The token observation's wallet steps at their 60 s bounds, with a margin. */
+const OBSERVE_MS = 5 * 60_000
 
 /** The bridge form of `commitment`'s row with `amount` typed in. */
 async function openForm(page: Page, commitment: bigint, amount: string) {
@@ -52,6 +54,7 @@ test("connects", async ({ realWallet: rw }) => {
 // Fails if the wallet cannot prove or send the claim from the app, if the claim does not also
 // initialize the wallet's account, if anyone but the SponsoredFPC pays, or if proving reached past the seeded points.
 test("claims", async ({ realWallet: rw, run }, testInfo) => {
+	const began = Date.now()
 	const page = rw.appPage
 	const s = await seededStack(run)
 	const note = await approvedNote(s.pool)
@@ -76,7 +79,7 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 
 	const sent = rw.node.sentTxHashes()
 	const sendSeq = rw.node.calls().find((c) => c.name === "sendTx")?.seq ?? Number.POSITIVE_INFINITY
-	const queried = rw.node.nullifierQueries().filter((q) => q.seq < sendSeq)
+	const queried = rw.node.nullifierQueries().filter((q) => q.answered !== undefined && q.answered < sendSeq)
 	const methods = rw.node.calls().flatMap((c) => (c.seq < sendSeq ? [c.name] : []))
 	rw.log(`before the send: ${JSON.stringify({ methods, queried })}`)
 	expect(sent, "the wallet sent exactly one transaction").toHaveLength(1)
@@ -100,7 +103,7 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 	).toEqual([])
 	await rw.checkCache()
 	expect(
-		rw.egress.hits().some((h) => PRESTO_PORTS.some((p) => h.target === `127.0.0.1:${p}`)),
+		refusals(rw).some((r) => PRESTO_PORTS.some((p) => r.target === `127.0.0.1:${p}`)),
 		"the wallet tried its local prover and reached only the recorder",
 	).toBe(true)
 	expect(
@@ -108,13 +111,17 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 		"no owned listener on the local prover's ports",
 	).toEqual([])
 
-	// Recorded, not asserted: what the wallet shows for the token is a finding, never a nightly failure.
-	const total = await rw.driver
-		.importToken(s.manifest.bridge.token)
-		.then(async (imported) =>
-			"added" in imported ? `${await rw.driver.tokenTotal(s.symbol)} ${s.symbol}` : `not imported: ${imported.refused}`,
-		)
-		.catch((e: Error) => `not observed: ${e.message.split("\n")[0]}`)
+	// Recorded, not asserted: what the wallet shows for the token is a finding, never a nightly failure,
+	// so it runs only when its steps' bounds fit in the test's remaining time.
+	const observe = () =>
+		rw.driver
+			.importToken(s.manifest.bridge.token)
+			.then(async (imported) =>
+				"added" in imported ? `${await rw.driver.tokenTotal(s.symbol)} ${s.symbol}` : `not imported: ${imported.refused}`,
+			)
+			.catch((e: Error) => `not observed: ${e.message.split("\n")[0]}`)
+	const left = testInfo.timeout - (Date.now() - began)
+	const total = left > OBSERVE_MS ? await observe() : "not observed: too little of the test's time left"
 	testInfo.annotations.push({ type: "wallet token total", description: `${total}; the app shows ${shown}` })
 	rw.log(`wallet token total ${total}; the app shows ${shown}`)
 })

@@ -49,7 +49,7 @@ async function cachedZip(pin: WalletPin, cacheDir: string, fetchImpl: typeof fet
  */
 export async function fetchWallet(pin: WalletPin, o: { cacheDir: string; extensionDir: string; fetchImpl?: typeof fetch }): Promise<void> {
 	// An absent hash would skip the check, and the hash also names the cache file.
-	if (!SHA256_HEX.test(String(pin.sha256)) || !Number.isSafeInteger(pin.size) || pin.size <= 0)
+	if (typeof pin.sha256 !== "string" || !SHA256_HEX.test(pin.sha256) || !Number.isSafeInteger(pin.size) || pin.size <= 0)
 		throw new Error("wallet: the pin's sha256 or size is malformed")
 	const zip = await cachedZip(pin, o.cacheDir, o.fetchImpl ?? fetch)
 	extractZip(zip, o.extensionDir, CAPS)

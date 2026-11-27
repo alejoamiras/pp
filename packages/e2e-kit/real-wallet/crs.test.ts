@@ -71,6 +71,10 @@ describe("prepareCrs", () => {
 		expect(fetchImpl).not.toHaveBeenCalled()
 	})
 
+	it("starts bb.js only on the three inputs at the sizes it needs, so it never downloads one itself", async () => {
+		await expect(prepareCrs(pin, fresh(), { fetchImpl: cdn() })).rejects.toThrow(/bn254_g1_compressed.dat is not the 16777216 bytes/)
+	})
+
 	it("refuses a decompressed G1 that does not match its pin", async () => {
 		const decompress = async (dir: string) => writeFileSync(join(dir, "bn254_g1.dat"), Buffer.alloc(128, 5))
 		await expect(prepareCrs(pin, fresh(), { fetchImpl: cdn(), decompress })).rejects.toThrow(/decompressed G1/)
