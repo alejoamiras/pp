@@ -2,8 +2,8 @@ import { describe, expect, test } from "vitest"
 import { isWalletRefusal, ProviderError, REFUSAL_SHAPES } from "./errors"
 
 /** The released wallet's Reject, as wallet-sdk 6.0.0's extension transport throws it; the trace id varies. */
-const envelope = (walletErrorCode: string, code = 4001) =>
-	new Error(JSON.stringify({ code, message: "User rejected", data: { walletErrorCode, walletTraceId: "71faf217" } }))
+const envelope = (walletErrorCode: string, code = 4001, over: Record<string, unknown> = {}) =>
+	new Error(JSON.stringify({ code, message: "User rejected", data: { walletErrorCode, walletTraceId: "71faf217" }, ...over }))
 
 const named = (name: string) => Object.assign(new Error("no"), { name })
 
@@ -12,6 +12,13 @@ describe("the refusals trusted past the handoff", () => {
 		["EIP-1193 provider (4001)", new ProviderError(4001, "User rejected the request.")],
 		["viem", named("UserRejectedRequestError")],
 		["wallet-sdk 6.0.0 extension (released wallet)", envelope("USER_REJECTED")],
+		[
+			"wallet-sdk 6.0.0 extension (released wallet)",
+			envelope("USER_REJECTED", 4001, {
+				stage: "approval",
+				data: { walletErrorCode: "USER_REJECTED", walletTraceId: "71faf217", origin: "x" },
+			}),
+		],
 	])("%s: its refusal is a no", (wallet, err) => {
 		expect(REFUSAL_SHAPES.find((s) => s.wallet === wallet)?.matches(err as never)).toBe(true)
 		expect(isWalletRefusal(err)).toBe(true)
@@ -22,6 +29,8 @@ describe("the refusals trusted past the handoff", () => {
 		["the wording alone", new Error("User rejected the request")],
 		["the envelope of a cancelled job", envelope("JOB_CANCELLED")],
 		["the envelope's wallet code under another code", envelope("USER_REJECTED", -32603)],
+		["the envelope under other wording", envelope("USER_REJECTED", 4001, { message: "Request failed" })],
+		["the envelope with no trace id", envelope("USER_REJECTED", 4001, { data: { walletErrorCode: "USER_REJECTED" } })],
 		["the envelope inside a longer message", new Error(`relay failed: ${envelope("USER_REJECTED").message}`)],
 		["the kit wallet's injected failure, JSON-quoted", new Error(JSON.stringify("test wallet: injected failure of sendTx"))],
 		["a 4001 only in the cause", new Error("send failed", { cause: new ProviderError(4001, "no") })],

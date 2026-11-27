@@ -197,16 +197,14 @@ export const REFUSAL_SHAPES: readonly { readonly wallet: string; matches(e: Reco
 	{ wallet: "viem", matches: (e) => e.name === "UserRejectedRequestError" },
 	{
 		// Measured on wallet v1.3.0's Reject; its other 4001s (a cancelled job) are not shown to send nothing.
+		// Fields the wallet adds are ignored, so a new one does not turn every decline into a hold.
 		wallet: "wallet-sdk 6.0.0 extension (released wallet)",
 		matches: (e) => {
 			const env = sdkEnvelope(e.message)
 			const data = env?.data
-			return (
-				env?.code === 4001 &&
-				typeof data === "object" &&
-				data !== null &&
-				(data as Record<string, unknown>).walletErrorCode === "USER_REJECTED"
-			)
+			if (env?.code !== 4001 || env.message !== "User rejected" || typeof data !== "object" || data === null) return false
+			const d = data as Record<string, unknown>
+			return d.walletErrorCode === "USER_REJECTED" && typeof d.walletTraceId === "string"
 		},
 	},
 ]
