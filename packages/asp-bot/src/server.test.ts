@@ -36,10 +36,11 @@ describe("snapshot routes", () => {
 			expect(respond("GET", path, book).status, path).toBe(404)
 		}
 		expect(respond("POST", "/v1/snapshots/latest", book).status).toBe(405)
-		// After `set_poster`: the same sequence with cleared roots, which this process does not hold.
-		book.setCurrent({ sequence: 4n, poolRoot: 0n, birthRoot: 0n, poolSize: 0n, birthSize: 0n })
-		expect(respond("GET", "/v1/snapshots/latest", book).status).toBe(404)
-		expect(respond("GET", "/v1/snapshots/4", book).status).toBe(200)
+		// `set_poster` clears the record at the next sequence: a body held there is a post that lost to the
+		// reset, and the last post's body keeps serving older anchors.
+		book.hold(snapshot(5n))
+		book.setCurrent({ sequence: 5n, poolRoot: 0n, birthRoot: 0n, poolSize: 0n, birthSize: 0n })
+		expect(["latest", "5", "4"].map((n) => respond("GET", `/v1/snapshots/${n}`, book).status)).toEqual([404, 404, 200])
 
 		const live = await serve(book)
 		try {
