@@ -11,6 +11,7 @@ import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
 import { advance, connectWallet, fixtureState, recordFirst, selectL1Account, signInToPool, submitted, watchPage } from "./support"
 
 test.use({ family: "walkthrough", cells: 1, spares: 0 })
+test.skip(({ run }) => run.mode === "stack", "a stack build has no fixture world to walk through")
 
 /** The seeded approved note (100 of the 6-decimal token), as its row carries its commitment. */
 const NOTE = "4097"

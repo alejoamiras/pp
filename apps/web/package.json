@@ -14,7 +14,7 @@
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "bun --bun vitest run",
 		"test:headers": "bun scripts/test-headers.ts",
-		"e2e": "bun run --cwd ../../packages/e2e-kit test:browser"
+		"e2e": "PP_E2E_MODE=stack bun run --cwd ../../packages/e2e-kit test:browser"
 	},
 	"dependencies": {
 		"@aztec-foundation/bb.js": "6.0.0",

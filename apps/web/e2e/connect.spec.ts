@@ -1,8 +1,9 @@
 /**
- * Connect, on the production bundle against the sandbox. Each test proves a part of the wallet SDK,
- * its iframe, cross-origin isolation and the CSP working together, which jsdom cannot show. Payer:
- * none; a connect sends nothing, and each test reads from the wallet frame that it handed the node no
- * transaction. Dispatch per granted scope is the unit suite's; here, what the page shows for a grant.
+ * Connect, on the production bundle against the run's network (sandbox or local stack). Each test
+ * proves a part of the wallet SDK, its iframe, cross-origin isolation and the CSP working together,
+ * which jsdom cannot show. Payer: none; a connect sends nothing, and each test reads from the wallet
+ * frame that it handed the node no transaction. Dispatch per granted scope is the unit suite's; here,
+ * what the page shows for a grant.
  */
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -56,6 +57,7 @@ test("discovers both wallet profiles and connects the full one after its emoji c
 // Fails if the page reads a grant it was not given: a declined contract scope must close the bridge and
 // every token action, with a reason, and a later full grant must lift exactly that refusal.
 test("a declined grant closes the bridge and token actions with a reason; granting again opens them", async ({ page, run, actor }) => {
+	test.skip(run.mode === "stack", "a stack build has no bridge or token actions yet for a grant to open")
 	const watch = await watchPage(page)
 	await page.goto("/")
 	await signInToPool(page)
