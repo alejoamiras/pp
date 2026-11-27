@@ -18,6 +18,7 @@ import type { AztecPort, Deployment, ExitPort, ExitView } from "../ports"
 import type { ExitTicket } from "../stack-types"
 import { type AztecDeps, sendThroughWallet } from "./aztec"
 import type { StackL1 } from "./l1"
+import { asPageError } from "./page-error"
 
 export interface ExitDeps {
 	/** As the build inlined it; parsed again here with the schema the build parsed it with. */
@@ -70,9 +71,13 @@ export function stackExits(d: ExitDeps): Pick<AztecPort, "ragequit"> & ExitPort 
 			)
 		},
 		settle: (t, from, on) =>
-			client.settle(
-				t,
-				d.l1.settleWallet(from, () => on.handoff()),
-			),
+			client
+				.settle(
+					t,
+					d.l1.settleWallet(from, () => on.handoff()),
+				)
+				.catch((err: unknown) => {
+					throw asPageError(err)
+				}),
 	}
 }

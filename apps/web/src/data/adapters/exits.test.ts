@@ -2,11 +2,12 @@ import { AztecAddress as SdkAddress } from "@aztec-labs/aztec.js/addresses"
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
-import type { BridgeClient, ExitTicket as CoreExitTicket } from "@pp/bridge-core"
+import { type BridgeClient, BridgeClientError, type ExitTicket as CoreExitTicket } from "@pp/bridge-core"
 import type { Address, Hash, Hex, WalletClient } from "viem"
 import { describe, expect, test, vi } from "vitest"
 import type { StackManifestJson } from "../../build/target"
 import { stageManifest } from "../capabilities"
+import { ProviderError } from "../errors"
 import { bindAztecSend, bindL1Send, type SendContext } from "../sends"
 import type { AztecAddress } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
@@ -215,5 +216,15 @@ describe("the exits adapter", () => {
 		await expect(r.exits.settle(t, { sender: SENDER, demo: false }, moved)).rejects.toMatchObject({ code: 4001 })
 		expect(asked).toEqual(["eth_sendTransaction"])
 		expect(moved.refused()).toBe(true)
+	})
+
+	test("reads the user's refusal of a settle as the wallet's no, and any other client failure as it came", async () => {
+		const r = rig([40n])
+		const t = { kind: "public", token: TOKEN, payee: PAYEE, amount: 25n, l2TxHash: L2_TX, messageIndexInTx: 0 } as const
+		const on = bindL1Send(() => r.ctx, SENDER, 31337)
+		r.client.settle.mockRejectedValueOnce(new BridgeClientError("RPC_FAILED", { source: "UserRejectedRequestError" }))
+		await expect(r.exits.settle(t, { sender: SENDER, demo: false }, on)).rejects.toBeInstanceOf(ProviderError)
+		r.client.settle.mockRejectedValueOnce(new BridgeClientError("RPC_FAILED", { source: "HttpRequestError" }))
+		await expect(r.exits.settle(t, { sender: SENDER, demo: false }, on)).rejects.toMatchObject({ code: "RPC_FAILED" })
 	})
 })
