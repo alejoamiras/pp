@@ -43,6 +43,11 @@ export type StartStackOptions = {
 	runsDir?: string
 	/** Default true. Off, no block is mined unless a consumer asks for one. */
 	heartbeat?: boolean
+	/**
+	 * Default true. Off, the bridge gets no ASP registry and no bot runs, so no heartbeat post adds
+	 * blocks to a chain a caller counts.
+	 */
+	bot?: boolean
 	/** Tick spacing; defaults to `HEARTBEAT_MS`. */
 	heartbeatMs?: number
 	/** Checked between steps; a step already starting runs to the end first, since neither harness can be cancelled mid-start. */
@@ -202,7 +207,7 @@ async function bridgeStep(o: StartStackOptions, faults: BootFaults, b: Booted, t
 			await mineBlock(b.net.nodeUrl, o.signal)
 		},
 		dataDir: join(b.runDir, "bridge"),
-		registry: await localBotAccounts(b.runId),
+		...(o.bot === false ? {} : { registry: await localBotAccounts(b.runId) }),
 	})
 	teardown.push("bridge deployer", () => u.stop())
 	try {
@@ -261,7 +266,7 @@ function botStep(b: Booted, bridge: StackBridgeBlock): Promise<BotHandle> {
 	)
 }
 
-function manifestOf(b: Booted, bridge: StackBridgeBlock, bot: BotHandle): StackManifest {
+function manifestOf(b: Booted, bridge: StackBridgeBlock, bot: BotHandle | undefined): StackManifest {
 	const { pool: poolVault, entrypoint, aspRegistry, keystore, deployBlock } = b.pool.deployment
 	return buildManifest({
 		chainId: STACK_CHAIN_ID,
@@ -271,7 +276,7 @@ function manifestOf(b: Booted, bridge: StackBridgeBlock, bot: BotHandle): StackM
 		asset: b.pool.asset,
 		aspUrl: b.pool.asp.url,
 		bridge,
-		bot: { url: bot.url, poster: bot.poster, birthIntake: bot.birthIntake },
+		...(bot ? { bot: { url: bot.url, poster: bot.poster, birthIntake: bot.birthIntake } } : {}),
 	})
 }
 
@@ -297,12 +302,15 @@ export async function bootStack(o: StartStackOptions, faults: BootFaults): Promi
 			() => seedPool(b.pool),
 			() => {},
 		)
-		const bot = await runStep(
-			o,
-			"bot",
-			() => botStep(b, bridge),
-			(h) => teardown.push("bot", () => h.stop()),
-		)
+		const bot =
+			o.bot === false
+				? undefined
+				: await runStep(
+						o,
+						"bot",
+						() => botStep(b, bridge),
+						(h) => teardown.push("bot", () => h.stop()),
+					)
 		const manifest = manifestOf(b, bridge, bot)
 		const manifestPath = join(b.runDir, "manifest.json")
 		await runStep(

@@ -49,8 +49,9 @@ async function stackExpectations(base: ExpectedBindings): Promise<ExpectedBindin
 }
 
 describe("the stack's bridge deploy", () => {
-	it("D0 the attached stack has an open bridge, no registry, and index 13 holds two approved notes of 100", async () => {
-		expect(m.bridge.registry).toBe(ZERO_WORD)
+	it("D0 the attached stack has an open bridge, the bot's registry, and index 13 holds two approved notes of 100", async () => {
+		expect(m.bridge.registry).not.toBe(ZERO_WORD)
+		expect(m.bot, "a registry implies the bot that posts to it").toBeDefined()
 		expect(await l1.readContract({ address: m.bridge.factory, abi: PORTAL_FACTORY_ABI, functionName: "entriesPaused" })).toBe(false)
 		const pool = await openPoolClient({
 			pool: poolConfigOf(m),
