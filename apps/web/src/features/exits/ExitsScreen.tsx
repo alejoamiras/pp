@@ -23,25 +23,27 @@ const STATUS: Record<ExitStatus, { text: string; tone: Tone; note: string }> = {
 type Collect = { kind: "idle" } | { kind: "collecting" } | { kind: "failed"; code: UiCode }
 
 function useCollect(view: ExitView) {
-	const { source, live, refresh } = useApp()
-	const [state, setState] = useState<Collect>({ kind: "idle" })
+	const { source, live, collecting, refresh } = useApp()
+	const key = exitKey(view)
+	const [failed, setFailed] = useState<UiCode | null>(null)
 	const collect = async () => {
 		// The context's account is the local demo's dev account while the page has chosen it, as for a bridge.
 		const { account, chainId, demo } = live.context()
-		if (account === null) return setState({ kind: "failed", code: "NO_SENDER" })
-		if (chainId !== source.deployment.chainId) return setState({ kind: "failed", code: "CHAIN_MISMATCH" })
+		if (account === null) return setFailed("NO_SENDER")
+		if (chainId !== source.deployment.chainId) return setFailed("CHAIN_MISMATCH")
 		const on = bindL1Send(live.context, account, chainId)
-		setState({ kind: "collecting" })
-		try {
-			await source.exits.settle(view.ticket, { sender: account, demo }, on)
-			setState({ kind: "idle" })
-		} catch (err) {
-			const code = on.refused() ? "CONTEXT_CHANGED" : isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED")
-			setState({ kind: "failed", code })
-		} finally {
-			refresh()
-		}
+		setFailed(null)
+		await collecting.run(key, async () => {
+			try {
+				await source.exits.settle(view.ticket, { sender: account, demo }, on)
+			} catch (err) {
+				setFailed(on.refused() ? "CONTEXT_CHANGED" : isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED"))
+			} finally {
+				refresh()
+			}
+		})
 	}
+	const state: Collect = collecting.has(key) ? { kind: "collecting" } : failed ? { kind: "failed", code: failed } : { kind: "idle" }
 	return { state, collect }
 }
 

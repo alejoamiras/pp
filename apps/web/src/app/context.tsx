@@ -11,6 +11,7 @@ import { createLiveStore, type LiveStore } from "./live"
 import { POOL_KEY, usePool } from "./queries"
 import { type BridgeFlow, useBridgeFlow } from "./useBridgeFlow"
 import { type Ethereum, useEthereum } from "./useEthereum"
+import { type InFlight, useInFlight } from "./useInFlight"
 import { type Tx, useTx } from "./useTx"
 
 export type View = "home" | "bridge" | "exits"
@@ -31,6 +32,8 @@ export interface App {
 	/** Payees whose exits the Exits screen lists, beyond the owner and the selected account. */
 	payees: readonly Address[]
 	addPayee(payee: Address): void
+	/** Collects in flight by exit key, so leaving and reopening the Exits screen cannot send one twice. */
+	collecting: InFlight
 	refresh(): void
 	forget(): Promise<void>
 }
@@ -105,6 +108,7 @@ export function AppProvider({ source, frame, children }: Props) {
 	}, [bridge, eth, connect, source, queryClient])
 
 	const addPayee = useCallback((p: Address) => setPayees((list) => (list.includes(p) ? list : [...list, p])), [])
-	const app: App = { source, live, eth, ...side, bridge, tx, view, go, payees, addPayee, refresh, forget }
+	const collecting = useInFlight()
+	const app: App = { source, live, eth, ...side, bridge, tx, view, go, payees, addPayee, collecting, refresh, forget }
 	return <AppContext.Provider value={app}>{children}</AppContext.Provider>
 }

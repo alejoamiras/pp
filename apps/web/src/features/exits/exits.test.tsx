@@ -51,6 +51,44 @@ describe("exits", () => {
 		expect(settle).toHaveBeenCalledTimes(2)
 	})
 
+	test("a collect still in flight when the Exits screen is left and reopened is not offered again", async () => {
+		let release: (h: typeof L2_TX) => void = () => {}
+		const settle = vi.fn(() => new Promise<typeof L2_TX>((r) => (release = r)))
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				exits: {
+					tickets: async () => [
+						{
+							key: { deployment: s.deployment.id, l2TxHash: L2_TX, messageIndexInTx: 0 },
+							ticket: {
+								kind: "public",
+								token: s.deployment.token,
+								payee: ACCOUNTS.owner,
+								amount: 1n,
+								l2TxHash: L2_TX,
+								messageIndexInTx: 0,
+							},
+							status: "ready",
+						},
+					],
+					settle,
+				},
+			}),
+		})
+		await app.user.click(screen.getByRole("button", { name: "Exits" }))
+		await app.user.click(await screen.findByRole("button", { name: "Collect on Ethereum" }))
+		await app.user.click(screen.getByRole("button", { name: "Balances" }))
+		await app.user.click(screen.getByRole("button", { name: "Exits" }))
+		const again = await screen.findByRole("button", { name: "Collect on Ethereum" })
+		expect((again as HTMLButtonElement).disabled).toBe(true)
+		await app.user.click(again)
+		release(L2_TX)
+		const collect = () => screen.getByRole("button", { name: "Collect on Ethereum" }) as HTMLButtonElement
+		await waitFor(() => expect(collect().disabled).toBe(false))
+		expect(settle).toHaveBeenCalledTimes(1)
+	})
+
 	test("a collect held while the wallet moves to another chain says the wallet changed and nothing was sent", async () => {
 		const app = renderApp({
 			patch: (s) => ({
