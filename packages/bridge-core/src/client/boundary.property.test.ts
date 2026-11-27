@@ -2,7 +2,7 @@ import { inspect } from "node:util"
 import { SpecRangeError } from "@pp/bridge-spec"
 import { PoolClientError, type PoolClientErrorCode } from "@pp/pool-client"
 import * as fc from "fast-check"
-import { BaseError, ContractFunctionExecutionError, ContractFunctionRevertedError, type Hash, type Hex } from "viem"
+import { BaseError, ContractFunctionExecutionError, ContractFunctionRevertedError, encodeErrorResult, type Hash, type Hex } from "viem"
 import { describe, expect, it } from "vitest"
 import { propertyParams } from "../../../../vitest.base"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
@@ -83,16 +83,20 @@ type Fields = Partial<Record<(typeof FIELDS)[number], unknown>>
 
 /**
  * A secret a lower layer may hold. `ident` is identifier-shaped on purpose: a value that only ever fails the
- * identifier pattern could not reveal a translation that copies it into `source`.
+ * identifier pattern could not reveal a translation that copies it into `source`. Its leading hex digit is
+ * nonzero, so a shrunk marker keeps a 23-digit `dec` that no line number in a stack can contain.
  */
 type Marker = { ident: string; hex: string; dec: string; value: bigint }
 const marker = fc
-	.stringMatching(/^[0-9a-f]{20}$/)
+	.stringMatching(/^[1-9a-f][0-9a-f]{19}$/)
 	.map((hex): Marker => ({ ident: `Zq9${hex}`, hex, dec: BigInt(`0x${hex}`).toString(), value: BigInt(`0x${hex}`) }))
 const leaksOf = (m: Marker) => [m.ident, m.hex, m.dec]
 
-// Names are allowed through when identifier-shaped, so they never carry the marker.
-const name = fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]{0,20}$/).filter((n) => !n.startsWith("Zq9"))
+// Names are allowed through when identifier-shaped, so they never carry the marker. The longest valid one
+// pins the 64-character limit from below; the forged 65-character one pins it from above.
+const longest = fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]{63}$/)
+const name = fc.oneof(fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]{0,20}$/), longest).filter((n) => !n.startsWith("Zq9"))
+const OVERLONG = `A${"b".repeat(64)}`
 const hash = fc.stringMatching(/^[0-9a-f]{64}$/).map((h) => `0x${h}` as Hash)
 const validDetail = fc.record(
 	{
@@ -124,12 +128,12 @@ type How = { cyclic: boolean; hiddenKey: string; label: string | undefined }
 function decorated(base: Error, m: Marker, how: How): Error {
 	Object.assign(base, { opening: m.value, salt: m.ident, args: [m.value], data: `0x${m.hex}` })
 	Object.defineProperty(base, how.hiddenKey, { value: m.ident, enumerable: false })
+	Object.defineProperty(base, "secretGetter", { get: () => m.ident, enumerable: false })
 	Object.defineProperty(base, "cause", { value: how.cyclic ? base : new Error(m.ident), enumerable: true })
 	if (how.label !== undefined) Object.defineProperty(base, "name", { value: how.label })
 	return base
 }
 
-/** Throwing getters on the properties a translation may read. */
 function trapped(m: Marker, prop: string): Error {
 	const e = new Error(m.ident)
 	Object.defineProperty(e, prop, {
@@ -140,7 +144,6 @@ function trapped(m: Marker, prop: string): Error {
 	return e
 }
 
-/** A proxy over an error: every trap throws, or every secret-bearing property answers with the marker. */
 function proxied(m: Marker, mode: "throw" | "answer"): unknown {
 	const target = new Error("x")
 	if (mode === "throw") {
@@ -175,6 +178,17 @@ const viemErrors = (m: Marker): fc.Arbitrary<Thrown> =>
 					data: `0xdeadbeef${m.hex}` as Hex,
 				}),
 		),
+		{
+			// A known error decodes, and its message then prints the arguments.
+			kind: "decoded revert",
+			make: () =>
+				new ContractFunctionRevertedError({
+					abi: PROCESSOR_PORTAL_ABI,
+					functionName: "bridgeFromPool",
+					data: encodeErrorResult({ abi: PROCESSOR_PORTAL_ABI, errorName: "CapExceeded", args: [m.value, m.value] }),
+				}),
+			keeps: { code: "SIMULATION_REVERTED", detail: { revert: "CapExceeded" } },
+		},
 	)
 
 const lowerTyped = (m: Marker): fc.Arbitrary<Thrown> =>
@@ -212,7 +226,14 @@ const hostile = (m: Marker): fc.Arbitrary<Thrown> => {
 		lowerTyped(m),
 		// The client's own type, forged: an unknown code or a detail value outside its field's rule.
 		fc
-			.constantFrom({ code: "NOPE" }, { l1TxHash: m.ident }, { source: `${m.ident}-x` }, { check: m.ident })
+			.constantFrom(
+				{ code: "NOPE" },
+				{ l1TxHash: m.ident },
+				{ source: `${m.ident}-x` },
+				{ check: m.ident },
+				{ source: OVERLONG },
+				{ revert: OVERLONG },
+			)
 			.map((forged) => thrown("forged", () => Object.assign(new BridgeClientError("UNCERTAIN"), forged))),
 	)
 	// The client's own type, valid and decorated: it must come back with the same code and fields.
@@ -245,7 +266,13 @@ function expectFieldRules(r: BridgeClientError): void {
 	expect("cause" in r).toBe(false)
 }
 
+// Own properties a translated error may carry (the runtime adds its own to every error); a copied accessor
+// would hide from every printed view.
+const OWN = new Set([...Object.getOwnPropertyNames(new BridgeClientError("RPC_FAILED")), ...FIELDS])
+
 function expectNoLeak(r: BridgeClientError, m: Marker): void {
+	expect(Object.getOwnPropertyNames(r).filter((k) => !OWN.has(k))).toEqual([])
+	expect(Object.getOwnPropertySymbols(r)).toEqual([])
 	const views = [String(r), JSON.stringify(r), inspect(r, { depth: 10, showHidden: true }), r.stack ?? ""].map((v) => v.toLowerCase())
 	for (const view of views) for (const leak of leaksOf(m)) expect(view).not.toContain(leak.toLowerCase())
 }

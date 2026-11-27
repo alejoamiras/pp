@@ -15,14 +15,21 @@ const open = fc.oneof(
 	fc.constant<Tried>({ attempt: {}, state: "hashless" }),
 )
 const reverted = hash.map((h): Tried => ({ attempt: { l1TxHash: h }, state: "reverted" }))
-// At most MAX_UNRESOLVED_ATTEMPTS unresolved ones, any number reverted, in any order.
+// A write keeps at most MAX_UNRESOLVED_ATTEMPTS attempts, and one that reverts later keeps its slot. Half the
+// records are full of open attempts, the only ones that evict.
 const tries = fc
-	.tuple(fc.array(open, { maxLength: MAX_UNRESOLVED_ATTEMPTS }), fc.array(reverted, { maxLength: 5 }))
+	.oneof(fc.constant(MAX_UNRESOLVED_ATTEMPTS), fc.integer({ min: 0, max: MAX_UNRESOLVED_ATTEMPTS - 1 }))
+	.chain((n) =>
+		fc.tuple(
+			fc.array(open, { minLength: n, maxLength: n }),
+			fc.array(reverted, { minLength: n === 0 ? 1 : 0, maxLength: MAX_UNRESOLVED_ATTEMPTS - n }),
+		),
+	)
 	.chain(([o, r]) => fc.shuffledSubarray([...o, ...r], { minLength: o.length + r.length }))
 
 const recipient = fc.stringMatching(/^[0-9a-f]{8}$/).map((h) => `0x${h}AbCd`)
 
-/** Reachable inputs: no record, the evicted empty record an unreadable one becomes, or a written one. */
+/** Reachable inputs: no record, the evicted empty record of the caller's intent an unreadable one becomes, or a written one. */
 const input = fc
 	.record({
 		kind: fc.constantFrom("none", "unreadable", "written"),
@@ -48,17 +55,15 @@ const input = fc
 		const record: JournalRecord | null =
 			v.kind === "none"
 				? null
-				: {
-						...recorded,
-						attempts: used.map((t) => t.attempt),
-						...(v.kind === "unreadable" || v.evicted ? { evicted: true as const } : {}),
-					}
+				: v.kind === "unreadable"
+					? { ...intent, attempts: [], evicted: true }
+					: { ...recorded, attempts: used.map((t) => t.attempt), ...(v.evicted ? { evicted: true as const } : {}) }
 		return {
 			record,
 			states: used.map((t) => t.state),
 			intent,
 			accept: v.accept,
-			sameIntent: v.recipientChange !== "other" && !v.otherAmount,
+			sameIntent: v.kind === "unreadable" || (v.recipientChange !== "other" && !v.otherAmount),
 		}
 	})
 
@@ -66,7 +71,7 @@ describe("planAttempt properties (every reachable record)", () => {
 	const decision = propertyParams(
 		import.meta.url,
 		"sends exactly when no earlier send can still land, or the override covers it",
-		300,
+		1_000,
 		3_000,
 	)
 	it(
@@ -94,7 +99,7 @@ describe("planAttempt properties (every reachable record)", () => {
 	const written = propertyParams(
 		import.meta.url,
 		"a send appends one hashless attempt, drops the oldest only at the cap, and never clears evicted",
-		300,
+		1_000,
 		3_000,
 	)
 	it(

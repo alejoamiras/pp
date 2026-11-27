@@ -48,8 +48,12 @@ const AMOUNT = 70n
 const OTHER_TX = keccak256(toHex("another bridge of the note"))
 
 type Status = "mempool" | "dropped" | "reverted" | "landed" | "landedNoLog"
-/** One wallet call that may have reached the chain: it returned a hash, or failed with anything but 4001. */
-type Broadcast = { hash: Hash; who: Who; saved: boolean; status: Status }
+type Signals = readonly (readonly bigint[])[]
+/**
+ * One wallet call that may have reached the chain: it returned a hash, or failed with anything but 4001.
+ * `secretHash` and `signals` are what the wallet was handed, so a landing pays what was really sent.
+ */
+type Broadcast = { hash: Hash; who: Who; saved: boolean; status: Status; secretHash: Hex; signals: Signals }
 type Kept = { kind: "kept"; who: Who; entries: Broadcast[]; evicted: boolean }
 type Stored = { kind: "none" } | { kind: "corrupt"; bytes: string } | Kept
 type Model = { sent: Broadcast[]; record: Stored; spent: boolean; logs: boolean; uncertain: boolean }
@@ -81,9 +85,12 @@ function hold(): Hold {
 class World {
 	readonly chain = new FakeChain()
 	readonly memory = memoryStore()
+	/** submit turns whatever the wallet throws into a result, so wallet-side checks record here instead. */
 	readonly violations: string[] = []
 	readonly aztec = aztecWallet([parties.A.recipient, parties.B.recipient])
 	steps = 0
+	/** A reload since the record was last written, so the code reads it with nothing in memory. */
+	reloaded = false
 	failNextWrite = false
 	readFault = false
 	held: Hold | undefined
@@ -147,12 +154,10 @@ function showStored(s: Stored): unknown {
 }
 
 const retained = (m: Model): Broadcast[] => (m.record.kind === "kept" ? m.record.entries : [])
-/** What the code counts as unresolved: everything but an attempt whose saved hash has a reverted receipt. */
 const unresolved = (entries: Broadcast[]) => entries.filter((b) => !(b.saved && b.status === "reverted"))
 /** May still land, as far as anyone can tell: a send the code cannot see revert is never resolved for it. */
 const mayLand = (b: Broadcast) => b.status === "mempool" || b.status === "dropped" || (b.status === "reverted" && !b.saved)
 
-/** Whether, for all the code can know, an earlier send may still land. */
 const mayStillLand = (m: Model) => m.record.kind !== "kept" || m.record.evicted || m.sent.some(mayLand)
 
 function mayCall(m: Model, s: Spec): boolean {
@@ -191,7 +196,7 @@ const attemptOf = (b: Broadcast) => (b.saved ? { l1TxHash: b.hash } : {})
 const show = (v: unknown) => JSON.stringify(v, (_, x) => (typeof x === "bigint" ? `${x}n` : x))
 
 async function landOn(m: Model, w: World, b: Broadcast, withLog: boolean): Promise<void> {
-	if (withLog) await w.chain.land(parties[b.who].spend.secretHash, b.hash, parties[b.who].spend.proof.pubSignals)
+	if (withLog) await w.chain.land(b.secretHash, b.hash, b.signals)
 	else {
 		w.chain.head += 1n
 		w.chain.receipts.set(b.hash, { status: "success", blockNumber: w.chain.head, transactionHash: b.hash })
@@ -242,11 +247,15 @@ function walletFor(m: Model, w: World, s: Spec, call: Call, may: boolean, plainA
 		await heldBeforeCall(m, w, plan)
 		if (s.fault === "reject") throw new UserRejectedRequestError(new Error("rejected"))
 		const hash = await w.chain.writeContract(args)
-		const b: Broadcast = { hash, who: s.who, saved: s.fault !== "ambiguous" && s.fault !== "hashWrite", status: "mempool" }
+		const saved = s.fault !== "ambiguous" && s.fault !== "hashWrite"
+		const b: Broadcast = { hash, who: s.who, saved, status: "mempool", secretHash: args.args[2], signals: args.args[0].pubSignals }
 		m.sent.push(b)
+		const pastHashless = plan.entries.some((e) => !e.saved && e.status === "mempool")
 		m.record = { kind: "kept", who: plan.who, entries: [...plan.entries, b], evicted: plan.evicted }
+		w.reloaded = false
 		call.sent = b
 		w.seen.add(`send: ${plan.kind}`)
+		if (pastHashless) w.seen.add("send: past a hashless pending send")
 		await settleSend(m, w, b, s.send)
 		if (s.fault === "ambiguous") throw new Error("connection reset")
 		if (s.fault === "hashWrite") w.failNextWrite = true
@@ -304,8 +313,19 @@ function expectBridge(m: Model, w: World, who: Who, r: BridgeReceipt): void {
 	if (!retained(m).some((b) => b.hash === r.l1TxHash)) w.seen.add("receipt for a send the record no longer lists")
 }
 
-const transition = (s: Spec, sent: boolean, code: string) =>
-	`${sent ? "sent" : "held back"}: ${code}${sent && s.fault !== "none" ? ` after ${s.fault}` : ""}`
+function heldBackState(m: Model, w: World, s: Spec, code: string): string[] {
+	const tags: string[] = []
+	if (s.override && m.record.kind === "kept" && m.record.who !== s.who) tags.push("override for another intent")
+	if (m.record.kind === "corrupt") tags.push("over a record that does not open")
+	if (w.reloaded && retained(m).some((b) => !b.saved)) tags.push("after a reload, over a hashless attempt")
+	if (code === "CONSUMED_ELSEWHERE") tags.push(m.logs ? "another bridge's event" : "spent without an event")
+	return tags
+}
+
+function transition(m: Model, w: World, s: Spec, sent: boolean, code: string): string {
+	const tags = [...(s.fault === "none" ? [] : [`after ${s.fault}`]), ...(sent ? [] : heldBackState(m, w, s, code))]
+	return `${sent ? `sent ${s.send}` : "held back"}: ${code}${tags.length ? ` (${tags.join(", ")})` : ""}`
+}
 
 const I3_RESULTS = new Set(["UNCERTAIN", "IN_FLIGHT", "RECEIPT", "CONSUMED_ELSEWHERE", "RPC_INCONSISTENT"])
 
@@ -317,7 +337,7 @@ function expectResult(m: Model, w: World, s: Spec, call: Call, r: Result, before
 	} else {
 		const want = call.sent ? afterSend(s, call.sent) : heldBack(m, s)
 		expect({ code: r.code, hash: r.hash }, `I4: the result of ${show(s)} (model: ${showModel(m)})`).toEqual(want)
-		w.seen.add(transition(s, call.sent !== undefined, r.code))
+		w.seen.add(transition(m, w, s, call.sent !== undefined, r.code))
 	}
 	if (before.plainAfterUncertain) expect([...I3_RESULTS, ...(s.fault === "read" ? ["RPC_FAILED"] : [])], "I3").toContain(r.code)
 	if (r.receipt) expectBridge(m, w, s.who, r.receipt)
@@ -347,7 +367,6 @@ async function runSubmit(m: Model, w: World, s: Spec): Promise<void> {
 	if (r.code === "UNCERTAIN" && mayStillLand(m)) m.uncertain = true
 }
 
-/** I2 after every command: the key holds exactly what the model says the code last wrote. */
 async function expectStored(m: Model, w: World): Promise<void> {
 	const raw = w.store.getItem(w.key)
 	if (m.record.kind === "none") return expect(raw, "I2: no record").toBeNull()
@@ -467,6 +486,7 @@ class Corrupt extends Step {
 class Reload extends Step {
 	async act(_m: Model, w: World) {
 		await w.reload()
+		w.reloaded = true
 		w.seen.add("reload")
 	}
 	toString() {
@@ -479,6 +499,7 @@ class SecondCaller extends Step {
 	constructor(
 		readonly first: Spec,
 		readonly who: Who,
+		readonly mustOverlap = false,
 	) {
 		super()
 	}
@@ -486,17 +507,23 @@ class SecondCaller extends Step {
 		const h = hold()
 		w.held = h
 		const first = runSubmit(m, w, this.first)
-		const reached = await Promise.race([
-			h.reached.then(() => true),
-			first.then(
-				() => false,
-				() => false,
-			),
-		])
-		if (reached) await this.rival(m, w)
-		h.release()
-		w.held = undefined
-		await first
+		let reached = false
+		try {
+			reached = await Promise.race([
+				h.reached.then(() => true),
+				first.then(
+					() => false,
+					() => false,
+				),
+			])
+			if (reached) await this.rival(m, w)
+		} finally {
+			// A held first submit keeps the note in `running`, which would refuse every later run's submits.
+			h.release()
+			w.held = undefined
+			await first
+		}
+		if (this.mustOverlap && !reached) throw new Error("the first submit never reached its simulation, so nothing overlapped")
 	}
 	async rival(m: Model, w: World) {
 		const writeContract = async () => {
@@ -530,16 +557,22 @@ const someOf = <T>(xs: readonly T[]): fc.Arbitrary<T[]> => fc.tuple(...xs.map(()
 
 /**
  * Swarm generation: each run draws the send modes, faults and side commands it may use, and whether every
- * submit overrides. Runs that never land reach deep states, such as an eviction after five unresolved
- * sends, that uniform choices over every command rarely do.
+ * submit overrides. A spent note ends what a run can explore, so half the runs never spend it; only those
+ * reach deep states, such as an eviction after five unresolved sends, often enough.
  */
-const swarm: fc.Arbitrary<Swarm> = fc.record({
-	always: fc.boolean(),
-	// A landing ends what a run can explore, so it stays the rarer outcome even where enabled.
-	sends: someOf<Send>(["land", "landNoLog", "other"]).map((x): Send[] => ["pending", "pending", "revert", "revert", ...x]),
-	faults: someOf<Fault>(["hashWrite", "ambiguous", "reject", "read"]).map((x): Fault[] => ["none", ...x]),
-	side: someOf(SIDE),
-})
+const swarm: fc.Arbitrary<Swarm> = fc
+	.record({
+		deep: fc.boolean(),
+		always: fc.boolean(),
+		ends: someOf<Send>(["land", "landNoLog", "other"]),
+		faults: someOf<Fault>(["hashWrite", "ambiguous", "reject", "read"]).map((x): Fault[] => ["none", ...x]),
+		side: someOf(SIDE),
+	})
+	.map(({ deep, ends, side, ...w }) => ({
+		...w,
+		sends: ["pending", "pending", "revert", "revert", ...(deep ? [] : ends)],
+		side: deep ? side.filter((k) => k !== "land" && k !== "elsewhere") : side,
+	}))
 
 function commandsOf(w: Swarm): fc.Arbitrary<Cmd> {
 	const spec: fc.Arbitrary<Spec> = fc.record({
@@ -562,7 +595,7 @@ function commandsOf(w: Swarm): fc.Arbitrary<Cmd> {
 const sub = (who: Who, o: Partial<Spec> = {}): Submit => new Submit({ override: false, who, send: "pending", fault: "none", ...o })
 const ov = (who: Who, o: Partial<Spec> = {}): Submit => sub(who, { override: true, ...o })
 
-/** Traces too long or exact for random runs to find reliably; their transitions are the random runs' coverage floor. */
+/** Traces too long or exact for random runs to find whole; every transition they reach, random runs must reach too. */
 const SCENARIOS: [string, Step[]][] = [
 	[
 		"an eviction, then the evicted send lands",
@@ -597,7 +630,7 @@ const SCENARIOS: [string, Step[]][] = [
 	["a failed hash write, then a reload", [sub("A", { fault: "hashWrite" }), new Reload(), sub("A"), new OnChain("revert", 0), sub("A")]],
 	["an earlier attempt lands", [sub("A"), new OnChain("land", 0), sub("A")]],
 	["a rejection keeps the record", [sub("A", { send: "revert" }), sub("A", { fault: "reject" }), sub("A", { send: "land" })]],
-	["an overlapping second caller", [new SecondCaller({ override: false, who: "A", send: "land", fault: "none" }, "B")]],
+	["an overlapping second caller", [new SecondCaller({ override: false, who: "A", send: "land", fault: "none" }, "B", true)]],
 ]
 
 /** Runs one fixed list and requires every step to have run: a skipped step would leave its scenario untested. */
@@ -635,7 +668,7 @@ describe("submit, against a model of the chain and the store", () => {
 	it.each(SCENARIOS)("%s", (_, steps) => runScenario(new Set(), steps))
 
 	const name = "random command sequences keep I1–I4"
-	const p = propertyParams(import.meta.url, name, 100, 10_000)
+	const p = propertyParams(import.meta.url, name, 400, 20_000)
 	it(
 		name,
 		async () => {
