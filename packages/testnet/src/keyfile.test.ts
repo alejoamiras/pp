@@ -1,4 +1,4 @@
-import { readFileSync, symlinkSync } from "node:fs"
+import { linkSync, readFileSync, symlinkSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { generatePrivateKey } from "viem/accounts"
@@ -50,7 +50,7 @@ describe("the key file loader", () => {
 		])
 	})
 
-	it("refuses a looser directory or file, a link, another owner, and an absent file", () => {
+	it("refuses a looser directory or file, a link, a second hard link, another owner, and an absent file", () => {
 		const key = generatePrivateKey()
 		expect(
 			refusal(() => loadKeys(GUARDIAN, writeKeyFile(scratchHome(), [`GUARDIAN_KEY=${key}`], { dir: 0o755, file: 0o600 }), UID)),
@@ -62,6 +62,9 @@ describe("the key file loader", () => {
 		const linked = join(dirname(writeKeyFile(scratchHome(), [])), "linked.env")
 		symlinkSync(target, linked)
 		expect(refusal(() => loadKeys(GUARDIAN, linked, UID))).toMatch(/cannot be opened \(ELOOP\)/)
+		const hard = join(dirname(writeKeyFile(scratchHome(), [])), "hard.env")
+		linkSync(target, hard)
+		expect(refusal(() => loadKeys(GUARDIAN, hard, UID))).toMatch(/2 hard links/)
 		expect(refusal(() => loadKeys(GUARDIAN, target, UID + 1))).toMatch(/belongs to uid/)
 		expect(refusal(() => loadKeys(GUARDIAN, keyFilePath(scratchHome()), UID))).toMatch(/run `keys`/)
 	})

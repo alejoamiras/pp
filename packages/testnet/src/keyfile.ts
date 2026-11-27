@@ -100,7 +100,10 @@ export function parseKeyLines(text: string, path: string, wanted: ReadonlySet<st
 	return { names, values }
 }
 
-/** Opens the file without following a link and checks the open descriptor, so a swap after the check is not read. */
+/**
+ * Opens the file without following a link and checks the open descriptor, so a swap after the check is
+ * not read. A second hard link is refused: it could carry the real key file into a scratch home.
+ */
 export function openKeyFile(path: string, flags: number, uid: number): number {
 	let fd: number
 	try {
@@ -110,7 +113,9 @@ export function openKeyFile(path: string, flags: number, uid: number): number {
 		throw new GuardError("keys", `${path} cannot be opened (${code ?? "error"}); run \`keys\` to create it`)
 	}
 	try {
-		assertPrivate(fstatSync(fd), "file", path, uid, false)
+		const st = fstatSync(fd)
+		assertPrivate(st, "file", path, uid, false)
+		if (st.nlink !== 1) throw new GuardError("keys", `${path} has ${st.nlink} hard links; the key file must have exactly one`)
 		return fd
 	} catch (e) {
 		closeSync(fd)
