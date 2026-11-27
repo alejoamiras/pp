@@ -3,6 +3,7 @@
  * returns `null` (or a reason) instead of throwing, so a hostile value cannot crash a screen.
  */
 import { type Address, checksumAddress, isAddressEqual } from "viem"
+import type { LabelBalance } from "./ports"
 import type { AztecAddress, Origin } from "./stack-types"
 
 /** The BN254 scalar field modulus: Aztec addresses and labels are elements of this field. */
@@ -88,6 +89,12 @@ export function parseOrigin(value: unknown): Origin | null {
 	if (value === 0 || value === 0n) return 0
 	if (value === 1 || value === 1n) return 1
 	return null
+}
+
+/** One `private_balances_by_label` row, `(label, origin, balance)`, as a wallet answers it. */
+export function parseBalanceRow(row: readonly unknown[]): LabelBalance | null {
+	const [label, origin, balance] = [parseLabel(row[0]), parseOrigin(row[1]), parseU128(row[2])]
+	return label === null || origin === null || balance === null ? null : { label, origin, balance }
 }
 
 const DECIMAL = /^(\d{1,39})(?:\.(\d*))?$/

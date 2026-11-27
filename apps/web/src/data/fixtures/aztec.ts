@@ -8,7 +8,7 @@ import type { AztecAddress, Origin } from "../stack-types"
 import { MAX_NOTES_PER_BURN, ragequitChunks } from "../chunks"
 import { BridgeFailure, ProviderError } from "../errors"
 import { BALANCES_PAGE, NOTES_PAGE, readAllPages } from "../paging"
-import { BN254_P, isAztecPoint, parseLabel, parseOrigin, parsePayee, parseU128 } from "../parse"
+import { BN254_P, isAztecPoint, parseBalanceRow, parsePayee, parseU128 } from "../parse"
 import type { AztecPort, LabelBalance, Sent } from "../ports"
 import { fixtureLabelState } from "./allow-list"
 import type { FixtureOp } from "./faults"
@@ -37,11 +37,6 @@ function notesView(w: World, owner: AztecAddress, label: bigint, start: number):
 		.sort(desc)
 		.map((n) => n.value)
 		.slice(start, start + NOTES_PAGE)
-}
-
-function parseBalance(row: unknown[]): LabelBalance | null {
-	const [label, origin, balance] = [parseLabel(row[0]), parseOrigin(row[1]), parseU128(row[2])]
-	return label === null || origin === null || balance === null ? null : { label, origin, balance }
 }
 
 /** One wallet send: an armed fault answers like the wallet or the chain would; `effect` returns a revert reason or applies. */
@@ -118,7 +113,7 @@ export function fixtureAztec(w: World): AztecPort {
 	return {
 		async balancesByLabel(owner) {
 			const rows = await readAllPages(async (start) => balancesView(w, owner, start), BALANCES_PAGE)
-			return rows.map(parseBalance).filter((b): b is LabelBalance => b !== null)
+			return rows.map(parseBalanceRow).filter((b): b is LabelBalance => b !== null)
 		},
 		async notesByLabel(owner, label) {
 			const values = await readAllPages(async (start) => notesView(w, owner, label, start), NOTES_PAGE)
