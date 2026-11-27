@@ -80,12 +80,15 @@ describe("the deployment file", () => {
 				asset: a,
 				deployBlock: 5n,
 				aspApiUrl: loopback(own.network.aspPort as number),
+				accessRouter: a,
+				relay: a,
 			},
 			bridge: { factory: a, portal: a, hub: word, token: word, registry: word, deployBlock: 6n, factoryTx: word },
 		}
 		const m = toStackManifest(d)
 		expect(m).toMatchObject({ chainId: 11155111, l1Rpc: own.network.l1Rpc, bridge: { deployBlock: 6n } })
 		expect(m.bridge).not.toHaveProperty("factoryTx")
+		expect(m.pool).not.toHaveProperty("accessRouter")
 		expect(m.bot).toBeUndefined()
 	})
 })

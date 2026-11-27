@@ -10,6 +10,8 @@ import { requireSections, type TestnetDeployment } from "./schema"
 export function toStackManifest(file: TestnetDeployment): StackManifest {
 	const d = requireSections(file, ["pool", "bridge"])
 	const { factoryTx: _, ...bridge } = d.bridge
+	// The own pool's code-check fields are not part of a stack manifest's strict pool block.
+	const { accessRouter: _router, relay: _relay, ...pool } = d.pool
 	return parseStackManifest(
 		JSON.parse(
 			JSON.stringify(
@@ -18,7 +20,7 @@ export function toStackManifest(file: TestnetDeployment): StackManifest {
 					chainId: d.network.l1ChainId,
 					l1Rpc: d.network.l1Rpc,
 					aztecNode: d.network.aztecNode,
-					pool: d.pool,
+					pool,
 					bridge,
 					...(d.expected
 						? { bot: { url: loopback(d.network.botPort), poster: d.expected.botPoster, birthIntake: d.expected.birthIntake } }
