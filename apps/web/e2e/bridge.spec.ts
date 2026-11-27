@@ -11,6 +11,7 @@ import { anvilKey } from "@pp/bridge-core/sandbox"
 import { deriveClaimKey, deriveClaimSalt } from "@pp/bridge-spec"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
 import { DEMO_SENDER_ADDRESS } from "@pp/local-stack/seed"
+import { messageOf } from "../src/data/errors"
 import { formatAmount, plainAmount } from "../src/ui/format"
 import { approvedNote, seededStack } from "./stack"
 import { connectWallet, signInToPool, submitted, watchPage } from "./support"
@@ -50,8 +51,8 @@ const storageText = (page: Page) =>
 	)
 
 // Fails if the page's proof, the injected wallet's send, the claim through the Aztec wallet or the
-// label's balance breaks in the browser, or if the stored record holds a nullifier, a claim salt or the
-// sign-in signature in the clear.
+// label's balance breaks in the browser; if a wallet's no reads as anything but a rejection; or if the
+// stored record holds a nullifier, a claim salt or the sign-in signature in the clear.
 test("bridges a pool note, claims it on Aztec and shows the balance under its label; the stored record holds no secret", async ({
 	page,
 	run,
@@ -74,7 +75,13 @@ test("bridges a pool note, claims it on Aztec and shows the balance under its la
 	const form = await openForm(page, note.commitment, plainAmount(amount, s.decimals))
 	await expect(form.getByLabel(`Amount to bridge (${s.symbol})`)).toBeVisible()
 	const before = await storageText(page)
+	// The wallet's no reaches the page as a rejection: nothing sent, the record dropped, the form back.
+	l1.rejectNext("transaction")
 	step("start")
+	await form.getByRole("button", { name: "Bridge to Aztec" }).click()
+	await expect(form.getByText(messageOf("WALLET_REJECTED"))).toBeVisible({ timeout: WAIT.mined })
+	step("declined")
+	expect(await storageText(page), "the declined send left no record").toBe(before)
 	await form.getByRole("button", { name: "Bridge to Aztec" }).click()
 	await expect(screen).toHaveAttribute("data-step", /mined|claimable/, { timeout: WAIT.mined })
 	step("mined")
