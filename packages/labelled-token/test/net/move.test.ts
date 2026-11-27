@@ -115,7 +115,10 @@ describe("move: anchor vs inclusion", () => {
 		expect(await values(racer.token, racer.from, L)).toEqual([40n, 20n])
 
 		// The revert dropped the change note's sequence nullifier, which the next self-send must prove.
-		await expect(ragequit(racer, 10n).send(sendOpts(racer) as never)).rejects.toThrow(/reading an unknown nullifier/)
+		// On an attached network another client's blocks may already have made the revert final.
+		if (inject("ownsNetwork")) {
+			await expect(ragequit(racer, 10n).send(sendOpts(racer) as never)).rejects.toThrow(/reading an unknown nullifier/)
+		}
 		await ragequit(racer, 40n).send(sendOpts(racer) as never)
 		await settledBalance(racer, 20n)
 	})

@@ -133,7 +133,7 @@ pub contract LabelledToken {
     #[external("public")]
     fn transfer_public(to: AztecAddress, amount: u128) {
         assert(!to.is_zero(), "zero recipient");
-        // No contract can sit at an off-curve address, so a credit there could never move again.
+        // Only protocol contracts sit off the curve, and none calls this token: a credit there is stranded.
         assert(to.is_valid(), "invalid recipient");
         // `Transfer` to the sentinel would read as a move into private balances.
         assert(to != PRIVATE_ADDRESS_MAGIC_VALUE, "private sentinel recipient");
