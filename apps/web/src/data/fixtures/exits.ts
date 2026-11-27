@@ -20,10 +20,11 @@ function viewOf(w: World, e: FixtureExit): ExitView {
 export function fixtureExits(w: World): ExitPort {
 	return {
 		tickets: async (payee: Address) => w.s.exits.filter((e) => isAddressEqual(e.payee, payee)).map((e) => viewOf(w, e)),
-		async settle(t, sender, on) {
+		async settle(t, from, on) {
 			const fault = w.takeFault("settle")
 			if (fault !== null) throw new BridgeFailure(fault as UiCode)
-			if (!isAddressEqual(sender, selectedAccount(w))) throw new ProviderError(4100, "not the selected account")
+			// The fixture world has no demo sender, so a demo choice names no account it would sign for.
+			if (from.demo || !isAddressEqual(from.sender, selectedAccount(w))) throw new ProviderError(4100, "not the selected account")
 			const e = w.s.exits.find((x) => x.l2TxHash === t.l2TxHash && x.messageIndexInTx === t.messageIndexInTx)
 			if (!e) throw new BridgeFailure("TICKET_NOT_FOUND")
 			if (e.settledTx) return e.settledTx

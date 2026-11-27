@@ -1,7 +1,7 @@
 /**
  * Exits for a stack build. A ragequit goes out through the connected Aztec wallet the way a claim does;
  * its tickets, their status and their settlement come from the bridge client over the manifest's RPC
- * and node; a settle sends from the injected wallet, pinned to its sender, behind the guard.
+ * and node; a settle sends as a bridge spend does, pinned to its sender, behind the guard.
  */
 import {
 	type BridgeClient,
@@ -69,10 +69,10 @@ export function stackExits(d: ExitDeps): Pick<AztecPort, "ragequit"> & ExitPort 
 				),
 			)
 		},
-		settle: (t, sender, on) =>
+		settle: (t, from, on) =>
 			client.settle(
 				t,
-				d.l1.settleWallet(sender, () => on.handoff()),
+				d.l1.settleWallet(from, () => on.handoff()),
 			),
 	}
 }

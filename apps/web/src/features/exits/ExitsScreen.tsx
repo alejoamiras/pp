@@ -26,13 +26,14 @@ function useCollect(view: ExitView) {
 	const { source, live, refresh } = useApp()
 	const [state, setState] = useState<Collect>({ kind: "idle" })
 	const collect = async () => {
-		const { account, chainId } = live.get()
+		// The context's account is the local demo's dev account while the page has chosen it, as for a bridge.
+		const { account, chainId, demo } = live.context()
 		if (account === null) return setState({ kind: "failed", code: "NO_SENDER" })
 		if (chainId !== source.deployment.chainId) return setState({ kind: "failed", code: "CHAIN_MISMATCH" })
-		const on = bindL1Send(live.get, account, chainId)
+		const on = bindL1Send(live.context, account, chainId)
 		setState({ kind: "collecting" })
 		try {
-			await source.exits.settle(view.ticket, account, on)
+			await source.exits.settle(view.ticket, { sender: account, demo }, on)
 			setState({ kind: "idle" })
 		} catch (err) {
 			const code = on.refused() ? "CONTEXT_CHANGED" : isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED")
@@ -44,10 +45,14 @@ function useCollect(view: ExitView) {
 	return { state, collect }
 }
 
+const DEMO_COLLECT_NOTE = "Collecting sends one Ethereum transaction from the local demo's dev account, no wallet."
+
 function ExitRow({ view }: { view: ExitView }) {
-	const { source } = useApp()
+	const { source, live } = useApp()
 	const { state, collect } = useCollect(view)
 	const s = STATUS[view.status]
+	const fromDemo = useLive(live).demo && source.l1.demo !== undefined
+	const note = view.status === "ready" && fromDemo ? DEMO_COLLECT_NOTE : s.note
 	const { ticket } = view
 	return (
 		<li
@@ -71,7 +76,7 @@ function ExitRow({ view }: { view: ExitView }) {
 					to {shortHex(ticket.payee)}
 				</span>
 			</div>
-			<p className="text-xs text-ink-3">{s.note}</p>
+			<p className="text-xs text-ink-3">{note}</p>
 			{view.status === "ready" ? (
 				<ActionButton
 					variant="primary"

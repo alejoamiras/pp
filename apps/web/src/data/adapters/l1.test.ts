@@ -1,7 +1,7 @@
 import type { Address, Hash } from "viem"
 import { describe, expect, test } from "vitest"
 import type { Attempt } from "../ports"
-import { type InjectedWallet, stackL1 } from "./l1"
+import { type InjectedWallet, type StackL1, stackL1 } from "./l1"
 
 const TARGET = { l1ChainId: 31337, l1RpcUrl: "http://127.0.0.1:8545" }
 const SENDER: Address = "0x00000000000000000000000000000000000000b2"
@@ -54,18 +54,20 @@ describe("the stack's Ethereum port", () => {
 		expect(sent).toEqual([TX])
 	})
 
-	test("a spend from the dev account goes through the demo sender only for an attempt made under the page's choice", async () => {
+	test.each([
+		["spend", (l1: StackL1, from: Pick<Attempt, "sender" | "demo">) => l1.spendWallet(from as Attempt, () => {}, { sent: () => {} })],
+		["settle", (l1: StackL1, from: Pick<Attempt, "sender" | "demo">) => l1.settleWallet(from, () => {})],
+	])("a %s from the dev account goes through the demo sender only under the page's choice", async (_, client) => {
 		const DEV: Address = "0x00000000000000000000000000000000000000Aa"
 		const own = wallet(TARGET.l1ChainId)
 		const injected = wallet(TARGET.l1ChainId)
 		const l1 = stackL1(TARGET, injected.w, { address: DEV, ready: async () => {}, provider: own.w })
-		const spend = (demo: boolean) =>
-			l1.spendWallet({ sender: DEV, demo } as Attempt, () => {}, { sent: () => {} }).sendTransaction({ to: PORTAL, value: 0n })
+		const send = (demo: boolean) => client(l1, { sender: DEV, demo }).sendTransaction({ to: PORTAL, value: 0n })
 		// A passed check chooses nothing: a wallet holding the dev account still sends as itself.
 		await l1.demo?.ready()
-		await expect(spend(false)).resolves.toBe(TX)
+		await expect(send(false)).resolves.toBe(TX)
 		expect([injected.from, own.from]).toEqual([[DEV], []])
-		await expect(spend(true)).resolves.toBe(TX)
+		await expect(send(true)).resolves.toBe(TX)
 		expect([injected.from, own.from]).toEqual([[DEV], [DEV]])
 		expect(stackL1(TARGET, injected.w).demo).toBeUndefined()
 	})

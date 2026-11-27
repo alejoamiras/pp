@@ -114,7 +114,7 @@ const aztec: AztecPort = {
 }
 const exits: ExitPort = {
 	tickets: async (payee) => (await loadExits()).tickets(payee),
-	settle: async (t, sender, on) => (await loadExits()).settle(t, sender, on),
+	settle: async (t, from, on) => (await loadExits()).settle(t, from, on),
 }
 /** The allow list loads on first use; its worker starts at the first check. */
 let allowLoad: Promise<AllowListPort> | undefined

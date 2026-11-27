@@ -197,8 +197,11 @@ export interface ExitView {
 }
 export interface ExitPort {
 	tickets(payee: Address): Promise<ExitView[]>
-	/** Sends from `sender`, or returns the transaction that already settled `t`. */
-	settle(t: ExitTicket, sender: Address, on: Pick<SubmitHooks, "handoff">): Promise<Hash>
+	/**
+	 * Sends from `from.sender`, through the local demo's dev account only when `from.demo` names the
+	 * page's choice of it, or returns the transaction that already settled `t`.
+	 */
+	settle(t: ExitTicket, from: Pick<Attempt, "sender" | "demo">, on: Pick<SubmitHooks, "handoff">): Promise<Hash>
 }
 
 /** The registry's record and the time of the Aztec block it was read at: one anchor. */

@@ -207,12 +207,12 @@ describe("the exits adapter", () => {
 		})
 		const t = { kind: "public", token: TOKEN, payee: PAYEE, amount: 25n, l2TxHash: L2_TX, messageIndexInTx: 0 } as const
 		const live = () => r.ctx
-		await expect(r.exits.settle(t, SENDER, bindL1Send(live, SENDER, 31337))).resolves.toBe(L1_TX)
+		await expect(r.exits.settle(t, { sender: SENDER, demo: false }, bindL1Send(live, SENDER, 31337))).resolves.toBe(L1_TX)
 		expect(asked).toEqual(["eth_sendTransaction"])
 
 		r.ctx.account = "0x00000000000000000000000000000000000000c3"
 		const moved = bindL1Send(live, SENDER, 31337)
-		await expect(r.exits.settle(t, SENDER, moved)).rejects.toMatchObject({ code: 4001 })
+		await expect(r.exits.settle(t, { sender: SENDER, demo: false }, moved)).rejects.toMatchObject({ code: 4001 })
 		expect(asked).toEqual(["eth_sendTransaction"])
 		expect(moved.refused()).toBe(true)
 	})
