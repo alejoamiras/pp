@@ -63,11 +63,16 @@ function toPoolNote(n: Note): PoolNote {
 	}
 }
 
-function contracts(config: ClientConfig, wallet: LocalWallet, merkleService: MerkleService) {
+export function contracts(config: ClientConfig, wallet: LocalWallet, merkleService: MerkleService) {
 	const d = config.deployment
 	const deploymentBlock = d.deployBlock
 	const publicClient = publicClientAt(config)
-	const rpcInteractor = new ViemRPCInteractor({ publicClient: sdkViem<SdkPublicClient>(publicClient) })
+	// Every log scan starts at the deploy block or later: with no usable ASP snapshot the SDK rescans
+	// from "0x0", which its vault adapter reads as block 0 rather than as "from deployment".
+	const rpcInteractor = new ViemRPCInteractor({
+		publicClient: sdkViem<SdkPublicClient>(publicClient),
+		minFromBlock: deploymentBlock,
+	})
 	const walletInteractor = new ViemWalletInteractor({ walletClient: sdkViem<SdkWalletClient>(wallet), expectedChainId: config.chainId })
 	const aspRegistryInteractor = new ASPRegistryInteractor({ rpcInteractor, contractAddress: d.aspRegistry })
 	const aspDataProvider = new HttpASPDataProvider({
@@ -104,6 +109,9 @@ async function wireSession(
 	prover: IGroth16Prover,
 ) {
 	const noteManager = new NoteManager({})
+	// Discovery scans from this cursor, and the SDK's fall-back to the deploy block never fires for the
+	// "0x0" it starts at: from genesis, a public node with pruned history refuses the first scan.
+	noteManager.setSyncCursor(toHex(config.deployment.deployBlock) as SdkHex)
 	const hashService = await PoseidonHashService.create()
 	const merkleService = new MerkleService({ hashService })
 	const noteComputationService = new NoteComputationService({ hashService, cryptoService })

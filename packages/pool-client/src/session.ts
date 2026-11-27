@@ -1,4 +1,4 @@
-import type { Account, Address, Chain, PublicClient, Transport, WalletClient } from "viem"
+import { type Account, type Address, type Chain, type PublicClient, type Transport, toHex, type WalletClient } from "viem"
 import type { Keys } from "./keys.ts"
 import { createProver } from "./runtime/prover.ts"
 import type { VerifiedArtifacts } from "./runtime/artifacts.ts"
@@ -56,7 +56,12 @@ type SdkPublicClient = ConstructorParameters<typeof ViemRPCInteractor>[0]["publi
 type SdkWalletClient = ConstructorParameters<typeof ViemWalletInteractor>[0]["walletClient"]
 
 function contracts(pool: PoolConfig, publicClient: PublicClient, merkleService: MerkleService, wallet: LocalWallet | undefined) {
-	const rpcInteractor = new ViemRPCInteractor({ publicClient: publicClient as unknown as SdkPublicClient })
+	// Every log scan starts at the deploy block or later: with no usable ASP snapshot the SDK rescans
+	// from "0x0", which its vault adapter reads as block 0 rather than as "from deployment".
+	const rpcInteractor = new ViemRPCInteractor({
+		publicClient: publicClient as unknown as SdkPublicClient,
+		minFromBlock: pool.deployBlock,
+	})
 	const writes = wallet
 		? {
 				walletInteractor: new ViemWalletInteractor({
@@ -103,6 +108,9 @@ export async function createSession(d: {
 	wallet?: LocalWallet
 }): Promise<Session> {
 	const noteManager = new NoteManager({})
+	// Discovery scans from this cursor, and the SDK's fall-back to the deploy block never fires for the
+	// "0x0" it starts at: from genesis, a public node with pruned history refuses the first scan.
+	noteManager.setSyncCursor(toHex(d.pool.deployBlock))
 	const hashService = await PoseidonHashService.create()
 	const merkleService = new MerkleService({ hashService })
 	const cryptoService = d.keys.crypto
