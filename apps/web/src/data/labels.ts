@@ -10,6 +10,7 @@
 import type { LabelState, Origin } from "./stack-types"
 import type { Tone } from "../ui"
 import { type AllowListCode, messageOf } from "./errors"
+import { NO_LIST_CODES } from "./list-post"
 
 export interface LabelView {
 	text: string
@@ -75,12 +76,12 @@ const FAILURE_TEXT: Record<AllowListCode, string> = {
 	LIST_NOT_POSTED: "No allow list yet",
 }
 
-/** No list to check until a post, which the next refresh reads: nothing to check again. */
-const AWAITING_POST: ReadonlySet<AllowListCode> = new Set(["LIST_RESETTING", "LIST_NOT_POSTED"])
-
-/** A label whose list could not be checked: its state is unknown, so only the ragequit stays open. */
+/**
+ * A label whose list could not be checked: its state is unknown, so only the ragequit stays open. A
+ * record with no list waits for a post, which the next refresh reads: nothing to check again.
+ */
 export function listFailureView(code: AllowListCode): LabelView {
-	const waiting = AWAITING_POST.has(code)
+	const waiting = NO_LIST_CODES.has(code)
 	return {
 		text: FAILURE_TEXT[code],
 		tone: code === "LIST_CANCELLED" ? "neutral" : waiting ? "wait" : "bad",

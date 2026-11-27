@@ -88,6 +88,16 @@ async function latestBlock(nodeUrl: string, fetchFn: typeof fetch): Promise<{ ha
 	return { hash: blockHash as Hex, timestamp: BigInt(header.globalVariables.timestamp) }
 }
 
+/** `p`, or a cancel as soon as `signal` aborts, for a read that takes no signal of its own. */
+function unlessCancelled<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const stop = () => reject(new AllowListError("LIST_CANCELLED"))
+		if (signal.aborted) return stop()
+		signal.addEventListener("abort", stop, { once: true })
+		p.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop))
+	})
+}
+
 const FROM_WORKER: Record<ListFailure, AllowListCode> = {
 	MISMATCH: "LIST_MISMATCH",
 	OVERSIZED: "LIST_OVERSIZED",
@@ -216,10 +226,12 @@ class StackAllowList implements AllowListPort {
 		const deps = { fetch: this.fetchFn, timer: this.d.timer, signal, ...(this.d.limits ? { limits: this.d.limits } : {}) }
 		const text = await downloadSnapshot(url(view.record.sequence), deps)
 		if (text !== null) return text
-		// After a restart the bot serves only what it posts next; a heartbeat keeps the lists.
-		const latest = await readRootRecord({ aztecNode: this.d.nodeUrl, registry: this.d.registry }).catch(() => null)
-		// The read takes no signal: a Cancel during it is still a cancel, whatever it returned.
-		if (signal.aborted) throw new AllowListError("LIST_CANCELLED")
+		// After a restart the bot serves only what it posts next; a heartbeat keeps the lists. A clear
+		// answers 404 too, until the next post.
+		const read = readRootRecord({ aztecNode: this.d.nodeUrl, registry: this.d.registry }).catch(() => null)
+		const latest = await unlessCancelled(read, signal)
+		const none = latest && noListCode(latest)
+		if (none) throw new AllowListError(none)
 		if (latest === null || listsKey(latest) !== key) throw new AllowListError("LIST_UNAVAILABLE")
 		const again = await downloadSnapshot(url(latest.sequence), deps)
 		if (again === null) throw new AllowListError("LIST_UNAVAILABLE")

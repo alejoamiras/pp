@@ -4,6 +4,7 @@ import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { describe, expect, test, vi } from "vitest"
 import { stageManifest } from "../capabilities"
+import { AllowListError } from "../errors"
 import type { AllowListPort, AztecSendHooks, Stage } from "../ports"
 import type { AztecAddress, LabelCheck } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
@@ -116,7 +117,7 @@ describe("the token's checked spends", () => {
 			nowSec: 2n,
 		}
 		const later = { ...first, record: { ...first.record, sequence: 2n, poolRoot: 10n } }
-		const current = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(later)
+		const current = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(later)
 		const check = vi.fn().mockResolvedValueOnce(ACTIVE).mockResolvedValueOnce({ state: "ABSENT" })
 		const sends = stackTokenSends({
 			aztec: r.aztec,
@@ -159,6 +160,54 @@ describe("the token's checked spends", () => {
 		})
 		await expect(again.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())).rejects.toMatchObject({ code: "LIST_STALE" })
 		expect(check).toHaveBeenCalledTimes(3)
+		// An absence under a list that keeps moving is no more final than a path: the bound ends too new.
+		check.mockClear().mockResolvedValue({ state: "ABSENT" })
+		await expect(again.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())).rejects.toMatchObject({ code: "LIST_STALE" })
+		expect(check).toHaveBeenCalledTimes(3)
+		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
+	})
+
+	const posted = { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n, poolSize: 1n, birthSize: 0n }
+	const through = (r: ReturnType<typeof rig>, current: AllowListPort["current"], check: AllowListPort["check"]) =>
+		stackTokenSends({ aztec: r.aztec, allowList: { current, check }, sponsoredFpc: FPC, notes: ENOUGH, publicBalance: PUBLIC })
+
+	test.each([
+		["absent", async (): Promise<LabelCheck> => ({ state: "ABSENT" })],
+		["active", async () => ACTIVE],
+		["met the clear itself", async (): Promise<LabelCheck> => Promise.reject(new AllowListError("LIST_RESETTING"))],
+	])("a clear that lands during the check refuses the spend as stale, whatever the old list's check %s", async (_, answer) => {
+		const r = rig()
+		const cleared = { sequence: 2n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+		const current = vi.fn().mockResolvedValueOnce({ record: posted, nowSec: 2n }).mockResolvedValue({ record: cleared, nowSec: 3n })
+		const check = vi.fn(answer)
+		const spend = through(r, current, check).unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())
+		await expect(spend).rejects.toMatchObject({ code: "LIST_STALE" })
+		expect([check.mock.calls.length, r.wallet.sendTx.mock.calls.length]).toEqual([1, 0])
+	})
+
+	test.each([
+		["the first", []],
+		["the one after an absence", [{ record: posted, nowSec: 2n }]],
+		["the one after a clear", [{ record: { ...posted, poolRoot: 0n, poolSize: 0n, rootTime: 0n }, nowSec: 2n }]],
+	])("a record read that fails, %s, refuses the spend as an unreadable list before the handoff", async (_, reads) => {
+		const r = rig()
+		const current = vi.fn()
+		for (const read of reads) current.mockResolvedValueOnce(read)
+		current.mockRejectedValue(new Error("node_getBlockData: fetch failed"))
+		const check = vi.fn().mockResolvedValue({ state: "ABSENT" })
+		const handoff = vi.fn()
+		const spend = through(r, current, check).unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on(handoff))
+		await expect(spend).rejects.toMatchObject({ code: "LIST_UNAVAILABLE" })
+		expect([handoff.mock.calls.length, r.wallet.sendTx.mock.calls.length]).toEqual([0, 0])
+	})
+
+	test("a label absent from the first record proceeds on the record that moved in during its check and holds it", async () => {
+		const r = rig()
+		const next = { ...posted, sequence: 2n, poolRoot: 10n, rootTime: 2n }
+		const current = vi.fn().mockResolvedValueOnce({ record: posted, nowSec: 2n }).mockResolvedValue({ record: next, nowSec: 3n })
+		const check = vi.fn().mockResolvedValueOnce({ state: "ABSENT" }).mockResolvedValueOnce(ACTIVE)
+		await through(r, current, check).unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())
+		expect(check.mock.calls.map(([v]) => v.record.sequence)).toEqual([1n, 2n])
 		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
 	})
 
