@@ -10,6 +10,7 @@
 		"build:local": "vite build --mode sandbox",
 		"check:stack-build": "bun scripts/check-stack-build.ts",
 		"preview": "vite preview",
+		"serve": "bun scripts/serve.ts",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "bun --bun vitest run",
 		"test:headers": "bun scripts/test-headers.ts",
