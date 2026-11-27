@@ -10,11 +10,10 @@ import { TxStatus } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { type Address, defineChain, type Hex, isAddressEqual } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
-import { tokenBridgeHubArtifact } from "../../src/artifacts"
 import { aspRootRegistryArtifact } from "../../src/asp-registry-artifact"
 import { PORTAL_FACTORY_ABI } from "../../src/factory-abi"
 import type { L1Ctx } from "../l1-ctx"
-import { assertGenerationBindings, type ExpectedBindings, rollupEndpointsOf } from "../../src/generation-bindings"
+import { type ExpectedBindings, rollupEndpointsOf } from "../../src/generation-bindings"
 import { hubTokenFor } from "../../src/hub-l2"
 import type { StackManifest } from "../../src/stack-manifest"
 import { openDeployJournal } from "../deploy-manifest"
@@ -24,7 +23,7 @@ import { createActor, SANDBOX_ACTOR_SALT, SANDBOX_ACTOR_SECRET } from "../sandbo
 import { createL1Clients, createL2Wallet, createNode } from "../script-bootstrap"
 import { missingEvmArtifacts } from "../script-artifacts"
 import { registerHub, sponsoredFpcFee } from "../script-l2"
-import { assertV1Hub } from "./v1-hub"
+import { checkBeforeOpen, type OpenContext } from "./open"
 
 export type StackBridgeBlock = NonNullable<StackManifest["bridge"]>
 
@@ -39,15 +38,27 @@ export type DeployBridgeOptions = {
 	aztecNode: string
 	chainId: number
 	pool: { poolVault: Address; asset: Address }
-	/** Owner and guardian of the factory: a sandbox key, never a real one. */
+	/** The factory's deployer, and its guardian unless `guardian` is given. */
 	deployerKey: Hex
+	/** The factory's owner, the only key that opens or pauses entries; default the deployer. A
+	 *  generation with its own guardian opens through `openDeployedEntries`, never `openBridgeEntries`. */
+	guardian?: Address
 	lifetimeCap: bigint
 	/** The ASP registry's operators; absent, the hub and its token get the zero registry. */
 	registry?: { poster: Hex; birthIntake: Hex }
 	/** Only an orchestrator passes this, before its heartbeat runs; absent, blocks come from beats. */
 	forceBlock?: () => Promise<void>
-	/** The deployer's PXE store and the deploy journal; the caller owns and removes it. */
+	/** The deploy journal, and the deployer's PXE store unless `l2Deployer` is given; the caller owns and removes it. */
 	dataDir: string
+	/** A real L2 deployer account (it becomes the registry's admin). Its PXE store is then an owned
+	 *  tmpfs store, never `dataDir`; default the sandbox actor. */
+	l2Deployer?: { secret: Hex; salt: bigint }
+	/** Default false, as on a local network. */
+	proverEnabled?: boolean
+	/** "node" leaves gas to the node's estimate; default the sandbox's `FEE_CEILING`. */
+	gasSettings?: "node"
+	/** The L2 deploy and send waits; default aztec.js's. */
+	l2WaitTimeoutSec?: number
 }
 
 /** A deployed generation whose entries are still paused. */
@@ -61,6 +72,7 @@ export interface UnopenedBridge {
 }
 
 type Internals = {
+	chainId: number
 	l1: L1Ctx
 	wallet: Wallet
 	node: AztecNode
@@ -87,15 +99,17 @@ function l1For(o: DeployBridgeOptions): L1Ctx {
 
 async function l2For(o: DeployBridgeOptions, wallet: Wallet, node: AztecNode): Promise<L2Ctx> {
 	const { fee: sponsored } = await sponsoredFpcFee(wallet)
-	const fee = { ...sponsored, gasSettings: FEE_CEILING }
-	const actor = await createActor(wallet, node, fee, SANDBOX_ACTOR_SECRET, SANDBOX_ACTOR_SALT, (line) => console.log(`[bridge] ${line}`))
+	const fee = o.gasSettings === "node" ? sponsored : { ...sponsored, gasSettings: FEE_CEILING }
+	const { secret, salt } = o.l2Deployer ?? { secret: SANDBOX_ACTOR_SECRET, salt: SANDBOX_ACTOR_SALT }
+	const actor = await createActor(wallet, node, fee, secret, salt, (line) => console.log(`[bridge] ${line}`))
 	const from = actor.address
+	const timeout = o.l2WaitTimeoutSec === undefined ? {} : { timeout: o.l2WaitTimeoutSec }
 	return {
 		wallet,
 		node,
 		from,
-		deployOpts: { from, fee, wait: { waitForStatus: TxStatus.CHECKPOINTED } } as never,
-		sendOpts: { from, fee, wait: { waitForStatus: TxStatus.PROPOSED } } as never,
+		deployOpts: { from, fee, wait: { waitForStatus: TxStatus.CHECKPOINTED, ...timeout } } as never,
+		sendOpts: { from, fee, wait: { waitForStatus: TxStatus.PROPOSED, ...timeout } } as never,
 		...(o.forceBlock ? { forceBlock: o.forceBlock } : {}),
 	}
 }
@@ -121,7 +135,13 @@ async function deployOnto(o: DeployBridgeOptions, l1: L1Ctx, l2: L2Ctx): Promise
 		deployer: lc(l1.account.address),
 		registry: registryL1,
 	})
-	const inputs = { registry: registryL1, pool: o.pool.poolVault, lifetimeCap: o.lifetimeCap, guardianL1: l1.account.address, aspRegistry }
+	const inputs = {
+		registry: registryL1,
+		pool: o.pool.poolVault,
+		lifetimeCap: o.lifetimeCap,
+		guardianL1: o.guardian ?? l1.account.address,
+		aspRegistry,
+	}
 	const gen = await deployGeneration(l1, l2, inputs, journal)
 	const token = await preCreateToken(l1, l2, gen, o.pool.asset, journal)
 	const block = {
@@ -135,18 +155,21 @@ async function deployOnto(o: DeployBridgeOptions, l1: L1Ctx, l2: L2Ctx): Promise
 	return { gen, block, ...(registry ? { registry } : {}) }
 }
 
+/** A real deployer's store is an owned tmpfs store (`createL2Wallet` refuses disk for real keys); the sandbox actor's sits in `dataDir`. */
+export function deployerWalletOptions(o: Pick<DeployBridgeOptions, "aztecNode" | "dataDir" | "l2Deployer" | "proverEnabled">) {
+	const proverEnabled = o.proverEnabled ?? false
+	return o.l2Deployer
+		? { nodeUrl: o.aztecNode, proverEnabled, sandboxKeysOnly: false }
+		: { nodeUrl: o.aztecNode, proverEnabled, sandboxKeysOnly: true, dataDirectory: join(o.dataDir, "pxe") }
+}
+
 /**
  * Deploys a generation and pre-creates the pool asset's portal, with entries paused. The deployer's
  * PXE is stopped before this rejects; on success the caller owns `stop()` from the moment it returns.
  */
 export async function deployBridgeGeneration(o: DeployBridgeOptions): Promise<UnopenedBridge> {
 	const node = createNode(o.aztecNode)
-	const wallet = (await createL2Wallet({
-		nodeUrl: o.aztecNode,
-		proverEnabled: false,
-		sandboxKeysOnly: true,
-		dataDirectory: join(o.dataDir, "pxe"),
-	})) as unknown as Wallet
+	const wallet = (await createL2Wallet(deployerWalletOptions(o))) as unknown as Wallet
 	let stopped: Promise<void> | undefined
 	const stop = () => {
 		stopped ??= (wallet as unknown as { stop(): Promise<void> }).stop()
@@ -160,7 +183,7 @@ export async function deployBridgeGeneration(o: DeployBridgeOptions): Promise<Un
 			factory: gen.l1.factory,
 			implementation: gen.l1.implementation,
 			hub: block.hub,
-			guardian: lc(l1.account.address),
+			guardian: lc(o.guardian ?? l1.account.address),
 			...(await rollupEndpointsOf(node)),
 			pool: lc(o.pool.poolVault),
 			lifetimeCap: o.lifetimeCap,
@@ -174,7 +197,16 @@ export async function deployBridgeGeneration(o: DeployBridgeOptions): Promise<Un
 				return stopped !== undefined
 			},
 		})
-		internals.set(u, { l1, wallet, node, from: l2.from, gen, asset: o.pool.asset, ...(registry ? { registry } : {}) })
+		internals.set(u, {
+			chainId: o.chainId,
+			l1,
+			wallet,
+			node,
+			from: l2.from,
+			gen,
+			asset: o.pool.asset,
+			...(registry ? { registry } : {}),
+		})
 		return u
 	} catch (e) {
 		await stop().catch(() => {})
@@ -203,11 +235,42 @@ async function readBack(h: Internals, block: StackBridgeBlock): Promise<void> {
 	if (token?.toLowerCase() !== block.token) throw new Error(`hub.token_for(asset) is ${token}, not the deployed ${block.token}`)
 }
 
+/** `checkBeforeOpen`'s context for the handle: `given`'s rollup endpoints, the generation's L1 registry and the rollup the node reports. */
+async function openContextOf(h: Internals, block: StackBridgeBlock, e: ExpectedBindings): Promise<OpenContext> {
+	const info = await h.node.getNodeInfo()
+	return {
+		chainId: h.chainId,
+		l1: h.l1.pub as never,
+		node: h.node as never,
+		factory: block.factory,
+		portals: e.portals.map((p) => ({
+			asset: p.token,
+			portal: p.portal,
+			...(isAddressEqual(p.token, h.asset) ? { l2Token: block.token } : {}),
+		})),
+		hub: block.hub,
+		registry: block.registry,
+		expected: {
+			guardian: e.guardian,
+			lifetimeCap: e.lifetimeCap,
+			pool: e.pool,
+			rollup: {
+				l1Registry: h.gen.l1.registry,
+				rollup: info.l1ContractAddresses.rollupAddress.toString() as Address,
+				inbox: e.inbox,
+				outbox: e.outbox,
+				rollupVersion: e.rollupVersion,
+			},
+		},
+	}
+}
+
 /**
- * Opens entries once the deployment reads back as `expected`: portal and token lookups, every
- * factory and implementation binding, and a v1 hub (a legacy hub would strand every bridge behind
- * a message nothing can claim). Any mismatch throws with entries still paused.
- * @throws BindingMismatchError, LegacyHubError, or Error naming the read that disagreed
+ * Opens entries once the deployment reads back as `expected`: portal and token lookups, then
+ * {@link checkBeforeOpen} (every factory and implementation binding, the rollup, a v1 hub: a legacy
+ * hub would strand every bridge behind a message nothing can claim). Any mismatch throws with entries
+ * still paused.
+ * @throws BindingMismatchError, LegacyHubError, OpenRefusedError, or Error naming the read that disagreed
  */
 export async function openBridgeEntries(u: UnopenedBridge, given: ExpectedBindings): Promise<StackBridgeBlock> {
 	const h = internals.get(u)
@@ -215,9 +278,10 @@ export async function openBridgeEntries(u: UnopenedBridge, given: ExpectedBindin
 	// Copied before any await: what is checked against the chain must be what was checked as this generation's.
 	const expected = structuredClone(given)
 	assertOwnGeneration(h, u.block, expected)
+	if (!isAddressEqual(h.gen.l1.guardian, h.l1.account.address))
+		throw new Error("this generation has its own guardian: open it with openDeployedEntries")
 	await readBack(h, u.block)
-	await assertGenerationBindings(h.l1.pub as never, expected, "stack bridge")
-	await assertV1Hub(h.node as never, AztecAddress.fromStringUnsafe(u.block.hub), tokenBridgeHubArtifact)
+	await checkBeforeOpen(await openContextOf(h, u.block, expected))
 	const factory = { address: u.block.factory, abi: PORTAL_FACTORY_ABI } as const
 	const hash = await h.l1.wallet.writeContract({
 		...factory,

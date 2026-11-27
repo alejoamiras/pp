@@ -59,6 +59,7 @@ export const PORTAL_FACTORY_ABI = [
 	},
 	{ type: "function", name: "IMPLEMENTATION", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
 	{ type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
+	{ type: "function", name: "pendingOwner", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
 	{ type: "function", name: "L2_HUB", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bytes32" }] },
 	{ type: "function", name: "INBOX", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
 	{ type: "function", name: "ROLLUP_VERSION", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
