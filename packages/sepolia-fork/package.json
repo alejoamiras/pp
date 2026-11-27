@@ -1,0 +1,24 @@
+{
+	"name": "@pp/sepolia-fork",
+	"version": "0.0.0",
+	"private": true,
+	"license": "Apache-2.0",
+	"description": "The bridge's Ethereum side against the real Sepolia pool and Aztec testnet Inbox, on an owned anvil fork.",
+	"type": "module",
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "bun test ./src/",
+		"test:net": "bun test --timeout 600000 ./test/",
+		"run": "bun src/cli.ts run",
+		"pins": "bun src/cli.ts pins"
+	},
+	"dependencies": {
+		"@pp/run-isolation": "workspace:*",
+		"viem": "2.45.3"
+	},
+	"devDependencies": {
+		"@types/bun": "1.4.4",
+		"@types/node": "^24.13.2",
+		"typescript": "^6.0.3"
+	}
+}

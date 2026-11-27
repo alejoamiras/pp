@@ -19,6 +19,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 | [`packages/asp-bot`](packages/asp-bot/README.md) | `@pp/asp-bot`: posts the ASP root to the Aztec registry and serves the snapshots, as a child process group. |
 | [`packages/pool-client`](packages/pool-client/README.md) | `@pp/pool-client`: Privacy Pools v2 notes and a checked one-input spend to a processor, in Node, Bun and the browser; never submits. `@pp/pool-client/testing` seeds a running `pp-env up`. |
 | [`packages/run-isolation`](packages/run-isolation/README.md) | `@pp/run-isolation`: the primitives a local run uses to own its ports and processes: the host port registry and its lock, group-leader children that end with the process that spawned them and their teardown, and `./process-group`, which tells a running group from one of unreaped zombies. Node-only, no dependencies. |
+| [`packages/sepolia-fork`](packages/sepolia-fork/README.md) | `@pp/sepolia-fork`: the bridge's Ethereum side against the real Sepolia pool and Aztec testnet Inbox, on an anvil fork it owns at a pinned block, with the pins checked on the fork and live. |
 | [`scripts/`](scripts) | CI-gating tests (`scripts/ci-cd/`), the complexity baseline, the absolute-path guard. |
 | [`.github/`](.github) | PR workflows, each with a `changes` filter and an exact-state aggregator. |
 
@@ -77,6 +78,8 @@ with warm package and toolchain caches.
 | Pool client, unit | `bun run --cwd packages/pool-client test` and `test:node` | 10 s |
 | Web e2e (sandbox boot, both builds, Playwright) | `bun run --cwd apps/web e2e` | 4 min |
 | Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |
+| Sepolia fork, unit | `bun run --cwd packages/sepolia-fork test` | 1 s |
+| Sepolia fork, against Sepolia | `SEPOLIA_RPC_URL=<public endpoint with archive state> bun run --cwd packages/sepolia-fork test:net`, then `run` | 6 s · 5 s |
 
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row
 the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml`,
