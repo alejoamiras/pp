@@ -7,7 +7,7 @@
  * contract's `sponsor_unconditionally` that rides in each of them, under `transaction`. The fee
  * contract is called, never registered, so it stays out of `contracts`.
  */
-import type { AztecAddress } from "./a7"
+import type { AztecAddress } from "./stack-types"
 import type { Stage } from "./ports"
 import { type ScopeBucket, scopeKey } from "./wallet/grant"
 

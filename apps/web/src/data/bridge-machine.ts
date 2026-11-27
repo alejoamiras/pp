@@ -4,7 +4,7 @@
  * leaves it unchanged, which is how a second Submit is ignored.
  */
 import type { Hash, Hex } from "viem"
-import type { AztecAddress, BridgeRecordView, BridgeStep, StaleRootCode } from "./a7"
+import type { AztecAddress, BridgeRecordView, BridgeStep, StaleRootCode } from "./stack-types"
 import type { UiCode } from "./errors"
 import type { Attempt } from "./ports"
 

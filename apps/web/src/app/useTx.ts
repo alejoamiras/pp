@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react"
-import type { AztecAddress } from "../data/a7"
+import type { AztecAddress } from "../data/stack-types"
 import type { UiCode } from "../data/errors"
 import type { Sent } from "../data/ports"
 import type { DataSource } from "../data/source"

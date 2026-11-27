@@ -5,7 +5,7 @@
  * keeps one for 10.
  */
 import { type Address, isAddressEqual } from "viem"
-import type { AztecAddress, BridgeRecordView, PoolNoteView } from "./a7"
+import type { AztecAddress, BridgeRecordView, PoolNoteView } from "./stack-types"
 import type { BridgeEvent, Failure } from "./bridge-machine"
 import { offerFor } from "./bridge-machine"
 import { codeOf, isUserRejection, type UiCode } from "./errors"

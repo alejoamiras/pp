@@ -2,7 +2,7 @@
  * The fixture allow list: one posted record and its snapshot. Its leaves are the labels themselves
  * (the real tree hashes each), and its roots are stand-ins that are 0 for an empty list, as real ones.
  */
-import type { LabelState, Origin } from "../a7"
+import type { LabelState, Origin } from "../stack-types"
 import { BN254_P } from "../parse"
 import type { AllowListPort, AllowListView } from "../ports"
 import type { World } from "./world"

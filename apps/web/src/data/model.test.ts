@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest"
-import type { PoolNoteView } from "./a7"
+import type { PoolNoteView } from "./stack-types"
 import { allowListAge, chainAge, poolNotesView } from "./model"
 
 const note = (commitment: bigint, value: bigint, status: PoolNoteView["status"]): PoolNoteView => ({

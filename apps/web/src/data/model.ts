@@ -3,7 +3,7 @@
  * chain time from `ChainClock`, labelled as such; the browser's clock would be wrong on a local chain,
  * where time moves only with blocks.
  */
-import type { PoolNoteStatus, PoolNoteView, RootRecord } from "./a7"
+import type { PoolNoteStatus, PoolNoteView, RootRecord } from "./stack-types"
 import type { BridgeMachine, Notice, Offer } from "./bridge-machine"
 import { messageOf, reprovingMessage } from "./errors"
 import type { ChainClock } from "./ports"

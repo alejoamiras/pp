@@ -1,6 +1,6 @@
 import type { Address, Hex, TypedDataDefinition } from "viem"
 import { describe, expect, test, vi } from "vitest"
-import type { AztecAddress, BridgeRecordView, PoolNoteView, StaleRootCode } from "./a7"
+import type { AztecAddress, BridgeRecordView, PoolNoteView, StaleRootCode } from "./stack-types"
 import { createBridgeDriver, type LiveContext, PREFLIGHT_FRESH_MS, PROVE_DEADLINE_MS, type SubmitInput } from "./bridge-driver"
 import { type BridgeEvent, type BridgeMachine, bridgeReducer, initialBridge } from "./bridge-machine"
 import { openOwnerSession } from "./chain"

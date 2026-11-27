@@ -107,7 +107,6 @@ function Forget() {
 	)
 }
 
-/** Everything a reviewer checks: deployment, accounts, the grant, the allow list, the bridge log and the recovery limits. */
 export function DetailsButton() {
 	const { bridge } = useApp()
 	const log = bridgeView(bridge.machine).log

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, test } from "vitest"
-import type { AztecAddress } from "../../data/a7"
+import type { AztecAddress } from "../../data/stack-types"
 import { messageOf, PAYEE_MESSAGES } from "../../data/errors"
 import { ACCOUNTS, LABELS } from "../../data/fixtures/seed"
 import { connectAztec, labelRow, renderApp, signIn } from "../../test-utils/app"

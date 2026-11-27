@@ -2,7 +2,7 @@
  * `window.__ppFixtures`: how tests and the demo drive the fixture world. Fixture builds only; a stack
  * build that names it fails the guard. Inputs are checked, since any page script can call it.
  */
-import type { StaleRootCode } from "../a7"
+import type { StaleRootCode } from "../stack-types"
 import { approveBirths } from "./allow-list"
 import { type FixtureOp, isFixtureOp } from "./faults"
 import { selectedAccount } from "./l1"

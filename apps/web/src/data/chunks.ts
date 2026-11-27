@@ -1,4 +1,4 @@
-import type { RagequitChunks } from "./a7"
+import type { RagequitChunks } from "./stack-types"
 import { BridgeFailure } from "./errors"
 
 /** `burn_for_exit` consumes at most this many notes per call. */

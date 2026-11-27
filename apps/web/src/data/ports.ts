@@ -1,7 +1,7 @@
 /**
  * The ports the screens and the bridge driver use. Fixtures and stack adapters both implement them,
- * and `#data` picks one at build time. A7's names and types where A7 has them (`./a7`); app-level
- * shapes for the wallet, the token calls and time.
+ * and `#data` picks one at build time. The packages' contract types come from `./stack-types`; the
+ * shapes for the wallet, the token calls and time are the app's own.
  */
 import type { Address, Hash, Hex, TypedDataDefinition } from "viem"
 import type {
@@ -15,7 +15,7 @@ import type {
 	PoolNoteView,
 	RootRecord,
 	StaleRootCode,
-} from "./a7"
+} from "./stack-types"
 import type { AztecConnection, ConfirmEmoji, WalletOption } from "./wallet/types"
 
 /** An Aztec or Ethereum send as the chain reports it. `reason` is untrusted text. */

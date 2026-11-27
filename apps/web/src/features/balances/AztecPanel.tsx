@@ -1,6 +1,6 @@
 import { useApp } from "../../app/context"
 import { useAllowList, useBalances, usePublicBalance } from "../../app/queries"
-import type { AztecAddress } from "../../data/a7"
+import type { AztecAddress } from "../../data/stack-types"
 import { messageOf } from "../../data/errors"
 import { chainAge } from "../../data/model"
 import type { LabelBalance } from "../../data/ports"

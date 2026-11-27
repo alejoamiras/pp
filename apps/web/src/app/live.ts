@@ -4,7 +4,7 @@
  */
 import { useSyncExternalStore } from "react"
 import type { Address } from "viem"
-import type { AztecAddress } from "../data/a7"
+import type { AztecAddress } from "../data/stack-types"
 import type { LiveContext } from "../data/bridge-driver"
 
 export interface Live {

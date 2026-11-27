@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import type { AztecAddress, BridgeRecordView } from "./a7"
+import type { AztecAddress, BridgeRecordView } from "./stack-types"
 import { type BridgeEvent, type BridgeMachine, bridgeReducer, type Failure, initialBridge, MAX_NOTICES } from "./bridge-machine"
 import type { Attempt } from "./ports"
 

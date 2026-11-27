@@ -4,7 +4,7 @@
  * driver's waits use runs on the same blocks. The state is copied to `sessionStorage` after every
  * change, so a reload mid-bridge resumes; it holds no signature, key, salt or proof.
  */
-import type { StaleRootCode } from "../a7"
+import type { StaleRootCode } from "../stack-types"
 import type { ChainClock, Deployment, Timer } from "../ports"
 import { decode, encode } from "./codec"
 import type { FixtureOp } from "./faults"

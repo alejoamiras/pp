@@ -1,4 +1,4 @@
-import type { AztecAddress } from "../a7"
+import type { AztecAddress } from "../stack-types"
 
 /** One discovered wallet. `key` is per announcement: any wallet can claim any id or name. */
 export interface WalletOption {

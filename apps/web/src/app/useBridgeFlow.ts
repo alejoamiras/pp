@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
-import type { BridgeRecordView, PoolNoteView } from "../data/a7"
+import type { BridgeRecordView, PoolNoteView } from "../data/stack-types"
 import { createBridgeDriver } from "../data/bridge-driver"
 import { bridgeReducer, initialBridge } from "../data/bridge-machine"
 import type { Session } from "../data/ports"

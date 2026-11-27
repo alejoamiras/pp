@@ -2,7 +2,7 @@
  * Error codes to the sentences the page shows. Only these sentences reach the screen: a lower error's
  * message, a wallet's wording or a revert string is never displayed.
  */
-import type { BridgeClientErrorCode, StaleRootCode } from "./a7"
+import type { BridgeClientErrorCode, StaleRootCode } from "./stack-types"
 import type { PayeeRefusal } from "./parse"
 
 /** Outcomes the app names itself, beside bridge-core's closed set. */

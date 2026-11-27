@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { isAddressEqual } from "viem"
 import { useApp } from "../../app/context"
 import { type Live, useLive } from "../../app/live"
-import type { PoolNoteView } from "../../data/a7"
+import type { PoolNoteView } from "../../data/stack-types"
 import type { BridgeMachine } from "../../data/bridge-machine"
 import { messageOf } from "../../data/errors"
 import { bridgeView } from "../../data/model"
@@ -43,7 +43,6 @@ function SenderCheck({ live }: { live: Live }) {
 	)
 }
 
-/** Amount, sender, recipient and review, then Submit. */
 export function BridgeForm({ note }: { note: PoolNoteView }) {
 	const { bridge, live, source, connection, refusal } = useApp()
 	const now = useLive(live)

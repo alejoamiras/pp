@@ -70,7 +70,6 @@ function NextYou() {
 	)
 }
 
-/** The bridge after Submit: the label crossing, the steps, and what comes next. */
 export function InFlight() {
 	const { bridge, go } = useApp()
 	const m = bridge.machine

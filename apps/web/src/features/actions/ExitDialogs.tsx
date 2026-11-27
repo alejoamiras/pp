@@ -2,7 +2,7 @@ import { useState } from "react"
 import type { Address } from "viem"
 import { useApp } from "../../app/context"
 import { useLabelNotes } from "../../app/queries"
-import type { AztecAddress } from "../../data/a7"
+import type { AztecAddress } from "../../data/stack-types"
 import { ragequitChunks, singleCallAmounts } from "../../data/chunks"
 import { codeOf, messageOf } from "../../data/errors"
 import type { LabelBalance } from "../../data/ports"
@@ -22,7 +22,6 @@ interface ReviewProps {
 	onConfirm(): void
 }
 
-/** The last look before an exit: the payee in full and the amount, with the owner warning. */
 function ExitReview({ payee, amount, label, confirm, busy, onBack, onConfirm }: ReviewProps) {
 	const { source } = useApp()
 	const { decimals, symbol } = source.deployment

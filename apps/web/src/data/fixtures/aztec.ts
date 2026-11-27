@@ -4,7 +4,7 @@
  * needs an ACTIVE label, a spend takes at most 8 notes, a ragequit only an exact chunk.
  */
 import type { Address } from "viem"
-import type { AztecAddress, Origin } from "../a7"
+import type { AztecAddress, Origin } from "../stack-types"
 import { MAX_NOTES_PER_BURN, ragequitChunks } from "../chunks"
 import { BridgeFailure, ProviderError } from "../errors"
 import { BALANCES_PAGE, NOTES_PAGE, readAllPages } from "../paging"

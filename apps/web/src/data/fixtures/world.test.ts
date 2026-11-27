@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest"
-import type { BridgeRecordView } from "../a7"
+import type { BridgeRecordView } from "../stack-types"
 import { createBridgeDriver, type LiveContext } from "../bridge-driver"
 import { type BridgeMachine, bridgeReducer, initialBridge } from "../bridge-machine"
 import { openOwnerSession } from "../chain"

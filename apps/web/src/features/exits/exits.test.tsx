@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
-import type { ExitStatus, ExitTicket } from "../../data/a7"
+import type { ExitStatus, ExitTicket } from "../../data/stack-types"
 import { messageOf, ProviderError } from "../../data/errors"
 import { ACCOUNTS, LABELS } from "../../data/fixtures/seed"
 import type { ExitView } from "../../data/ports"

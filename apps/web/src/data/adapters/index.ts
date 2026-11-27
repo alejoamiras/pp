@@ -4,7 +4,7 @@
  * stack-build check only proves that no fixture module is reachable from it.
  */
 import { target } from "../../target"
-import type { AztecAddress } from "../a7"
+import type { AztecAddress } from "../stack-types"
 import { stageManifest } from "../capabilities"
 import type { AllowListPort, AztecPort, Deployment, ExitPort, L1Port, SessionPort } from "../ports"
 import type { DataSource } from "../source"

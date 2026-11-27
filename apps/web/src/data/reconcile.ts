@@ -8,7 +8,7 @@
  * on a device that has no journal for it.
  */
 import type { Hash } from "viem"
-import type { AztecAddress, BridgeRecordView, PoolNoteStatus, PoolNoteView } from "./a7"
+import type { AztecAddress, BridgeRecordView, PoolNoteStatus, PoolNoteView } from "./stack-types"
 import type { L1TxState, Session } from "./ports"
 
 export interface PoolState {

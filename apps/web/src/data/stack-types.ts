@@ -1,7 +1,6 @@
 /**
- * Type-only mirror of the A7 shapes the app reads (`@pp/bridge-core`, `@pp/pool-client`,
- * `@pp/label-paths`), until those packages land and this file becomes re-exports. Nothing here has
- * a runtime value.
+ * Type-only mirror of the public types the app reads from `@pp/bridge-core`, `@pp/pool-client` and
+ * `@pp/label-paths`, under those packages' names. Nothing here has a runtime value.
  *
  * One deliberate difference: `AztecAddress` is a branded canonical hex string, not aztec.js's class.
  * Importing that class at runtime pulls bb.js and its wasm (about 11 MB) into every bundle, so the

@@ -6,7 +6,7 @@
  * label (origin 0) as not found in the latest list, with a fresh read offered. Leaving to Ethereum
  * never reads the allow list, so ragequit stays open in every state.
  */
-import type { LabelState, Origin } from "./a7"
+import type { LabelState, Origin } from "./stack-types"
 import type { Tone } from "../ui"
 
 export interface LabelView {

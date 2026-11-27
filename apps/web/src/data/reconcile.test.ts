@@ -1,6 +1,6 @@
 import type { Hash } from "viem"
 import { describe, expect, test } from "vitest"
-import type { AztecAddress, BridgeRecordView, PoolNoteView } from "./a7"
+import type { AztecAddress, BridgeRecordView, PoolNoteView } from "./stack-types"
 import type { L1TxState } from "./ports"
 import { reconcile } from "./reconcile"
 

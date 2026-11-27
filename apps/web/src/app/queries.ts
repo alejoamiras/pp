@@ -4,7 +4,7 @@
  */
 import { useQuery } from "@tanstack/react-query"
 import type { Address } from "viem"
-import type { AztecAddress } from "../data/a7"
+import type { AztecAddress } from "../data/stack-types"
 import type { AllowListView, AztecPort, ExitView, Session } from "../data/ports"
 import { readPool } from "../data/reconcile"
 import type { DataSource } from "../data/source"

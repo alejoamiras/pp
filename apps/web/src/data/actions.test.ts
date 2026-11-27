@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest"
-import type { AztecAddress } from "./a7"
+import type { AztecAddress } from "./stack-types"
 import { canDispatch, guardAztec, NotGrantedError } from "./actions"
 import { type AztecAction, stageManifest } from "./capabilities"
 import type { AztecPort } from "./ports"

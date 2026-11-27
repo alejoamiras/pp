@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useApp } from "../../app/context"
-import type { AztecAddress } from "../../data/a7"
+import type { AztecAddress } from "../../data/stack-types"
 import { messageOf, RECIPIENT_MESSAGE } from "../../data/errors"
 import { isAztecPoint, parseAztecAddress } from "../../data/parse"
 import type { LabelBalance } from "../../data/ports"

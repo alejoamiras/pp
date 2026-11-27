@@ -6,7 +6,7 @@
  * the signature it was opened with in its closure only.
  */
 import { type Address, type Hex, isAddressEqual, type TypedDataDefinition } from "viem"
-import type { AztecAddress, BridgeRecordView, PoolNoteView } from "../a7"
+import type { AztecAddress, BridgeRecordView, PoolNoteView } from "../stack-types"
 import { BridgeFailure, ProviderError, providerCode, type UiCode } from "../errors"
 import { parseAztecAddress } from "../parse"
 import type { Attempt, ClaimHooks, Proved, Sent, Session, SessionPort, SubmitHooks } from "../ports"

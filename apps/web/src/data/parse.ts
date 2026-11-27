@@ -3,7 +3,7 @@
  * returns `null` (or a reason) instead of throwing, so a hostile value cannot crash a screen.
  */
 import { type Address, checksumAddress, isAddressEqual } from "viem"
-import type { AztecAddress, Origin } from "./a7"
+import type { AztecAddress, Origin } from "./stack-types"
 
 /** The BN254 scalar field modulus: Aztec addresses and labels are elements of this field. */
 export const BN254_P = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001n

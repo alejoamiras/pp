@@ -1,6 +1,6 @@
 /** Fixture exit tickets: proving until two Aztec blocks after the burn (the epoch proof), then ready, then settled. */
 import { type Address, type Hash, isAddressEqual } from "viem"
-import type { ExitTicket } from "../a7"
+import type { ExitTicket } from "../stack-types"
 import { BridgeFailure, ProviderError, type UiCode } from "../errors"
 import type { ExitPort, ExitView } from "../ports"
 import { selectedAccount } from "./l1"

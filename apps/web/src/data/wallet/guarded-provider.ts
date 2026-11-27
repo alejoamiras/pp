@@ -1,9 +1,8 @@
 /**
- * A deny-by-default EIP-1193 wrapper for the wallet client that sends a bridge spend. Every method that
- * can send or sign runs `assertCurrent` first, so a wallet context that changed during proving,
- * simulation or an internal re-proof stops at the handoff; reads on the allow-list pass; anything else
- * is refused. The send methods include `wallet_sendTransaction`, which viem 2.57.1 falls back to when a
- * provider answers `eth_sendTransaction` with -32601 or similar.
+ * A deny-by-default EIP-1193 wrapper for the wallet client that sends a bridge spend: every send or
+ * sign method runs `assertCurrent` first, allow-listed reads pass, and anything else is refused.
+ * `wallet_sendTransaction` counts as a send because viem 2.57.1 falls back to it when a provider
+ * answers `eth_sendTransaction` with -32601 or similar.
  */
 import { ProviderError } from "../errors"
 

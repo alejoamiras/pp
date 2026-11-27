@@ -4,7 +4,7 @@
  * token. Labels and Aztec addresses are field elements, so each is below the BN254 modulus.
  */
 import { type Address, checksumAddress } from "viem"
-import type { AztecAddress, Origin, PoolNoteStatus } from "../a7"
+import type { AztecAddress, Origin, PoolNoteStatus } from "../stack-types"
 import type { Deployment } from "../ports"
 import type { FixtureOp } from "./faults"
 

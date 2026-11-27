@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import type { AztecAddress } from "./a7"
+import type { AztecAddress } from "./stack-types"
 import { stageManifest } from "./capabilities"
 
 const at = (n: number) => `0x${n.toString(16).padStart(64, "0")}` as AztecAddress

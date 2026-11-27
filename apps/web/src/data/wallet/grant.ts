@@ -2,7 +2,7 @@
  * Reads a wallet's capability answer against the app's own request. Both sides carry the same shapes,
  * so one reader flattens either; the answer is wallet-controlled input throughout.
  */
-import type { AztecAddress } from "../a7"
+import type { AztecAddress } from "../stack-types"
 import { parseAztecAddress } from "../parse"
 import type { Grant } from "./types"
 

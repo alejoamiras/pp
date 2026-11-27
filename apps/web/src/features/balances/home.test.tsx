@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, test } from "vitest"
-import type { PoolNoteView } from "../../data/a7"
+import type { PoolNoteView } from "../../data/stack-types"
 import { LABELS } from "../../data/fixtures/seed"
 import { connectAztec, labelRow, noteRow, renderApp, signIn } from "../../test-utils/app"
 

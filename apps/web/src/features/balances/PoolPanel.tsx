@@ -1,6 +1,6 @@
 import { useApp } from "../../app/context"
 import { usePool } from "../../app/queries"
-import type { BridgeRecordView, PoolNoteView } from "../../data/a7"
+import type { BridgeRecordView, PoolNoteView } from "../../data/stack-types"
 import { messageOf, UNCERTAIN_WORST_CASE } from "../../data/errors"
 import { type NoteRow, poolNotesView } from "../../data/model"
 import type { Session } from "../../data/ports"
