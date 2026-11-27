@@ -12,19 +12,48 @@ export class RpcError extends Error {
 	}
 }
 
-export const hostOf = (url: string): string => new URL(url).host
+/** Never throws: a failure message about an unparseable endpoint must not carry the endpoint either. */
+export const hostOf = (url: string): string => URL.parse(url)?.host ?? "<unparseable endpoint>"
 
 /**
- * `text` with each of `urls` replaced by its host, raw and in the URL-encoded and JSON-escaped forms an
- * error can carry. An endpoint's path or query may hold a key; its host names the provider well enough.
+ * `text` with each of `urls` replaced by its host, as given and as `URL` normalizes it, raw and in the
+ * URL-encoded and JSON-escaped forms an error can carry; then any part of it left on its own. An endpoint's
+ * path, query or userinfo may hold a key; its host names the provider well enough.
  */
 export function scrub(text: string, urls: readonly string[]): string {
 	let out = text
 	for (const url of urls) {
 		const host = hostOf(url)
-		for (const form of [url, encodeURIComponent(url), JSON.stringify(url).slice(1, -1)]) out = out.replaceAll(form, host)
+		const parsed = URL.parse(url)
+		const spellings = parsed ? [url, parsed.href] : [url]
+		for (const s of spellings)
+			for (const form of [s, encodeURIComponent(s), JSON.stringify(s).slice(1, -1)]) out = out.replaceAll(form, host)
+		for (const part of parsed ? secretParts(parsed) : []) out = out.replaceAll(part, "<hidden>")
 	}
 	return out
+}
+
+const decoded = (s: string): string => {
+	try {
+		return decodeURIComponent(s)
+	} catch {
+		return s
+	}
+}
+
+/**
+ * What a provider can echo on its own, longest first: the path and query together and apart, and each
+ * credential, path segment and query value both as the URL encodes it and decoded. Shorter parts are no key,
+ * and replacing them would garble the message.
+ */
+function secretParts(u: URL): string[] {
+	const values = u.search
+		.slice(1)
+		.split("&")
+		.map((kv) => kv.slice(kv.indexOf("=") + 1))
+	const raw = [u.username, u.password, ...u.pathname.split("/"), ...values]
+	const parts = [`${u.pathname}${u.search}`, u.pathname, u.search, ...raw.flatMap((p) => [p, decoded(p)]), ...u.searchParams.values()]
+	return [...new Set(parts)].filter((p) => p.length >= 6).sort((a, b) => b.length - a.length)
 }
 
 type Options = {
@@ -38,6 +67,8 @@ type Options = {
 	retries?: number
 	fetch?: typeof fetch
 	sleep?: (ms: number) => Promise<void>
+	/** Ends a call in flight and any further attempt. */
+	signal?: AbortSignal
 }
 
 /** Direct calls to the endpoint retry as long as the fork's own calls do (anvil `--retries 8`). */
@@ -61,7 +92,7 @@ export function httpRpc(url: string, o: Options = {}): Rpc {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-				signal: AbortSignal.timeout(o.timeoutMs ?? 60_000),
+				signal: AbortSignal.any([AbortSignal.timeout(o.timeoutMs ?? 60_000), ...(o.signal ? [o.signal] : [])]),
 			})
 			if (!res.ok) throw fail(`HTTP ${res.status}`, res.status)
 			return (await res.json()) as Body<T>
@@ -82,7 +113,7 @@ export function httpRpc(url: string, o: Options = {}): Rpc {
 			try {
 				return await once<T>(method, params)
 			} catch (err) {
-				if (!(err instanceof RpcError) || !busy(err) || attempt >= (o.retries ?? 0)) throw err
+				if (!(err instanceof RpcError) || !busy(err) || attempt >= (o.retries ?? 0) || o.signal?.aborted) throw err
 				await sleep(Math.min(1_000 * 2 ** attempt, 8_000))
 			}
 		}

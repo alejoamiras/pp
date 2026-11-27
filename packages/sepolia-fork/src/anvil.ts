@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { claimPort } from "@pp/run-isolation/ports"
+import { claimPort, releaseNamed } from "@pp/run-isolation/ports"
 import { type CleanupStack, killGroup, type OwnedChild, spawnOwned } from "@pp/run-isolation/process"
 import { hostOf, httpRpc, type Rpc } from "./rpc.ts"
 
@@ -45,6 +45,7 @@ type StartOptions = {
 	/** Called with the group's id as soon as it exists, so a caller can check the group is gone even if startup fails. */
 	onSpawn?: (pgid: number) => void
 	bin?: string
+	signal?: AbortSignal
 }
 
 /**
@@ -53,12 +54,20 @@ type StartOptions = {
  * acceptable for a keyless endpoint only.
  */
 export async function startForkAnvil(o: StartOptions): Promise<ForkAnvil> {
+	const bin = o.bin ?? resolveAnvil()
 	const port = await claimPort(o.runId, "fork-anvil")
+	// A deadline can land while the claim is in flight, after teardown has released this run's rows.
+	if (o.signal?.aborted) {
+		await releaseNamed([{ port, service: "fork-anvil", owner: o.runId }])
+		o.signal.throwIfAborted()
+	}
 	const args = [
 		["--fork-url", o.endpoint],
 		["--fork-block-number", String(o.block)],
 		["--host", "127.0.0.1"],
 		["--port", String(port)],
+		// No dev accounts: the run signs with fresh keys and impersonation, and the defaults rewrite balances on the fork.
+		["--accounts", "0"],
 		// The endpoint's state is read once per run and never cached across runs, so a stale cache cannot pass.
 		["--no-storage-caching"],
 		// Free endpoints rate-limit bursts of log queries; these retries absorbed them in measurement.
@@ -69,7 +78,7 @@ export async function startForkAnvil(o: StartOptions): Promise<ForkAnvil> {
 		["--silent"],
 	].flat()
 	const owned = spawnOwned(
-		o.bin ?? resolveAnvil(),
+		bin,
 		args,
 		join(o.dataDir, "anvil.log"),
 		{ PATH: process.env.PATH ?? "", HOME: o.dataDir },

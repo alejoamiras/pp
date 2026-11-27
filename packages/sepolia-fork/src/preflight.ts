@@ -92,21 +92,17 @@ export async function checkEndpoint(rpc: Rpc, pins: Pins, host: string): Promise
 	const n = pins.block.number
 	const unserved = (why: unknown) =>
 		new PreflightError("endpoint", `${host} no longer serves block ${n}: ${why instanceof Error ? why.message : String(why)}`)
-	let chainId: number
-	let header: Header
-	try {
-		chainId = Number(await rpc<Hex>("eth_chainId"))
-		header = await rpc<Header>("eth_getBlockByNumber", [numberToHex(n), false])
-		await rpc<Hex>("eth_getStorageAt", [pins.pool.vault, EIP1967_IMPLEMENTATION, numberToHex(n)])
-	} catch (err) {
-		throw unserved(err)
-	}
+	const served = <T>(read: Promise<T>) => read.catch((err: unknown) => Promise.reject(unserved(err)))
+	// Identity first, so another chain or block is named as such even where state is missing too.
+	const chainId = Number(await served(rpc<Hex>("eth_chainId")))
 	if (chainId !== SEPOLIA_CHAIN_ID) throw new PreflightError("pin", `${host} serves chain ${chainId}, not Sepolia`, ["chainId"])
+	const header = await served(rpc<Header>("eth_getBlockByNumber", [numberToHex(n), false]))
 	if (header === null) throw unserved("no such block")
 	if (header.hash.toLowerCase() !== pins.block.hash.toLowerCase())
 		throw new PreflightError("pin", `pin block.hash: ${host} has ${header.hash} at block ${n}, pinned ${pins.block.hash}`, [
 			"block.hash",
 		])
+	await served(rpc<Hex>("eth_getStorageAt", [pins.pool.vault, EIP1967_IMPLEMENTATION, numberToHex(n)]))
 }
 
 /** The fork at the pinned block holds every pin. */
@@ -144,9 +140,23 @@ export async function checkKeys(fork: Rpc, pins: Pins, vkeys: BundleVkeys): Prom
 
 /** The live deployment still matches the pins, read straight from the endpoint at its finalized block. */
 export async function checkLive(rpc: Rpc, pins: Pins): Promise<bigint> {
-	const header = await rpc<{ number: Hex }>("eth_getBlockByNumber", ["finalized", false])
-	const finalized = BigInt(header.number)
-	const got = await readBindings(rpc, pins, finalized)
+	const unread = (why: unknown) =>
+		new PreflightError(
+			"endpoint",
+			`the endpoint failed reading the live deployment: ${why instanceof Error ? why.message : String(why)}`,
+		)
+	let finalized: bigint
+	let got: Bindings
+	try {
+		const header = await rpc<{ number: Hex } | null>("eth_getBlockByNumber", ["finalized", false])
+		if (header === null) throw new Error("no finalized block")
+		finalized = BigInt(header.number)
+		// A lagging gateway would otherwise check the deployment before the pin, not after it.
+		if (finalized < pins.block.number) throw new Error(`its finalized block ${finalized} predates the pinned block`)
+		got = await readBindings(rpc, pins, finalized)
+	} catch (err) {
+		throw unread(err)
+	}
 	const names = drifted(got, pins.bindings)
 	if (names.length > 0)
 		throw new PreflightError(

@@ -6,6 +6,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { CIRCUIT_BUNDLES, createArtifacts } from "@pp/pool-client"
+import type { CleanupStack } from "@pp/run-isolation/process"
 import { SEPOLIA_CHAIN_ID } from "./pins.ts"
 import type { BundleVkeys } from "./preflight.ts"
 
@@ -38,12 +39,14 @@ export async function checkBundleDir(dir: string): Promise<void> {
 }
 
 /** The bundle's directory: downloaded once, published whole, and hashed again on every call. */
-export async function bundleDir(o: { root?: string; fetch?: typeof fetch; log?: (line: string) => void } = {}): Promise<string> {
+export async function bundleDir(
+	o: { root?: string; fetch?: typeof fetch; log?: (line: string) => void; cleanup?: CleanupStack } = {},
+): Promise<string> {
 	const root = o.root ?? ARTIFACTS_DIR
 	const dir = join(root, bundleDigest())
 	if (!existsSync(dir)) {
 		const t0 = performance.now()
-		await download(root, dir, o.fetch)
+		await download(root, dir, o.fetch, o.cleanup)
 		o.log?.(`fetched the ${BUNDLE} circuits in ${Math.round(performance.now() - t0)} ms`)
 	}
 	await checkBundleDir(dir)
@@ -56,9 +59,11 @@ export async function readVkeys(dir: string): Promise<BundleVkeys> {
 	return { deposit: await read("deposit"), transact_1x1: await read("transact_1x1") }
 }
 
-async function download(root: string, dir: string, fetchImpl: typeof fetch | undefined): Promise<void> {
+async function download(root: string, dir: string, fetchImpl: typeof fetch | undefined, cleanup?: CleanupStack): Promise<void> {
 	const tmp = join(root, `.partial-${process.pid}-${randomBytes(4).toString("hex")}`)
 	await mkdir(tmp, { recursive: true })
+	// A deadline abandons this download mid-fetch, so its `finally` may never run; teardown removes it then.
+	cleanup?.push(() => rm(tmp, { recursive: true, force: true }))
 	try {
 		const remote = createArtifacts(
 			{ kind: "gateway", urls: [...GATEWAYS], bundle: BUNDLE },

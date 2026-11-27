@@ -7,6 +7,10 @@ import { type CleanupStack, killGroup, type OwnedChild, own, spawnWatched } from
 import { resolveFoundry } from "./anvil.ts"
 
 export const EVM_DIR = join(import.meta.dir, "../../../contracts/bridge/evm")
+/** A run's fixture, under the one directory the fork profile lets Forge read. */
+export const fixturePath = (runId: string) => join(EVM_DIR, "out/fork", runId, "fixture.json")
+const SUITE_FILE = "test/PortalFork.t.sol"
+const SUITE = `${SUITE_FILE}:PortalForkTest`
 export const FORK_CASES = [
 	"testFork_bridgeFromPool",
 	"testFork_spendCannotChangeProcessor",
@@ -18,13 +22,15 @@ export function forgeEnv(fixture: string): Record<string, string> {
 	return { PATH: process.env.PATH ?? "", HOME: homedir(), FOUNDRY_PROFILE: "fork", PP_FORK_FIXTURE: fixture }
 }
 
-type Forge = { bin?: string; dataDir: string; cleanup: CleanupStack; env: Record<string, string> }
+type Forge = { bin?: string; dataDir: string; cleanup: CleanupStack; env: Record<string, string>; signal?: AbortSignal }
+type Ran = { stdout: string; exit: string | undefined }
 
 /**
  * Runs forge in a watched process group that dies with this process, stdout to a file read once it exits,
  * stderr appended to the run's log. `--root` stands in for a working directory, which a watched spawn lacks.
  */
-async function forge(args: string[], o: Forge): Promise<string> {
+async function forge(args: string[], o: Forge): Promise<Ran> {
+	o.signal?.throwIfAborted()
 	const outFile = join(o.dataDir, `forge-${args[0]}.out`)
 	const out = openSync(outFile, "w", 0o600)
 	const log = openSync(join(o.dataDir, "forge.log"), "a", 0o600)
@@ -43,17 +49,24 @@ async function forge(args: string[], o: Forge): Promise<string> {
 		if (!(await killGroup(owned))) throw new Error(`forge's process group ${owned.child.pid} survived SIGKILL`)
 	})
 	await owned.exited
-	const stdout = readFileSync(outFile, "utf8")
-	const reason = owned.exitReason()
-	if (reason !== "exit code 0") throw Object.assign(new Error(`forge ${args[0]} ended with ${reason}`), { stdout })
-	return stdout
+	return { stdout: readFileSync(outFile, "utf8"), exit: owned.exitReason() }
+}
+
+const OK = "exit code 0"
+
+/** Forge's last lines across stdout and its log, for a failure that has no report to name. */
+function said(stdout: string, dataDir: string): string {
+	const log = readFileSync(join(dataDir, "forge.log"), "utf8")
+	return `${stdout}\n${log}`.trim().split("\n").filter(Boolean).slice(-3).join(" | ")
 }
 
 type FsPermission = { access: string; path: string }
 
-/** What Forge itself resolves for the fork profile: no ffi, and read access to `out/fork` alone. */
-export function checkForkConfig(config: { ffi?: unknown; fs_permissions?: FsPermission[] }): void {
+/** What Forge itself resolves for the fork profile: no ffi, no RPC storage cache, and read access to `out/fork` alone. */
+export function checkForkConfig(config: { ffi?: unknown; no_storage_caching?: unknown; fs_permissions?: FsPermission[] }): void {
 	if (config.ffi !== false) throw new Error(`the fork profile resolves ffi to ${JSON.stringify(config.ffi)}, not false`)
+	if (config.no_storage_caching !== true)
+		throw new Error(`the fork profile resolves no_storage_caching to ${JSON.stringify(config.no_storage_caching)}, not true`)
 	const allowed = resolve(EVM_DIR, "out/fork")
 	const perms = config.fs_permissions ?? []
 	const wrong = perms.filter((p) => p.access !== "read" || resolve(EVM_DIR, p.path) !== allowed)
@@ -64,17 +77,22 @@ export function checkForkConfig(config: { ffi?: unknown; fs_permissions?: FsPerm
 type TestResult = { status: string; reason?: string | null }
 type SuiteResults = Record<string, { test_results: Record<string, TestResult> }>
 
-/** Passes only when exactly the named cases ran and each passed; returns their count. */
+const verdict = (sig: string, r: TestResult) => `${sig}: ${r.status}${r.reason ? ` (${r.reason})` : ""}`
+
+/** Passes only when PortalForkTest alone ran exactly the named cases and each passed; returns their count. */
 export function checkForkResults(results: SuiteResults): number {
-	const ran = Object.values(results).flatMap((s) => Object.entries(s.test_results))
-	const byName = new Map(ran.map(([sig, r]) => [sig.replace(/\(.*$/, ""), r]))
-	const failures = FORK_CASES.flatMap((name) => {
-		const r = byName.get(name)
-		if (!r) return [`${name} did not run`]
-		return r.status === "Success" ? [] : [`${name}: ${r.status}${r.reason ? ` (${r.reason})` : ""}`]
+	const suites = Object.keys(results)
+	if (suites.length !== 1 || suites[0] !== SUITE) throw new Error(`forge ran ${JSON.stringify(suites)}, not ${SUITE} alone`)
+	const ran = results[SUITE]?.test_results ?? {}
+	const wanted = FORK_CASES.map((name) => `${name}()`)
+	const failures = wanted.flatMap((sig) => {
+		const r = ran[sig]
+		if (!r) return [`${sig} did not run`]
+		return r.status === "Success" ? [] : [verdict(sig, r)]
 	})
-	const extra = [...byName.keys()].filter((n) => !(FORK_CASES as readonly string[]).includes(n))
-	if (extra.length > 0) failures.push(`unexpected cases ran: ${extra.join(", ")}`)
+	// setUp's failure lands here too, with its reason.
+	const extra = Object.entries(ran).filter(([sig]) => !wanted.includes(sig))
+	if (extra.length > 0) failures.push(`unexpected entries: ${extra.map(([sig, r]) => verdict(sig, r)).join(", ")}`)
 	if (failures.length > 0) throw new Error(`fork cases failed: ${failures.join("; ")}`)
 	return FORK_CASES.length
 }
@@ -82,17 +100,15 @@ export function checkForkResults(results: SuiteResults): number {
 /** Checks the profile Forge resolves, then runs the named cases at `block` of the anvil at `url`. */
 export async function runForkCases(o: Omit<Forge, "env"> & { url: string; block: number; fixture: string }): Promise<number> {
 	const env = forgeEnv(o.fixture)
-	checkForkConfig(JSON.parse(await forge(["config", "--json"], { ...o, env })))
-	const args = ["test", "--match-contract", "Fork", "--fork-url", o.url, "--fork-block-number", String(o.block), "--json"]
-	// A failing case exits non-zero and its report still names which and why; "No tests found" exits 0 with no report.
-	const { stdout, failure } = await forge(args, { ...o, env }).then(
-		(stdout) => ({ stdout, failure: "forge test printed no report" }),
-		(err: Error & { stdout?: string }) => ({ stdout: err.stdout ?? "", failure: err.message }),
-	)
-	if (!stdout.trim().startsWith("{")) {
-		const log = readFileSync(join(o.dataDir, "forge.log"), "utf8")
-		const said = `${stdout}\n${log}`.trim().split("\n").filter(Boolean).slice(-3).join(" | ")
-		throw new Error(`${failure}: ${said}`)
-	}
-	return checkForkResults(JSON.parse(stdout))
+	const config = await forge(["config", "--json"], { ...o, env })
+	if (config.exit !== OK) throw new Error(`forge config ended with ${config.exit}: ${said(config.stdout, o.dataDir)}`)
+	checkForkConfig(JSON.parse(config.stdout))
+	const match = ["--match-path", SUITE_FILE, "--match-contract", "^PortalForkTest$"]
+	const test = await forge(["test", ...match, "--fork-url", o.url, "--fork-block-number", String(o.block), "--json"], { ...o, env })
+	// A failing case exits non-zero with a report naming which and why; "No tests found" exits 0 with none.
+	if (!test.stdout.trim().startsWith("{"))
+		throw new Error(`forge test ${test.exit === OK ? "printed no report" : `ended with ${test.exit}`}: ${said(test.stdout, o.dataDir)}`)
+	const passed = checkForkResults(JSON.parse(test.stdout))
+	if (test.exit !== OK) throw new Error(`forge test ended with ${test.exit} after a passing report`)
+	return passed
 }

@@ -74,7 +74,6 @@ contract PortalForkTest is Test {
         }
     }
 
-    /// The message key the Inbox must derive for this spend, computed here from the portal's bindings.
     function _expectedKey(IPrivacyPoolVault.TransactProof memory p, uint256 index) internal view returns (bytes32) {
         bytes32 content = Hash.sha256ToField(
             BridgeMessageV1.bridgeContentPreimage(
@@ -102,6 +101,7 @@ contract PortalForkTest is Test {
         assertEq(reg.nameWord, USDC_WORD, "USDC name");
         assertEq(reg.symbolWord, USDC_WORD, "USDC symbol");
         assertEq(address(portal.INBOX()), address(inbox), "the portal's Inbox is the registry's");
+        assertEq(address(portal.POOL()), address(vault), "the portal's pool is the pinned vault");
 
         IPrivacyPoolVault.TransactProof memory p = _proof();
         uint256 amount = p.pubSignals[AMOUNT_OUT][0];
@@ -116,19 +116,38 @@ contract PortalForkTest is Test {
         assertEq(portal.grossAccepted(), amount, "grossAccepted");
         assertEq(leafIndex, index, "leaf index is the Inbox's count before the call");
         assertEq(key, expected, "key derived independently");
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        (bool sent, bool bridged) = (false, false);
+        _assertEvents(vm.getRecordedLogs(), p, expected, index);
+    }
+
+    /// Exactly one event from each of the Inbox and the portal; the portal's carries everything the bridge
+    /// client reads back from it.
+    function _assertEvents(
+        Vm.Log[] memory logs,
+        IPrivacyPoolVault.TransactProof memory p,
+        bytes32 expected,
+        uint256 index
+    ) internal view {
+        (uint256 sent, uint256 bridged) = (0, 0);
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].emitter == address(inbox) && logs[i].topics[0] == IInbox.MessageSent.selector) {
+            if (logs[i].emitter == address(inbox)) {
+                assertEq(logs[i].topics[0], IInbox.MessageSent.selector, "the Inbox emits only MessageSent");
                 assertEq(logs[i].topics[1], expected, "Inbox MessageSent key");
-                sent = true;
+                sent++;
             }
-            if (logs[i].emitter == address(portal) && logs[i].topics[0] == ProcessorPortalImpl.BridgedFromPool.selector) {
+            if (logs[i].emitter == address(portal)) {
+                assertEq(logs[i].topics[0], ProcessorPortalImpl.BridgedFromPool.selector, "the portal emits only BridgedFromPool");
                 assertEq(logs[i].topics[1], expected, "BridgedFromPool key");
-                bridged = true;
+                assertEq(uint256(logs[i].topics[2]), p.pubSignals[NULLIFIERS][0], "BridgedFromPool nullifier");
+                (uint256 leafIndex, uint256 changeCommitment, uint256 amount) =
+                    abi.decode(logs[i].data, (uint256, uint256, uint256));
+                assertEq(leafIndex, index, "BridgedFromPool leaf index");
+                assertEq(changeCommitment, p.pubSignals[COMMITMENTS][0], "BridgedFromPool change commitment");
+                assertEq(amount, p.pubSignals[AMOUNT_OUT][0], "BridgedFromPool amount");
+                bridged++;
             }
         }
-        assertTrue(sent && bridged, "both events emitted");
+        assertEq(sent, 1, "one MessageSent");
+        assertEq(bridged, 1, "one BridgedFromPool");
     }
 
     /// The deployed vault binds `processor` into the proof and checks `msg.sender` against it.
@@ -156,7 +175,6 @@ contract PortalForkTest is Test {
         portal.bridgeFromPool(p, notes, otherSecretHash);
     }
 
-    /// The deployed vault consults its verifier, so the bridge case's pass means the verifier accepted.
     function testFork_tamperedProofRejected() public {
         IPrivacyPoolVault.TransactProof memory p = _proof();
         IPrivacyPoolVault.NoteData[] memory notes = _noteData();

@@ -105,8 +105,21 @@ describe("the preflight", () => {
 		expect([pruned.kind, pruned.message]).toEqual(["endpoint", "rpc.example no longer serves block 12220000: missing trie node"])
 		const otherHash = await rejection(checkEndpoint(chain(BASE, { blockHash: `0x${"ab".repeat(32)}` }).rpc, pins, "rpc.example"))
 		expect([otherHash.kind, otherHash.pins]).toEqual(["pin", ["block.hash"]])
-		const mainnet = await rejection(checkEndpoint(chain(BASE, { chainId: 1 }).rpc, pins, "rpc.example"))
+		const mainnet = await rejection(checkEndpoint(chain(BASE, { chainId: 1, pruned: true }).rpc, pins, "rpc.example"))
 		expect([mainnet.kind, mainnet.pins]).toEqual(["pin", ["chainId"]])
+		const prunedOtherHash = chain(BASE, { blockHash: `0x${"ab".repeat(32)}`, pruned: true }).rpc
+		expect((await rejection(checkEndpoint(prunedOtherHash, pins, "rpc.example"))).pins).toEqual(["block.hash"])
+		const { rpc: base } = chain(BASE)
+		const lagging: Rpc = async <T>(method: string, params: unknown[] = []) =>
+			(params[0] === "finalized" ? { number: numberToHex(pins.block.number - 1n) } : await base(method, params)) as T
+		const stale = await rejection(checkLive(lagging, pins))
+		expect([stale.kind, stale.message]).toEqual([
+			"endpoint",
+			"the endpoint failed reading the live deployment: its finalized block 12219999 predates the pinned block",
+		])
+		const down: Rpc = async () => Promise.reject(new Error("HTTP 502"))
+		const live = await rejection(checkLive(down, pins))
+		expect([live.kind, live.message]).toEqual(["endpoint", "the endpoint failed reading the live deployment: HTTP 502"])
 		const forkHash = await rejection(checkFork(chain(BASE, { blockHash: `0x${"cd".repeat(32)}` }).rpc, pins))
 		expect([forkHash.kind, forkHash.pins]).toEqual(["pin", ["block.hash"]])
 	})

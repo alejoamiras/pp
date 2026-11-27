@@ -38,6 +38,11 @@ async function main(argv: string[]): Promise<number> {
 		console.error("sepolia-fork: SEPOLIA_RPC_URL is unset")
 		return 1
 	}
+	const protocol = URL.parse(endpoint)?.protocol
+	if (protocol !== "https:" && protocol !== "http:") {
+		console.error("sepolia-fork: SEPOLIA_RPC_URL is not an http(s) URL")
+		return 1
+	}
 	try {
 		if (command === "pins") await pins(endpoint, rest[0])
 		else {
@@ -53,7 +58,14 @@ async function main(argv: string[]): Promise<number> {
 					const { fixture, path } = await prepare(fork, run)
 					if (rest.includes("--prepare-only")) return
 					const { dataDir, cleanup } = run
-					const passed = await runForkCases({ url: fork.url, block: fixture.block, fixture: path, dataDir, cleanup })
+					const passed = await runForkCases({
+						url: fork.url,
+						block: fixture.block,
+						fixture: path,
+						dataDir,
+						cleanup,
+						signal: run.signal,
+					})
 					run.log(`${passed} fork cases passed`)
 				},
 			})

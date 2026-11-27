@@ -1,11 +1,24 @@
 import { expect, test } from "bun:test"
-import { httpRpc, RpcError, scrub } from "./rpc.ts"
+import { hostOf, httpRpc, RpcError, scrub } from "./rpc.ts"
 
 const ENDPOINT = "https://rpc.example/v2/k3y?x=1"
 
 test("an endpoint's path and query never reach a message, in any of its encoded forms", () => {
 	const text = `a ${ENDPOINT} b ${encodeURIComponent(ENDPOINT)} c ${JSON.stringify(ENDPOINT)}`
 	expect(scrub(text, [ENDPOINT])).toBe('a rpc.example b rpc.example c "rpc.example"')
+})
+
+test("a normalized spelling, a bare path or query, and an unparseable endpoint leak nothing either", () => {
+	const spelled = "HTTPS://RPC.Example:443/v2/k3y00?x=1"
+	expect(scrub(`got ${new URL(spelled).href} and /v2/k3y00?x=1`, [spelled])).toBe("got rpc.example and <hidden>")
+	expect(scrub("https://rpc.example?key=s3cr3t failed", ["https://rpc.example?key=s3cr3t"])).toBe("rpc.example failed")
+	expect(hostOf("rpc.example/v2/k3y")).toBe("<unparseable endpoint>")
+	expect(scrub("bad rpc.example/v2/k3y", ["rpc.example/v2/k3y"])).toBe("bad <unparseable endpoint>")
+	const keyed = "https://rpc.example/v2/s3cr3tkey?api_key=an0th3rkey"
+	expect(scrub("key s3cr3tkey at /v2/s3cr3tkey, param an0th3rkey", [keyed])).toBe("key <hidden> at <hidden>, param <hidden>")
+	// Each part echoed in the other encoding than the URL carries it.
+	const encoded = "https://rpc.example/v2/k%33ysegment?api_key=val%2Fwith%2Fslash"
+	expect(scrub("seg k3ysegment, value val%2Fwith%2Fslash or val/with/slash", [encoded])).toBe("seg <hidden>, value <hidden> or <hidden>")
 })
 
 test("RPC failures name the host only, including upstream errors a fork relays", async () => {

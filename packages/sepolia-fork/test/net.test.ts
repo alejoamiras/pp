@@ -40,7 +40,8 @@ describe.skipIf(!endpoint)("the Sepolia fork", () => {
 		expect(seen).toEqual(["anvil/v1.7.1"])
 		expect(report.finalized).toBeGreaterThan(PINS.block.number)
 		expect(report.leftovers).toEqual({ groups: 0, rows: 0, dirs: 0 })
-		expect(lines.join("\n")).not.toContain(new URL(endpoint!).pathname.length > 1 ? new URL(endpoint!).pathname : "\0")
+		const { pathname, search } = new URL(endpoint!)
+		for (const secret of [pathname.length > 1 ? pathname : "", search]) if (secret) expect(lines.join("\n")).not.toContain(secret)
 	})
 
 	test("a mutated Inbox pin fails on the fork, naming the pin", async () => {

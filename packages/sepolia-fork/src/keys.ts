@@ -40,13 +40,17 @@ export function keyCoordinates(vk: Vkey): { name: string; word: string }[] {
 	const g1 = (name: string, p: readonly string[]) => p.slice(0, 2).map((c, i) => ({ name: `${name}.${"xy"[i]}`, word: word(c) }))
 	const g2 = (name: string, p: readonly (readonly string[])[]) =>
 		p.slice(0, 2).flatMap((pair, i) => pair.map((c, j) => ({ name: `${name}.${"xy"[i]}${j}`, word: word(c) })))
-	return [
+	const coordinates = [
 		...g1("alpha1", vk.vk_alpha_1),
 		...g2("beta2", vk.vk_beta_2),
 		...g2("gamma2", vk.vk_gamma_2),
 		...g2("delta2", vk.vk_delta_2),
 		...vk.IC.flatMap((p, i) => g1(`IC${i}`, p)),
 	]
+	// A short or empty key would pass any code vacuously.
+	if (vk.IC.length < 2 || coordinates.length !== 14 + 2 * vk.IC.length)
+		throw new Error(`not a Groth16 verifying key: ${coordinates.length} coordinates for ${vk.IC.length} IC points`)
+	return coordinates
 }
 
 /** The coordinates of `vk` that `code` does not carry; empty when the verifier holds the key. */

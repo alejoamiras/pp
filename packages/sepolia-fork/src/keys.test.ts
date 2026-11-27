@@ -47,6 +47,9 @@ test("a verifier holds a key only if its code pushes every affine coordinate, an
 	expect(missingKeyPoints(code(VK), VK)).toEqual([])
 	expect(missingKeyPoints(code(VK, "IC0.y"), VK)).toEqual(["IC0.y"])
 	expect(missingKeyPoints(code(VK, "delta2.x1"), VK)).toEqual(["delta2.x1"])
+	const empty: Vkey = { vk_alpha_1: [], vk_beta_2: [], vk_gamma_2: [], vk_delta_2: [], IC: [] }
+	expect(() => missingKeyPoints("0x", empty)).toThrow("not a Groth16 verifying key")
+	expect(() => missingKeyPoints(code(VK), { ...VK, IC: [VK.IC[0]!] })).toThrow("not a Groth16 verifying key")
 })
 
 test("the preflight names the pinned verifier whose code lacks the bundle's key", async () => {
@@ -55,7 +58,7 @@ test("the preflight names the pinned verifier whose code lacks the bundle's key"
 		[PINS.bindings.transact1x1Verifier.toLowerCase(), code(VK, "IC1.x")],
 	])
 	const fork: Rpc = async <T>(_method: string, params: unknown[] = []) => codes.get(String(params[0]).toLowerCase()) as T
-	await checkKeys(fork, PINS, { deposit: VK, transact_1x1: { ...VK, IC: VK.IC.slice(0, 1) } })
+	await checkKeys(fork, PINS, { deposit: VK, transact_1x1: { ...VK, IC: [VK.IC[0]!, VK.IC[0]!] } })
 	const err = await checkKeys(fork, PINS, { deposit: VK, transact_1x1: VK }).catch((e: unknown) => e)
 	expect(err).toBeInstanceOf(PreflightError)
 	expect([(err as PreflightError).kind, (err as PreflightError).pins]).toEqual(["pin", ["transact1x1Verifier.keys"]])

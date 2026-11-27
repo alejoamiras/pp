@@ -8,12 +8,12 @@ import { attachForkPoolEnv } from "@pp/pp-env/fork"
 import { type Address, getAddress, type Hex, numberToHex, pad, parseAbi, toHex } from "viem"
 import { ANVIL_CLIENT_VERSION, type ForkAnvil } from "./anvil.ts"
 import { BUNDLE } from "./bundle.ts"
+import { EVM_DIR, fixturePath } from "./forge.ts"
 import { SEPOLIA_CHAIN_ID } from "./pins.ts"
 import type { RunContext } from "./run.ts"
 import { type ForkWallet, forkReader, freshWriter, impersonatedWriter } from "./writer.ts"
 
 const REPO_ROOT = join(import.meta.dir, "../../..")
-const EVM_DIR = join(REPO_ROOT, "contracts/bridge/evm")
 /** No hub exists on the fork; any field-sized recipient serves, and entries open without the hub check. */
 export const HUB_PLACEHOLDER = pad(toHex("sepolia-fork hub"), { size: 32 })
 const LIFETIME_CAP = 10n ** 12n
@@ -69,9 +69,6 @@ function forgeFields(spend: PreparedSpend): Pick<Fixture, "pA" | "pB0" | "pB1" |
 		noteData: notes.map((n) => n.data),
 	}
 }
-
-/** Where the Forge cases read the fixture; inside `out/fork`, the one path the fork profile may read. */
-export const fixturePath = (runId: string) => join(EVM_DIR, "out/fork", runId, "fixture.json")
 
 type Artifact = { abi: unknown[]; bytecode: { object: Hex } }
 const artifact = (name: string): Artifact => JSON.parse(readFileSync(join(EVM_DIR, "out", `${name}.sol`, `${name}.json`), "utf8"))
@@ -169,6 +166,7 @@ export async function verifierAccepts(fork: ForkAnvil, verifier: Address, spend:
 /** Makes the fork's state and one spend proof, checks the deployed verifier accepts it, and writes the fixture. */
 export async function prepare(fork: ForkAnvil, run: RunContext): Promise<{ fixture: Fixture; path: string }> {
 	const user = await poolSide(fork, run)
+	run.signal.throwIfAborted()
 	const { factory, portal } = await bridgeSide(fork, run)
 	const secretHash = randomSecretHash()
 	const spend = await timed(run.log, "spend proved", () =>
@@ -191,6 +189,7 @@ export async function prepare(fork: ForkAnvil, run: RunContext): Promise<{ fixtu
 		...forgeFields(spend),
 	}
 	const path = fixturePath(run.runId)
+	run.signal.throwIfAborted()
 	mkdirSync(dirname(path), { recursive: true })
 	run.cleanup.push(async () => rmSync(dirname(path), { recursive: true, force: true }))
 	writeFileSync(path, JSON.stringify(fixture, null, 2))

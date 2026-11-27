@@ -30,6 +30,8 @@ test("a refused endpoint fails, named by its host alone", () => {
 	expect(failed.code).toBe(1)
 	expect(failed.err).toContain("sepolia-fork: endpoint failure: 127.0.0.1:9 no longer serves block 12220000")
 	expect(failed.err).not.toContain("k3y")
+	const unparseable = cli(["run"], "rpc.example/v2/k3y")
+	expect([unparseable.code, unparseable.err.trim()]).toEqual([1, "sepolia-fork: SEPOLIA_RPC_URL is not an http(s) URL"])
 })
 
 test("only an anvil reporting the pinned Foundry version is used", () => {

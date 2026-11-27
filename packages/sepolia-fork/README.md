@@ -26,7 +26,8 @@ A run:
    hashes every file again;
 3. forks the endpoint with Foundry 1.7.1's anvil at the pinned block, on a claimed loopback port, as its own
    process group, which ends and frees its row even when the runner is SIGKILLed (Forge's groups too; the
-   mock ASP's row and the run's data directory stay then, for removal by hand);
+   mock ASP's row and the run's data and fixture directories stay then, for removal by hand); the run fails
+   as soon as that anvil exits;
 4. checks every pin on the fork: the vault's implementation and code hash, its deposit verifier, its 1x1
    verifier route and that verifier's code hash, the Aztec registry's rollup, version, Inbox (and its code
    hash) and Outbox; and that both verifiers embed the pre-ceremony keys;
@@ -35,8 +36,10 @@ A run:
    posting as the registry's postman; a fresh `PortalFactory` creates the USDC portal and opens entries; one
    spend to the portal is proved, and the deployed 1x1 verifier must accept it;
 7. runs the four `PortalFork.t.sol` cases with Forge's `fork` profile in an environment built here, after
-   checking that profile resolves to no ffi and read access to `out/fork` alone;
-8. tears down, and fails if any process group, port row or data directory is left.
+   checking that profile resolves to no ffi, no RPC storage cache and read access to `out/fork` alone; it
+   passes only when `PortalForkTest` alone ran those four, each passed, and Forge exited 0;
+8. tears down, and fails if any process group, port row (the mock ASP's included), data or fixture
+   directory is left.
 
 The whole run has a 10-minute deadline; past it, it fails and tears down. `run --prepare-only` stops after
 step 6. A pass means compatible at the pinned block. Failures name their kind: `endpoint` (it no longer
