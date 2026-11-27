@@ -61,6 +61,7 @@ jobs:
               - 'contracts/bridge/**'
               - 'packages/bridge-spec/src/**'
               - 'packages/bridge-spec/package.json'
+              - 'packages/bridge-spec/vectors/v1.json'
               - 'packages/pool-client/src/**'
               - 'packages/pool-client/package.json'
               - 'packages/pool-client/test/support/**'
