@@ -20,12 +20,15 @@ bash scripts/install-libs.sh
 The `@aztec/` remap resolves through `packages/bridge-core`'s installed `@aztec-foundation/l1-artifacts`.
 Under the repository's isolated linker that package is not at the root `node_modules` the static
 `foundry.toml` remap assumes, so generate the override file first (gitignored). CI and the sandbox's
-forge step generate it too.
+forge step generate it too. It remaps to a link at `node_modules/` here rather than to the package's
+own path: solc hashes the remappings and source names into each contract's bytecode, and forge names
+a source outside this root by its absolute path, which would make the bytecode differ per checkout.
 
 ```bash
 # from the repository root:
-bun packages/bridge-core/scripts/gen-remappings.ts        # writes contracts/bridge/evm/remappings.txt
+bun packages/bridge-core/scripts/gen-remappings.ts        # writes remappings.txt and the node_modules/ link
 (cd contracts/bridge/evm && forge build && forge test --no-match-contract Fork)
+bun packages/bridge-core/scripts/check-l1-metadata.ts      # no artifact's metadata names this checkout
 bash contracts/bridge/evm/scripts/check-gas.sh             # .gas-snapshot within 2%, every case ran
 bash contracts/bridge/evm/scripts/check-halmos.sh          # every proof, by name, and the harness check
 bash contracts/bridge/evm/scripts/check-invariant.sh       # invariant campaigns, with their reach checked

@@ -54,6 +54,7 @@ with warm package and toolchain caches.
 | Workflow lint | `bun run lint:actions` | < 1 s |
 | Quality and Web build without the pool checkout | `bun run test:unfetched` | 3 min |
 | L1 build + hermetic tests | `forge build && forge test --no-match-contract Fork` in `contracts/bridge/evm` | 2 min |
+| L1 artifact metadata (no checkout path, so builds reproduce) | `bun packages/bridge-core/scripts/check-l1-metadata.ts` after `forge build` | < 1 s |
 | L1 gas snapshot | `bash contracts/bridge/evm/scripts/check-gas.sh` | 1 s |
 | L1 symbolic proofs | `bash contracts/bridge/evm/scripts/check-halmos.sh` | 67 s |
 | L1 invariant campaigns, reach checked | `bash contracts/bridge/evm/scripts/check-invariant.sh` | 42 s |

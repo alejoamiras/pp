@@ -3,9 +3,10 @@
 # The static @aztec/ remap below assumes the HOISTED node_modules layout. Under
 # the isolated linker, run `bun scripts/gen-remappings.ts` from
 # packages/bridge-core first: it writes remappings.txt (gitignored), which
-# Foundry gives priority over these TOML remappings, with the @aztec/ path
-# resolved through bridge-core's declared dependency. CI and the sandbox's forge
-# step run it; verify-l1.ts does not, so run it before `verify:l1` too.
+# Foundry gives priority over these TOML remappings, with @aztec/ pointing at
+# node_modules/ here, a link to bridge-core's declared dependency, so no machine
+# path enters the metadata solc hashes into the bytecode. CI and the sandbox's
+# forge step run it.
 [profile.default]
 src = "src"
 out = "out"
