@@ -39,6 +39,8 @@ export type AppCode =
 	| "REGISTER_FROM_OWNER"
 	| "REGISTRATION_REPLACED"
 	| "NOT_SENT"
+	| "PAGE_LOAD_FAILED"
+	| "PROVING_FILES_FAILED"
 	| "UNKNOWN"
 
 /**
@@ -136,6 +138,9 @@ const MESSAGES: Record<UiCode, string> = {
 		"Your wallet replaced the registration with another transaction, so the key this step sets is still unset. Register again when you are ready.",
 	NOT_SENT:
 		"Something failed before the transaction reached your wallet, so nothing was sent. Try again; if it fails the same way, reload the page.",
+	PAGE_LOAD_FAILED: "A part of this page failed to load. Reload the page.",
+	PROVING_FILES_FAILED:
+		"The proving files did not load or did not match what this app expects, so nothing was sent. Reload the page and try again.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",
 }
 

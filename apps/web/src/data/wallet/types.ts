@@ -1,3 +1,4 @@
+import { codeOf, messageOf } from "../errors"
 import type { AztecAddress } from "../stack-types"
 
 /** One discovered wallet. `key` is per announcement: any wallet can claim any id or name. */
@@ -47,7 +48,7 @@ export type ConnectErrorCode =
 	| "no-accounts"
 	| "superseded"
 
-/** The only errors whose text reaches the screen; anything else shows a generic line. */
+/** The only errors whose text reaches the screen; anything else shows a generic line, or the page's own for a part that failed to load. */
 export class ConnectError extends Error {
 	constructor(
 		readonly code: ConnectErrorCode,
@@ -65,5 +66,6 @@ export const noAccountsError = () => new ConnectError("no-accounts", "The wallet
 const GENERIC = "Something went wrong while connecting. Try again."
 
 export function connectErrorMessage(err: unknown): string {
-	return err instanceof ConnectError ? err.message : GENERIC
+	if (err instanceof ConnectError) return err.message
+	return codeOf(err) === "PAGE_LOAD_FAILED" ? messageOf("PAGE_LOAD_FAILED") : GENERIC
 }
