@@ -61,9 +61,10 @@ function burnAll(ns: readonly bigint[], chunks: readonly bigint[]): bigint[] {
 	return left
 }
 
+/** On a frozen copy, so an implementation that writes to its input throws instead of changing what the oracle reads. */
 const outcome = (ns: readonly bigint[], amount: bigint | undefined): bigint[] | "NO_EXACT_CHUNKS" => {
 	try {
-		return ragequitChunks(ns, amount)
+		return ragequitChunks(Object.freeze([...ns]), amount)
 	} catch (e) {
 		if (e instanceof BridgeClientError && e.code === "NO_EXACT_CHUNKS") return "NO_EXACT_CHUNKS"
 		throw e
