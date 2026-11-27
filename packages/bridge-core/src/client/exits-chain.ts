@@ -307,7 +307,7 @@ export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): P
 		const hash = await sendSettle(c, l1, account, t, w)
 		const receipt = await c.reader.waitForTransactionReceipt({ hash, timeout: c.timing.receiptTimeoutMs }).catch(() => null)
 		// A failed read after the broadcast must not lose its hash; the caller re-reads the ticket later.
-		const settled = await settledAt(io, t, w, receipt?.blockNumber).catch(() => undefined)
+		const settled = await settledAt(io, t, receipt?.blockNumber).catch(() => undefined)
 		if (settled) return settled
 		// A receipt for another hash is the wallet's replacement of this send: what mined is not ours to judge.
 		const own = receipt?.transactionHash.toLowerCase() === hash.toLowerCase()

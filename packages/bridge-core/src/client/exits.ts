@@ -92,15 +92,17 @@ async function settledAtPin<W extends ExitWitness>(
 	return { tx, consumed }
 }
 
-/** The transaction that settled `t` at `w`, read at a fresh header at or above `floor`. */
-export async function settledAt<W extends ExitWitness>(
-	io: ExitReads<W>,
-	t: ExitTicket,
-	w: ExitWitness,
-	floor?: bigint,
-): Promise<Hash | null> {
-	const [s] = await atOnePin(io, floor, (at) => settledAtPin(io, t, w, at))
-	return s.tx
+/**
+ * The transaction that settled `t`, read at a fresh header at or above `floor` with the ticket's
+ * witness derived at that same header: an identical exit at the pair, where `t` itself is gone, is
+ * not `t`'s settlement.
+ */
+export async function settledAt<W extends ExitWitness>(io: ExitReads<W>, t: ExitTicket, floor?: bigint): Promise<Hash | null> {
+	const [tx] = await atOnePin(io, floor, async (at) => {
+		const w = await io.witness(t, at)
+		return w ? (await settledAtPin(io, t, w, at)).tx : null
+	})
+	return tx
 }
 
 type Decision<W extends ExitWitness> = ExitState<W> | { status: "consumed"; witness: W }
@@ -121,7 +123,7 @@ export async function exitState<W extends ExitWitness>(io: ExitReads<W>, t: Exit
 		return consumed ? { status: "consumed", witness } : { status: "ready", witness }
 	})
 	if (s.status !== "consumed") return s
-	const reread = await settledAt(io, t, s.witness, at.number)
+	const reread = await settledAt(io, t, at.number)
 	if (reread) return { status: "settled", tx: reread }
 	throw new BridgeClientError("RPC_INCONSISTENT")
 }
@@ -144,7 +146,7 @@ export async function settleWith<W extends ExitWitness>(io: ExitReads<W>, t: Exi
 	} catch (e) {
 		if (e instanceof BridgeClientError && e.l1TxHash) throw e
 		// The send's own error outlives a failed re-read.
-		const raced = await settledAt(io, t, s.witness).catch(() => null)
+		const raced = await settledAt(io, t).catch(() => null)
 		if (raced) return raced
 		throw e
 	}

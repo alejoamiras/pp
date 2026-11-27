@@ -119,17 +119,31 @@ export async function runStandaloneBot(c: StandaloneBotConfig, s: BotSecrets, o:
 	o.signal.throwIfAborted()
 	checkStandaloneConfig(c, s)
 	const cleanup = new CleanupStack({ signals: false })
+	// A wait the drain outlived can still log; nothing reaches the caller's logger once this resolves.
+	let done = false
+	const log: Ports["log"] = (event, fields) => {
+		if (!done) (o.log ?? stderrLog)(event, fields)
+	}
 	try {
-		await run(c, s, o, cleanup)
+		await run(c, s, { ...o, log }, cleanup)
 	} catch (e) {
 		if (!o.signal.aborted) throw e
 	} finally {
-		await cleanup.run()
+		try {
+			await cleanup.run()
+		} finally {
+			done = true
+		}
 	}
 }
 
-async function run(c: StandaloneBotConfig, s: BotSecrets, o: StandaloneOptions, cleanup: CleanupStack): Promise<void> {
-	const log = o.log ?? stderrLog
+async function run(
+	c: StandaloneBotConfig,
+	s: BotSecrets,
+	o: StandaloneOptions & { log: Ports["log"] },
+	cleanup: CleanupStack,
+): Promise<void> {
+	const log = o.log
 	const tag = c.tag ?? "finalized"
 	const d = c.deployment
 	await claimRows(c.runId, { "asp-bot": c.port }, process.pid)
@@ -169,8 +183,9 @@ async function run(c: StandaloneBotConfig, s: BotSecrets, o: StandaloneOptions, 
 	o.signal.throwIfAborted()
 	await warnMargin(c, tag, log)
 	const poster = new Poster(live.ports, book, { self: live.self, inclusionMarginSec: BigInt(c.inclusionMarginSec) })
-	// Ready once its own post is checkpointed and `/latest` serves: a failed read after the post leaves it unserved.
-	const ready = () => !o.signal.aborted && first !== undefined && book.body("latest") !== undefined
+	// Ready once `/latest` serves its own checkpointed post: a failed read after the post can leave an
+	// older snapshot current, as after a restart.
+	const ready = () => !o.signal.aborted && first !== undefined && book.servesLatest(first.sequence)
 	const runner = new Runner({
 		// Until its own first post lands, every tick asks for one.
 		tick: (postNow) => poster.tick(postNow || first === undefined),

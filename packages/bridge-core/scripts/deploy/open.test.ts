@@ -225,7 +225,12 @@ type Chain = {
 	tick?: () => void
 }
 
-function chainOf(init: Partial<Chain> = {}): { c: Chain; l1: GuardianL1; guardian: GuardianWallet; mine: (tx: Tx) => void } {
+function chainOf(init: Partial<Chain> = {}): {
+	c: Chain
+	l1: GuardianL1
+	guardian: GuardianWallet
+	mine: (tx: Tx, sameBlock?: boolean) => void
+} {
 	const c: Chain = {
 		latest: 5,
 		pending: 5,
@@ -240,8 +245,9 @@ function chainOf(init: Partial<Chain> = {}): { c: Chain; l1: GuardianL1; guardia
 		...init,
 	}
 	const initial = c.paused
-	const mine = (tx: Tx) => {
-		c.block += 1n
+	/** `sameBlock` puts `tx` after the previous one in its block. */
+	const mine = (tx: Tx, sameBlock = false) => {
+		if (!sameBlock) c.block += 1n
 		c.receipts.set(tx.hash, { status: "success", blockNumber: c.block, blockHash: w(Number(c.block)), transactionHash: tx.hash })
 		c.paused = tx.paused
 		c.history.push({ block: c.block, paused: tx.paused })
@@ -382,6 +388,17 @@ describe("pauseEntries", () => {
 		expect(c.paused).toBe(true)
 		expect(c.pins.length).toBeGreaterThan(0)
 
+		// The queued open runs right after the pause in the pause's own block.
+		const sameBlock = chainOf()
+		let once = true
+		sameBlock.c.onSend = (tx) => {
+			sameBlock.mine(tx)
+			if (!once) return
+			once = false
+			sameBlock.mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, hash: w(0x0e), paused: false }, true)
+		}
+		expect(await pauseEntries(target(sameBlock.l1), sameBlock.guardian, FAST)).toMatchObject({ nonce: 7 })
+
 		const reopening = chainOf()
 		reopening.c.onSend = (tx) => {
 			reopening.mine(tx)
@@ -392,6 +409,16 @@ describe("pauseEntries", () => {
 			nonce: 9,
 			message: expect.stringMatching(/reopened/),
 		})
+	})
+
+	it("names the send as PAUSE_UNCONFIRMED when a read after its receipt fails", async () => {
+		const { c, l1, guardian } = chainOf()
+		;(l1 as { getBlock: unknown }).getBlock = async () => {
+			throw new Error("block not found: hash 0x01")
+		}
+		const e = await pauseEntries(target(l1), guardian, FAST).catch((x: unknown) => x)
+		expect(c.sent).toHaveLength(1)
+		expect(e).toMatchObject({ code: "PAUSE_UNCONFIRMED", nonce: 5, message: expect.stringContaining(c.sent[0]!.hash) })
 	})
 
 	it("names a nonce gap, a stalled next nonce and an occupied nonce for the owner, and replaces at four times", async () => {
@@ -468,18 +495,41 @@ describe("openDeployedEntries", () => {
 		expect(c.paused).toBe(false)
 	})
 
-	it("reads the canonical rollup again after signing and broadcasts nothing once the registry moved", async () => {
+	it.each([
+		["the registry moved", `${ROLLUP.l1Registry}.getCanonicalRollup`, a(0x20), /getCanonicalRollup/],
+		["an ownership transfer is pending", `${FACTORY}.pendingOwner`, a(0xbeef), /pendingOwner/],
+	])("reads again after signing and broadcasts nothing once %s", async (_, key, value, check) => {
 		const w0 = await world()
 		const { c, l1, guardian } = chainOf({ paused: true })
 		const ctx = { ...w0.ctx, l1: { ...l1, ...w0.ctx.l1 } as GuardianL1 }
 		const sign = guardian.signTransaction
 		guardian.signTransaction = (async (q: never) => {
-			w0.l1Reads[`${ROLLUP.l1Registry}.getCanonicalRollup`] = a(0x20)
+			w0.l1Reads[key] = value
 			return sign(q)
 		}) as never
 		const signed = vi.fn()
-		await expect(openDeployedEntries(ctx, guardian, { ...FAST, onSigned: signed })).rejects.toEqual(refusedAt(/getCanonicalRollup/))
+		await expect(openDeployedEntries(ctx, guardian, { ...FAST, onSigned: signed })).rejects.toEqual(refusedAt(check))
 		expect(signed).not.toHaveBeenCalled()
 		expect(c.sent).toEqual([])
+	})
+
+	it("refuses another transaction's receipt at its nonce, even one that opened entries", async () => {
+		const base = (await world()).ctx
+		const { c, l1, guardian } = chainOf({ paused: true })
+		const reads = base.l1.readContract
+		const ctx = {
+			...base,
+			l1: {
+				...l1,
+				...base.l1,
+				readContract: (async (q: { functionName: string }) =>
+					q.functionName === "entriesPaused" ? c.paused : reads(q as never)) as GuardianL1["readContract"],
+				waitForTransactionReceipt: (async ({ hash }: { hash: Hex }) => ({
+					...c.receipts.get(hash),
+					transactionHash: w(0xab),
+				})) as never,
+			} as GuardianL1,
+		}
+		await expect(openDeployedEntries(ctx, guardian, FAST)).rejects.toThrow(/mined at this open's nonce instead/)
 	})
 })

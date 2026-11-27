@@ -66,12 +66,14 @@ export async function retryLagging<T>(
 	}
 }
 
-/** The reads that name a block. Nothing that sends is ever retried. */
+/**
+ * The reads that name a block and answer a lagging backend with an error. Header reads answer it with
+ * null instead, which their callers retry as {@link BlockNotServedError}, so they are left out: a
+ * header read has that one owner. Nothing that sends is ever retried.
+ */
 const BLOCK_READS: ReadonlySet<string> = new Set([
 	"eth_call",
 	"eth_getLogs",
-	"eth_getBlockByNumber",
-	"eth_getBlockByHash",
 	"eth_getStorageAt",
 	"eth_getCode",
 	"eth_getBalance",

@@ -23,7 +23,7 @@ import { createActor, SANDBOX_ACTOR_SALT, SANDBOX_ACTOR_SECRET } from "../sandbo
 import { createL1Clients, createL2Wallet, createNode } from "../script-bootstrap"
 import { missingEvmArtifacts } from "../script-artifacts"
 import { registerHub, sponsoredFpcFee } from "../script-l2"
-import { checkBeforeOpen, type OpenContext } from "./open"
+import { checkBeforeOpen, checkStillOpenable, type OpenContext } from "./open"
 
 export type StackBridgeBlock = NonNullable<StackManifest["bridge"]>
 
@@ -281,7 +281,9 @@ export async function openBridgeEntries(u: UnopenedBridge, given: ExpectedBindin
 	if (!isAddressEqual(h.gen.l1.guardian, h.l1.account.address))
 		throw new Error("this generation has its own guardian: open it with openDeployedEntries")
 	await readBack(h, u.block)
-	await checkBeforeOpen(await openContextOf(h, u.block, expected))
+	const ctx = await openContextOf(h, u.block, expected)
+	await checkBeforeOpen(ctx)
+	await checkStillOpenable(ctx)
 	const factory = { address: u.block.factory, abi: PORTAL_FACTORY_ABI } as const
 	const hash = await h.l1.wallet.writeContract({
 		...factory,

@@ -222,6 +222,8 @@ const payeeOf = (word: string): Address => {
 
 const status = async (c: ExitContext, t: ExitTicket) => exitStatusOf(await exitState(exitReads(c), t))
 
+const NOT_FOUND = { code: -32001, message: "block not found: 0x12c" }
+
 /** A loopback JSON-RPC endpoint that gives every request `answer(method)` and records each method. */
 async function endpoint(answer: (method: string) => object) {
 	const methods: string[] = []
@@ -414,11 +416,12 @@ describe("settle", () => {
 	})
 
 	it.each([
-		["a provider's lagging answer, retried by the transport alone", { error: { code: -32001, message: "block not found: 0x12c" } }, 4],
-		["a null header, retried by the pin alone", { result: null }, 4],
-		["another -32001", { error: { code: -32001, message: "block not found for an unrelated validation test" } }, 1],
-	])("pins through the client's own reader with one retry owner per error: %s", async (_, answer, requests) => {
-		const { url, methods } = await endpoint(() => answer)
+		["a null header, retried by the pin alone", [{ result: null }], 4],
+		["provider errors mixed with null headers", [...Array.from({ length: 3 }, () => ({ error: NOT_FOUND })), { result: null }], 1],
+		["a null header after provider errors", [{ result: null }, { error: NOT_FOUND }], 2],
+	])("pins through the client's own reader within one four-read budget: %s", async (_, answers, requests) => {
+		let n = 0
+		const { url, methods } = await endpoint(() => answers[n++ % answers.length]!)
 		const timing = { receiptTimeoutMs: 1_000, pollingIntervalMs: 1 }
 		const c = { deployment: D, reader: l1Reader(url, timing), node: {}, timing } as unknown as ExitContext
 		await expect(exitReads(c).pin()).rejects.toBeDefined()

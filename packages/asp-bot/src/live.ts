@@ -52,7 +52,7 @@ export type LiveSpec = {
 	onPosted?(p: LivePost): void
 	/** Refuse, before the poster's account deploys, unless the registry names the derived poster and intake. */
 	checkRoles?: true
-	/** Checked before the account deploy, the start's only write. */
+	/** Checked before the account deploy and before each post. */
 	signal?: AbortSignal
 }
 
@@ -201,6 +201,8 @@ export async function liveFrom(s: LiveSpec, log: Ports["log"]): Promise<Live> {
 			aspLeaves: s.aspLeaves,
 			birthLeaves: births.birthLeaves,
 			async post(a: PostArgs) {
+				// A proof already running when the signal aborts can still broadcast: one more correct root.
+				s.signal?.throwIfAborted()
 				const call = registry.methods.post_root(a.sequence, new Fr(a.poolRoot), new Fr(a.birthRoot), a.l1Block, a.rootTime)
 				const { receipt } = (await call.send(send as never)) as unknown as {
 					receipt: { blockNumber?: number; txHash: { toString(): string } }

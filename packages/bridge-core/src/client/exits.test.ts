@@ -18,23 +18,25 @@ const TX = `0x${"aa".repeat(32)}` as Hash
 const h = (n: number) => `0x${n.toString(16).padStart(64, "0")}` as Hex
 
 /**
- * Headers at heights 10, 11, …; the n-th pin sees `settled[n]` (the last entry thereafter) and, unless
- * `consumed` says otherwise, the leaf consumed exactly when it sees an event. `moved` makes a header
- * no longer canonical once a read has used it.
+ * Headers at heights 10, 11, …; the n-th pin sees `settled[n]` and `witness[n]` (each list's last entry
+ * thereafter) and, unless `consumed` says otherwise, the leaf consumed exactly when it sees an event.
+ * `moved` makes a header no longer canonical once a read has used it.
  */
-const reads = (o: Partial<{ witness: boolean; settled: (Hash | null)[]; consumed: boolean; moved: boolean }>) => {
+const reads = (o: Partial<{ witness: boolean | boolean[]; settled: (Hash | null)[]; consumed: boolean; moved: boolean }>) => {
 	const settled = o.settled ?? [null]
+	const witnesses = Array.isArray(o.witness) ? o.witness : [o.witness !== false]
 	let height = 10n
 	const pinned: { floor: bigint | undefined; at: ExitPin }[] = []
 	const used: ExitPin[] = []
 	const use = (at: ExitPin) => used.push(at)
-	const eventAt = (at: ExitPin) =>
-		settled[
+	const nth = <T>(xs: readonly T[], at: ExitPin): T | undefined =>
+		xs[
 			Math.min(
 				pinned.findIndex((p) => p.at === at),
-				settled.length - 1,
+				xs.length - 1,
 			)
-		] ?? null
+		]
+	const eventAt = (at: ExitPin) => nth(settled, at) ?? null
 	const io: ExitReads = {
 		pin: vi.fn(async (floor?: bigint) => {
 			const at = { number: height++, hash: h(Number(height)) }
@@ -44,7 +46,7 @@ const reads = (o: Partial<{ witness: boolean; settled: (Hash | null)[]; consumed
 		holds: vi.fn(async () => {
 			if (o.moved) throw new BridgeClientError("RPC_INCONSISTENT")
 		}),
-		witness: async (_, at) => (use(at), o.witness === false ? undefined : W),
+		witness: async (_, at) => (use(at), nth(witnesses, at) ? W : undefined),
 		settledTx: async (_, __, at) => (use(at), eventAt(at)),
 		consumed: async (_, at) => (use(at), o.consumed ?? eventAt(at) !== null),
 	}
@@ -115,6 +117,16 @@ describe("settleWith", () => {
 				throw new Error("reverted")
 			}),
 		).rejects.toThrow("reverted")
+	})
+
+	it("re-derives the witness at the re-read's own header: an event at the pair once the ticket is gone is not its settlement", async () => {
+		const gone = reads({ settled: [null, TX], witness: [true, false] })
+		await expect(
+			settleWith(gone, T, async () => {
+				throw new Error("reverted")
+			}),
+		).rejects.toThrow("reverted")
+		expect(gone.pinned).toHaveLength(2)
 	})
 
 	it("leaves a broadcast send's error to that send's own floored re-read", async () => {

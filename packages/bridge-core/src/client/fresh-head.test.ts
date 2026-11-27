@@ -65,7 +65,13 @@ const SCANS: [string, (c: PublicClient) => Promise<unknown>][] = [
 	[
 		"the settled-exit lookup",
 		(c) =>
-			settledAt(exitReads({ deployment: D, reader: c, node: {} as never, timing: LOCAL_TIMING }), TICKET, { epoch: 1n, leafId: 2n }),
+			settledAt(
+				{
+					...exitReads({ deployment: D, reader: c, node: {} as never, timing: LOCAL_TIMING }),
+					witness: async () => ({ epoch: 1n, leafId: 2n }),
+				},
+				TICKET,
+			),
 	],
 ]
 

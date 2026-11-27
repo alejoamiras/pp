@@ -200,13 +200,28 @@ export async function checkBeforeOpen(c: OpenContext): Promise<void> {
 	await checkHub(c, tokenClassId)
 	await checkTokens(c, tokenClassId)
 	await checkRegistry(c)
+	await checkNoPendingOwner(c, head)
+	if ((await c.l1.getBlock({ blockNumber: head.number })).hash !== head.hash)
+		throw new OpenRefusedError("l1 head", "reorged during the check")
+}
+
+async function checkNoPendingOwner(c: OpenContext, head: Head): Promise<void> {
 	same(
 		"factory.pendingOwner",
 		await c.l1.readContract({ address: c.factory, abi: PORTAL_FACTORY_ABI, functionName: "pendingOwner", ...at(head) }),
 		ZERO_ADDRESS,
 	)
-	if ((await c.l1.getBlock({ blockNumber: head.number })).hash !== head.hash)
-		throw new OpenRefusedError("l1 head", "reorged during the check")
+}
+
+/**
+ * The last reads before an open broadcasts, at a fresh head: what can change between {@link checkBeforeOpen}
+ * and the send without a deploy, the registry's canonical rollup and a pending ownership transfer.
+ * @throws OpenRefusedError
+ */
+export async function checkStillOpenable(c: OpenContext): Promise<void> {
+	const head = await latestHead(c.l1)
+	await checkCanonicalRollup(c, head)
+	await checkNoPendingOwner(c, head)
 }
 
 // ─── The guardian's writes ───────────────────────────────────────────────────
@@ -267,9 +282,10 @@ async function pausedAt(l1: OpenL1, factory: Address, blockHash?: Hash): Promise
 /**
  * The later-process open. Refuses before any write unless `expected.registryRoles` is set, every
  * portal names its L2 token, the reader's, the wallet's and the node's L1 chain ids all equal
- * `c.chainId`, the account is the expected guardian, and {@link checkBeforeOpen} passes. Signs, reads
- * the canonical rollup once more at a fresh head, reports the hash and nonce, then broadcasts;
- * requires a successful receipt and entries open at the receipt's block.
+ * `c.chainId`, the account is the expected guardian, and {@link checkBeforeOpen} passes. Signs, runs
+ * {@link checkStillOpenable}, reports the hash and nonce, then broadcasts; requires its own receipt,
+ * successful, and entries open at the receipt's block.
+ * @throws Error naming both hashes when another transaction at the nonce mined instead
  */
 export async function openDeployedEntries(
 	c: OpenContext & { l1: GuardianL1 },
@@ -283,7 +299,7 @@ export async function openDeployedEntries(
 	await assertGuardian(c.chainId, guardian, l1, c.expected.guardian)
 	await checkBeforeOpen(c)
 	const signed = await signEntriesPaused(l1, guardian, c.factory, false, {})
-	await checkCanonicalRollup(c, await latestHead(l1))
+	await checkStillOpenable(c)
 	o.onSigned?.({ hash: signed.hash, nonce: signed.nonce })
 	await guardian.sendRawTransaction({ serializedTransaction: signed.serialized })
 	const receipt = await l1.waitForTransactionReceipt({
@@ -291,6 +307,8 @@ export async function openDeployedEntries(
 		timeout: timing.receiptTimeoutMs,
 		pollingInterval: timing.pollingIntervalMs,
 	})
+	if (receipt.transactionHash.toLowerCase() !== signed.hash.toLowerCase())
+		throw new Error(`${receipt.transactionHash} mined at this open's nonce instead of ${signed.hash}`)
 	if (receipt.status !== "success") throw new Error(`setEntriesPaused(false) reverted (${signed.hash})`)
 	if (await pausedAt(l1, c.factory, receipt.blockHash)) throw new Error(`entries still paused at block ${receipt.blockNumber}`)
 	return signed.hash
@@ -412,9 +430,9 @@ async function awaitPause(
 }
 
 /**
- * Once the pause's block is canonical under a finalized header: "paused" when entries are paused at
- * that header's hash and at a fresh head's; else "reopened", as an open queued behind a nonce gap the
- * pause filled leaves them once it mines.
+ * "reopened" when entries are open at the pause's own block, or, once that block is canonical under a
+ * finalized header, at that header's hash or a fresh head's, as an open queued behind a nonce gap the
+ * pause filled leaves them; else "paused".
  */
 async function confirmFinal(
 	l1: GuardianL1,
@@ -425,7 +443,8 @@ async function confirmFinal(
 	waits: PauseWaits,
 ): Promise<"paused" | "reopened"> {
 	if (receipt.status !== "success") throw new Error(`setEntriesPaused(true) reverted (${receipt.transactionHash})`)
-	if (!(await pausedAt(l1, factory, receipt.blockHash))) throw new Error(`entries open at the pause's block ${receipt.blockNumber}`)
+	// An open queued right behind the pause can run after it in the same block.
+	if (!(await pausedAt(l1, factory, receipt.blockHash))) return "reopened"
 	const deadline = Date.now() + waits.finalityMs
 	let finalized = await l1.getBlock({ blockTag: "finalized" })
 	while (finalized.number < receipt.blockNumber) {
@@ -441,6 +460,27 @@ async function confirmFinal(
 }
 
 const PAUSE_SENDS = 3
+
+/** {@link confirmFinal} after a broadcast: a failed read there is `PAUSE_UNCONFIRMED` naming the send, never a bare RPC error. */
+async function confirmed(
+	l1: GuardianL1,
+	factory: Address,
+	receipt: TransactionReceipt,
+	sent: Sent,
+	timing: ClientTiming,
+	waits: PauseWaits,
+): Promise<"paused" | "reopened"> {
+	try {
+		return await confirmFinal(l1, factory, receipt, sent.nonce, timing, waits)
+	} catch (e) {
+		if (e instanceof PauseError) throw e
+		throw new PauseError(
+			"PAUSE_UNCONFIRMED",
+			sent.nonce,
+			`${sent.hash} mined; reading its state failed: ${e instanceof Error ? e.message : String(e)}`,
+		)
+	}
+}
 
 /**
  * Always writes `setEntriesPaused(true)` (idempotent on chain), at `o.nonce` if given, else at the
@@ -471,7 +511,7 @@ export async function pauseEntries(
 		const landed = sent.taken
 			? await ownReceipt(f.l1, sent.hash, timing)
 			: await awaitPause(f.l1, guardian.account.address, sent, timing, waits)
-		const outcome = landed === "taken" ? landed : await confirmFinal(f.l1, f.factory, landed, sent.nonce, timing, waits)
+		const outcome = landed === "taken" ? landed : await confirmed(f.l1, f.factory, landed, sent, timing, waits)
 		if (outcome === "paused") return { hash: sent.hash, nonce: sent.nonce, wasPaused }
 		last = { nonce: sent.nonce, outcome }
 		nonce = undefined

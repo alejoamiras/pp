@@ -35,6 +35,11 @@ export class SnapshotBook {
 		const n = sequence === "latest" ? this.current : sequence
 		return n === null ? undefined : this.held.get(n)?.body
 	}
+
+	/** Whether `/latest` serves exactly `sequence`'s snapshot. */
+	servesLatest(sequence: bigint): boolean {
+		return this.current === sequence && this.held.has(sequence)
+	}
 }
 
 export type Reply = { status: number; headers: Record<string, string>; body: string }
