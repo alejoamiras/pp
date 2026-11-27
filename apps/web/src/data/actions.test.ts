@@ -67,7 +67,11 @@ describe("dispatch", () => {
 		const ragequit = vi.fn(async () => ({ txHash: "0x01" as const, status: "success" as const }))
 		const port = guardAztec({ ragequit } as unknown as AztecPort, (a) => a !== "ragequit")
 		await expect(
-			port.ragequit(ACCOUNT, { payee: "0x0000000000000000000000000000000000000001", label: 1n, amount: 1n }),
+			port.ragequit(
+				ACCOUNT,
+				{ payee: "0x0000000000000000000000000000000000000001", label: 1n, amount: 1n },
+				{ epoch: 1, handoff: () => {} },
+			),
 		).rejects.toBeInstanceOf(NotGrantedError)
 		expect(ragequit).not.toHaveBeenCalled()
 	})

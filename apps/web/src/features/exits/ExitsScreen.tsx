@@ -7,6 +7,7 @@ import type { ExitStatus } from "../../data/stack-types"
 import { codeOf, isUserRejection, messageOf, PAYEE_MESSAGES, type UiCode } from "../../data/errors"
 import { parsePayee } from "../../data/parse"
 import type { ExitView } from "../../data/ports"
+import { bindL1Send } from "../../data/sends"
 import { ActionButton, Amount, Callout, EmptyState, Field, LabelChip, Panel, StateBadge, shortHex, type Tone } from "../../ui"
 
 const STATUS: Record<ExitStatus, { text: string; tone: Tone; note: string }> = {
@@ -28,12 +29,14 @@ function useCollect(view: ExitView) {
 		const { account, chainId } = live.get()
 		if (account === null) return setState({ kind: "failed", code: "NO_SENDER" })
 		if (chainId !== source.deployment.chainId) return setState({ kind: "failed", code: "CHAIN_MISMATCH" })
+		const on = bindL1Send(live.get, account, chainId)
 		setState({ kind: "collecting" })
 		try {
-			await source.exits.settle(view.ticket, account)
+			await source.exits.settle(view.ticket, account, on)
 			setState({ kind: "idle" })
 		} catch (err) {
-			setState({ kind: "failed", code: isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED") })
+			const code = on.refused() ? "CONTEXT_CHANGED" : isUserRejection(err) ? "WALLET_REJECTED" : (codeOf(err) ?? "RPC_FAILED")
+			setState({ kind: "failed", code })
 		} finally {
 			refresh()
 		}

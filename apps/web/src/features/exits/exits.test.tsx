@@ -50,4 +50,43 @@ describe("exits", () => {
 		await waitFor(() => expect(statuses()).toEqual(["settled", "settled", "proving"]))
 		expect(settle).toHaveBeenCalledTimes(2)
 	})
+
+	test("a collect held while the wallet moves to another chain says the wallet changed and nothing was sent", async () => {
+		const app = renderApp({
+			patch: (s) => ({
+				...s,
+				exits: {
+					tickets: async () => [
+						{
+							key: { deployment: s.deployment.id, l2TxHash: L2_TX, messageIndexInTx: 0 },
+							ticket: {
+								kind: "public",
+								token: s.deployment.token,
+								payee: ACCOUNTS.owner,
+								amount: 1n,
+								l2TxHash: L2_TX,
+								messageIndexInTx: 0,
+							},
+							status: "ready",
+						},
+					],
+					settle: async (_t, _sender, on) => {
+						app.control.setL1Chain(1)
+						// The stack's guard answers a refused handoff with a 4001, which reads like the wallet's own no.
+						try {
+							on.handoff()
+						} catch {
+							throw new ProviderError(4001, "The wallet context changed; nothing was sent.")
+						}
+						return L2_TX
+					},
+				},
+			}),
+		})
+		await app.user.click(screen.getByRole("button", { name: "Exits" }))
+		const collect = await screen.findByRole("button", { name: "Collect on Ethereum" })
+		await waitFor(() => expect((collect as HTMLButtonElement).disabled).toBe(false))
+		await app.user.click(collect)
+		await screen.findByText(messageOf("CONTEXT_CHANGED"))
+	})
 })

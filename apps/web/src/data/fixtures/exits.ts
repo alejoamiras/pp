@@ -20,7 +20,7 @@ function viewOf(w: World, e: FixtureExit): ExitView {
 export function fixtureExits(w: World): ExitPort {
 	return {
 		tickets: async (payee: Address) => w.s.exits.filter((e) => isAddressEqual(e.payee, payee)).map((e) => viewOf(w, e)),
-		async settle(t, sender) {
+		async settle(t, sender, on) {
 			const fault = w.takeFault("settle")
 			if (fault !== null) throw new BridgeFailure(fault as UiCode)
 			if (!isAddressEqual(sender, selectedAccount(w))) throw new ProviderError(4100, "not the selected account")
@@ -28,6 +28,7 @@ export function fixtureExits(w: World): ExitPort {
 			if (!e) throw new BridgeFailure("TICKET_NOT_FOUND")
 			if (e.settledTx) return e.settledTx
 			if (viewOf(w, e).status !== "ready") throw new BridgeFailure("EXIT_NOT_READY")
+			on.handoff()
 			const tx: Hash = w.nextHex(32)
 			w.update((s) => {
 				e.settledTx = tx

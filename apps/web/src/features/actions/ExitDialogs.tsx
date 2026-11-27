@@ -5,7 +5,8 @@ import { useLabelNotes } from "../../app/queries"
 import type { AztecAddress } from "../../data/stack-types"
 import { ragequitChunks, singleCallAmounts } from "../../data/chunks"
 import { codeOf, messageOf } from "../../data/errors"
-import type { LabelBalance } from "../../data/ports"
+import type { AztecSendHooks, LabelBalance } from "../../data/ports"
+import { bindAztecSend } from "../../data/sends"
 import { ActionButton, Amount, Callout, Choices, Facts, formatAmount, LabelChip } from "../../ui"
 import { ActionShell, AmountField, OwnerWarning, PayeeField, useAction, useAmount, usePayee } from "./shared"
 
@@ -71,10 +72,11 @@ interface RagequitProps {
 
 /**
  * Exact chunks only, so nothing is left as change. The confirmed amount is re-derived against the
- * notes as they are right before sending, so a note set that changed under the dialog sends nothing.
+ * notes as they are right before sending, so a note set that changed under the dialog sends nothing,
+ * and the send stays bound to the Aztec connection the confirm was made in.
  */
 export function RagequitDialog({ account, balance, onClose }: RagequitProps) {
-	const { aztec, addPayee } = useApp()
+	const { aztec, live, addPayee } = useApp()
 	const { notes, choices } = useChunkChoices(account, balance.label)
 	const payee = usePayee()
 	const [pick, setPick] = useState<string | null>(null)
@@ -84,12 +86,14 @@ export function RagequitDialog({ account, balance, onClose }: RagequitProps) {
 	const confirm = async () => {
 		const to = payee.payee
 		if (amount === null || !to) return
+		let on: AztecSendHooks
 		try {
+			on = bindAztecSend(live.get, account)
 			if (ragequitChunks(await aztec.notesByLabel(account, balance.label), amount).length !== 1) return act.fail("NO_EXACT_CHUNKS")
 		} catch (err) {
 			return act.fail(codeOf(err) ?? "RPC_FAILED")
 		}
-		if (await act.send("ragequit", () => aztec.ragequit(account, { payee: to, label: balance.label, amount }))) addPayee(to)
+		if (await act.send("ragequit", () => aztec.ragequit(account, { payee: to, label: balance.label, amount }, on))) addPayee(to)
 	}
 	const missing = amount === null ? "Pick an amount first." : !payee.payee ? "Enter a valid payee first." : undefined
 	return (

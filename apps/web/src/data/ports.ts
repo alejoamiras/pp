@@ -102,12 +102,15 @@ export interface SubmitHooks {
 	sent(txHash: Hash): void
 }
 
-export interface ClaimHooks {
-	/** The Aztec connection the claim is bound to: it goes out through that connection's wallet or not at all. */
+/** What one Aztec send is bound to, from the moment the user asked for it. */
+export interface AztecSendHooks {
+	/** The Aztec connection the send is bound to: it goes out through that connection's wallet or not at all. */
 	readonly epoch: number
-	/** Runs after the claim is built and right before the Aztec wallet is asked to send; when it throws, nothing is sent. */
+	/** Runs after the send is built and right before the Aztec wallet is asked to send; when it throws, nothing is sent. */
 	handoff(): void
 }
+
+export type ClaimHooks = AztecSendHooks
 
 /** Opaque: the bridge session, the signature and every proof stay inside the implementation. */
 export interface Session {
@@ -163,8 +166,11 @@ export interface AztecPort {
 	transferPrivate(from: AztecAddress, a: { to: AztecAddress; amount: bigint; label: bigint; origin: Origin }): Promise<Sent>
 	unshield(from: AztecAddress, a: { amount: bigint; label: bigint; origin: Origin }): Promise<Sent>
 	shield(from: AztecAddress, amount: bigint): Promise<Sent>
-	/** Re-derives the one exact chunk (at most 8 largest notes) equal to `amount`, else refuses with `NO_EXACT_CHUNKS`. */
-	ragequit(from: AztecAddress, a: { payee: Address; label: bigint; amount: bigint }): Promise<Sent>
+	/**
+	 * Re-derives the one exact chunk (at most 8 largest notes) equal to `amount` from the notes as they
+	 * are right before sending, else refuses with `NO_EXACT_CHUNKS`.
+	 */
+	ragequit(from: AztecAddress, a: { payee: Address; label: bigint; amount: bigint }, on: AztecSendHooks): Promise<Sent>
 	exitPublic(from: AztecAddress, a: { payee: Address; amount: bigint }): Promise<Sent>
 }
 
@@ -181,7 +187,8 @@ export interface ExitView {
 }
 export interface ExitPort {
 	tickets(payee: Address): Promise<ExitView[]>
-	settle(t: ExitTicket, sender: Address): Promise<Hash>
+	/** Sends from `sender`, or returns the transaction that already settled `t`. */
+	settle(t: ExitTicket, sender: Address, on: Pick<SubmitHooks, "handoff">): Promise<Hash>
 }
 
 /** One record and the snapshot it names, read at one anchor block. */

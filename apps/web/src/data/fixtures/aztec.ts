@@ -148,10 +148,11 @@ export function fixtureAztec(w: World): AztecPort {
 				return null
 			})
 		},
-		async ragequit(from, { payee, label, amount }) {
+		async ragequit(from, { payee, label, amount }, on) {
 			checkPayee(w, payee)
 			const values = ofLabel(w, from, label).map((n) => n.value)
 			if (ragequitChunks(values, amount).length !== 1) throw new BridgeFailure("NO_EXACT_CHUNKS")
+			on.handoff()
 			return send(w, "ragequit", () => {
 				const origin = ofLabel(w, from, label)[0]?.origin ?? 0
 				const change = spend(w, from, label, origin, amount)
