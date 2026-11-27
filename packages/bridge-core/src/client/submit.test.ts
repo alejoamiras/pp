@@ -188,9 +188,21 @@ describe("submit: preflight at handoff", () => {
 		expect(t.values.size).toBe(0)
 	})
 
-	it("keeps the attempt as UNCERTAIN when a 4001 sits under an error that may follow a broadcast", async () => {
+	it.each<[string, Parameters<typeof foreignError>]>([
+		["a timeout, which may follow a broadcast", [["TimeoutError"], ["UserRejectedRequestError", { code: 4001 }]]],
+		// Pinned: viem relabels a refusal whose text says "execution reverted"; treating that as a wrapper is a deliberate change.
+		[
+			"viem's ExecutionRevertedError relabel",
+			[
+				["ContractFunctionExecutionError"],
+				["TransactionExecutionError"],
+				["ExecutionRevertedError"],
+				["UserRejectedRequestError", { code: 4001 }],
+			],
+		],
+	])("keeps the attempt as UNCERTAIN when a 4001 sits under %s", async (_, links) => {
 		const t = await setup()
-		t.chain.writeContract.mockRejectedValueOnce(foreignError(["TimeoutError"], ["UserRejectedRequestError", { code: 4001 }]))
+		t.chain.writeContract.mockRejectedValueOnce(foreignError(...links))
 		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
 		expect((await t.journal.read(t.spend.nullifier)).record?.attempts).toHaveLength(1)
 	})
