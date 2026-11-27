@@ -39,8 +39,16 @@ export const forgeArtifact = (name: string, out = FORGE_OUT): string => join(out
  * The build directory `deploy`'s check reads: a `--rehearse` run's own copy when `PP_TESTNET_FORGE_OUT`
  * names one, so a rehearsal never rewrites the shared build; every other mode reads the checkout's.
  */
-export const checkedForgeOut = (mode: { kind: string }, env: NodeJS.ProcessEnv): string =>
-	(mode.kind === "rehearse" && env.PP_TESTNET_FORGE_OUT) || FORGE_OUT
+export const checkedForgeOut = (mode: { kind: string }, env: NodeJS.ProcessEnv, checkout = FORGE_OUT): string =>
+	(mode.kind === "rehearse" && env.PP_TESTNET_FORGE_OUT) || checkout
+
+/**
+ * `deploy`'s build check: {@link checkedForgeOut}'s build, then the checkout's, which is the one
+ * `@pp/bridge-core` broadcasts, so a rehearsal's copy can fail the check but never stand in for it.
+ * @returns the first mismatch, or undefined
+ */
+export const deployBuildMismatch = (mode: { kind: string }, env: NodeJS.ProcessEnv, checkout = FORGE_OUT): string | undefined =>
+	buildMismatch(checkedForgeOut(mode, env, checkout)) ?? buildMismatch(checkout)
 
 /**
  * Every contract in {@link CREATION_CODES}, as the deploy will load it, matches its pin's hash and size.

@@ -1,7 +1,17 @@
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { concat, type Hex, keccak256, numberToHex, size } from "viem"
 import { describe, expect, it } from "vitest"
-import { buildMismatch, CREATION_CODES, checkedForgeOut, creationCodeHash, forgeArtifact as artifact, stripMetadata } from "./creation"
+import {
+	buildMismatch,
+	CREATION_CODES,
+	checkedForgeOut,
+	creationCodeHash,
+	deployBuildMismatch,
+	forgeArtifact as artifact,
+	stripMetadata,
+} from "./creation"
+import { scratchHome } from "./test-support"
 
 describe("creation-code hashes", () => {
 	it("hash the code without its trailing metadata, so only what the code does is compared", () => {
@@ -30,4 +40,27 @@ describe("the build deploy checks", () => {
 		for (const kind of ["live", "rehearse-fork"]) expect(checkedForgeOut({ kind }, env)).toBe(own)
 		expect(checkedForgeOut({ kind: "rehearse" }, { PP_TESTNET_FORGE_OUT: "" })).toBe(own)
 	})
+
+	it.skipIf(!existsSync(artifact("PortalFactory")))(
+		"refuses a stale checkout even beside a good copy, since the checkout is what broadcasts",
+		() => {
+			const real = readFileSync(artifact("PortalFactory"), "utf8")
+			const parsed = JSON.parse(real) as { bytecode: { object: string } }
+			const code = parsed.bytecode.object
+			parsed.bytecode.object = `${code.slice(0, 10)}${code[10] === "0" ? "1" : "0"}${code.slice(11)}`
+			const root = scratchHome()
+			const out = (name: string, text: string) => {
+				const dir = join(root, name)
+				mkdirSync(dirname(artifact("PortalFactory", dir)), { recursive: true })
+				writeFileSync(artifact("PortalFactory", dir), text)
+				return dir
+			}
+			const [good, stale] = [out("good", real), out("stale", JSON.stringify(parsed))]
+			const rehearse = { kind: "rehearse" }
+			expect(deployBuildMismatch(rehearse, { PP_TESTNET_FORGE_OUT: good }, stale)).toMatch(/^PortalFactory: /)
+			expect(deployBuildMismatch(rehearse, { PP_TESTNET_FORGE_OUT: stale }, good)).toMatch(/^PortalFactory: /)
+			expect(deployBuildMismatch({ kind: "live" }, { PP_TESTNET_FORGE_OUT: stale }, good)).toBeUndefined()
+			expect(deployBuildMismatch(rehearse, { PP_TESTNET_FORGE_OUT: good }, good)).toBeUndefined()
+		},
+	)
 })
