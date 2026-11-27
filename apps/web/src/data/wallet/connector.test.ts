@@ -18,6 +18,7 @@ const TARGET: PublicTarget = {
 	walletUrls: [],
 	dataMode: "fixtures",
 	connector: "real",
+	stack: null,
 }
 const PNG = "data:image/png;base64,iVBORw0KGgo="
 
@@ -169,5 +170,18 @@ describe("the real connector", () => {
 		expect(onDisconnect).toHaveBeenCalledTimes(1)
 		const again = await connector.connect(options[0] as WalletOption, async () => true)
 		expect(again.epoch).toBeGreaterThan(connection.epoch + 1)
+	})
+
+	test("a target with no rollup version asks wallets for the node's", async () => {
+		vi.spyOn(globalThis, "fetch").mockImplementation(
+			async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { l1ChainId: 31337, rollupVersion: 1685378643 } })),
+		)
+		const asked: bigint[] = []
+		const discover: Discover = (_t, chainInfo) => {
+			asked.push(chainInfo.version.toBigInt())
+			return { wallets: (async function* () {})(), cancel: () => {} }
+		}
+		await createRealConnector({ ...TARGET, rollupVersion: null }, MANIFEST, discover).discover(() => {}, new AbortController().signal)
+		expect(asked).toEqual([1685378643n])
 	})
 })

@@ -1,34 +1,80 @@
 /**
  * The build's public target: the only chain coordinates the bundle may carry. The inputs also hold
- * keys (`handle.json` names the anvil and actor keys), so each allowed field is read and validated on
- * its own and the target is assembled by name; an unlisted field cannot reach `define`.
+ * keys (`handle.json` names the anvil and actor keys) or fields the page never needs (the bot's
+ * accounts), so each allowed field is read and validated on its own and the target is assembled by
+ * name; an unlisted field cannot reach `define`.
  */
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { z } from "zod"
+// The config runs under Node, which cannot load `@pp/bridge-core`'s barrel (its imports carry no
+// extensions); this module is self-contained and isomorphic.
+import { parseStackManifest, requireBlocks } from "../../../../packages/bridge-core/src/stack-manifest.ts"
 
 export type DataMode = "fixtures" | "stack"
 export type ConnectorMode = "fixture" | "real"
+
+/**
+ * A stack manifest's pool and bridge, in the JSON shape `parseStackManifest` reads (bigints as
+ * decimal strings). The adapters parse it again in the page, so a value that reaches the bundle
+ * passes the same strict check twice.
+ */
+export interface StackManifestJson {
+	readonly version: 1
+	readonly chainId: number
+	readonly l1Rpc: string
+	readonly aztecNode: string
+	readonly pool: {
+		readonly poolVault: string
+		readonly entrypoint: string
+		readonly aspRegistry: string
+		readonly keystore: string
+		readonly asset: string
+		readonly deployBlock: string
+		readonly aspApiUrl: string
+	}
+	readonly bridge: {
+		readonly factory: string
+		readonly portal: string
+		readonly hub: string
+		readonly token: string
+		readonly registry: string
+		readonly deployBlock: string
+	}
+}
+
+export interface StackTarget {
+	readonly manifest: StackManifestJson
+	/** The ASP bot's snapshot server. */
+	readonly botUrl: string
+	/** The canonical SponsoredFPC, derived at build time so its artifact never ships. */
+	readonly sponsoredFpc: string
+}
 
 export interface PublicTarget {
 	readonly nodeUrl: string
 	readonly l1RpcUrl: string
 	readonly l1ChainId: number
-	readonly rollupVersion: number
+	/** `null` on a stack target, whose manifest has none: the page takes the node's once its L1 chain id matches. */
+	readonly rollupVersion: number | null
 	/** Iframe wallets the connector probes, in order; empty outside a local build. */
 	readonly walletUrls: readonly string[]
 	readonly dataMode: DataMode
 	readonly connector: ConnectorMode
+	/** Present exactly when `dataMode` is `"stack"`. */
+	readonly stack: StackTarget | null
 }
 
 export interface TargetEnv {
 	PP_SANDBOX_ARTIFACTS?: string
+	PP_STACK_MANIFEST?: string
 	PP_WEB_WALLETS?: string
 	PP_DATA?: string
 }
 
 /** A CSP host-source host with no wildcard: dot-separated letters, digits and hyphens. */
 const SOURCE_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*$/
+const AZTEC_ADDRESS = /^0x[0-9a-f]{64}$/
 
 /**
  * A URL a page may connect to: http(s) only; no userinfo, which is how a keyed endpoint leaks; and a
@@ -65,7 +111,7 @@ function fail(source: string, problem: string): never {
 	throw new Error(`build target: ${source} ${problem}`)
 }
 
-function readHandle(file: string): unknown {
+function readJson(file: string): unknown {
 	let text: string
 	try {
 		text = readFileSync(file, "utf8")
@@ -90,39 +136,111 @@ function parseWalletUrls(raw: string | undefined): string[] {
 	return urls
 }
 
-export function parseDataMode(raw: string | undefined): DataMode {
-	if (raw === undefined || raw === "" || raw === "fixtures") return "fixtures"
-	if (raw === "stack") return "stack"
-	fail("PP_DATA", `is ${JSON.stringify(raw)}; expected "fixtures" or "stack"`)
+/** A stack manifest builds the stack data mode, a sandbox handle the fixture world; `PP_DATA`, when set, must agree. */
+export function parseDataMode(env: Pick<TargetEnv, "PP_DATA" | "PP_STACK_MANIFEST">): DataMode {
+	const implied: DataMode = env.PP_STACK_MANIFEST ? "stack" : "fixtures"
+	const raw = env.PP_DATA
+	if (raw === undefined || raw === "") return implied
+	if (raw !== "fixtures" && raw !== "stack") fail("PP_DATA", `is ${JSON.stringify(raw)}; expected "fixtures" or "stack"`)
+	if (raw !== implied) fail("PP_DATA", `is ${raw}, but PP_STACK_MANIFEST is ${env.PP_STACK_MANIFEST ? "set" : "unset"}`)
+	return raw
 }
 
-/**
- * The target for one build. `local` (`vite build --mode sandbox`, the kit's `build:local`) reads the
- * sandbox run's handle from `PP_SANDBOX_ARTIFACTS` and the wallet URLs from `PP_WEB_WALLETS`, and uses
- * the real connector; every other build reads `committedHandle` and uses the fixture connector.
- *
- * @throws when an input is missing or a field fails validation, and when a stack build would use the
- *   fixture connector.
- */
-export function resolveTarget(o: { local: boolean; env: TargetEnv; committedHandle: string }): PublicTarget {
-	const dataMode = parseDataMode(o.env.PP_DATA)
-	if (dataMode === "stack" && !o.local) fail("PP_DATA=stack", "needs the real connector: build with --mode sandbox")
-	let handleFile = o.committedHandle
-	if (o.local) {
-		const dir = o.env.PP_SANDBOX_ARTIFACTS
-		if (!dir) fail("PP_SANDBOX_ARTIFACTS", "is not set; a local build reads the sandbox run's handle.json from it")
-		handleFile = join(dir, "handle.json")
+/** Runs `f`, reporting what it throws as a problem with `source`. */
+function attempt<T>(source: string, f: () => T): T {
+	try {
+		return f()
+	} catch (err) {
+		fail(source, err instanceof Error ? err.message : String(err))
 	}
-	const parsed = handleFields.safeParse(readHandle(handleFile))
-	if (!parsed.success) fail(handleFile, `is invalid: ${z.prettifyError(parsed.error)}`)
+}
+
+/** The manifest's public fields by name. */
+function stackTarget(file: string, sponsoredFpc: string | undefined): StackTarget {
+	const json = readJson(file)
+	const m = attempt(file, () => requireBlocks(parseStackManifest(json), ["bridge", "bot"]))
+	for (const [field, url] of [
+		["l1Rpc", m.l1Rpc],
+		["aztecNode", m.aztecNode],
+		["pool.aspApiUrl", m.pool.aspApiUrl],
+		["bot.url", m.bot.url],
+	] as const)
+		if (!isPublicHttpUrl(url)) fail(file, `${field} is not ${URL_RULE}`)
+	if (sponsoredFpc === undefined || !AZTEC_ADDRESS.test(sponsoredFpc)) fail("the SponsoredFPC address", "is missing or not 32-byte hex")
+	const { pool: p, bridge: b } = m
+	return {
+		manifest: {
+			version: 1,
+			chainId: m.chainId,
+			l1Rpc: m.l1Rpc,
+			aztecNode: m.aztecNode,
+			pool: {
+				poolVault: p.poolVault,
+				entrypoint: p.entrypoint,
+				aspRegistry: p.aspRegistry,
+				keystore: p.keystore,
+				asset: p.asset,
+				deployBlock: p.deployBlock.toString(),
+				aspApiUrl: p.aspApiUrl,
+			},
+			bridge: {
+				factory: b.factory,
+				portal: b.portal,
+				hub: b.hub,
+				token: b.token,
+				registry: b.registry,
+				deployBlock: b.deployBlock.toString(),
+			},
+		},
+		botUrl: m.bot.url,
+		sponsoredFpc,
+	}
+}
+
+function handleTarget(file: string, local: boolean, env: TargetEnv): PublicTarget {
+	const parsed = handleFields.safeParse(readJson(file))
+	if (!parsed.success) fail(file, `is invalid: ${z.prettifyError(parsed.error)}`)
 	const h = parsed.data
 	return {
 		nodeUrl: h.nodeUrl,
 		l1RpcUrl: h.anvilUrl,
 		l1ChainId: h.l1ChainId,
 		rollupVersion: h.rollupVersion,
-		walletUrls: o.local ? parseWalletUrls(o.env.PP_WEB_WALLETS) : [],
+		walletUrls: local ? parseWalletUrls(env.PP_WEB_WALLETS) : [],
+		dataMode: "fixtures",
+		connector: local ? "real" : "fixture",
+		stack: null,
+	}
+}
+
+/**
+ * The target for one build. `local` (`vite build --mode sandbox`, the kit's `build:local`) uses the
+ * real connector and the wallet URLs in `PP_WEB_WALLETS`; it reads the stack manifest at
+ * `PP_STACK_MANIFEST` (the stack adapters behind `#data`) or else the sandbox run's handle from
+ * `PP_SANDBOX_ARTIFACTS` (the fixture world). Every other build reads `committedHandle` and uses the
+ * fixture connector. `sponsoredFpc` is required for a stack target.
+ *
+ * @throws when an input is missing or a field fails validation, and when a stack build would use the
+ *   fixture connector.
+ */
+export function resolveTarget(o: { local: boolean; env: TargetEnv; committedHandle: string; sponsoredFpc?: string }): PublicTarget {
+	const dataMode = parseDataMode(o.env)
+	if (dataMode === "fixtures") {
+		if (!o.local) return handleTarget(o.committedHandle, false, o.env)
+		const dir = o.env.PP_SANDBOX_ARTIFACTS
+		if (!dir) fail("PP_SANDBOX_ARTIFACTS", "is not set; a local build reads the sandbox run's handle.json from it")
+		return handleTarget(join(dir, "handle.json"), true, o.env)
+	}
+	if (!o.local) fail("PP_DATA=stack", "needs the real connector: build with --mode sandbox")
+	const stack = stackTarget(o.env.PP_STACK_MANIFEST as string, o.sponsoredFpc)
+	return {
+		nodeUrl: stack.manifest.aztecNode,
+		l1RpcUrl: stack.manifest.l1Rpc,
+		l1ChainId: stack.manifest.chainId,
+		rollupVersion: null,
+		walletUrls: parseWalletUrls(o.env.PP_WEB_WALLETS),
 		dataMode,
-		connector: o.local ? "real" : "fixture",
+		connector: "real",
+		stack,
 	}
 }

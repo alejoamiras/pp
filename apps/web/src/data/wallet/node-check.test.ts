@@ -33,6 +33,15 @@ describe("the node check", () => {
 		expect(await codeOf(check(replying(info(31337, 8))))).toBe("chain-mismatch")
 	})
 
+	// A stack manifest names no rollup: the version comes from the node, and only after its L1 chain matched.
+	test("a target without a rollup version takes the node's, on the target's L1 chain only", async () => {
+		const unpinned = { ...TARGET, rollupVersion: null }
+		const signal = new AbortController().signal
+		expect(await assertNodeServesTarget(unpinned, signal, replying(info(31337, 1685378643)))).toEqual({ rollupVersion: 1685378643 })
+		expect(await codeOf(assertNodeServesTarget(unpinned, signal, replying(info(1, 1685378643))))).toBe("chain-mismatch")
+		expect(await codeOf(assertNodeServesTarget(unpinned, signal, replying(info(31337, -1))))).toBe("node-unreachable")
+	})
+
 	test("reads no answer, an HTTP error or an unreadable answer as unreachable", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => {})
 		const down: typeof fetch = async () => {

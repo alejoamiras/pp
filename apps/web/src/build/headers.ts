@@ -28,9 +28,14 @@ export type SecurityHeaders = z.infer<typeof headerFile>
 
 const uniqueOrigins = (urls: readonly string[]): string[] => [...new Set(urls.map((u) => new URL(u).origin))]
 
-/** Every origin the page fetches from: the node and the L1 RPC. Wallets are frames, not fetches. */
+/**
+ * Every origin the page fetches from: the node and the L1 RPC; on a stack target also the pool's ASP
+ * API, which the pool client reads note states from, and the ASP bot's snapshot server. Proving
+ * artifacts come from the page's own origin. Wallets are frames, not fetches.
+ */
 export function connectOrigins(t: PublicTarget): string[] {
-	return uniqueOrigins([t.nodeUrl, t.l1RpcUrl])
+	const stack = t.stack ? [t.stack.manifest.pool.aspApiUrl, t.stack.botUrl] : []
+	return uniqueOrigins([t.nodeUrl, t.l1RpcUrl, ...stack])
 }
 
 export function frameOrigins(t: PublicTarget): string[] {

@@ -14,6 +14,7 @@ const TEST_TARGET: PublicTarget = {
 	walletUrls: [],
 	dataMode: "fixtures",
 	connector: "fixture",
+	stack: null,
 }
 
 export default defineConfig({

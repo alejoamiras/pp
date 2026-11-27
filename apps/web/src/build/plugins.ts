@@ -46,6 +46,16 @@ export function previewSecurityHeaders(): Plugin {
 	}
 }
 
+/**
+ * nodePolyfills aliases each Node builtin by prefix, so pool-client's `buffer/index.js` (its explicit
+ * pick of the npm package) becomes a path inside the shim's file, and worker bundles get those aliases
+ * without the plugin's resolver that would repair them. A plugin's aliases outrank the config's, and
+ * a later plugin's outrank an earlier one's, so this goes after nodePolyfills.
+ */
+export function bufferSubpathAlias(shim: string): Plugin {
+	return { name: "pp:buffer-subpath-alias", config: () => ({ resolve: { alias: [{ find: /^buffer\/index\.js$/, replacement: shim }] } }) }
+}
+
 export interface BundleFile {
 	fileName: string
 	text: string
@@ -60,6 +70,14 @@ export function fixtureLeaks(moduleIds: Iterable<string>, files: Iterable<Bundle
 	return leaks
 }
 
+/** Build-time-only code: the contract artifacts the target derives the SponsoredFPC from, and that derivation. */
+const BUILD_ONLY = [/[\\/]@aztec-labs[\\/]noir-contracts\.js[\\/]/, /[\\/]src[\\/]build[\\/]sponsored-fpc\.ts$/]
+
+/** Modules in a bundle's graph that only the build may load. */
+export function buildOnlyModules(moduleIds: Iterable<string>): string[] {
+	return [...moduleIds].filter((id) => BUILD_ONLY.some((re) => re.test(id.replace(/^\0/, "")))).map((id) => `module ${id}`)
+}
+
 /** Every file under `dir`, named relative to it with `/` separators. */
 function readOutput(dir: string): BundleFile[] {
 	return readdirSync(dir, { recursive: true, withFileTypes: true })
@@ -71,10 +89,10 @@ function readOutput(dir: string): BundleFile[] {
 }
 
 /**
- * Fails a stack build whose module graph holds any file under `src/data/fixtures/` (reachable code,
- * even if tree-shaken, means an import path exists) or whose written output names the fixture marker.
- * The output directory is read back rather than the bundle, because Vite copies `public/` beside the
- * bundle and the scan must cover everything that ships.
+ * Fails a stack build whose module graph holds any file under `src/data/fixtures/` or any build-only
+ * module (reachable code, even if tree-shaken, means an import path exists), or whose written output
+ * names the fixture marker. The output directory is read back rather than the bundle, because Vite
+ * copies `public/` beside the bundle and the scan must cover everything that ships.
  */
 export function stackBuildGuard(appRoot: string): Plugin {
 	const fixturesDir = join(appRoot, "src", "data", "fixtures")
@@ -95,7 +113,11 @@ export function stackBuildGuard(appRoot: string): Plugin {
 			const files = readOutput(options.dir ?? outDir)
 			const leaks = fixtureLeaks(ids, files, fixturesDir)
 			if (leaks.length > 0) this.error(`stack build ships fixture code:\n  ${leaks.join("\n  ")}`)
-			logger?.info(`${GUARD_PASSED}: ${ids.length} modules, ${files.length} files, no fixture module, no ${FIXTURE_MARKER}`)
+			const buildOnly = buildOnlyModules(ids)
+			if (buildOnly.length > 0) this.error(`stack build ships build-time-only code:\n  ${buildOnly.join("\n  ")}`)
+			logger?.info(
+				`${GUARD_PASSED}: ${ids.length} modules, ${files.length} files, no fixture module, no ${FIXTURE_MARKER}, no build-only module`,
+			)
 		},
 	}
 }

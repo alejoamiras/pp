@@ -124,9 +124,9 @@ function connectorState(t: PublicTarget, discover: Discover) {
 			return option
 		},
 		async discover(onOption: (o: WalletOption) => void, signal: AbortSignal): Promise<void> {
-			await assertNodeServesTarget(t, signal)
+			const { rollupVersion } = await assertNodeServesTarget(t, signal)
 			s.providers.clear()
-			const chainInfo: ChainInfo = { chainId: new Fr(BigInt(t.l1ChainId)), version: new Fr(BigInt(t.rollupVersion)) }
+			const chainInfo: ChainInfo = { chainId: new Fr(BigInt(t.l1ChainId)), version: new Fr(BigInt(rollupVersion)) }
 			const session = discover(t, chainInfo)
 			const stop = () => session.cancel()
 			signal.addEventListener("abort", stop, { once: true })

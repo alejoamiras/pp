@@ -5,7 +5,7 @@ import { ConnectError } from "./types"
 const NODE_TIMEOUT_MS = 10_000
 
 const nodeInfoReply = z.object({
-	result: z.object({ l1ChainId: z.number().int(), rollupVersion: z.number().int() }),
+	result: z.object({ l1ChainId: z.number().int(), rollupVersion: z.number().int().nonnegative() }),
 })
 
 async function nodeInfo(nodeUrl: string, fetchFn: typeof fetch, signal: AbortSignal): Promise<unknown> {
@@ -22,16 +22,19 @@ async function nodeInfo(nodeUrl: string, fetchFn: typeof fetch, signal: AbortSig
 }
 
 /**
- * Plain JSON-RPC, no Aztec client: the node must name the target's L1 chain and rollup version before
- * the page offers it to a wallet as the chain to connect on.
+ * Plain JSON-RPC, no Aztec client: the node must name the target's L1 chain, and its rollup version
+ * when the target pins one, before the page offers it to a wallet as the chain to connect on. A
+ * target without a version (a stack manifest has none) takes the node's, read in the same answer
+ * whose L1 chain id matched.
  *
+ * @returns the rollup version the wallet is asked to connect on.
  * @throws ConnectError `node-unreachable` (no answer, or one that does not parse) or `chain-mismatch`.
  */
 export async function assertNodeServesTarget(
 	t: Pick<PublicTarget, "nodeUrl" | "l1ChainId" | "rollupVersion">,
 	signal: AbortSignal,
 	fetchFn: typeof fetch = fetch,
-): Promise<void> {
+): Promise<{ rollupVersion: number }> {
 	let reply: unknown
 	try {
 		reply = await nodeInfo(t.nodeUrl, fetchFn, signal)
@@ -42,10 +45,12 @@ export async function assertNodeServesTarget(
 	const parsed = nodeInfoReply.safeParse(reply)
 	if (!parsed.success) throw new ConnectError("node-unreachable", "The Aztec node sent an answer this app cannot read.")
 	const { l1ChainId, rollupVersion } = parsed.data.result
-	if (l1ChainId !== t.l1ChainId || rollupVersion !== t.rollupVersion) {
+	if (l1ChainId !== t.l1ChainId || (t.rollupVersion !== null && rollupVersion !== t.rollupVersion)) {
+		const built = t.rollupVersion === null ? "" : `, rollup ${t.rollupVersion}`
 		throw new ConnectError(
 			"chain-mismatch",
-			`The Aztec node serves L1 chain ${l1ChainId}, rollup ${rollupVersion}; this app is built for L1 chain ${t.l1ChainId}, rollup ${t.rollupVersion}.`,
+			`The Aztec node serves L1 chain ${l1ChainId}, rollup ${rollupVersion}; this app is built for L1 chain ${t.l1ChainId}${built}.`,
 		)
 	}
+	return { rollupVersion }
 }

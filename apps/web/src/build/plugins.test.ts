@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { expect, test } from "vitest"
 import { scratchDir } from "../../scripts/proc"
-import { fixtureLeaks, stackBuildGuard } from "./plugins"
+import { buildOnlyModules, fixtureLeaks, stackBuildGuard } from "./plugins"
 
 test("the stack guard flags fixture modules and the fixture marker, and nothing else", () => {
 	const fixtures = join("/app", "src", "data", "fixtures")
@@ -18,6 +18,12 @@ test("the stack guard flags fixture modules and the fixture marker, and nothing 
 		fixtures,
 	)
 	expect(leaks).toHaveLength(3)
+})
+
+test("the stack guard flags the SponsoredFPC artifact and its derivation, which only the build may load", () => {
+	const store = "/repo/node_modules/.bun/@aztec-labs+noir-contracts.js@6.0.0/node_modules/@aztec-labs/noir-contracts.js"
+	const ids = [join(store, "dest", "SponsoredFPC.js"), "\0/app/src/build/sponsored-fpc.ts", "/app/src/data/adapters/index.ts"]
+	expect(buildOnlyModules(ids)).toEqual([`module ${ids[0]}`, `module ${ids[1]}`])
 })
 
 type Hook = ((...args: unknown[]) => unknown) | { handler: (...args: unknown[]) => unknown } | undefined

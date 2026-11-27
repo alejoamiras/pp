@@ -48,6 +48,45 @@ function artifacts(handle: unknown): string {
 
 const local = (env: TargetEnv) => resolveTarget({ local: true, env, committedHandle: "/nonexistent" })
 
+const A20 = (n: string) => `0x${n.repeat(20)}`
+const A32 = (n: string) => `0x${n.repeat(32)}`
+const FPC = A32("fc")
+/** The bot's accounts: manifest fields the page never needs, so the target must not carry them. */
+const BOT_SENTINELS = { poster: A32("5e"), birthIntake: A32("5f") }
+
+/** The shape the local stack writes. */
+const MANIFEST = {
+	version: 1,
+	chainId: 31337,
+	l1Rpc: "http://127.0.0.1:40105",
+	aztecNode: "http://127.0.0.1:40106",
+	pool: {
+		poolVault: A20("01"),
+		entrypoint: A20("02"),
+		aspRegistry: A20("03"),
+		keystore: A20("04"),
+		asset: A20("05"),
+		deployBlock: "12",
+		aspApiUrl: "http://127.0.0.1:40107",
+	},
+	bridge: { factory: A20("06"), portal: A20("07"), hub: A32("08"), token: A32("09"), registry: A32("0a"), deployBlock: "34" },
+	bot: { url: "http://127.0.0.1:40108", ...BOT_SENTINELS },
+}
+
+function manifestFile(manifest: unknown): string {
+	const file = join(disposable("manifest"), "manifest.json")
+	writeFileSync(file, JSON.stringify(manifest))
+	return file
+}
+
+const stack = (manifest: unknown, sponsoredFpc: string | null = FPC) =>
+	resolveTarget({
+		local: true,
+		env: { PP_STACK_MANIFEST: manifestFile(manifest), PP_WEB_WALLETS: WALLETS.join(",") },
+		committedHandle: "/nonexistent",
+		...(sponsoredFpc === null ? {} : { sponsoredFpc }),
+	})
+
 function filesUnder(dir: string): string[] {
 	return (readdirSync(dir, { recursive: true, withFileTypes: true }) as { isFile(): boolean; parentPath: string; name: string }[])
 		.filter((e) => e.isFile())
@@ -65,10 +104,59 @@ describe("the build target", () => {
 			walletUrls: WALLETS,
 			dataMode: "fixtures",
 			connector: "real",
+			stack: null,
 		} satisfies PublicTarget)
 		for (const value of Object.values(SENTINELS)) expect(JSON.stringify(t)).not.toContain(value)
 		const committed = resolveTarget({ local: false, env: {}, committedHandle: join(artifacts(HANDLE), "handle.json") })
 		expect([committed.connector, committed.walletUrls]).toEqual(["fixture", []])
+	})
+
+	test("carries exactly the public fields of a stack manifest, and the node's rollup version is left to the page", () => {
+		const t = stack(MANIFEST)
+		expect(t).toEqual({
+			nodeUrl: MANIFEST.aztecNode,
+			l1RpcUrl: MANIFEST.l1Rpc,
+			l1ChainId: 31337,
+			rollupVersion: null,
+			walletUrls: WALLETS,
+			dataMode: "stack",
+			connector: "real",
+			stack: {
+				manifest: {
+					version: 1,
+					chainId: 31337,
+					l1Rpc: MANIFEST.l1Rpc,
+					aztecNode: MANIFEST.aztecNode,
+					pool: MANIFEST.pool,
+					bridge: MANIFEST.bridge,
+				},
+				botUrl: MANIFEST.bot.url,
+				sponsoredFpc: FPC,
+			},
+		} satisfies PublicTarget)
+		for (const value of Object.values(BOT_SENTINELS)) expect(JSON.stringify(t)).not.toContain(value.slice(2))
+	})
+
+	test("refuses a stack manifest the schema, the target's URL rule or the build mode does not accept", () => {
+		const remote = { ...MANIFEST, chainId: 11155111, l1Rpc: "https://key@rpc.example", aztecNode: "https://node.example" }
+		const { bot: _bot, ...botless } = MANIFEST
+		const cases: [string, () => unknown][] = [
+			[
+				"no manifest file",
+				() => local({ PP_STACK_MANIFEST: join(disposable("empty"), "manifest.json"), PP_WEB_WALLETS: WALLETS[0] }),
+			],
+			["a non-loopback node on 31337", () => stack({ ...MANIFEST, aztecNode: "http://10.0.0.1:8080" })],
+			["an unknown field", () => stack({ ...MANIFEST, keys: ["0x01"] })],
+			["no bot block", () => stack(botless)],
+			["an L1 RPC URL with a key in its userinfo", () => stack(remote)],
+			["no SponsoredFPC address", () => stack(MANIFEST, null)],
+			["a SponsoredFPC address that is not 32-byte hex", () => stack(MANIFEST, A20("fc"))],
+			["PP_DATA=fixtures beside a manifest", () => local({ PP_STACK_MANIFEST: manifestFile(MANIFEST), PP_DATA: "fixtures" })],
+			["PP_DATA=stack with no manifest", () => local({ PP_DATA: "stack", PP_WEB_WALLETS: WALLETS[0] })],
+		]
+		for (const [label, run] of cases) expect(run, label).toThrow(/build target/)
+		const committed = { local: false, env: { PP_STACK_MANIFEST: manifestFile(MANIFEST) }, committedHandle: "/x", sponsoredFpc: FPC }
+		expect(() => resolveTarget(committed)).toThrow(/real connector/)
 	})
 
 	test("refuses a missing or invalid input", () => {
@@ -90,7 +178,6 @@ describe("the build target", () => {
 			["an unknown data mode", { ...ok, PP_DATA: "mock" }],
 		]
 		for (const [label, env] of cases) expect(() => local(env), label).toThrow(/build target/)
-		expect(() => resolveTarget({ local: false, env: { PP_DATA: "stack" }, committedHandle: "/x" })).toThrow(/real connector/)
 	})
 
 	// The kit's own path: `build:local` reads the handle, then every output file is scanned.

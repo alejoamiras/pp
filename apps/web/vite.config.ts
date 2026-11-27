@@ -1,10 +1,11 @@
 /**
  * One config for every mode. `vite build` and `vite` read the kit's committed placeholder handle and
  * use the fixture connector; `vite build --mode sandbox` (`build:local`; Vite reserves the mode name
- * `local`) reads the sandbox run (`PP_SANDBOX_ARTIFACTS`, `PP_WEB_WALLETS`) and uses the real one;
- * `PP_DATA=stack` points `#data` at the adapters and arms the fixture guard. `vite preview` reads no
- * target: the kit starts it with no `--config` and only `PP_SANDBOX_ARTIFACTS`, and the headers come
- * from the build's own `security-headers.json`.
+ * `local`) uses the real one with the wallets in `PP_WEB_WALLETS`, and reads either a stack manifest
+ * (`PP_STACK_MANIFEST`: `#data` points at the adapters and the fixture guard is armed) or a sandbox
+ * run (`PP_SANDBOX_ARTIFACTS`: the fixture world). `vite preview` reads no target: the kit starts it
+ * with no `--config` and only `PP_SANDBOX_ARTIFACTS`, and the headers come from the build's own
+ * `security-headers.json`.
  */
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -14,20 +15,23 @@ import react from "@vitejs/plugin-react"
 import { defineConfig, type UserConfig } from "vite"
 import { nodePolyfills } from "vite-plugin-node-polyfills"
 import { ISOLATION_HEADERS } from "./src/build/headers.ts"
-import { emitSecurityHeaders, previewSecurityHeaders, stackBuildGuard } from "./src/build/plugins.ts"
-import { resolveTarget } from "./src/build/target.ts"
+import { bufferSubpathAlias, emitSecurityHeaders, previewSecurityHeaders, stackBuildGuard } from "./src/build/plugins.ts"
+import { sponsoredFpcAddress } from "./src/build/sponsored-fpc.ts"
+import { parseDataMode, resolveTarget } from "./src/build/target.ts"
 
 const root = dirname(fileURLToPath(import.meta.url))
 /** `font-src 'self'` refuses `data:` fonts, and small subsets fall under the default inline limit. */
 const FONT_FILE = /\.(woff2?|ttf|otf)$/
 
-export default defineConfig(({ mode, isPreview }): UserConfig => {
+export default defineConfig(async ({ mode, isPreview }): Promise<UserConfig> => {
 	if (isPreview) return { root, plugins: [previewSecurityHeaders()] }
 	const target = resolveTarget({
 		local: mode === "sandbox",
 		env: process.env,
 		committedHandle: resolvePackageAsset("@pp/e2e-kit", "fixtures/build-artifacts/handle.json", { from: import.meta.url }),
+		...(parseDataMode(process.env) === "stack" ? { sponsoredFpc: await sponsoredFpcAddress() } : {}),
 	})
+	const bufferShim = resolvePackageAsset("vite-plugin-node-polyfills", "shims/buffer/dist/index.js", { from: import.meta.url })
 	return {
 		root,
 		server: { headers: { ...ISOLATION_HEADERS } },
@@ -51,10 +55,7 @@ export default defineConfig(({ mode, isPreview }): UserConfig => {
 				},
 				// nodePolyfills injects this shim into every transformed module, dependencies included, and
 				// the isolated linker lets a dependency resolve only what it declares: pin this app's copy.
-				{
-					find: "vite-plugin-node-polyfills/shims/buffer",
-					replacement: resolvePackageAsset("vite-plugin-node-polyfills", "shims/buffer/dist/index.js", { from: import.meta.url }),
-				},
+				{ find: "vite-plugin-node-polyfills/shims/buffer", replacement: bufferShim },
 			],
 			// Two copies of a wasm binding split its init and its calls across module scopes.
 			dedupe: ["@aztec-foundation/noir-noirc_abi", "@aztec-foundation/noir-acvm_js"],
@@ -64,7 +65,10 @@ export default defineConfig(({ mode, isPreview }): UserConfig => {
 		plugins: [
 			react(),
 			tailwindcss(),
-			nodePolyfills({ globals: { Buffer: true, global: true, process: true } }),
+			// `fs` stays with Vite's browser stub, which also answers `fs/promises` and its named imports; the
+			// plugin's prefix alias would point that subpath inside its one-export empty mock.
+			nodePolyfills({ exclude: ["fs"], globals: { Buffer: true, global: true, process: true } }),
+			bufferSubpathAlias(bufferShim),
 			emitSecurityHeaders(target),
 			...(target.dataMode === "stack" ? [stackBuildGuard(root)] : []),
 		],
