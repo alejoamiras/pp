@@ -17,10 +17,16 @@ export function stripMetadata(code: Hex): Hex {
 
 export const creationCodeHash = (code: Hex): Hex => keccak256(stripMetadata(code))
 
-/** The creation-code hash of every contract a keyed run broadcasts, at the pinned build. */
+/**
+ * A contract's creation code at the pinned build: the hash without metadata, and the full size with it.
+ * The compiled constructor reads its arguments from that size, so a creation input splits there.
+ */
+export type CreationPin = { hash: Hex; size: number }
+
+/** The pin of every contract a keyed run broadcasts. */
 export const CREATION_CODES = JSON.parse(readFileSync(fileURLToPath(new URL("../creation-codes.json", import.meta.url)), "utf8")) as Record<
 	"PortalFactory",
-	Hex
+	CreationPin
 >
 
 /** The forge artifact `@pp/bridge-core`'s deploy loads for `name`. */
@@ -28,18 +34,20 @@ export const forgeArtifact = (name: string): string =>
 	fileURLToPath(new URL(`../../../contracts/bridge/evm/out/${name}.sol/${name}.json`, import.meta.url))
 
 /**
- * Every contract in {@link CREATION_CODES}, as the deploy will load it, hashes to the committed value.
- * @returns the first mismatch as `name: actual`, or undefined
+ * Every contract in {@link CREATION_CODES}, as the deploy will load it, matches its pin's hash and size.
+ * @returns the first mismatch as `name: actual, committed pin`, or undefined
  */
 export function buildMismatch(): string | undefined {
 	for (const [name, want] of Object.entries(CREATION_CODES)) {
 		let actual: string
 		try {
-			actual = creationCodeHash(JSON.parse(readFileSync(forgeArtifact(name), "utf8")).bytecode.object as Hex)
+			const code = JSON.parse(readFileSync(forgeArtifact(name), "utf8")).bytecode.object as Hex
+			actual = `${creationCodeHash(code)} (${size(code)} bytes)`
 		} catch (e) {
 			actual = `unreadable (${e instanceof Error ? e.message : String(e)})`
 		}
-		if (actual !== want) return `${name}: ${actual}, committed ${want}`
+		const committed = `${want.hash} (${want.size} bytes)`
+		if (actual !== committed) return `${name}: ${actual}, committed ${committed}`
 	}
 	return undefined
 }

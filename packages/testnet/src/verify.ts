@@ -134,23 +134,38 @@ const FACTORY_ARGS = [
 ] as const
 const FACTORY_ARGS_BYTES = 32 * FACTORY_ARGS.length
 
-export type FactoryExpectation = { deployer: Address; registry: Address; hub: Hex; pool: Address; lifetimeCap: bigint; guardian: Address }
+export type FactoryExpectation = {
+	deployer: Address
+	registry: Address
+	hub: Hex
+	pool: Address
+	lifetimeCap: bigint
+	guardian: Address
+	/** The bridge section's `deployBlock`, where discovery starts reading `PortalCreated`. */
+	deployBlock: bigint
+}
 
 /**
- * The factory's creation transaction came from `deployer`, created `factory`, carries the committed
- * creation code (metadata aside) and exactly the expected constructor arguments.
+ * The factory's creation transaction came from `deployer`, created `factory` no earlier than
+ * `deployBlock`, carries the committed creation code (metadata aside) at its pinned size, and exactly the
+ * expected constructor arguments after it, where the constructor reads them.
  */
 export async function checkFactoryCreation(l1: PublicClient, txHash: Hex, factory: Address, want: FactoryExpectation): Promise<void> {
 	const [tx, receipt] = await Promise.all([l1.getTransaction({ hash: txHash }), l1.getTransactionReceipt({ hash: txHash })])
 	sameAddress("factory creator", tx.from, want.deployer)
 	if (tx.to !== null || !receipt.contractAddress) throw new VerifyError("factory creation", `${txHash} is not a contract creation`)
 	sameAddress("factory address", receipt.contractAddress, factory)
-	const n = size(tx.input)
-	if (n <= FACTORY_ARGS_BYTES) throw new VerifyError("factory creation", "the input is shorter than its constructor arguments")
-	const code = creationCodeHash(slice(tx.input, 0, n - FACTORY_ARGS_BYTES))
-	if (code !== CREATION_CODES.PortalFactory)
-		throw new VerifyError("factory creation code", `${code}, committed ${CREATION_CODES.PortalFactory}`)
-	const [registry, l2Hub, pool, lifetimeCap, guardian] = decodeAbiParameters(FACTORY_ARGS, slice(tx.input, n - FACTORY_ARGS_BYTES))
+	if (want.deployBlock > receipt.blockNumber)
+		throw new VerifyError("bridge deploy block", `${want.deployBlock} follows the factory's creation in block ${receipt.blockNumber}`)
+	const pin = CREATION_CODES.PortalFactory
+	if (size(tx.input) !== pin.size + FACTORY_ARGS_BYTES)
+		throw new VerifyError(
+			"factory creation",
+			`the input is ${size(tx.input)} bytes, not the pinned code's ${pin.size} and ${FACTORY_ARGS_BYTES} of arguments`,
+		)
+	const code = creationCodeHash(slice(tx.input, 0, pin.size))
+	if (code !== pin.hash) throw new VerifyError("factory creation code", `${code}, committed ${pin.hash}`)
+	const [registry, l2Hub, pool, lifetimeCap, guardian] = decodeAbiParameters(FACTORY_ARGS, slice(tx.input, pin.size))
 	sameAddress("factory registry", registry, want.registry)
 	if (BigInt(l2Hub) !== BigInt(want.hub)) throw new VerifyError("factory hub", `${l2Hub}, the file names ${want.hub}`)
 	sameAddress("factory pool", pool, want.pool)

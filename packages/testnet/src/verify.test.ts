@@ -1,4 +1,4 @@
-import { type Address, concat, encodeAbiParameters, type Hex, keccak256, numberToHex, type PublicClient } from "viem"
+import { type Address, concat, encodeAbiParameters, type Hex, keccak256, numberToHex, type PublicClient, size } from "viem"
 import { describe, expect, it, vi } from "vitest"
 
 const meta = (seed: string): Hex => concat([keccak256(`0x${seed}`), numberToHex(32, { size: 2 })])
@@ -6,13 +6,23 @@ const BODY: Hex = "0x60806040526004361061"
 
 vi.mock("./creation", async (actual) => {
 	const real = await actual<typeof import("./creation")>()
-	return { ...real, CREATION_CODES: { PortalFactory: real.creationCodeHash(concat([BODY, meta("01")])) } }
+	const code = concat([BODY, meta("01")])
+	return { ...real, CREATION_CODES: { PortalFactory: { hash: real.creationCodeHash(code), size: size(code) } } }
 })
 
 const { checkDeployBlock, checkFactoryCreation } = await import("./verify")
 
 const a = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address
-const want = { deployer: a(1), registry: a(2), hub: `0x${"ab".repeat(32)}` as Hex, pool: a(3), lifetimeCap: 10n ** 9n, guardian: a(4) }
+const CREATED_AT = 100n
+const want = {
+	deployer: a(1),
+	registry: a(2),
+	hub: `0x${"ab".repeat(32)}` as Hex,
+	pool: a(3),
+	lifetimeCap: 10n ** 9n,
+	guardian: a(4),
+	deployBlock: CREATED_AT,
+}
 const FACTORY = a(5)
 const args = (o: typeof want) =>
 	encodeAbiParameters(
@@ -22,18 +32,32 @@ const args = (o: typeof want) =>
 const l1 = (input: Hex, from: Address = want.deployer) =>
 	({
 		getTransaction: async () => ({ from, to: null, input }),
-		getTransactionReceipt: async () => ({ contractAddress: FACTORY }),
+		getTransactionReceipt: async () => ({ contractAddress: FACTORY, blockNumber: CREATED_AT }),
 	}) as unknown as PublicClient
-const check = (client: PublicClient) => checkFactoryCreation(client, `0x${"cd".repeat(32)}`, FACTORY, want)
+const check = (client: PublicClient, expectation = want) => checkFactoryCreation(client, `0x${"cd".repeat(32)}`, FACTORY, expectation)
 
 describe("the factory's creation transaction", () => {
 	it("passes with the committed code under other metadata and exactly the expected arguments", async () => {
 		await expect(check(l1(concat([BODY, meta("02"), args(want)])))).resolves.toBeUndefined()
 	})
 
+	it("reads the arguments where the constructor does, at the pinned code's size, whatever metadata length the input claims", async () => {
+		// The constructor reads `args(evil)` at the pinned size; the claimed metadata length hides it from a split from the end.
+		const evil = args({ ...want, guardian: a(9) })
+		const hidden = concat([meta("01"), evil])
+		const input = concat([BODY, hidden, numberToHex(size(hidden), { size: 2 }), args(want)])
+		await expect(check(l1(input))).rejects.toThrow(/^factory creation: the input is/)
+	})
+
+	it("refuses a bridge deploy block after the factory's creation, from which discovery misses PortalCreated", async () => {
+		const input = concat([BODY, meta("01"), args(want)])
+		await expect(check(l1(input), { ...want, deployBlock: CREATED_AT })).resolves.toBeUndefined()
+		await expect(check(l1(input), { ...want, deployBlock: CREATED_AT + 1n })).rejects.toThrow(/^bridge deploy block/)
+	})
+
 	it("names the first field that differs: creator, code, then each argument", async () => {
 		await expect(check(l1(concat([BODY, meta("01"), args(want)]), a(9)))).rejects.toThrow(/^factory creator/)
-		await expect(check(l1(concat(["0x6080", meta("01"), args(want)])))).rejects.toThrow(/^factory creation code/)
+		await expect(check(l1(concat(["0x60806040526004361062", meta("01"), args(want)])))).rejects.toThrow(/^factory creation code/)
 		await expect(check(l1(concat([BODY, meta("01"), args({ ...want, guardian: a(9) })])))).rejects.toThrow(/^factory guardian/)
 		await expect(check(l1(concat([BODY, meta("01"), args({ ...want, lifetimeCap: 1n })])))).rejects.toThrow(/^factory cap/)
 	})

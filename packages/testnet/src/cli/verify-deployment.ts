@@ -49,6 +49,7 @@ async function checkBridge(d: Full, l1: Parameters<typeof checkPoolBindings>[0],
 		pool: d.pool.poolVault,
 		lifetimeCap: d.expected.lifetimeCap,
 		guardian: d.expected.guardian,
+		deployBlock: b.deployBlock,
 	})
 	const n = node as { getContract(a: AztecAddress): Promise<{ currentContractClassId: { toString(): string } } | undefined> }
 	const token = await n.getContract(AztecAddress.fromStringUnsafe(b.token))
