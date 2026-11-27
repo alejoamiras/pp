@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { once } from "node:events"
 import { setTimeout as sleep } from "node:timers/promises"
 import { describe, expect, it } from "vitest"
-import { endGroup, groupAlive } from "./process-group"
+import { endGroup, groupAlive, type ProcFs } from "./process-group"
 
 // Without /proc these semantics do not apply (macOS); CI is Linux, so there the suite always runs.
 const proc = existsSync("/proc/self/stat") || process.env.CI !== undefined
@@ -18,6 +18,48 @@ ready.wait()
 print(os.getpid(), flush=True)
 ctypes.CDLL(None).syscall({"x86_64": 60, "aarch64": 93}[os.uname().machine], 0)
 `
+
+/** `tids` lists threads that have already exited by the time their stat is read. */
+type Member = { pid: number; state: string; pgrp: number; tids?: number[] }
+
+/** A `/proc` that moves to the next snapshot each time `/proc` itself is listed, then stays on the last. */
+function scriptedProc(snapshots: Member[][]) {
+	let passes = 0
+	const now = () => snapshots[Math.min(passes, snapshots.length) - 1] ?? []
+	const find = (pid: string | undefined) => now().find((m) => String(m.pid) === pid)
+	const gone = () => Object.assign(new Error("ENOENT"), { code: "ENOENT" })
+	const proc: ProcFs = {
+		readdir(path) {
+			if (path === "/proc") {
+				passes++
+				return ["self", ...now().map((m) => String(m.pid))]
+			}
+			const pid = /^\/proc\/(\d+)\/task$/.exec(path)?.[1]
+			const m = find(pid)
+			if (!m) throw gone()
+			return [pid as string, ...(m.tids ?? []).map(String)]
+		},
+		readFile(path) {
+			const [, pid, tid] = /^\/proc\/(\d+)\/(?:task\/(\d+)\/)?stat$/.exec(path) ?? []
+			const m = find(pid)
+			if (!m || (tid !== undefined && tid !== pid)) throw gone()
+			return `${m.pid} (s h) ${m.state} 1 ${m.pgrp} ${m.pgrp} 0`
+		},
+	}
+	return { proc, passes: () => passes }
+}
+
+/** A real group to take the signals while `/proc` is scripted. */
+function realGroup() {
+	const child = spawn("sleep", ["30"], { detached: true, stdio: "ignore" })
+	const exit = once(child, "exit") as Promise<[number | null, NodeJS.Signals | null]>
+	const kill = () => {
+		try {
+			process.kill(-child.pid!, "SIGKILL")
+		} catch {}
+	}
+	return { pgid: child.pid!, exit, kill }
+}
 
 const state = (pid: number) => {
 	try {
@@ -62,6 +104,44 @@ describe.skipIf(!proc)("groupAlive", () => {
 			try {
 				process.kill(-pgid, "SIGKILL")
 			} catch {}
+		}
+	})
+
+	it("reads a zombie-only pass again, so a member forked behind the first pass still counts", async () => {
+		const { pgid, exit, kill } = realGroup()
+		try {
+			const zombie = { pid: pgid, state: "Z", pgrp: pgid }
+			// The second pass lists a member forked after the first pass listed /proc.
+			const race = () => scriptedProc([[zombie], [zombie, { pid: 4_000_001, state: "S", pgrp: pgid }]])
+			const alive = race()
+			expect(groupAlive(pgid, alive.proc)).toBe(true)
+			expect(alive.passes()).toBe(2)
+			expect(await endGroup(pgid, 2_000, race().proc)).toBe(true)
+			const [, signal] = await Promise.race([exit, sleep(1_000).then(() => [null, null] as const)])
+			expect(signal).toBe("SIGTERM")
+		} finally {
+			kill()
+		}
+	})
+
+	it("stops once two passes list the same members, and counts members or threads that change on every pass as running", () => {
+		const { pgid, kill } = realGroup()
+		try {
+			const zombie = (pid: number, tids?: number[]) => ({ pid, state: "Z", pgrp: pgid, tids })
+			expect(groupAlive(pgid, scriptedProc([[zombie(pgid)]]).proc)).toBe(false)
+			// The same two members, listed in a different order on every pass.
+			const reordered = Array.from({ length: 20 }, (_, i) =>
+				i % 2 ? [zombie(pgid), zombie(4_000_001)] : [zombie(4_000_001), zombie(pgid)],
+			)
+			expect(groupAlive(pgid, scriptedProc(reordered).proc)).toBe(false)
+			const churn = scriptedProc(Array.from({ length: 20 }, (_, i) => [zombie(pgid), zombie(4_000_001 + i)]))
+			expect(groupAlive(pgid, churn.proc)).toBe(true)
+			expect(churn.passes()).toBeLessThan(20)
+			// Each pass lists a thread that started another and exited before its stat was read.
+			const handoff = scriptedProc(Array.from({ length: 20 }, (_, i) => [zombie(pgid, [4_100_001 + i])]))
+			expect(groupAlive(pgid, handoff.proc)).toBe(true)
+		} finally {
+			kill()
 		}
 	})
 })
