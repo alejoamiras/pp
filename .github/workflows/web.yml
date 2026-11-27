@@ -40,10 +40,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only, no `!` negations (dorny's some-quantifier footgun). The app and the kit
-          # whole; bridge-core's sources and the sandbox harness in its scripts/, and bridge-spec's sources, which bridge-core imports; contracts/bridge/**,
-          # which the sandbox compiles and deploys from source; the actions these jobs run; the root files
-          # the install and the vitest config read (lint lives in pr-quick.yml). Pinned by
-          # scripts/ci-cd/behavior-gating.test.ts.
+          # whole; the sources of what they load (bridge-core with its sandbox harness in scripts/,
+          # bridge-spec, run-isolation); contracts/bridge/**, which the sandbox compiles and deploys
+          # from source; the actions these jobs run; the root files the install and the vitest config
+          # read (lint lives in pr-quick.yml). Pinned by scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             web:
               - 'apps/web/**'
@@ -53,6 +53,8 @@ jobs:
               - 'packages/bridge-core/package.json'
               - 'packages/bridge-spec/src/**'
               - 'packages/bridge-spec/package.json'
+              - 'packages/run-isolation/src/**'
+              - 'packages/run-isolation/package.json'
               - 'contracts/bridge/**'
               - 'package.json'
               - 'bun.lock'

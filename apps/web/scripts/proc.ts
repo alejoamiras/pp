@@ -3,11 +3,11 @@
  * and `stop` signals that group alone, so another agent's servers on the same host are never touched.
  */
 import { spawn } from "node:child_process"
-import { setTimeout as sleep } from "node:timers/promises"
 import { mkdirSync, mkdtempSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { endGroup } from "@pp/run-isolation/process-group"
 
 export const APP_ROOT = fileURLToPath(new URL("..", import.meta.url))
 const STOP_GRACE_MS = 10_000
@@ -18,25 +18,8 @@ export interface Group {
 	readonly exited: Promise<number | null>
 	/** Everything the group wrote, when started with `capture`. */
 	output(): string
-	/** SIGTERM to the group, SIGKILL after a grace period; resolves once no member is left. */
+	/** SIGTERM to the group, SIGKILL after a grace period; rejects if a member still runs after that. */
 	stop(): Promise<void>
-}
-
-function groupAlive(pid: number): boolean {
-	try {
-		process.kill(-pid, 0)
-		return true
-	} catch {
-		return false
-	}
-}
-
-function signalGroup(pid: number, signal: NodeJS.Signals): void {
-	try {
-		process.kill(-pid, signal)
-	} catch {
-		// The group is already gone.
-	}
 }
 
 export function startGroup(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; capture?: boolean } = {}): Group {
@@ -61,11 +44,7 @@ export function startGroup(cmd: string, args: string[], o: { cwd?: string; env?:
 		exited,
 		output: () => out,
 		async stop() {
-			signalGroup(pid, "SIGTERM")
-			const deadline = Date.now() + STOP_GRACE_MS
-			while (groupAlive(pid) && Date.now() < deadline) await sleep(100)
-			if (groupAlive(pid)) signalGroup(pid, "SIGKILL")
-			while (groupAlive(pid)) await sleep(50)
+			if (!(await endGroup(pid, STOP_GRACE_MS))) throw new Error(`process group ${pid} outlived SIGKILL`)
 		},
 	}
 }
