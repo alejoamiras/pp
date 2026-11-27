@@ -116,7 +116,9 @@ function workspaceOf(fromDir: string, dep: string, spec: string, workspaces: Map
 }
 
 function workspacesByName(): Map<string, Workspace> {
-	const paths = (manifest("package.json").workspaces ?? []).flatMap((glob) => [...new Bun.Glob(`${glob}/package.json`).scanSync({ cwd: ROOT })])
+	const paths = (manifest("package.json").workspaces ?? []).flatMap((glob) => [
+		...new Bun.Glob(`${glob}/package.json`).scanSync({ cwd: ROOT }),
+	])
 	return new Map(paths.map((path) => [manifest(path).name ?? path, { dir: dirname(path), manifest: manifest(path) }]))
 }
 
@@ -128,7 +130,9 @@ function appClosure(workspaces: Map<string, Workspace>): Set<string> {
 		if (members.has(name)) continue
 		members.add(name)
 		const w = workspaces.get(name)
-		queue.push(...Object.entries(runtimeSpecs(w?.manifest)).flatMap(([dep, spec]) => workspaceOf(w?.dir ?? "", dep, spec, workspaces) ?? []))
+		queue.push(
+			...Object.entries(runtimeSpecs(w?.manifest)).flatMap(([dep, spec]) => workspaceOf(w?.dir ?? "", dep, spec, workspaces) ?? []),
+		)
 	}
 	return members
 }
@@ -199,9 +203,16 @@ test("the app's dependency closure declares and resolves one exact viem", () => 
 test("the closure walk finds a nested second viem and stops at a workspace outside the closure", () => {
 	const ws = (dir: string, m: Manifest): [string, Workspace] => [m.name ?? dir, { dir, manifest: m }]
 	const workspaces = new Map([
-		ws("packages/bridge-core", { name: "@pp/bridge-core", dependencies: { x: "1.0.0" }, devDependencies: { "@pp/pp-env": "workspace:*" } }),
+		ws("packages/bridge-core", {
+			name: "@pp/bridge-core",
+			dependencies: { x: "1.0.0" },
+			devDependencies: { "@pp/pp-env": "workspace:*" },
+		}),
 		ws("packages/pp-env", { name: "@pp/pp-env", dependencies: { viem: "2.45.3" } }),
-		ws("packages/local-stack", { name: "@pp/local-stack", dependencies: { "@pp/bridge-core": "workspace:*", "@pp/pp-env": "workspace:*" } }),
+		ws("packages/local-stack", {
+			name: "@pp/local-stack",
+			dependencies: { "@pp/bridge-core": "workspace:*", "@pp/pp-env": "workspace:*" },
+		}),
 	])
 	const lock: ResolvedLock = {
 		packages: {

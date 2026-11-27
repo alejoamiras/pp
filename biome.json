@@ -11,6 +11,7 @@
 		"includes": [
 			"apps/**",
 			"packages/**",
+			"scripts/**",
 			"vitest.base.ts",
 			"!**/node_modules",
 			"!**/dist",
