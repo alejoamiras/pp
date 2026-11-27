@@ -66,8 +66,8 @@ describe("home", () => {
 		expect(reasonOf(shielded.getByRole("button", { name: "Send privately" }))).toBe("Send and Unshield open once the label is approved")
 		expect(isDisabled(labelRow(LABELS.active).getByRole("button", { name: "Send privately" }))).toBe(false)
 
-		// An hour of chain time later, the posted list is too old to spend against.
-		act(() => app.control.advance(300))
+		// Half an hour of chain time later, a proof could outlive the list's hour: too old to spend against.
+		act(() => app.control.advance(150))
 		await app.user.click(screen.getByRole("button", { name: "Refresh" }))
 		await waitFor(() => labelRow(LABELS.active).getByText("List out of date"))
 		const active = labelRow(LABELS.active)

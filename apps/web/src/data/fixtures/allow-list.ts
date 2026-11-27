@@ -7,8 +7,9 @@ import { BN254_P } from "../parse"
 import type { AllowListPort, AllowListView } from "../ports"
 import type { World } from "./world"
 
-/** `@pp/label-paths`' MAX_ROOT_AGE: a record older than this, in chain time, is too old to spend against. */
-export const MAX_ROOT_AGE = 3600n
+/** `@pp/label-paths`' limits: a proof anchored now must still find the record younger than its maximum age a spend window later. */
+const MAX_ROOT_AGE = 3600n
+const SPEND_WINDOW = 1800n
 
 const rootOf = (leaves: readonly bigint[]) => (leaves.length === 0 ? 0n : (leaves.reduce((a, b) => a * 31n + b, 7n) % (BN254_P - 1n)) + 1n)
 
@@ -28,10 +29,12 @@ function current(w: World): AllowListView {
 	}
 }
 
-/** `labelState` for the fixture tree: stale past MAX_ROOT_AGE, else whether the origin's tree holds the label. */
+/** `@pp/label-paths`' `labelState` over the fixture tree: roots compared, the same age cutoff, then the label's leaf. */
 export function stateIn(view: AllowListView, label: bigint, origin: Origin, nowSec: bigint): LabelState {
-	if (view.record.sequence !== view.snapshot.sequence || nowSec > view.record.rootTime + MAX_ROOT_AGE) return "STALE_ROOT"
-	return (origin === 0 ? view.snapshot.poolLeaves : view.snapshot.birthLeaves).includes(label) ? "ACTIVE" : "ABSENT"
+	const { record: r, snapshot: s } = view
+	if (s.poolRoot !== r.poolRoot || s.birthRoot !== r.birthRoot) return "STALE_ROOT"
+	if (r.rootTime > nowSec || r.rootTime + MAX_ROOT_AGE < nowSec + SPEND_WINDOW) return "STALE_ROOT"
+	return (origin === 0 ? s.poolLeaves : s.birthLeaves).includes(label) ? "ACTIVE" : "ABSENT"
 }
 
 /** The state a checked spend sees now, at the latest Aztec block. */
