@@ -164,6 +164,13 @@ describe("the stack's allow list", () => {
 		expect(r.s.bot).toHaveLength(2)
 	})
 
+	test("a list that declares the record's roots but whose leaves build another never answers absent", async () => {
+		const r = rig()
+		const whole = JSON.parse(body(7n)) as { poolLeaves: string[] }
+		r.s.snapshots.set(7n, JSON.stringify({ ...whole, poolLeaves: whole.poolLeaves.slice(0, 1) }))
+		await expect(r.port.check({ record: recordOf(7n), nowSec: 1_100n }, 22n, 0)).rejects.toMatchObject({ code: "LIST_MISMATCH" })
+	})
+
 	test("Cancel ends the worker and the running check; the stopped list waits for a Check again", async () => {
 		const r = rig({ hold: true })
 		r.s.snapshots.set(7n, body(7n))

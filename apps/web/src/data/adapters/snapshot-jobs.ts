@@ -2,7 +2,8 @@
  * What the allow-list worker does with one request, apart from the worker itself so it runs in a
  * test. It holds one snapshot, for one pair of roots, and the verified trees `LabelPathCache` keeps
  * for it. A snapshot is parsed without building a tree, and its declared roots must be the record's
- * before anything is hashed; a check then hashes only to build the tree of a label the list holds.
+ * before anything is hashed; a check then builds the label's origin tree and answers only once that
+ * tree has its root, whether or not the list holds the label.
  */
 import { type AspSnapshot, LabelPathCache, parseAspSnapshotUnverified, SnapshotError } from "@pp/label-paths"
 import type { JobReply, JobRequest, ListFailure } from "./snapshot-protocol"
