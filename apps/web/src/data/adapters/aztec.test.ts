@@ -1,3 +1,5 @@
+import { AztecAddress as SdkAddress } from "@aztec-labs/aztec.js/addresses"
+import { Fr } from "@aztec-labs/aztec.js/fields"
 import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { labelledTokenArtifact, tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
@@ -30,6 +32,8 @@ const receipt = (ok: boolean) => ({
 
 function rig(o: { contracts?: AztecAddress[]; served?: (a: { toString(): string }) => unknown; ok?: boolean } = {}) {
 	const wallet = {
+		getAccounts: vi.fn(async () => [{ alias: "me", item: SdkAddress.fromStringUnsafe(ME) }]),
+		getChainInfo: vi.fn(async () => ({ chainId: new Fr(31337n), version: new Fr(5n) })),
 		registerContract: vi.fn(async () => {}),
 		sendTx: vi.fn(async () => ({ txHash: { toString: () => at("dd") } })),
 	}
@@ -40,6 +44,7 @@ function rig(o: { contracts?: AztecAddress[]; served?: (a: { toString(): string 
 		node: {
 			getContract: vi.fn(async (a: { toString(): string }) => (o.served ? o.served(a) : { address: a })),
 			getTxReceipt: vi.fn(async () => receipt(o.ok ?? true)),
+			getNodeInfo: vi.fn(async () => ({ l1ChainId: 31337, rollupVersion: 5 })),
 		} as never,
 		current: () => live,
 	}

@@ -38,6 +38,7 @@ async function page(store: KeyValue) {
 	const ctx = (): LiveContext => ({
 		owner: ACCOUNTS.owner,
 		account: ACCOUNTS[world.s.selected],
+		selected: ACCOUNTS[world.s.selected],
 		chainId: world.s.walletChain,
 		deployment: world.deployment.id,
 		epoch: 1,

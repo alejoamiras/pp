@@ -40,8 +40,8 @@ export function createLiveStore(deployment: string, demoSender: Address | null =
 			return () => void listeners.delete(f)
 		},
 		context: () => {
-			const { demo, ...rest } = live
-			return { ...rest, account: demo && demoSender ? demoSender : live.account, deployment }
+			const { demo, account, ...rest } = live
+			return { ...rest, account: demo && demoSender ? demoSender : account, selected: account, deployment }
 		},
 	}
 }

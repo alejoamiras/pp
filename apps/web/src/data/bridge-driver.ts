@@ -22,8 +22,10 @@ export const PREFLIGHT_FRESH_MS = 9 * 60_000
 export interface LiveContext {
 	/** The owner whose session is open; `null` once it closes. */
 	readonly owner: Address | null
-	/** The Ethereum wallet's selected account. */
+	/** The account a bridge sends from: the wallet's selection, or the local demo's dev account. */
 	readonly account: Address | null
+	/** The Ethereum wallet's own selection, which the demo's dev account never stands in for. */
+	readonly selected: Address | null
 	readonly chainId: number | null
 	readonly deployment: string
 	/** The Aztec connection's epoch; `null` when disconnected. */
@@ -73,7 +75,7 @@ function assertLive(st: State, a: Attempt, signal: AbortSignal): void {
  */
 interface ClaimContext {
 	owner: Address
-	account: Address | null
+	selected: Address | null
 	chainId: number
 	deployment: string
 	epoch: number
@@ -82,7 +84,7 @@ interface ClaimContext {
 
 const claimCurrent = (c: ClaimContext, ctx: LiveContext) =>
 	same(ctx.owner, c.owner) &&
-	(c.account === null ? ctx.account === null : same(ctx.account, c.account)) &&
+	(c.selected === null ? ctx.selected === null : same(ctx.selected, c.selected)) &&
 	ctx.chainId === c.chainId &&
 	ctx.deployment === c.deployment &&
 	ctx.epoch === c.epoch &&
@@ -445,7 +447,7 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
 	if (refusal !== null) return dispatch({ type: "refused", code: refusal })
 	const c: ClaimContext = {
 		owner: ctx.owner as Address,
-		account: ctx.account,
+		selected: ctx.selected,
 		chainId: st.deps.deployment.chainId,
 		deployment: st.deps.deployment.id,
 		epoch: ctx.epoch as number,

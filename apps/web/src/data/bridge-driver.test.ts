@@ -38,6 +38,7 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 	const ctx: { -readonly [K in keyof LiveContext]: LiveContext[K] } = {
 		owner: OWNER,
 		account: SENDER,
+		selected: SENDER,
 		chainId: 31337,
 		deployment: "31337:portal:hub",
 		epoch: 1,
@@ -167,7 +168,7 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 }
 
 const CHANGES = {
-	account: (c: LiveContext & { account: Address | null }) => Object.assign(c, { account: OTHER }),
+	account: (c: LiveContext) => Object.assign(c, { account: OTHER, selected: OTHER }),
 	chain: (c: LiveContext) => Object.assign(c, { chainId: 1 }),
 	aztec: (c: LiveContext) => Object.assign(c, { epoch: 2 }),
 } as const

@@ -28,7 +28,7 @@ const SEND_TIMEOUT_S = 180
 
 export interface AztecDeps {
 	deployment: Pick<Deployment, AppContract>
-	node: Pick<AztecNode, "getContract" | "getTxReceipt">
+	node: Pick<AztecNode, "getContract" | "getTxReceipt" | "getNodeInfo">
 	/** The live connection's wallet, or `null`. */
 	current(): HeldWallet | null
 }
@@ -106,12 +106,25 @@ async function settle(node: AztecDeps["node"], txHash: TxHash): Promise<Sent> {
 	}
 }
 
+/**
+ * The grant is the connect's snapshot, and a wallet can drop an account or move to another rollup over
+ * the same channel without disconnecting, so its own answers are read again before a send. The scopes
+ * it granted cannot be read back without asking the user again; they stay the connect's.
+ */
+async function assertWalletStill(d: AztecDeps, held: HeldWallet, from: AztecAddress): Promise<void> {
+	const [accounts, chain, node] = await Promise.all([held.wallet.getAccounts(), held.wallet.getChainInfo(), d.node.getNodeInfo()])
+	if (!accounts.some((a) => parseAztecAddress(a.item.toString()) === from)) throw new BridgeFailure("RECIPIENT_NOT_IN_WALLET")
+	if (chain.chainId.toBigInt() !== BigInt(node.l1ChainId) || chain.version.toBigInt() !== BigInt(node.rollupVersion))
+		throw new BridgeFailure("CONTEXT_CHANGED")
+}
+
 /** One Aztec send. Every refusal is thrown before `handoff`, so the caller knows nothing was sent. */
 export async function sendThroughWallet(d: AztecDeps, s: AztecSend): Promise<Sent> {
 	const first = boundTo(d, s.epoch)
 	if (!first.grant.accounts.includes(s.from)) throw new BridgeFailure("RECIPIENT_NOT_IN_WALLET")
 	if (!grantedPayload(first, "transaction", s.payload)) throw new BridgeFailure("NOT_GRANTED")
 	await registerScoped(d, first, s.contracts)
+	await assertWalletStill(d, first, s.from)
 	// Nothing awaits between this check, the handoff and the wallet call.
 	const held = boundTo(d, s.epoch)
 	s.handoff()

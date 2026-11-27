@@ -1,3 +1,5 @@
+import { AztecAddress as SdkAddress } from "@aztec-labs/aztec.js/addresses"
+import { Fr } from "@aztec-labs/aztec.js/fields"
 import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import type { BridgeClient, BridgeReceipt, BridgeSession, openBridgeSession, PreparedBridgeSpend } from "@pp/bridge-core"
@@ -29,6 +31,8 @@ const RECIPIENT = A32("1c") as AztecAddress
 const HUB = A32("08") as AztecAddress
 const TOKEN = A32("09") as AztecAddress
 const FPC = A32("0c") as AztecAddress
+const ROLLUP = 5
+const chainInfo = (version = ROLLUP) => ({ chainId: new Fr(31337n), version: new Fr(BigInt(version)) })
 
 const MANIFEST: StackManifestJson = {
 	version: 1,
@@ -102,8 +106,14 @@ const minedReceipt = {
 function freshWallet() {
 	const calls: string[] = []
 	const wallet = {
-		getChainInfo: vi.fn(async () => calls.push("getChainInfo")),
-		getAccounts: vi.fn(async () => calls.push("getAccounts")),
+		getChainInfo: vi.fn(async () => {
+			calls.push("getChainInfo")
+			return chainInfo()
+		}),
+		getAccounts: vi.fn(async () => {
+			calls.push("getAccounts")
+			return [{ alias: "a", item: SdkAddress.fromStringUnsafe(RECIPIENT) }]
+		}),
 		simulateTx: vi.fn(async () => calls.push("simulateTx")),
 		registerContract: vi.fn(async () => void calls.push("registerContract")),
 		sendTx: vi.fn(async () => {
@@ -154,7 +164,11 @@ function rig(o: Partial<Pick<SessionDeps, "open" | "reads">> = {}) {
 	const spendWallet = vi.fn(() => ({ marker: "pinned client" }))
 	const aztec: AztecDeps = {
 		deployment: { hub: HUB, token: TOKEN },
-		node: { getContract: vi.fn(async (a) => ({ address: a })), getTxReceipt: vi.fn(async () => minedReceipt) } as never,
+		node: {
+			getContract: vi.fn(async (a) => ({ address: a })),
+			getTxReceipt: vi.fn(async () => minedReceipt),
+			getNodeInfo: vi.fn(async () => ({ l1ChainId: 31337, rollupVersion: ROLLUP })),
+		} as never,
 		current: () => held,
 	}
 	const spend = { amount: 70n, change: { label: 3n, value: 30n } } as unknown as PreparedBridgeSpend
@@ -367,6 +381,7 @@ describe("a claim's handoff", () => {
 		const ctx: { -readonly [K in keyof LiveContext]: LiveContext[K] } = {
 			owner: OWNER,
 			account: SENDER,
+			selected: SENDER,
 			chainId: 31337,
 			deployment: DEPLOYMENT_ID,
 			epoch: 1,
@@ -405,7 +420,10 @@ describe("a claim's handoff", () => {
 
 	const CHANGES = {
 		account: (c: Awaited<ReturnType<typeof claimRig>>) =>
-			Object.assign(c.ctx, { account: "0x00000000000000000000000000000000000000c3" }),
+			Object.assign(c.ctx, {
+				account: "0x00000000000000000000000000000000000000c3",
+				selected: "0x00000000000000000000000000000000000000c3",
+			}),
 		chain: (c: Awaited<ReturnType<typeof claimRig>>) => Object.assign(c.ctx, { chainId: 1 }),
 		epoch: (c: Awaited<ReturnType<typeof claimRig>>) => {
 			c.ctx.epoch = 2
@@ -414,6 +432,11 @@ describe("a claim's handoff", () => {
 		grant: (c: Awaited<ReturnType<typeof claimRig>>) => c.revoke(),
 		"connection replaced before the page hears of it": (c: Awaited<ReturnType<typeof claimRig>>) =>
 			c.replaceConnection({ epoch: 2, wallet: freshWallet().asWallet, grant: GRANT }),
+		// The same channel, no disconnect: only the wallet's own answers show these.
+		"recipient dropped by the wallet": (c: Awaited<ReturnType<typeof claimRig>>) =>
+			c.aztecWallet.wallet.getAccounts.mockResolvedValue([]),
+		"wallet moved to another rollup": (c: Awaited<ReturnType<typeof claimRig>>) =>
+			c.aztecWallet.wallet.getChainInfo.mockResolvedValue(chainInfo(ROLLUP + 1)),
 	} as const
 
 	test.each(Object.keys(CHANGES) as (keyof typeof CHANGES)[])(
