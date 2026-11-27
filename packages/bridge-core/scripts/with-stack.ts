@@ -19,7 +19,7 @@ import { dirname, join } from "node:path"
 import { createInterface } from "node:readline"
 import { setTimeout as sleep } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
-import { endGroup, groupAlive, groupGone, groupMembers } from "./process-group"
+import { endGroup, groupAlive, groupGone, groupMembers } from "@pp/run-isolation/process-group"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
 const CACHE = join(homedir(), ".cache", "pp")
