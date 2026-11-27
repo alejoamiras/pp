@@ -66,10 +66,15 @@ const field = (x: object, key: string): unknown => {
  * is the class the send failed with (`InsufficientFundsError`, `ChainMismatchError`). Only the name.
  */
 export function innermostSource(e: unknown): { source?: string } {
+	const named = (v: unknown) => {
+		const name = identifier(v)
+		return name === "Error" ? undefined : name
+	}
 	for (const x of causeChain(e).reverse()) {
 		const ctor = field(x, "constructor")
-		const name = identifier(field(x, "name")) ?? (typeof ctor === "function" ? identifier(field(ctor, "name")) : undefined)
-		if (name !== undefined && name !== "Error") return { source: name }
+		// A subclass that never sets `name` keeps `Error` there; its class still names it.
+		const name = named(field(x, "name")) ?? (typeof ctor === "function" ? named(field(ctor, "name")) : undefined)
+		if (name !== undefined) return { source: name }
 	}
 	return {}
 }

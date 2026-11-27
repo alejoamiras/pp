@@ -414,6 +414,9 @@ describe("settle", () => {
 		expect(e).toBeInstanceOf(BridgeClientError)
 		expect(e).toMatchObject({ code: "UNCERTAIN", source: "InsufficientFundsError", l1TxHash: undefined })
 		expect(String((e as Error).message)).not.toMatch(/wei|0x/)
+		class RelayTimeout extends Error {}
+		writeContract.mockRejectedValueOnce(named("ContractFunctionExecutionError", "settle failed", new RelayTimeout("late")))
+		await expect(settle(c, t!, l1)).rejects.toMatchObject({ code: "UNCERTAIN", source: "RelayTimeout" })
 		reader.simulateContract.mockRejectedValueOnce(new Error("socket hang up"))
 		await expect(settle(c, t!, l1)).rejects.not.toMatchObject({ code: "UNCERTAIN" })
 	})
