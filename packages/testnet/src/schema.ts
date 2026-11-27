@@ -46,7 +46,8 @@ const networkSchema = z
 	})
 	.strict()
 
-const amountsSchema = z.object({ debit: decimal, note: decimal, bridge: decimal }).strict()
+/** `shield`, the canary's shield in base units, defaults to 1 and must not exceed `bridge`. */
+const amountsSchema = z.object({ debit: decimal, note: decimal, bridge: decimal, shield: decimal.optional() }).strict()
 
 const expectedSchema = z
 	.object({
