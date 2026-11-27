@@ -126,7 +126,7 @@ boot_sandbox() {
     if ! kill -0 "$SANDBOX_PID" 2>/dev/null; then KEEP=0; log "FATAL: the sandbox died while booting — see $LOG"; tail -40 "$LOG" >&2; exit 2; fi
     sleep 2
   done
-  [ -f "$ARTIFACTS/handle.json" ] || { log "FATAL: sandbox did not come up in 20 min"; exit 2; }
+  [ -f "$ARTIFACTS/handle.json" ] || { KEEP=0; log "FATAL: sandbox did not come up in 20 min"; exit 2; }
 }
 
 attach_sandbox() {
