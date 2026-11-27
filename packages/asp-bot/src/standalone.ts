@@ -8,6 +8,7 @@ import { createPublicClient, http } from "viem"
 import { type AspScope, fetchScopedLeaves } from "./asp"
 import type { L1Tag } from "./l1"
 import { type LivePost, liveFrom } from "./live"
+import { ownPosts } from "./own-posts"
 import { Poster, type Ports } from "./loop"
 import { Runner } from "./runner"
 import { SnapshotBook, serve } from "./server"
@@ -41,7 +42,7 @@ export type BotSecrets = { poster: Fr; intake?: Fr }
 
 export type StandaloneOptions = {
 	signal: AbortSignal
-	/** Once, after this process's own first post is checkpointed. */
+	/** Once, when `/latest` first serves a post this process checkpointed, which it names. */
 	onReady?(r: { url: string; post: LivePost }): void
 	/** Default: JSON lines on stderr. Fields carry no secret. */
 	log?: Ports["log"]
@@ -160,7 +161,7 @@ async function run(
 	const inflight: { step?: Promise<unknown> } = {}
 	cleanup.push(() => drain(inflight.step, DRAIN_MS))
 	o.signal.throwIfAborted()
-	let first: LivePost | undefined
+	const own = ownPosts(book)
 	const live = await liveFrom(
 		{
 			...d,
@@ -171,9 +172,7 @@ async function run(
 			postTimeoutSec: c.postTimeoutSec,
 			secrets: { poster: s.poster.toString() as Hex, ...(s.intake ? { intake: s.intake.toString() as Hex } : {}) },
 			aspLeaves: scopedLeaves(d),
-			onPosted: (p) => {
-				first ??= p
-			},
+			onPosted: own.posted,
 			checkRoles: true,
 			signal: o.signal,
 		},
@@ -183,17 +182,16 @@ async function run(
 	o.signal.throwIfAborted()
 	await warnMargin(c, tag, log)
 	const poster = new Poster(live.ports, book, { self: live.self, inclusionMarginSec: BigInt(c.inclusionMarginSec) })
-	// Ready once `/latest` serves its own checkpointed post: a failed read after the post can leave an
-	// older snapshot current, as after a restart.
-	const ready = () => !o.signal.aborted && first !== undefined && book.servesLatest(first.sequence)
+	const served = () => (o.signal.aborted ? undefined : own.served())
 	const runner = new Runner({
 		// Until its own first post lands, every tick asks for one.
-		tick: (postNow) => poster.tick(postNow || first === undefined),
+		tick: (postNow) => poster.tick(postNow || own.none()),
 		blockNumber: live.blockNumber,
 		readiness: () =>
-			ready() ? { url: server.url, port: server.port, poster: live.poster, birthIntake: live.birthIntake ?? "" } : null,
+			served() ? { url: server.url, port: server.port, poster: live.poster, birthIntake: live.birthIntake ?? "" } : null,
 		emit: (e) => {
-			if (e.event === "ready" && first && ready()) o.onReady?.({ url: server.url, post: first })
+			const post = served()
+			if (e.event === "ready" && post) o.onReady?.({ url: server.url, post })
 		},
 		now: Date.now,
 	})

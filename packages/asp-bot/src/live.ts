@@ -186,7 +186,15 @@ export async function liveFrom(s: LiveSpec, log: Ports["log"]): Promise<Live> {
 			(await node.getPublicStorageAt({ hash: at } as never, registry.address, new Fr(slots[name]?.slot ?? Fr.ZERO))).toBigInt()
 		if (s.checkRoles) await assertRoles(role, node, (await actorAccount(wallet, s.secrets.poster)).address.toBigInt(), births.intake)
 		s.signal?.throwIfAborted()
-		const actor = await createActor(wallet, node as never, fee, s.secrets.poster, undefined, (l) => log("account", { line: l }))
+		const actor = await createActor(
+			wallet,
+			node as never,
+			fee,
+			s.secrets.poster,
+			undefined,
+			(l) => log("account", { line: l }),
+			s.signal,
+		)
 		const l1 = l1Source(s.l1Rpc)
 		const send = { from: actor.address, fee, wait: { waitForStatus: TxStatus.CHECKPOINTED, timeout: s.postTimeoutSec } }
 		const ports: Ports = {

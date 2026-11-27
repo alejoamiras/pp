@@ -210,7 +210,10 @@ type Chain = {
 	latest: number
 	pending: number
 	paused: boolean
-	finalized: bigint
+	/** The finalized height; absent, the head itself. */
+	finalized?: bigint
+	/** How far each next latest-header read lags the head; then 0. */
+	latestLag: bigint[]
 	block: bigint
 	sent: Tx[]
 	receipts: Map<Hex, { status: "success" | "reverted"; blockNumber: bigint; blockHash: Hex; transactionHash: Hex }>
@@ -235,7 +238,7 @@ function chainOf(init: Partial<Chain> = {}): {
 		latest: 5,
 		pending: 5,
 		paused: false,
-		finalized: 1000n,
+		latestLag: [],
 		block: 10n,
 		sent: [],
 		receipts: new Map(),
@@ -277,10 +280,13 @@ function chainOf(init: Partial<Chain> = {}): {
 			if (!r) throw new Error("timed out")
 			return r
 		},
-		getBlock: async (q: { blockTag?: string; blockNumber?: bigint }) =>
-			q.blockTag === "finalized"
-				? { number: c.finalized, hash: w(Number(c.finalized)) }
-				: { number: q.blockNumber ?? c.block, hash: w(Number(q.blockNumber ?? c.block)) },
+		getBlock: async (q: { blockTag?: string; blockNumber?: bigint }) => {
+			const n =
+				q.blockTag === "finalized"
+					? (c.finalized ?? c.block)
+					: (q.blockNumber ?? c.block - (q.blockTag ? (c.latestLag.shift() ?? 0n) : 0n))
+			return { number: n, hash: w(Number(n)) }
+		},
 		readContract: async (q: { blockHash?: Hex }) => pausedAt(q.blockHash),
 	} as unknown as GuardianL1
 	const guardian = {
@@ -408,6 +414,34 @@ describe("pauseEntries", () => {
 			code: "PAUSE_UNCONFIRMED",
 			nonce: 9,
 			message: expect.stringMatching(/reopened/),
+		})
+	})
+
+	it("reads the fresh head no lower than the finalized one: a lagging head can predate an open that mined", async () => {
+		const { c, l1, guardian, mine } = chainOf({ paused: true })
+		let first = true
+		c.onSend = (tx) => {
+			mine(tx)
+			if (!first) {
+				c.finalized = undefined
+				return
+			}
+			first = false
+			c.finalized = c.block
+			mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, hash: w(0x0e), paused: false })
+			c.latestLag = [2n]
+		}
+		expect(await pauseEntries(target(l1), guardian, FAST)).toMatchObject({ nonce: 7 })
+		expect(c.sent.map((t) => t.nonce)).toEqual([5, 7])
+
+		const behind = chainOf()
+		behind.c.onSend = (tx) => {
+			behind.mine(tx)
+			behind.c.latestLag = Array.from({ length: 1_000 }, () => 1n)
+		}
+		await expect(pauseEntries(target(behind.l1), behind.guardian, FAST)).rejects.toMatchObject({
+			code: "PAUSE_UNCONFIRMED",
+			message: expect.stringMatching(/stayed below finalized/),
 		})
 	})
 

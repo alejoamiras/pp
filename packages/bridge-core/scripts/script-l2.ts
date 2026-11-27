@@ -139,6 +139,8 @@ export async function deployAccountIfAbsent(p: {
 	from: AztecAddress
 	fee: unknown
 	log: (stage: "deploying" | "deployed") => void
+	/** Checked right before the send, the deploy's one write. */
+	signal?: AbortSignal
 }): Promise<void> {
 	if (await p.node.getContract(p.from)) return
 	// An account deploy publishes no instance, so the node never "serves" it: its initialization
@@ -147,6 +149,7 @@ export async function deployAccountIfAbsent(p: {
 	if (await p.node.getNullifierMembershipWitness("latest", initNullifier)) return
 	p.log("deploying")
 	const deployMethod = await p.manager.getDeployMethod()
+	p.signal?.throwIfAborted()
 	await deployMethod.send({ fee: p.fee, from: "NO_FROM" as never } as never)
 	p.log("deployed")
 }

@@ -455,8 +455,25 @@ async function confirmFinal(
 	}
 	if ((await l1.getBlock({ blockNumber: receipt.blockNumber })).hash !== receipt.blockHash)
 		throw new PauseError("PAUSE_UNCONFIRMED", nonce, `the pause's block ${receipt.blockNumber} was reorged out`)
-	const final = await pausedAt(l1, factory, finalized.hash)
-	return final && (await pausedAt(l1, factory, (await latestHead(l1)).hash)) ? "paused" : "reopened"
+	if (!(await pausedAt(l1, factory, finalized.hash))) return "reopened"
+	const head = await headAtLeast(
+		l1,
+		finalized.number,
+		Math.max(deadline, Date.now() + OWN_RECEIPT_READS * timing.pollingIntervalMs),
+		timing,
+	)
+	if (!head) throw new PauseError("PAUSE_UNCONFIRMED", nonce, `the endpoint's head stayed below finalized block ${finalized.number}`)
+	return (await pausedAt(l1, factory, head.hash)) ? "paused" : "reopened"
+}
+
+/** A head at or above `floor` by `deadline`: a lagging backend's older head can predate an open that already mined. */
+async function headAtLeast(l1: OpenL1, floor: bigint, deadline: number, timing: ClientTiming): Promise<Head | undefined> {
+	for (;;) {
+		const head = await latestHead(l1)
+		if (head.number >= floor) return head
+		if (Date.now() >= deadline) return undefined
+		await sleep(timing.pollingIntervalMs)
+	}
 }
 
 const PAUSE_SENDS = 3
