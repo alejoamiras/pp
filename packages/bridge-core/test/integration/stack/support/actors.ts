@@ -74,11 +74,26 @@ export async function blockFees(d: Device, block: number): Promise<bigint[]> {
 	return b.body.txEffects.map((t) => t.transactionFee.toBigInt())
 }
 
+/** A simulated utility or view call's result, unwrapped from aztec.js's `{ result }` when present. */
+const resultOf = (r: unknown): unknown => (r as { result?: unknown }).result ?? r
+
+/** `holder`'s private balance rows, `[label, origin, value]`, first page, read through `d`'s own wallet. */
+export async function labelRows(d: Device, holder: AztecAddress): Promise<[bigint, number, bigint][]> {
+	const token = await Contract.at(d.token, labelledTokenArtifact, d.wallet as never)
+	const page = resultOf(await token.methods.private_balances_by_label(holder, 0).simulate({ from: holder } as never)) as
+		| { storage?: unknown[]; len?: bigint | number }
+		| unknown[]
+	const rows = (Array.isArray(page) ? page : (page.storage ?? []).slice(0, Number(page.len ?? 0))) as [bigint, bigint, bigint][]
+	return rows.map(([l, o, v]) => [BigInt(l), Number(o), BigInt(v)])
+}
+
 /** `holder`'s private balance under `label`, read through `d`'s own wallet. */
 export async function labelBalance(d: Device, holder: AztecAddress, label: bigint): Promise<bigint> {
+	return (await labelRows(d, holder)).filter(([l]) => l === label).reduce((sum, [, , v]) => sum + v, 0n)
+}
+
+/** `holder`'s public balance of the stack's labelled token. */
+export async function publicBalance(d: Device, holder: AztecAddress): Promise<bigint> {
 	const token = await Contract.at(d.token, labelledTokenArtifact, d.wallet as never)
-	const r = (await token.methods.private_balances_by_label(holder, 0).simulate({ from: holder } as never)) as unknown
-	const page = ((r as { result?: unknown }).result ?? r) as { storage?: unknown[]; len?: bigint | number } | unknown[]
-	const rows = (Array.isArray(page) ? page : (page.storage ?? []).slice(0, Number(page.len ?? 0))) as [bigint, bigint, bigint][]
-	return rows.filter(([l]) => BigInt(l) === label).reduce((sum, [, , v]) => sum + BigInt(v), 0n)
+	return BigInt(resultOf(await token.methods.balance_of_public(holder).simulate({ from: holder } as never)) as bigint)
 }

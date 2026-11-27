@@ -35,6 +35,7 @@ export const CASE_GROUPS = {
 		"E2",
 		"E3",
 		"X1",
+		"BT1",
 	],
 	"local-stack": ["L1"],
 } as const satisfies Record<string, readonly string[]>
