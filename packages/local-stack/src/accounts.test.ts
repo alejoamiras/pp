@@ -4,11 +4,17 @@ import { privateKeyToAccount } from "viem/accounts"
 import { expect, test } from "vitest"
 import { BRIDGE_DEPLOYER_INDEX, DEMO_SENDER_ADDRESS, DEMO_SENDER_INDEX, POOL_DEPLOYER_INDEX, SEED_USER_INDEX } from "./accounts.ts"
 
+/** A static `import … from` or `export … from`; group 2 is its `type` modifier. */
+const EDGE =
+	/^[ \t]*(import|export)[ \t]+(type[ \t]+)?(?:[\w$]+[ \t]*,[ \t]*)?(?:\{[^}]*\}|\*(?:[ \t]+as[ \t]+[\w$]+)?|[\w$]+)[ \t]+from[ \t]*["']/gm
+
 // Node loads this module for the web build's config, in jobs that never fetch the pool checkout: a
-// value import here would pull in the sandbox (extensionless imports) or pp-env (the checkout).
-test("the module the web build loads imports types only", () => {
-	const imports = readFileSync(new URL("./accounts.ts", import.meta.url), "utf8").match(/^import .*$/gm) ?? []
-	expect(imports.filter((line) => !line.startsWith("import type "))).toEqual([])
+// runtime edge here would pull in the sandbox (extensionless imports) or pp-env (the checkout).
+test("the module the web build loads has no runtime edge: type-only imports and re-exports, no dynamic import", () => {
+	const source = readFileSync(new URL("./accounts.ts", import.meta.url), "utf8")
+	expect([...source.matchAll(EDGE)].filter((m) => m[2] === undefined).map((m) => m[0])).toEqual([])
+	expect(source).not.toMatch(/^[ \t]*import[ \t]*["']/m)
+	expect(source).not.toMatch(/\bimport[ \t]*\(/)
 })
 
 test("the plain values equal what they stand for: the demo sender's derived address and the harness index", () => {

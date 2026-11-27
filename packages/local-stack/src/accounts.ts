@@ -1,7 +1,9 @@
 /**
  * The anvil indices the demo stack signs from, and the demo sender's address, as plain values: the web
  * build's config loads this module under Node, which resolves neither the sandbox's extensionless
- * imports nor pp-env's fetched pool checkout. `accounts.test.ts` pins each value to its source.
+ * imports nor pp-env's fetched pool checkout. `accounts.test.ts` pins the derived values, the demo
+ * sender's address and the harness index. `POOL_DEPLOYER_INDEX` is not pinned: pp-env's
+ * `DEPLOYER_INDEX` sits only on its root barrel, which a job without the checkout cannot load.
  */
 import type { Address } from "viem"
 
