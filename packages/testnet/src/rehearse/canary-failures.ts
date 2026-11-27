@@ -7,9 +7,9 @@
  * burn it listed; an interrupted canary, then `pause`.
  */
 import { randomBytes } from "node:crypto"
-import { readdirSync, readFileSync, rmSync } from "node:fs"
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { PORTAL_FACTORY_ABI } from "@pp/bridge-core"
+import { PORTAL_FACTORY_ABI, parseStackManifest, serializeStackManifest } from "@pp/bridge-core"
 import { CleanupStack, killGroup, type OwnedChild } from "@pp/run-isolation/process"
 import { groupGone, groupMembers } from "@pp/run-isolation/process-group"
 import { createPublicClient, type Hex, http, type PublicClient, toHex } from "viem"
@@ -31,7 +31,7 @@ type Ctx = StackRun & {
 	l1: PublicClient
 	factory: Hex
 	/** The scratch file with its L1 or node behind a proxy: the bot's, the canary's without Outbox roots, the canary's refusing node. */
-	files: { bot: string; outbox: string; node: string }
+	files: { bot: Variant; outbox: Variant; node: Variant }
 	bot: { bot: OwnedChild; ready: Event; log: string }
 	/** The block the bot's proxy serves as `finalized`; undefined passes the tag through. */
 	pin: { at?: bigint }
@@ -64,12 +64,22 @@ const listedOf = (events: Event[]) =>
 		.split(" ")
 		.filter(Boolean)
 
-/** A copy of the scratch file whose `network` points a CLI at a proxy. */
-function variant(s: Scratch, name: string, network: Partial<TestnetDeployment["network"]>): string {
+type Variant = { file: string; modeArgs: readonly string[] }
+
+/**
+ * A copy of the scratch file whose `network` points a CLI at a proxy, and a copy of the stack manifest
+ * naming the same endpoints, since `--rehearse` refuses a file whose URLs are not its manifest's.
+ */
+function variant(s: Scratch, manifestPath: string, name: string, network: Partial<TestnetDeployment["network"]>): Variant {
 	const file = join(dirname(s.file), `testnet-own-${name}.json`)
 	const d = loadScratch(s)
-	writeScratch({ ...s, file }, { ...d, network: { ...d.network, ...network } })
-	return file
+	const n = { ...d.network, ...network }
+	writeScratch({ ...s, file }, { ...d, network: n })
+	const m = parseStackManifest(JSON.parse(readFileSync(manifestPath, "utf8")))
+	const manifest = join(dirname(s.file), `stack-${name}.json`)
+	const proxied = parseStackManifest(JSON.parse(serializeStackManifest({ ...m, l1Rpc: n.l1Rpc, aztecNode: n.aztecNode })))
+	writeFileSync(manifest, serializeStackManifest(proxied))
+	return { file, modeArgs: ["--rehearse", manifest] }
 }
 
 /** The step of the last send the canary report under `root` records; the canary flushes it before the broadcast. */
@@ -100,15 +110,17 @@ async function setUp(r: StackRun, manifestPath: string, cleanup: CleanupStack): 
 		return p.url
 	}
 	const files = {
-		bot: variant(s, "bot", {
+		bot: variant(s, manifestPath, "bot", {
 			l1Rpc: await proxy(
 				"rehearse-bot-l1",
 				network.l1Rpc,
 				finalizedAt(() => pin.at),
 			),
 		}),
-		outbox: variant(s, "outbox", { l1Rpc: await proxy("rehearse-canary-l1", network.l1Rpc, outboxWithoutRoots(network.outbox)) }),
-		node: variant(s, "node", {
+		outbox: variant(s, manifestPath, "outbox", {
+			l1Rpc: await proxy("rehearse-canary-l1", network.l1Rpc, outboxWithoutRoots(network.outbox)),
+		}),
+		node: variant(s, manifestPath, "node", {
 			aztecNode: await proxy(
 				"rehearse-canary-node",
 				network.aztecNode,
@@ -116,7 +128,7 @@ async function setUp(r: StackRun, manifestPath: string, cleanup: CleanupStack): 
 			),
 		}),
 	}
-	const bot = await startBot({ ...s, file: files.bot }, r.dir, 1, cleanup)
+	const bot = await startBot({ ...s, ...files.bot }, r.dir, 1, cleanup)
 	await must(s, "open", [s.file, "--factory", factory])
 	const l1 = createPublicClient({ transport: http(network.l1Rpc) }) as PublicClient
 	return { ...r, cleanup, l1, factory, files, bot, pin, refuse }
@@ -128,10 +140,10 @@ const canaryArgs = (c: Ctx) => ["--min-sequence", String(c.bot.ready.sequence), 
 async function canaryRun(
 	c: Ctx,
 	name: string,
-	o: { file: string; env?: NodeJS.ProcessEnv; during?: (log: string, child: OwnedChild) => Promise<void> },
+	o: { variant: Variant; env?: NodeJS.ProcessEnv; during?: (log: string, child: OwnedChild) => Promise<void> },
 ): Promise<CanaryRun> {
 	const log = join(c.dir, `${name}.log`)
-	const child = startCli("canary", [o.file, ...canaryArgs(c), ...c.s.modeArgs], o.env ?? c.s.env, log)
+	const child = startCli("canary", [o.variant.file, ...canaryArgs(c), ...o.variant.modeArgs], o.env ?? c.s.env, log)
 	c.cleanup.push(async () => void (await killGroup(child)))
 	await o.during?.(log, child)
 	let timer: ReturnType<typeof setTimeout> | undefined
@@ -203,7 +215,7 @@ async function approvalFinality(c: Ctx): Promise<void> {
 async function refusedSelfTransfer(c: Ctx): Promise<void> {
 	c.refuse.root = join(c.dir, "runs-refused")
 	const env = { ...c.s.env, PP_TESTNET_RUN_ROOT: c.refuse.root }
-	const run = await canaryRun(c, "canary-refused", { file: c.files.node, env }).finally(() => {
+	const run = await canaryRun(c, "canary-refused", { variant: c.files.node, env }).finally(() => {
 		c.refuse.root = undefined
 	})
 	const sends = (run.report.sends ?? []) as { step?: string; outcome?: string }[]
@@ -224,7 +236,7 @@ async function refusedSelfTransfer(c: Ctx): Promise<void> {
 /** No Outbox root within a short budget: exit 3 listing every burn; then `canary --settle` settles each one on the real Outbox. */
 async function exit3ThenSettle(c: Ctx): Promise<void> {
 	const env = { ...c.s.env, PP_TESTNET_EPOCH_PROOF_BUDGET_MS: String(EXIT_3_BUDGET_MS) }
-	const run = await canaryRun(c, "canary-exit-3", { file: c.files.outbox, env })
+	const run = await canaryRun(c, "canary-exit-3", { variant: c.files.outbox, env })
 	const burns = burnsOf(run.report)
 	const listed = listedOf(run.events)
 	expectAll(
@@ -253,7 +265,7 @@ async function interruptedThenPause(c: Ctx): Promise<void> {
 		test: (e: Event) => e.event === "l2-sent" && e.step === "burn" && e.outcome === "checkpointed",
 	}
 	const run = await canaryRun(c, "canary-interrupted", {
-		file: c.files.outbox,
+		variant: c.files.outbox,
 		during: async (log, child) => {
 			await untilEvent(log, landedBurn, child, CANARY_MS)
 			// The canary alone, not its group: the group's leader only waits on it, and its prover child

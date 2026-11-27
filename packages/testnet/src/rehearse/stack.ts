@@ -64,6 +64,8 @@ function rehearsalKeys(): Record<string, Hex> {
 /** The scratch file's network from the stack's manifest and its node, and the stack's pool as `pool`. */
 export async function stackFile(s: Scratch, manifestPath: string, runId: string): Promise<void> {
 	const m = parseStackManifest(JSON.parse(readFileSync(manifestPath, "utf8")))
+	// Chain 31337's manifest holds only loopback URLs, so nothing below reaches another host.
+	if (m.chainId !== LOCAL) throw new Error(`${manifestPath} is a chain ${m.chainId} manifest; a stack rehearsal runs on ${LOCAL}`)
 	const info = await createAztecNodeClient(m.aztecNode).getNodeInfo()
 	const a = info.l1ContractAddresses
 	// Claimed then released at once: the bot claims the row itself, under its own run id.
@@ -92,6 +94,9 @@ export async function stackFile(s: Scratch, manifestPath: string, runId: string)
 	} as unknown as TestnetDeployment)
 }
 
+/** A stop mid-post lets the post drain for up to 10 s before the bot stops its wallet and server. */
+const BOT_STOP_GRACE_MS = 30_000
+
 /** The bot up until its first checkpointed post. */
 export async function startBot(
 	s: Scratch,
@@ -101,14 +106,14 @@ export async function startBot(
 ): Promise<{ bot: OwnedChild; ready: Event; log: string }> {
 	const log = join(dir, `bot-${n}.log`)
 	const bot = startCli("bot", [s.file, ...s.modeArgs], s.env, log)
-	cleanup.push(async () => void (await killGroup(bot)))
+	cleanup.push(async () => void (await killGroup(bot, BOT_STOP_GRACE_MS)))
 	const ready = await untilEvent(log, "bot-ready", bot, BOT_READY_MS)
 	s.log(`[${s.tag}] bot ${n} posted sequence ${ready.sequence} (${ready.txHash})`)
 	return { bot, ready, log }
 }
 
 export async function stopBot(s: Scratch, b: { bot: OwnedChild; log: string }): Promise<void> {
-	const stopped = await killGroup(b.bot)
+	const stopped = await killGroup(b.bot, BOT_STOP_GRACE_MS)
 	const out = readFileSync(b.log, "utf8")
 	s.outputs.push(out)
 	if (!stopped || b.bot.exitReason() !== "exit code 0" || !out.includes('"bot-stopped"'))
