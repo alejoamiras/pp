@@ -188,6 +188,6 @@ describe.skipIf(!RUN)("asp-bot births against the local stack", () => {
 				`secret ${i} appears in the bot's outputs`,
 			).toBe(false)
 		}
-		expect(text).not.toContain("birth_refused")
+		expect(text.includes("birth_refused"), "the bot refused a birth").toBe(false)
 	})
 })

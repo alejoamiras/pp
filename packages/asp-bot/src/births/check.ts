@@ -16,7 +16,7 @@ export type Refusal = "above_pin" | "reverted" | "invalid_fields" | "label_misma
 
 export type Verdict = { ok: true; leaf: bigint } | { ok: false; reason: Refusal }
 
-/** `tx` must be the announcement's own transaction: the announcement alone is the shielder's word. */
+/** `tx` must be the announcement's own transaction. */
 export async function checkBirth(token: AztecAddress, pin: number, a: BirthAnnouncement, tx: BirthTx): Promise<Verdict> {
 	if (tx.block > pin) return { ok: false, reason: "above_pin" }
 	if (!tx.success) return { ok: false, reason: "reverted" }
