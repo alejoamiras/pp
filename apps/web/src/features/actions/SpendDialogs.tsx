@@ -1,0 +1,118 @@
+import { useState } from "react"
+import { useApp } from "../../app/context"
+import type { AztecAddress } from "../../data/stack-types"
+import { messageOf, RECIPIENT_MESSAGE } from "../../data/errors"
+import { isAztecPoint, parseAztecAddress } from "../../data/parse"
+import type { LabelBalance } from "../../data/ports"
+import { ActionButton, Callout, Field, LabelChip } from "../../ui"
+import { ActionShell, AmountField, useAction, useAmount } from "./shared"
+
+interface Props {
+	account: AztecAddress
+	balance: LabelBalance
+	onClose(): void
+}
+
+const submitReason = (sending: boolean, missing: string | null) => (sending ? "Sending…" : (missing ?? undefined))
+
+/** A private transfer under the same label. The page sends one transaction at a time, so a first send to a new recipient goes alone. */
+export function SendDialog({ account, balance, onClose }: Props) {
+	const { aztec, tx } = useApp()
+	const [to, setTo] = useState("")
+	const typed = parseAztecAddress(to)
+	const recipient = typed !== null && isAztecPoint(typed) ? typed : null
+	const toError = to === "" || recipient ? undefined : typed === null ? RECIPIENT_MESSAGE : messageOf("RECIPIENT_INVALID")
+	const amount = useAmount(balance.balance)
+	const act = useAction()
+	const send = () => {
+		if (!recipient || amount.amount === null) return
+		const a = { to: recipient, amount: amount.amount, label: balance.label, origin: balance.origin }
+		void act.send("transferPrivate", () => aztec.transferPrivate(account, a), recipient)
+	}
+	const missing = recipient === null ? "Enter the recipient first." : amount.amount === null ? "Enter an amount first." : null
+	return (
+		<ActionShell
+			title="Send privately"
+			description="Pays another Aztec account from this label. The label travels with the funds."
+			action="send"
+			state={act.state}
+			onClose={onClose}
+			done="The transfer is on Aztec. The recipient sees it under the same label."
+		>
+			<LabelChip label={balance.label} />
+			<Field label="Recipient on Aztec" value={to} onValue={setTo} error={toError} />
+			<AmountField field={amount} />
+			{recipient && tx.isNewRecipient(recipient) ? (
+				<Callout tone="wait" title="First send to this recipient">
+					It goes alone in its own transaction. Send more once it lands.
+				</Callout>
+			) : null}
+			<ActionButton variant="primary" disabledReason={submitReason(act.state.kind === "sending", missing)} onClick={send}>
+				Send
+			</ActionButton>
+		</ActionShell>
+	)
+}
+
+/** Moves part of a label's balance to the account's public balance, which carries no label. */
+export function UnshieldDialog({ account, balance, onClose }: Props) {
+	const { aztec } = useApp()
+	const amount = useAmount(balance.balance)
+	const act = useAction()
+	const send = () => {
+		if (amount.amount === null) return
+		const a = { amount: amount.amount, label: balance.label, origin: balance.origin }
+		void act.send("unshield", () => aztec.unshield(account, a))
+	}
+	return (
+		<ActionShell
+			title="Unshield"
+			description="Moves part of this label's balance to your public balance on Aztec, where it carries no label."
+			action="unshield"
+			state={act.state}
+			onClose={onClose}
+			done="Unshielded. The amount is in your public balance; withdraw it to Ethereum from there."
+		>
+			<LabelChip label={balance.label} />
+			<AmountField field={amount} />
+			<ActionButton
+				variant="primary"
+				disabledReason={submitReason(act.state.kind === "sending", amount.amount === null ? "Enter an amount first." : null)}
+				onClick={send}
+			>
+				Unshield
+			</ActionButton>
+		</ActionShell>
+	)
+}
+
+/** Moves public balance into a new private label, which waits for approval. */
+export function ShieldDialog({ account, amount: available, onClose }: { account: AztecAddress; amount: bigint; onClose(): void }) {
+	const { aztec } = useApp()
+	const amount = useAmount(available)
+	const act = useAction()
+	const send = () => {
+		const value = amount.amount
+		if (value === null) return
+		void act.send("shield", () => aztec.shield(account, value))
+	}
+	return (
+		<ActionShell
+			title="Shield"
+			description="Moves public balance into a new private label. The label waits for approval before it can be sent or unshielded; it can always leave to Ethereum."
+			action="shield"
+			state={act.state}
+			onClose={onClose}
+			done="Shielded. The new label shows as awaiting approval until the allow list includes it."
+		>
+			<AmountField field={amount} />
+			<ActionButton
+				variant="primary"
+				disabledReason={submitReason(act.state.kind === "sending", amount.amount === null ? "Enter an amount first." : null)}
+				onClick={send}
+			>
+				Shield
+			</ActionButton>
+		</ActionShell>
+	)
+}

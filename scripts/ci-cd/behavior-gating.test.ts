@@ -10,8 +10,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 
 const ROOT = join(import.meta.dir, "..", "..")
-// Deployable leaves live under apps/ (none yet), libraries under packages/.
-const APPS = new Set<string>()
+// Deployable leaves live under apps/, libraries under packages/.
+const APPS = new Set<string>(["web"])
 const dirOf = (pkg: string): string => (APPS.has(pkg) ? "apps" : "packages")
 
 /** Direct `@pp/*` workspace deps of a package (runtime + dev — what it's built/tested from). */
@@ -174,7 +174,7 @@ function readFilters(file: string): string[] {
   return [...read]
 }
 
-const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml", "local-stack.yml", "pool-client.yml"]
+const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml", "local-stack.yml", "pool-client.yml", "web.yml"]
 
 /**
  * The check-run each PR workflow's aggregator job produces. Branch protection matches these by
@@ -187,6 +187,7 @@ const AGGREGATOR_CHECKS: Record<string, string> = {
   "pp-env.yml": "pp-env-status",
   "local-stack.yml": "local-stack-status",
   "pool-client.yml": "pool-client-status",
+  "web.yml": "web-status",
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed-YAML shape is dynamic.
@@ -313,6 +314,45 @@ describe("CI behavior-gating guard", () => {
     const wf = workflow("pr-quick.yml")
     expect(wf.jobs.changes.outputs["needs-kit-build"]).toBe("${{ steps.compute.outputs.needs-kit-build }}")
     expect(wf.jobs["build-e2e-kit"].if).toBe("needs.changes.outputs.needs-kit-build == 'true'")
+  })
+
+  test("web covers the app graph, the sandbox it boots, the contracts that sandbox compiles, its actions and the root config", () => {
+    const web = filtersOf("web.yml")["web"]
+    // The closure test above holds this filter to every file the app can load; this pins that it gates the app whole.
+    expect(web, "web gates the app whole").toContain("apps/web/**")
+    expect(web, "the kit's runner boots @pp/bridge-core/sandbox, which lives in scripts/").toContain("packages/bridge-core/scripts/**")
+    expect(web, "the sandbox compiles the bridge from source (sandbox/forge.ts)").toContain("contracts/bridge/**")
+    for (const path of importsOutside("bridge-core")) {
+      expect(web.some((pattern) => new Bun.Glob(pattern).match(path)), `web must gate ${path}`).toBe(true)
+    }
+    for (const p of [
+      "package.json",
+      "bun.lock",
+      "bunfig.toml",
+      "vitest.base.ts",
+      "patches/**",
+      ".github/workflows/web.yml",
+      ".github/actions/setup-aztec/**",
+      ".github/actions/setup-bun/**",
+      ".github/actions/setup-playwright/**",
+    ]) {
+      expect(web, `web must gate ${p}`).toContain(p)
+    }
+    const wf = workflow("web.yml")
+    expect(wf.jobs.changes.outputs.web).toBe("${{ steps.override.outputs.full || steps.filter.outputs.web }}")
+    for (const job of ["build", "e2e"]) expect(wf.jobs[job].if, job).toBe("needs.changes.outputs.web == 'true'")
+    expect(wf.jobs.status.needs, "web-status waits on exactly the gate's jobs").toEqual(["changes", "build", "e2e"])
+    expect(wf.jobs.e2e.steps.map((step: { run?: string }) => step.run)).toContain("bun run --cwd apps/web e2e")
+  })
+
+  test("web pins every external action to a commit and never persists the checkout token", () => {
+    for (const [name, job] of Object.entries(workflow("web.yml").jobs) as [string, { steps?: { uses?: string; with?: Record<string, unknown> }[] }][]) {
+      for (const step of job.steps ?? []) {
+        if (typeof step.uses !== "string" || step.uses.startsWith("./")) continue
+        expect(step.uses, `${name}: a tag or branch can move under the same name`).toMatch(/^[\w.-]+\/[\w.-]+(?:\/[\w.-]+)*@[0-9a-f]{40}$/)
+        if (step.uses.startsWith("actions/checkout@")) expect(step.with?.["persist-credentials"], `${name}: checkout`).toBe(false)
+      }
+    }
   })
 
   test("bridge-contracts covers the contracts, the harness package, its graph, and the shared vitest config", () => {

@@ -81,7 +81,7 @@
 	},
 	"overrides": [
 		{
-			"includes": ["**/*.test.ts"],
+			"includes": ["**/*.test.ts", "**/*.test.tsx"],
 			"linter": {
 				"rules": {
 					"complexity": {
@@ -93,6 +93,7 @@
 		{
 			"includes": [
 				"**/*.test.ts",
+				"**/*.test.tsx",
 				"**/*.spec.*",
 				"**/tests/**",
 				"**/e2e/**",
@@ -109,6 +110,11 @@
 			}
 		}
 	],
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	},
 	"javascript": {
 		"formatter": {
 			"jsxQuoteStyle": "double",

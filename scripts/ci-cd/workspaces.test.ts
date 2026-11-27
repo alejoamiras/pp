@@ -24,6 +24,7 @@ test("the all-workspace scripts select every workspace", () => {
 		"@pp/pool-client",
 		"@pp/pp-env",
 		"@pp/run-isolation",
+		"@pp/web",
 	])
 	for (const script of ["typecheck:all", "test:all"]) {
 		const filter = root.scripts[script].match(/--filter '([^']+)'/)?.[1]
