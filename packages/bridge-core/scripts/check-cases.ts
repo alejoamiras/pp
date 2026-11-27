@@ -9,6 +9,32 @@ import { readFileSync } from "node:fs"
 /** The named cases each gate must run; a list only grows as its phases land. */
 export const CASE_GROUPS = {
 	deploy: ["D0", "D1a", "D1b"],
+	/** The whole stack suite, with the three cases that run at the unit layer (S6u, S7u, E1u). */
+	bridge: [
+		"D0",
+		"D1a",
+		"D1b",
+		"B1",
+		"B2",
+		"B3",
+		"S1",
+		"S2",
+		"S2b",
+		"S3",
+		"S4",
+		"S5",
+		"S6u",
+		"S7",
+		"S7u",
+		"J1",
+		"J2",
+		"J3",
+		"P1",
+		"E1",
+		"E1u",
+		"E2",
+		"E3",
+	],
 	"local-stack": ["L1"],
 } as const satisfies Record<string, readonly string[]>
 
