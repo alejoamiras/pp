@@ -2,7 +2,7 @@
  * What a label's allow-list state means on screen. ABSENT is the snapshot server's claim, while ACTIVE
  * is proved by a path to the posted root. One snapshot also cannot tell a label never approved from
  * one dropped. So the copy never
- * says a label was revoked or removed: a fresh shield (origin 1) reads as awaiting approval, a bridged
+ * says a label was revoked or removed: a fresh shield (origin 1) reads as not enabled yet, a bridged
  * label (origin 0) as not found in the latest list, with a fresh read offered and no advice to leave:
  * an absence alone never recommends a public exit. Leaving to Ethereum never reads the allow list, so
  * ragequit stays open in every state.
@@ -27,9 +27,12 @@ const CLOSED = { send: false, unshield: false, ragequit: true }
 export function labelView(origin: Origin, state: LabelState): LabelView {
 	if (state === "ACTIVE")
 		return {
-			text: "Active",
+			text: origin === 1 ? "Funds enabled" : "Active",
 			tone: "ok",
-			meaning: "In the posted allow list: sends and unshields work.",
+			meaning:
+				origin === 1
+					? "A shielded label the posted allow list now includes: sends and unshields work."
+					: "In the posted allow list: sends and unshields work.",
 			can: { send: true, unshield: true, ragequit: true },
 			reason: "",
 			checkAgain: false,
@@ -45,9 +48,9 @@ export function labelView(origin: Origin, state: LabelState): LabelView {
 		}
 	if (origin === 1)
 		return {
-			text: "Awaiting approval",
+			text: "Not enabled yet",
 			tone: "wait",
-			meaning: "Not in the allow list yet. Send and Unshield open once it is approved.",
+			meaning: "A shielded label not in the allow list this page last read. Send and Unshield open once it is approved.",
 			can: CLOSED,
 			reason: "Send and Unshield open once the label is approved",
 			checkAgain: false,

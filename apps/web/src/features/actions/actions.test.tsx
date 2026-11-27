@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
-import { afterEach, describe, expect, test } from "vitest"
+import { afterEach, describe, expect, onTestFinished, test, vi } from "vitest"
 import type { AztecAddress } from "../../data/stack-types"
 import { messageOf, PAYEE_MESSAGES, ProviderError, revertCopy } from "../../data/errors"
 import { ACCOUNTS, LABELS } from "../../data/fixtures/seed"
@@ -450,5 +450,47 @@ describe("the shield dialog", () => {
 		act(() => app.control.disconnectAztec())
 		await act(async () => release())
 		expect(app.control.state().sent.aztec).toBe(0)
+	})
+
+	test("a new label reads Not enabled yet, then Funds enabled at the next refetch after approval, with no Refresh", async () => {
+		// Only intervals are faked, and they still advance with real time, so the wallet, the dialog and waitFor run as usual.
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"], shouldAdvanceTime: true })
+		onTestFinished(() => void vi.useRealTimers())
+		let reads = 0
+		const app = renderApp({
+			poll: 6_000,
+			patch: (s) => ({
+				...s,
+				allowList: {
+					...s.allowList,
+					current: () => {
+						reads++
+						return s.allowList.current()
+					},
+				},
+			}),
+		})
+		await connectAztec(app.user)
+		const before = new Set((await screen.findAllByTestId("label-row")).map((r) => r.dataset.label))
+		const dialog = await openShield(app)
+		await app.user.type(dialog.getByLabelText(/Amount/), "5")
+		await app.user.click(dialog.getByRole("button", { name: "Shield" }))
+		await dialog.findByText(/^Shielded\./)
+		await app.user.click(dialog.getByRole("button", { name: "Close" }))
+		const label = await waitFor(() => {
+			const born = screen.getAllByTestId("label-row").find((r) => !before.has(r.dataset.label))
+			expect(born).toBeDefined()
+			return BigInt(born?.dataset.label ?? "")
+		})
+		await waitFor(() => labelRow(label).getByText("Not enabled yet"))
+		expect(disabled(labelRow(label).getByRole("button", { name: "Send privately" }))).toBe(true)
+
+		const seen = reads
+		act(() => app.control.approveBirths())
+		await act(() => vi.advanceTimersByTimeAsync(6_000))
+		await waitFor(() => labelRow(label).getByText("Funds enabled"))
+		expect(reads).toBeGreaterThan(seen)
+		await app.user.click(labelRow(label).getByRole("button", { name: "Send privately" }))
+		within(await screen.findByTestId("action-dialog")).getByRole("heading", { name: "Send privately" })
 	})
 })

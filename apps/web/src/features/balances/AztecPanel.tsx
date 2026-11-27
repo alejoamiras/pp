@@ -13,6 +13,11 @@ export type HomeAction = { kind: LabelAction; balance: LabelBalance } | { kind: 
 
 const CAP = "text-cap font-bold tracking-[0.06em] text-ink-3 uppercase"
 
+// A grant drops a contract whole when any of its asked scopes is missing, so a wallet that left out one
+// token method withholds every read and send on the token until the whole request is granted again.
+const PARTIAL_GRANT =
+	"Your Aztec wallet allowed only part of what this page asked for on the token contract, so the page can neither read nor move your token here. Nothing is lost: disconnect, connect again, and allow the whole request."
+
 /** The tree build a check is running, with the only way to stop it. */
 function AllowListProgressLine() {
 	const { source } = useApp()
@@ -53,7 +58,7 @@ function PrivateBalances({ account, onAction }: { account: AztecAddress; onActio
 	if (refused)
 		return (
 			<Callout tone="attn" title="Your balances are hidden from this page">
-				{messageOf(refused)}
+				{refused === "NOT_GRANTED" ? PARTIAL_GRANT : messageOf(refused)}
 			</Callout>
 		)
 	if (balances.isPending) return <Callout tone="wait" busy role="status" title="Reading your private balances…" />
