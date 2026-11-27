@@ -102,69 +102,107 @@ const describeMembers = (pgid: number) =>
 /** How long a group alive only through bb.js helpers gets to empty: ten times their own 100 ms backstop. */
 export const SETTLE_MS = 1_000
 
+const BB_BIN = /^\/(?:[^/]+\/)*@aztec-foundation\/bb\.js\/build\/(?:amd64|arm64)-(?:linux|macos)\/bb$/
+
+export type Member = { pid: number; ppid: number; argv: readonly string[] }
+
 /**
- * bb.js's sync helper, by its exact argv: `<pkg>/build/<platform>/bb msgpack run --input bb-sync-…shm
- * --request-ring-size <n>`. Importing `@aztec-labs/foundation/crypto/sync` spawns it in the importer's
- * group. It stops itself on its spawner's death (PR_SET_PDEATHSIG), but its SIGTERM handler only sets a
- * flag, so it can sleep out one 100 ms wait first: it always outlives its spawner, by up to that.
+ * bb.js's sync helper by its exact argv, once the spawner its ring names (`bb-sync-<pid>-…`) is not its
+ * parent. Importing `@aztec-labs/foundation/crypto/sync` spawns it in the importer's group. Its spawner's
+ * death sends it SIGTERM (PR_SET_PDEATHSIG), whose handler only sets a flag, so it can sleep out one
+ * 100 ms wait before it exits.
  */
-export function isBbHelper(argv: readonly string[]): boolean {
-	const [bin, sub, run, input, shm, ring, size, ...extra] = argv
+export function isBbHelper(m: Member): boolean {
+	const [bin, sub, run, input, ring, flag, size, ...extra] = m.argv
+	const spawner = /^bb-sync-(\d+)-\d+-\d+\.shm$/.exec(ring ?? "")?.[1]
 	return (
-		/\/@aztec-foundation\/bb\.js\/build\/[a-z0-9-]+\/bb$/.test(bin ?? "") &&
+		BB_BIN.test(bin ?? "") &&
 		sub === "msgpack" &&
 		run === "run" &&
 		input === "--input" &&
-		/^bb-sync-\d+-\d+-\d+\.shm$/.test(shm ?? "") &&
-		ring === "--request-ring-size" &&
+		spawner !== undefined &&
+		Number(spawner) !== m.ppid &&
+		flag === "--request-ring-size" &&
 		/^\d+$/.test(size ?? "") &&
 		extra.length === 0
 	)
 }
 
-function argvOf(pid: number): string[] {
+/** A `/proc/<pid>/cmdline` as argv; one not ending in NUL (a zombie's empty one included) is `[]`. */
+export const parseCmdline = (raw: string): string[] => (raw.endsWith("\0") ? raw.slice(0, -1).split("\0") : [])
+
+function member(pid: number): Member {
 	try {
-		return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").slice(0, -1)
+		const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+		const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1])
+		return { pid, ppid, argv: parseCmdline(readFileSync(`/proc/${pid}/cmdline`, "utf8")) }
 	} catch {
-		return []
+		return { pid, ppid: -1, argv: [] }
 	}
 }
 
-/** Whether every running member of `pgid` is a helper, none of them its leader: so its spawner is gone. */
-function helpersOnly(pgid: number, helper: (argv: readonly string[]) => boolean): boolean {
-	const running = groupMembers(pgid).filter((m) => m.state !== "Z" && m.state !== "X")
-	return running.length > 0 && running.every((m) => m.pid !== pgid && helper(argvOf(m.pid)))
+export type Seen = "gone" | "helpers" | "running"
+
+/** `helpers` when every running member is a bb.js helper and none leads the group. */
+export const classify = (pgid: number, running: readonly Member[]): Exclude<Seen, "gone"> =>
+	running.length > 0 && running.every((m) => m.pid !== pgid && isBbHelper(m)) ? "helpers" : "running"
+
+function look(pgid: number): Seen {
+	if (!groupAlive(pgid)) return "gone"
+	const running = groupMembers(pgid)
+		.filter((m) => m.state !== "Z" && m.state !== "X")
+		.map((m) => member(m.pid))
+	if (running.length === 0 && !groupAlive(pgid)) return "gone"
+	return classify(pgid, running)
 }
 
-export type Settle = { boundMs?: number; helper?: (argv: readonly string[]) => boolean }
+export type Settle = { boundMs?: number; look?: (pgid: number) => Seen; now?: () => number; sleep?: (ms: number) => Promise<unknown> }
 
 /**
- * The groups of `pgids` still running once each group alive only through helpers has had up to
- * `boundMs` to empty; any other running member fails at once. Every wait is logged with what it saw
- * and how long it took, so a slow exit is an observation, not a pass in silence.
+ * Looks at every group of `pgids` now. `settle()` then gives each one seen alive only through helpers
+ * until `boundMs` after that look to be seen gone, and resolves to the groups kept: those seen running
+ * anything else at any look, or not seen gone by the bound. Every wait is logged with what it saw and
+ * how long it took, so a slow exit is an observation rather than a silent pass.
  */
-export async function settledGroups(pgids: Iterable<number>, o: Settle = {}): Promise<number[]> {
-	const [bound, helper] = [o.boundMs ?? SETTLE_MS, o.helper ?? isBbHelper]
-	const left: number[] = []
-	for (const g of pgids) {
-		if (!groupAlive(g)) continue
-		if (!helpersOnly(g, helper)) {
-			left.push(g)
-			continue
+export function lookAtGroups(pgids: Iterable<number>, o: Settle = {}): { settle(): Promise<number[]> } {
+	const { boundMs = SETTLE_MS, look: see = look, now = () => performance.now(), sleep: pause = sleep } = o
+	const first = [...pgids].map((g) => ({ g, seen: see(g), held: describeMembers(g) }))
+	const start = now()
+	const deadline = start + boundMs
+	const waitOut = async (g: number): Promise<"gone" | "a member that is not a helper" | "the bound"> => {
+		for (;;) {
+			if (deadline - now() <= 0) return "the bound"
+			await pause(Math.min(10, deadline - now()))
+			if (now() > deadline) return "the bound"
+			const seen = see(g)
+			if (seen === "gone") return "gone"
+			if (seen === "running") return "a member that is not a helper"
 		}
-		const [seen, started] = [describeMembers(g), performance.now()]
-		while (groupAlive(g) && helpersOnly(g, helper) && performance.now() - started < bound) await sleep(10)
-		const [ms, running] = [Math.round(performance.now() - started), groupAlive(g)]
-		if (running) left.push(g)
-		console.warn(`[residue] group ${g} ${running ? "still running" : "emptied"} after ${ms} ms; it held ${seen}`)
 	}
-	return left
+	return {
+		async settle() {
+			const kept: number[] = []
+			for (const { g, seen, held } of first) {
+				if (seen === "gone") continue
+				if (seen === "running") {
+					kept.push(g)
+					continue
+				}
+				const outcome = await waitOut(g)
+				if (outcome !== "gone") kept.push(g)
+				const what = outcome === "gone" ? "emptied" : `kept at ${outcome}`
+				console.warn(`[residue] group ${g} ${what} after ${Math.round(now() - start)} ms; it held ${held}`)
+			}
+			return kept
+		},
+	}
 }
 
 /**
  * What a stopped run must not have left: running groups, open ports, registry rows, directories. A
  * group of zombies only has stopped (its reaper has not collected them yet); any running member fails,
- * except bb.js helpers, which get {@link SETTLE_MS} to follow their spawner. The rest is read at once.
+ * except bb.js helpers, which get {@link SETTLE_MS} to follow their spawner. Groups are looked at and
+ * the rest is read before that wait, so nothing else gets it.
  */
 export async function residueOf(r: {
 	runId: string
@@ -173,18 +211,19 @@ export async function residueOf(r: {
 	tmpDir?: string
 	settle?: Settle
 }): Promise<string[]> {
-	const left: string[] = []
-	for (const g of await settledGroups(r.pgids, r.settle)) left.push(`process group ${g}: ${describeMembers(g)}`)
-	for (const p of r.ports) if (!(await portRefuses(p))) left.push(`port ${p} accepts`)
-	for (const row of registryRows()) if (ownedBy(row, r.runId)) left.push(`registry row ${row.port} ${row.owner}`)
+	const groups = lookAtGroups(r.pgids, r.settle)
+	const rest: string[] = []
+	for (const p of r.ports) if (!(await portRefuses(p))) rest.push(`port ${p} accepts`)
+	for (const row of registryRows()) if (ownedBy(row, r.runId)) rest.push(`registry row ${row.port} ${row.owner}`)
 	const dirs = [
 		join(CACHE, "runs", r.runId),
 		join(CACHE, "pp-env", "runs", `${r.runId}-pool`),
 		join(CACHE, "bridge-sandbox", r.runId),
 		...(r.tmpDir ? [r.tmpDir] : []),
 	]
-	for (const d of dirs) if (existsSync(d)) left.push(`dir ${d}`)
-	return left
+	for (const d of dirs) if (existsSync(d)) rest.push(`dir ${d}`)
+	const kept = (await groups.settle()).map((g) => `process group ${g}: ${describeMembers(g)}`)
+	return [...kept, ...rest]
 }
 
 export const portsOwnedBy = (runId: string) =>

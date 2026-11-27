@@ -10,7 +10,7 @@ import { AttachRefused } from "../../src/attach.ts"
 import { nodeInfo } from "../../src/node-rpc.ts"
 import { newRunId } from "../../src/run-dir.ts"
 import { startStack } from "../../src/stack.ts"
-import { portsOwnedBy, processTree, registryRows, residueOf, sampleTree, settledGroups } from "./residue.ts"
+import { lookAtGroups, portsOwnedBy, processTree, registryRows, residueOf, sampleTree } from "./residue.ts"
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..")
 const BOOT_MS = 600_000
@@ -44,8 +44,7 @@ async function reap(run: Reapable): Promise<void> {
 	}
 	run.stopSampling()
 	kill()
-	// By residueOf's rule: a group alive only through bb.js helpers is let empty before it is named.
-	for (const g of await settledGroups(run.tree.unverifiedAlive()))
+	for (const g of await lookAtGroups(run.tree.unverifiedAlive()).settle())
 		console.warn(`[reap] left group ${g} alone: its leader is not the process sampled`)
 }
 
