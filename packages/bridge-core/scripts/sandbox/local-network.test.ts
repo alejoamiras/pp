@@ -3,12 +3,12 @@ import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { own } from "@pp/run-isolation/process"
 import { describe, expect, it } from "vitest"
 import {
 	assertSocketRoom,
 	killGroup,
 	nodeEnv,
-	own,
 	parseListeners,
 	runLeftovers,
 	SANDBOX_CACHE_DIR,

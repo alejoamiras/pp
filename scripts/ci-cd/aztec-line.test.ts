@@ -18,6 +18,8 @@ const LOCKFILES = ["bun.lock", "contracts/bridge/aztec/txe-server/bun.lock"]
 const PIN_SOURCES = ["packages/bridge-core/package.json"]
 const EXACT = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/
 const STANDARDS = "@aztec-foundation/aztec-standards"
+/** The standards pin's source: labelled-token profiles the stock Token as its gate baseline. */
+const STANDARDS_SOURCE = "packages/labelled-token/package.json"
 
 type Specs = Record<string, string>
 type Manifest = {
@@ -37,7 +39,7 @@ const lockOf = (path: string): Lock => Bun.JSONC.parse(readFileSync(join(ROOT, p
 const pinOf = (path: string, name: string): string | undefined => manifest(path).dependencies?.[name]
 
 const LABS = pinOf(PIN_SOURCES[0], "@aztec-labs/aztec.js")
-const STANDARDS_PIN = pinOf(PIN_SOURCES[0], STANDARDS)
+const STANDARDS_PIN = manifest(STANDARDS_SOURCE).devDependencies?.[STANDARDS]
 const FOUNDATION = lockOf("bun.lock").packages["@aztec-labs/aztec.js"]?.[2]?.dependencies?.["@aztec-foundation/l1-artifacts"]
 
 /** The version a package must resolve at, or `undefined` when the line does not govern it. */
@@ -67,7 +69,6 @@ test("every workspace the CI pin readers consult names the same exact pins", () 
 	expect(STANDARDS_PIN).toMatch(EXACT)
 	for (const path of PIN_SOURCES) {
 		expect(pinOf(path, "@aztec-labs/aztec.js"), path).toBe(LABS)
-		expect(pinOf(path, STANDARDS), path).toBe(STANDARDS_PIN)
 	}
 })
 

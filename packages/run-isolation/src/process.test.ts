@@ -20,10 +20,12 @@ async function until(path: string, ms = 10_000): Promise<void> {
 	}
 }
 
-test("a command that cannot start ends with a reason instead of an uncaught error", async () => {
-	const owned = spawnOwned(join(dir, "no-such-anvil"), [], join(dir, "missing.log"), {})
+test("a command that cannot start ends with exit code 127 and says why in its log", async () => {
+	const log = join(dir, "missing.log")
+	const owned = spawnOwned(join(dir, "no-such-anvil"), [], log, {})
 	await owned.exited
-	expect(owned.exitReason()).toContain("could not start")
+	expect(owned.exitReason()).toBe("exit code 127")
+	expect(readFileSync(log, "utf8")).toContain(`could not start ${join(dir, "no-such-anvil")}`)
 })
 
 test("a signal during stop() waits for the whole teardown, and a repeat does not cut it short", async () => {
