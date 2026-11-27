@@ -38,7 +38,7 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
   `fund --quote` reads no key and prints what the deployer must hold, the top-ups' own gas included.
 - `DEMO_OWNER_KEY` and `DEMO_SENDER_KEY` are the owner's two hand-test accounts, `expected.demoOwner` and
   `expected.demoSender`: the demo owner holds notes, the demo sender sends the bridge transactions. The
-  owner reads both values from the key file himself, in his own terminal, and imports them into his
+  owner reads both values from the key file in their own terminal and imports them into their
   wallet; no command prints, logs or hands over either. A key file made before them gains both from
   `keys`, which `addresses` needs first. Once `expected` names them, `fund` tops each up to 5 M gas,
   `seed --demo` registers the demo owner and deposits for it, and `asp` approves the demo owner's own
@@ -76,7 +76,7 @@ by a quarter, paying at least four times the estimate.
 Run order for the own target: `keys`, `addresses` (commit `expected`, the demo accounts included), `fund`,
 `verify-inputs`, `deploy-pool`, `verify-deployment --pool-only`, `asp` with an `--owner` for the canary
 owner and one for the demo owner, `seed`, `seed --demo`, `deploy`, `verify-deployment`, `bot`, `open`,
-`canary`, `pause`. Then the owner imports the two demo keys into his wallet, from the key file, and
+`canary`, `pause`. Then the owner imports the two demo keys into their wallet, from the key file, and
 hand-tests.
 
 `--rehearse <stack manifest>` runs a command against the local stack, at exactly that manifest's L1 and
