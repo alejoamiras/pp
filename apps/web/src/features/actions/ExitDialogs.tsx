@@ -12,6 +12,8 @@ import { ActionShell, AmountField, OwnerWarning, PayeeField, useAction, useAmoun
 
 const PUBLIC_LABEL = "Leaving to Ethereum is public: it shows this label on Ethereum, next to the payee."
 const COLLECT = "The exit is on Aztec. Collect it on Ethereum from Exits once its epoch is proven."
+const COLLECT_PAYER =
+	"Collecting it on Ethereum later takes a funded Ethereum account to pay the gas. Not your pool owner's: collecting from it links the owner to this payee in public."
 
 interface ReviewProps {
 	payee: Address
@@ -36,6 +38,9 @@ function ExitReview({ payee, amount, label, confirm, busy, onBack, onConfirm }: 
 				]}
 			/>
 			<OwnerWarning payee={payee} />
+			<p className="text-xs text-ink-3" data-testid="exit-collect-payer">
+				{COLLECT_PAYER}
+			</p>
 			<div className="flex flex-wrap gap-2">
 				<ActionButton onClick={onBack}>Back</ActionButton>
 				<ActionButton

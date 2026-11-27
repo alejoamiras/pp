@@ -78,6 +78,9 @@ test("leaves a claimed label to Ethereum, lists its ticket from the chain and co
 	step("ticket ready")
 	await l1.setAccount(anvilKey(s.stack.accounts.sender.index))
 	await row.getByRole("button", { name: "Collect on Ethereum" }).click()
+	const review = page.getByTestId("collect-review")
+	await expect(review.getByText("This links two addresses in public")).toBeVisible()
+	await review.getByRole("button", { name: "Collect", exact: true }).click()
 	await expect(row).toHaveAttribute("data-status", "settled", { timeout: WAIT.settled })
 	step("collected")
 

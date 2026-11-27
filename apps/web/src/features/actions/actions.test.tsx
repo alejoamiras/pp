@@ -42,6 +42,7 @@ describe("the action dialogs", () => {
 		await app.user.click(dialog.getByRole("button", { name: "Review" }))
 		within(dialog.getByTestId("exit-review")).getByText(ACCOUNTS.owner)
 		dialog.getByText("This payee is your pool owner's address")
+		expect(dialog.getByTestId("exit-collect-payer").textContent).toMatch(/funded Ethereum account.*Not your pool owner's/)
 
 		// Elsewhere, 15 leaves the label: its notes become 15 and 10, and 40 is no longer a sum of whole notes.
 		await act(() =>
