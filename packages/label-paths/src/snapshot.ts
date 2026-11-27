@@ -6,7 +6,10 @@ export type AspSnapshot = { sequence: bigint; poolRoot: bigint; birthRoot: bigin
 /** The registry's `RootRecord`, field for field. */
 export type RootRecord = { sequence: bigint; poolRoot: bigint; birthRoot: bigint; l1Block: bigint; rootTime: bigint }
 
-/** One snapshot cannot tell a never-approved label from a removed one, so both are `ABSENT`. */
+/**
+ * One snapshot cannot tell a never-approved label from a removed one, so both are `ABSENT`. The record
+ * binds the roots, not the lists' lengths, so `ABSENT` is not proof that a label is unapproved.
+ */
 export type LabelState = "ACTIVE" | "ABSENT" | "STALE_ROOT"
 
 /** The note's origin: 0 = minted from the bridge (pool tree), 1 = shielded (birth tree). Never a fallback search. */
@@ -69,7 +72,8 @@ export function treeOf(s: AspSnapshot, origin: Origin): { leaves: readonly bigin
 /**
  * The label's path in its origin's tree only, or `null` when its leaf is not there. The index is found
  * by value, since a revocation shifts every later leaf. Once the leaf is found, throws if the tree does not
- * rebuild to its root.
+ * rebuild to its root. A `null` is sound only for a verified snapshot (`parseAspSnapshot`): an unverified
+ * list was never checked against its root.
  */
 export function pathFor(s: AspSnapshot, label: bigint, origin: Origin): LabelPath | null {
 	const { leaves, root, field } = treeOf(s, origin)
@@ -84,7 +88,8 @@ export function pathFor(s: AspSnapshot, label: bigint, origin: Origin): LabelPat
  * Mirrors `check_label`. `r` must be the record at the block the proof will anchor to, and `nowSec`
  * that block's timestamp. Roots are compared, not `sequence`: a heartbeat keeps both roots and every path.
  * `ACTIVE` at the exact age limit fails a proof anchored one block later, so pass the anchor time plus
- * the proving budget.
+ * the proving budget. Pass a verified snapshot (`parseAspSnapshot`): on an unverified one, `ABSENT` comes
+ * from a list never checked against its root. `LabelPathCache.check` takes an unverified one.
  */
 export function labelState(r: RootRecord, s: AspSnapshot, label: bigint, origin: Origin, nowSec: bigint): LabelState {
 	if (s.poolRoot !== r.poolRoot || s.birthRoot !== r.birthRoot) return "STALE_ROOT"

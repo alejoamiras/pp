@@ -2,6 +2,8 @@ import { aspLeaf, buildLeanImt, type LabelPath, type LeanImt } from "@pp/bridge-
 import { type AspSnapshot, MAX_ROOT_AGE, type Origin, type RootRecord, SnapshotError, SPEND_WINDOW, treeOf } from "./snapshot"
 
 /**
+ * `ABSENT`: the label is not in the origin's list, a list that builds to the record's root. The record
+ * binds the roots, not the lists' lengths, so this is not proof that the label is unapproved.
  * `STALE_ROOT` says what to do next. `snapshot`: its roots are not the record's, so fetch the record's
  * own sequence. `age`: the record is too old for a spend, so wait for the next post; a record newer
  * than `nowSec` instead means it was not read at the anchor block.
@@ -36,8 +38,10 @@ export class LabelPathCache {
 
 	/**
 	 * Same rules as `labelState`; `r` is the record at the anchor block and `nowSec` its time plus the
-	 * proving budget. Throws `SnapshotError("RootMismatch")` when a found label's list does not build to
-	 * the declared root; that list is not kept, and a tree already verified for the root stays.
+	 * proving budget. The origin's list is built and checked before any `ACTIVE` or `ABSENT`, once per
+	 * root and list. Throws `SnapshotError("RootMismatch")` when that list does not build to the declared
+	 * root, whether or not the label is in it; that list is not kept, and a tree already verified for the
+	 * root stays.
 	 */
 	check(r: RootRecord, s: AspSnapshot, label: bigint, origin: Origin, nowSec: bigint): LabelCheck {
 		for (const root of this.trees.keys()) if (root !== r.poolRoot && root !== r.birthRoot) this.trees.delete(root)
@@ -45,11 +49,10 @@ export class LabelPathCache {
 		if (r.rootTime > nowSec || r.rootTime + MAX_ROOT_AGE < nowSec + SPEND_WINDOW) return { state: "STALE_ROOT", reason: "age" }
 		const { leaves, root, field } = treeOf(s, origin)
 		if (root === 0n) return { state: "ABSENT" }
-		const index = leaves.indexOf(aspLeaf(label))
-		if (index < 0) return { state: "ABSENT" }
 		const cached = this.trees.get(root)
 		const entry = cached && sameList(cached.leaves, leaves) ? cached : this.build(leaves, root, field)
-		return { state: "ACTIVE", path: entry.tree.path(index) }
+		const index = entry.leaves.indexOf(aspLeaf(label))
+		return index < 0 ? { state: "ABSENT" } : { state: "ACTIVE", path: entry.tree.path(index) }
 	}
 
 	private build(leaves: readonly bigint[], root: bigint, field: string): Entry {

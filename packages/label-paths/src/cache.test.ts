@@ -63,13 +63,24 @@ describe("LabelPathCache", () => {
 		expect(calls.builds).toBe(2)
 	})
 
-	it("answers ABSENT without building a tree when the label is not in its origin's list", () => {
+	it("answers ABSENT only after its origin's list builds to the root, building each list once", () => {
 		const cache = new LabelPathCache()
 		const noBirths = { ...snap, birthLeaves: [], birthRoot: 0n }
 		expect(cache.check(record(), snap, 999n, 0, T)).toEqual({ state: "ABSENT" })
 		expect(cache.check(record(), snap, label(0), 1, T)).toEqual({ state: "ABSENT" })
+		expect(cache.check(record(), { ...snap, sequence: 8n }, 998n, 0, T)).toEqual({ state: "ABSENT" })
 		expect(cache.check(record({ birthRoot: 0n }), noBirths, birthLabels[0] as bigint, 1, T)).toEqual({ state: "ABSENT" })
-		expect(calls).toEqual({ builds: 0, leafHashes: 2 })
+		expect(calls).toEqual({ builds: 2, leafHashes: 3 })
+	})
+
+	it("does not answer ABSENT from a list that does not build to the declared root, and keeps the verified tree", () => {
+		const omitted = { ...snap, poolLeaves: poolLeaves.filter((_, i) => i !== 3) }
+		const cache = new LabelPathCache()
+		expect(cache.check(record(), snap, 999n, 0, T)).toEqual({ state: "ABSENT" })
+		expect(() => cache.check(record(), omitted, label(3), 0, T)).toThrow("RootMismatch: poolRoot")
+		expect(() => cache.check(record(), omitted, 999n, 0, T)).toThrow("RootMismatch: poolRoot")
+		expect(cache.check(record(), snap, label(3), 0, T)).toEqual({ state: "ACTIVE", path: pathFor(snap, label(3), 0) })
+		expect(calls.builds).toBe(4)
 	})
 
 	it("compares the declared roots with the record before any hash, and says why a root is stale", () => {
@@ -101,6 +112,7 @@ describe("LabelPathCache", () => {
 		expect(() => cache.check(record(), liar, forged, 0, T)).toThrow("RootMismatch: poolRoot")
 		const r = record({ poolRoot: full.poolRoot })
 		expect(cache.check(r, collapsed, 5n, 0, T).state).toBe("ACTIVE")
+		expect(cache.check(r, collapsed, 1n, 0, T)).toEqual({ state: "ABSENT" })
 		expect(cache.check(r, full, 1n, 0, T)).toEqual({ state: "ACTIVE", path: fullPath })
 		expect(cache.check(r, full, 2n, 0, T).state).toBe("ACTIVE")
 		expect(calls.builds).toBe(4)
