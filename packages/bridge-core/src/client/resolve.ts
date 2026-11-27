@@ -1,5 +1,5 @@
 import type { Address, Hash, Hex, PublicClient } from "viem"
-import { BaseError, ContractFunctionRevertedError, decodeEventLog, getAbiItem, isHex, RawContractError } from "viem"
+import { BaseError, ContractFunctionRevertedError, decodeEventLog, getAbiItem, hexToBigInt, isHex, RawContractError } from "viem"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import type { StaleRootCode } from "./errors"
 import { bridgeMessageKey, type MessageEndpoints } from "./messages"
@@ -7,7 +7,7 @@ import type { BridgeReceipt } from "./types"
 
 export type ResolverClient = Pick<
 	PublicClient,
-	"getBlockNumber" | "getLogs" | "readContract" | "getTransaction" | "getTransactionReceipt" | "call"
+	"request" | "getLogs" | "readContract" | "getTransaction" | "getTransactionReceipt" | "call"
 >
 
 export type ResolverDeployment = MessageEndpoints & { asset: Address; poolVault: Address; deployBlock: bigint }
@@ -33,6 +33,15 @@ const SPENT_NULLIFIERS_ABI = [
 		outputs: [{ name: "spentAt", type: "uint256" }],
 	},
 ] as const
+
+/**
+ * The node's head, from a request of its own: viem's `getBlockNumber` can answer, even at
+ * `cacheTime: 0`, with a head another caller on the same client requested before the block a scan
+ * must reach was mined. Every scan bound comes from here.
+ */
+export async function freshHead(c: Pick<PublicClient, "request">): Promise<bigint> {
+	return hexToBigInt(await c.request({ method: "eth_blockNumber" }))
+}
 
 /** Log queries stay within what public RPCs accept. */
 const LOG_WINDOW = 10_000n
@@ -81,7 +90,7 @@ function receiptOf(d: ResolverDeployment, log: BridgedLog) {
 /** Every bridge of any of `nullifiers` from the portal, unverified: the caller checks each message against its intent. */
 export async function bridgedReceipts(c: ResolverClient, d: ResolverDeployment, nullifiers: readonly bigint[]): Promise<BridgeReceipt[]> {
 	if (nullifiers.length === 0) return []
-	const head = await c.getBlockNumber({ cacheTime: 0 })
+	const head = await freshHead(c)
 	return (await bridgedLogs(c, d, nullifiers, head, false)).map((l) => receiptOf(d, l).receipt)
 }
 
@@ -102,8 +111,7 @@ export async function resolveNullifier(
 	ownSucceeded: boolean,
 	minHead = 0n,
 ): Promise<Resolution> {
-	// viem caches the block number for a polling interval; a receipt just seen can be past that cache.
-	const latest = await c.getBlockNumber({ cacheTime: 0 })
+	const latest = await freshHead(c)
 	const head = latest > minHead ? latest : minHead
 	const [log] = await bridgedLogs(c, d, [intent.nullifier], head, true)
 	if (log) {

@@ -10,7 +10,7 @@ import { TxHash, TxStatus } from "@aztec-labs/stdlib/tx"
 import vectors from "@pp/bridge-spec/vectors/v1.json" with { type: "json" }
 import { type Address, type Hash, type Hex, getAddress, toHex } from "viem"
 import { describe, expect, it, vi } from "vitest"
-import { DEPLOYMENT, HUB, PORTAL, SENDER } from "../test/client-fakes"
+import { DEPLOYMENT, HUB, headRequest, PORTAL, SENDER } from "../test/client-fakes"
 import type { ClientDeployment } from "./deployment"
 import { exitStatusOf, exitState } from "./exits"
 import { assertExitPayee, type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
@@ -101,12 +101,13 @@ async function world() {
 	}
 	const zero = toHex(0n, { size: 32 })
 	const reader = {
-		// viem serves a cached head for `cacheTime` (its polling interval) unless told 0; here the cache never expires.
-		getBlockNumber: async (o?: { cacheTime?: number }) => {
-			if (o?.cacheTime === 0) return state.head
+		// viem's `getBlockNumber` can serve an older head at any `cacheTime` (its cache, or another
+		// caller's request in flight); here the first head it saw never moves.
+		getBlockNumber: async () => {
 			state.cachedHead ??= state.head
 			return state.cachedHead
 		},
+		request: headRequest(() => state.head),
 		readContract: vi.fn(async (q: { functionName: string; args: bigint[] }) => {
 			if (q.functionName === "getRoots")
 				return Array.from({ length: 32 }, (_, i) => (i === 0 && state.posted ? root.toString() : zero))
@@ -194,7 +195,7 @@ describe("settle", () => {
 		["a ragequit", 0, "settleRagequit", (t: ExitTicket) => [t.payee, t.amount, t.kind === "ragequit" && t.label]],
 		["a public exit", 3, "settlePublicExit", (t: ExitTicket) => [t.payee, t.amount]],
 	] as const)(
-		"settles %s with its witness and returns the transaction of its ExitSettled, read past a cached head",
+		"settles %s with its witness and returns the transaction of its ExitSettled, read past the older head viem shares",
 		async (_, i, fn, head) => {
 			const { c, state, reader, l1, writeContract } = await world()
 			state.posted = true

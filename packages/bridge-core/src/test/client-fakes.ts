@@ -9,6 +9,7 @@ import {
 	type Hex,
 	hexToBigInt,
 	keccak256,
+	numberToHex,
 	toHex,
 	TransactionNotFoundError,
 	TransactionReceiptNotFoundError,
@@ -145,6 +146,16 @@ type SentCall = {
 }
 type Log = { blockNumber: bigint; transactionHash: Hash; removed: false; nullifier: bigint; topics: Hex[]; data: Hex }
 
+/**
+ * A reader's `request`, answering a raw `eth_blockNumber` with `head()`: the node's own head. Where a
+ * test models viem's `getBlockNumber`, it serves an older head at any `cacheTime`, as a shared one can.
+ */
+export const headRequest = (head: () => bigint) =>
+	(async ({ method }: { method: string }) => {
+		if (method !== "eth_blockNumber") throw new Error(`unexpected ${method}`)
+		return numberToHex(head())
+	}) as never
+
 /** One L1 with the portal: what was sent, what landed, what is pending, and the logs the resolver reads. */
 export class FakeChain {
 	head = 200n
@@ -185,7 +196,7 @@ export class FakeChain {
 	}
 
 	readonly reader: SubmitReader = {
-		getBlockNumber: async () => this.head,
+		request: headRequest(() => this.head),
 		// viem ORs an array given for an indexed argument.
 		getLogs: (async (q: { fromBlock: bigint; toBlock: bigint; args: { nullifier: bigint | bigint[] } }) =>
 			this.logs.filter(

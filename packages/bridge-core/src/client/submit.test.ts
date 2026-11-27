@@ -8,6 +8,7 @@ import {
 	DEPLOYMENT,
 	FakeChain,
 	fakePool,
+	headRequest,
 	memoryStore,
 	NETWORK,
 	OWNER,
@@ -233,18 +234,17 @@ describe("submit: preflight at handoff", () => {
 })
 
 describe("submit: reading the outcome", () => {
-	it("finds its own event on a node whose head lags the receipt, or whose cached head is old", async () => {
+	it("finds its own event on a node whose head lags the receipt, or past the older head viem shares", async () => {
 		const t = await setup()
-		Object.assign(t.chain.reader, { getBlockNumber: async () => t.chain.head - 1n })
+		Object.assign(t.chain.reader, { request: headRequest(() => t.chain.head - 1n) })
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ amount: 70n })
 
 		const u = await setup()
 		await u.chain.land(u.spend.secretHash, hash(1), u.spend.proof.pubSignals)
 		await held(u, [{ l1TxHash: hash(1) }])
-		const cached = u.chain.head - 1n
-		Object.assign(u.chain.reader, {
-			getBlockNumber: async (o?: { cacheTime?: number }) => (o?.cacheTime === 0 ? u.chain.head : cached),
-		})
+		const older = u.chain.head - 1n
+		// viem's cache, or another caller's request still in flight, whatever `cacheTime` says.
+		Object.assign(u.chain.reader, { getBlockNumber: async () => older })
 		await expect(submit(u.ctx, u.spend, u.chain.wallet(), u.session)).resolves.toMatchObject({ l1TxHash: hash(1) })
 		expect(u.chain.writeContract).not.toHaveBeenCalled()
 	})
@@ -253,7 +253,7 @@ describe("submit: reading the outcome", () => {
 		const t = await setup()
 		await t.chain.land(t.spend.secretHash, hash(1), t.spend.proof.pubSignals)
 		await held(t, [{ l1TxHash: hash(1) }])
-		Object.assign(t.chain.reader, { getBlockNumber: async () => t.chain.head - 1n })
+		Object.assign(t.chain.reader, { request: headRequest(() => t.chain.head - 1n) })
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session)).resolves.toMatchObject({ l1TxHash: hash(1) })
 		expect(t.chain.writeContract).not.toHaveBeenCalled()
 		expect(t.chain.simulate).not.toHaveBeenCalled()

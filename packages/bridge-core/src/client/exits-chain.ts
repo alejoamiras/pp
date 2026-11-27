@@ -29,7 +29,7 @@ import type { ClientDeployment } from "./deployment"
 import { BridgeClientError } from "./errors"
 import { allPages, type ExitReads, type ExitWitness, messageIndices, settleWith } from "./exits"
 import { callPayload, sponsored } from "./payload"
-import { windowedLogs } from "./resolve"
+import { freshHead, windowedLogs } from "./resolve"
 import type { ExitTicket } from "./types"
 
 const EXIT_SETTLED = getAbiItem({ abi: PROCESSOR_PORTAL_ABI, name: "ExitSettled" })
@@ -42,10 +42,7 @@ export type ExitProof = ExitWitness & { numCheckpointsInEpoch: bigint; leafIndex
 
 export type ExitNode = Pick<AztecNode, "getPublicLogsByTags" | "getTxReceipt" | "getL2ToL1Messages" | "getBlock" | "getCheckpointsData">
 
-export type ExitReader = Pick<
-	PublicClient,
-	"readContract" | "getLogs" | "getBlockNumber" | "simulateContract" | "waitForTransactionReceipt"
->
+export type ExitReader = Pick<PublicClient, "readContract" | "getLogs" | "request" | "simulateContract" | "waitForTransactionReceipt">
 
 export type ExitContext = { deployment: ClientDeployment; reader: ExitReader; node: ExitNode; receiptTimeoutMs: number }
 
@@ -207,8 +204,7 @@ export function exitReads(c: ExitContext): ExitReads<ExitProof> {
 	return {
 		witness: (t) => proofOf(c, t),
 		settledTx: async (w) => {
-			// Uncached: a settle mined within viem's cache window must be inside the scan.
-			const head = await c.reader.getBlockNumber({ cacheTime: 0 })
+			const head = await freshHead(c.reader)
 			const logs = await windowedLogs(d.deployBlock, head, true, async (fromBlock, toBlock) => {
 				const window = await c.reader.getLogs({
 					address: d.portal,
