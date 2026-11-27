@@ -38,7 +38,7 @@ const ROOT_MISMATCH = {
 
 const SIZE_MISMATCH = {
 	why: "a posted root now comes with a list of another length; one root has one honest list, so one of the two is collapsed",
-	next: "the bot asks the feed again on a later tick, no sooner than its request floor, and resumes once the lengths agree; otherwise compare both lists with the ASP's published list: if the feed is wrong, fix it or restart the bot; if the posted length is wrong, fix the feed first, then the admin calls set_poster, which clears the record, and the bot posts again",
+	next: "the bot asks the feed again on a later tick, no sooner than its request floor, and the halt clears once the lengths agree; otherwise compare both lists with the ASP's published list: if the feed is wrong, fix it; if the posted length is wrong, fix the feed first, then the admin calls set_poster, which clears the record, and the bot posts again",
 }
 
 function sizeMismatch(record: RootRecord, pool: Pool, birthLeaves: bigint[], birthRoot: bigint): Record<string, unknown> | null {
@@ -85,7 +85,7 @@ export class Poster {
 		const tip = await p.tip()
 		const record = await p.record(tip.hash)
 		// `set_poster` keeps the sequence, so clears at one sequence share one cache boundary: a list cached
-		// before it is fetched again once, and one fetched since is kept for the post the reset waits for.
+		// before it is dropped once, and one fetched since is reused while the chain's root stays the same.
 		const resetAt = record.poolRoot === 0n ? record.sequence : null
 		if (resetAt !== null && resetAt !== this.resetAt) this.pool = null
 		this.resetAt = resetAt
