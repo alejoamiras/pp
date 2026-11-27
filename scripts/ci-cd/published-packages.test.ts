@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { type Catalogs, resolveSpec } from "../catalog"
 
 /**
  * The three packages the wallet repository publishes run against the consumer's own `@aztec-labs/*`
@@ -24,11 +25,17 @@ const PEERS: Record<string, string[]> = {
 }
 
 type Deps = Record<string, string>
-const lock = Bun.JSONC.parse(readFileSync(join(ROOT, "bun.lock"), "utf8")) as {
+const lock = Bun.JSONC.parse(readFileSync(join(ROOT, "bun.lock"), "utf8")) as Catalogs & {
 	workspaces: Record<string, { dependencies?: Deps; devDependencies?: Deps }>
 	packages: Record<string, [string, string, { peerDependencies?: Deps }, string]>
 }
-const declaredBy = (path: string): Deps => ({ ...lock.workspaces[path]?.dependencies, ...lock.workspaces[path]?.devDependencies })
+const declaredBy = (path: string): Deps =>
+	Object.fromEntries(
+		Object.entries({ ...lock.workspaces[path]?.dependencies, ...lock.workspaces[path]?.devDependencies }).map(([name, spec]) => [
+			name,
+			resolveSpec(name, spec, lock),
+		]),
+	)
 
 test("exactly the expected workspaces depend on the published packages", () => {
 	const found = Object.keys(lock.workspaces)

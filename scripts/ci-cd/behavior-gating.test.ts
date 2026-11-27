@@ -731,3 +731,14 @@ test("setup-playwright saves the browser cache only outside pull requests", () =
 		"steps.restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && inputs.cache-save != 'false'",
 	)
 })
+
+// A manifest naming Playwright `catalog:` does not change when the catalog moves it to a release with
+// new browsers, so an exact hit on a manifest hash would skip their download.
+test("setup-playwright keys the browser cache on the installed Playwright version", () => {
+	const action = readFileSync(join(ROOT, ".github/actions/setup-playwright/action.yml"), "utf8")
+	const steps: { id?: string; uses?: string; with?: { key?: string } }[] = Bun.YAML.parse(action).runs.steps
+	const restore = steps.findIndex((s) => s.id === "restore")
+	expect(steps[restore]?.with?.key).toBe("${{ runner.os }}-playwright-${{ steps.version.outputs.version }}")
+	expect(steps.findIndex((s) => s.id === "version")).toBeLessThan(restore)
+	expect(steps.filter((s) => s.with?.key !== undefined).map((s) => s.with?.key)).not.toContainEqual(expect.stringContaining("hashFiles"))
+})
