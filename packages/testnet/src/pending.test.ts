@@ -14,13 +14,13 @@ const FACTORY = "0x00000000000000000000000000000000000000f1" as Address
 type Record = { [k: string]: unknown; hash: Hash; blockNumber: bigint | null }
 
 /** A transaction really signed by `o.account` (the guardian's by default), as an endpoint returns it. */
-async function signed(o: { account?: typeof GUARDIAN_ACCOUNT; nonce?: number; chainId?: number; legacy?: boolean } = {}) {
+async function signed(o: { account?: typeof GUARDIAN_ACCOUNT; nonce?: number; chainId?: number; legacy?: boolean; tip?: bigint } = {}) {
 	const account = o.account ?? GUARDIAN_ACCOUNT
 	const common = { chainId: o.chainId ?? SEPOLIA, nonce: o.nonce ?? 3, to: FACTORY, gas: 60_000n, value: 0n, data: "0x1234" as Hex }
 	const raw = await account.signTransaction(
 		o.legacy
 			? { ...common, type: "legacy", gasPrice: 70n }
-			: { ...common, type: "eip1559", maxFeePerGas: 500n, maxPriorityFeePerGas: 50n },
+			: { ...common, type: "eip1559", maxFeePerGas: 500n, maxPriorityFeePerGas: o.tip ?? 50n },
 	)
 	const t = parseTransaction(raw)
 	const hash = keccak256(raw)
@@ -72,6 +72,19 @@ describe("pendingToReplace", () => {
 		// The endpoint names the guardian as sender, but another key signed it.
 		const forged = await signed({ account: OTHER_ACCOUNT })
 		await refusedWith([reader({ ...forged.tx, from: GUARDIAN })], forged.hash, `is signed by ${OTHER_ACCOUNT.address}`)
+	})
+
+	it("reads fees, chain and nonce from the signed bytes, not from fields an endpoint can leave out or rename", async () => {
+		// A signed zero tip serializes the same whether the endpoint sends it or omits it for a gasPrice.
+		const zero = await signed({ tip: 0n })
+		const { maxPriorityFeePerGas: _, ...omitted } = zero.tx
+		await expect(pendingToReplace(query([reader({ ...omitted, gasPrice: 9_000n })], zero.hash))).resolves.toMatchObject({
+			maxFeePerGas: 500n,
+			maxPriorityFeePerGas: 0n,
+		})
+		// A legacy signature's `v` names its chain, whatever chain id the endpoint reports beside it.
+		const mainnet = await signed({ legacy: true, chainId: 1 })
+		await refusedWith([reader({ ...mainnet.tx, chainId: SEPOLIA })], mainnet.hash, "is a chain 1 transaction")
 	})
 
 	it("refuses another chain's transaction, one at another nonce, and one that mined", async () => {

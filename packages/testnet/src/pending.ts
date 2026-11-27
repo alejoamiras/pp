@@ -6,6 +6,7 @@ import {
 	isAddressEqual,
 	isHash,
 	keccak256,
+	parseTransaction,
 	type PublicClient,
 	recoverTransactionAddress,
 	serializeTransaction,
@@ -83,18 +84,20 @@ async function checked(tx: Tx, q: PendingQuery): Promise<PendingTx> {
 	}
 	if (!signed) throw refuse(`is a ${tx.type} transaction${tx.chainId === undefined ? " with no chain id" : ""}: replace it by hand`)
 	if (keccak256(signed).toLowerCase() !== q.hash.toLowerCase()) throw notIt
-	if (tx.chainId !== q.chainId) throw refuse(`is a chain ${tx.chainId} transaction`)
 	const signer = await recoverTransactionAddress({ serializedTransaction: signed as never }).catch(() => {
 		throw notIt
 	})
 	if (!isAddressEqual(signer, q.guardian)) throw refuse(`is signed by ${signer}, not the guardian ${q.guardian}`)
-	if (tx.nonce !== q.nonce) throw refuse(`is at nonce ${tx.nonce}, not ${q.nonce}`)
+	// From here only what the signed bytes say: an endpoint can omit a field the serializer reads as zero,
+	// or name a chain that a legacy signature's `v` contradicts.
+	const s = parseTransaction(signed)
+	if (s.chainId !== q.chainId) throw refuse(`is a chain ${s.chainId} transaction`)
+	if (s.nonce !== q.nonce) throw refuse(`is at nonce ${s.nonce}, not ${q.nonce}`)
 	if (tx.blockNumber !== null)
 		throw refuse(`mined in block ${tx.blockNumber}, so nothing is pending at nonce ${q.nonce}: run \`pause\` without --nonce`)
-	const maxFeePerGas = tx.maxFeePerGas ?? tx.gasPrice
-	const maxPriorityFeePerGas = tx.maxPriorityFeePerGas ?? tx.gasPrice
-	if (maxFeePerGas === undefined || maxPriorityFeePerGas === undefined) throw refuse("carries no fee fields")
-	return { hash: q.hash, from: signer, nonce: tx.nonce, maxFeePerGas, maxPriorityFeePerGas }
+	const maxFeePerGas = s.maxFeePerGas ?? s.gasPrice ?? 0n
+	const maxPriorityFeePerGas = s.maxPriorityFeePerGas ?? s.gasPrice ?? 0n
+	return { hash: q.hash, from: signer, nonce: q.nonce, maxFeePerGas, maxPriorityFeePerGas }
 }
 
 async function unknown(q: PendingQuery): Promise<GuardError> {
