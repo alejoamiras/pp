@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { claimPort, releasePorts, rowsOwnedBy } from "./ports.ts"
+import { claimPort, claimRows, releasePorts, releaseRows, rowsOwnedBy } from "./ports.ts"
 
 const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
@@ -40,4 +40,15 @@ test("release drops only the rows its run owns, even when a run ID equals anothe
 	await releasePorts("pp-env-anvil")
 	expect(rowsOwnedBy("ports-test-other")).toBe(1)
 	await releasePorts("ports-test-other")
+})
+
+test("release leaves a row whose owner only contains the run id, and one that names it in another column", async () => {
+	const runId = "ports-test-exact"
+	await claimRows(`${runId}-pool`, { anvil: 40_001 }, process.pid)
+	await claimRows("ports-test-neighbour", { [runId]: 40_002 }, process.pid)
+	await claimRows(runId, { anvil: 40_003 }, process.pid)
+	expect(await releaseRows(runId)).toBe(true)
+	expect([rowsOwnedBy(runId), rowsOwnedBy(`${runId}-pool`), rowsOwnedBy("ports-test-neighbour")]).toEqual([0, 1, 1])
+	await releasePorts(`${runId}-pool`)
+	await releasePorts("ports-test-neighbour")
 })

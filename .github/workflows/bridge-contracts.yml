@@ -49,6 +49,8 @@ jobs:
               - 'contracts/crates.json'
               - 'scripts/ci-cd/crates.ts'
               - 'packages/bridge-core/**'
+              - 'packages/run-isolation/src/**'
+              - 'packages/run-isolation/package.json'
               - 'packages/bridge-spec/src/**'
               - 'packages/bridge-spec/package.json'
               - 'packages/bridge-spec/vectors/**'

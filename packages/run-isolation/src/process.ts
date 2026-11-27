@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process"
 import { closeSync, mkdirSync, openSync } from "node:fs"
 import { dirname } from "node:path"
+import { groupAlive, groupGone, signalGroup } from "./process-group"
 
 /** A spawned group leader plus the one authority on whether it still runs: its own exit or spawn error. */
 export interface OwnedChild {
@@ -24,6 +25,11 @@ export function spawnOwned(cmd: string, args: string[], logFile: string, env: Re
 	} finally {
 		closeSync(log)
 	}
+	return own(child)
+}
+
+/** Tracks a child spawned with `detached: true`. A child that cannot start ends `exited` with a reason instead of an uncaught `error`. */
+export function own(child: ChildProcess): OwnedChild {
 	let reason: string | undefined
 	const exited = new Promise<void>((resolve) => {
 		child.once("exit", (code, signal) => {
@@ -33,7 +39,7 @@ export function spawnOwned(cmd: string, args: string[], logFile: string, env: Re
 		// Without a pid there is no process, and so no exit event: the spawn itself failed.
 		child.on("error", (err) => {
 			if (child.pid !== undefined) return
-			reason = `could not start ${cmd}: ${err.message}`
+			reason = `could not start ${child.spawnfile}: ${err.message}`
 			resolve()
 		})
 	})
@@ -50,24 +56,50 @@ function exitedWithin(owned: OwnedChild, ms: number): Promise<void> {
 	})
 }
 
+/** EPERM still means the pid exists, held by another user. */
+function processExists(pid: number): boolean {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch (e) {
+		return (e as NodeJS.ErrnoException).code === "EPERM"
+	}
+}
+
 /**
- * Signals only the group this module created. A child that already exited is left alone: the kernel
- * may have reused its PID, and so its group, for a stranger.
+ * Whether `-pid` still names the group `owned` leads. After the leader exits, a running member keeps
+ * the number reserved, so a running group whose number names no process is still this one; a process
+ * holding the number got it after the group ended and is a stranger. Assumes the number is not handed
+ * out again, and its new group orphaned, within one run.
  */
-export async function killGroup(owned: OwnedChild): Promise<void> {
+export function ownsGroup(owned: OwnedChild): boolean {
 	const pid = owned.child.pid
-	if (pid === undefined || owned.hasExited()) return
+	if (pid === undefined) return false
+	return !owned.hasExited() || (groupAlive(pid) && !processExists(pid))
+}
+
+/**
+ * Ends the group `owned` leads and nothing else: SIGTERM while the leader runs, then SIGKILL to what is
+ * still running in the group, since a member that ignores SIGTERM outlives its leader. Resolves with
+ * whether the group is gone within `graceMs` of that SIGKILL.
+ */
+export async function killGroup(owned: OwnedChild, graceMs = 5_000): Promise<boolean> {
+	const pid = owned.child.pid
+	if (pid === undefined || !ownsGroup(owned)) return true
 	const signal = (sig: NodeJS.Signals) => {
+		if (signalGroup(pid, sig)) return
+		// Before the child's setsid the group does not exist yet; the leader still takes the signal.
 		try {
-			process.kill(-pid, sig)
+			owned.child.kill(sig)
 		} catch {}
 	}
-	signal("SIGTERM")
-	await exitedWithin(owned, 5_000)
-	if (owned.hasExited()) return
+	if (!owned.hasExited()) {
+		signal("SIGTERM")
+		await exitedWithin(owned, graceMs)
+	}
+	if (!ownsGroup(owned)) return true
 	signal("SIGKILL")
-	await exitedWithin(owned, 5_000)
-	if (!owned.hasExited()) throw new Error(`process group ${pid} survived SIGKILL`)
+	return groupGone(pid, graceMs)
 }
 
 const SIGNALS = ["SIGINT", "SIGTERM"] as const

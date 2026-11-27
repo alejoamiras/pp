@@ -5,7 +5,7 @@ import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { withFileLock } from "./lock.ts"
+import { withFileLock } from "./lock"
 
 /** Ports below the OS dynamic range are never handed to an outgoing connection between probe and spawn. */
 const DEFAULT_EPHEMERAL_FLOOR = 32768
@@ -76,18 +76,33 @@ async function withRegistry(mutate: (lines: string[]) => string[]): Promise<bool
 	return done !== undefined
 }
 
-class PortClaimConflict extends Error {}
+/** A claim that found one of its ports already listed: pick again. */
+export class PortClaimConflict extends Error {
+	constructor(readonly ports: number[]) {
+		super(`ports already claimed in ${registryPath()}: ${ports.join(", ")}`)
+	}
+}
 
-async function register(runId: string, service: string, port: number): Promise<void> {
-	let conflict = false
+/**
+ * Claims every port of `rows` (service → port) under `runId` in one write under the registry lock, so
+ * other runs pick around them from the moment they are chosen, not from when something listens. Throws
+ * `PortClaimConflict` when the registry already lists one, and an `Error` when the lock never came free.
+ */
+export async function claimRows(runId: string, rows: Record<string, number>, pidHint: number): Promise<void> {
+	const claimed = new Date().toISOString()
+	const wanted = new Set(Object.values(rows))
+	let conflicts: number[] = []
 	const written = await withRegistry((lines) => {
 		const body = lines.filter((l) => l.trim().length > 0)
-		conflict = body.some((l) => portOf(l) === port)
-		if (conflict) return lines
-		return [...body, `| ${port} | ${service} | ${runId} | ${REPO_ROOT} | ${process.pid} | ${new Date().toISOString()} |`, ""]
+		conflicts = body.map(portOf).filter((p): p is number => p !== undefined && wanted.has(p))
+		if (conflicts.length > 0) return lines
+		const added = Object.entries(rows).map(
+			([service, port]) => `| ${port} | ${service} | ${runId} | ${REPO_ROOT} | ${pidHint} | ${claimed} |`,
+		)
+		return [...body, ...added, ""]
 	})
-	if (!written) throw new Error(`${registryPath()} stayed locked; could not claim port ${port} for ${runId}`)
-	if (conflict) throw new PortClaimConflict(String(port))
+	if (!written) throw new Error(`${registryPath()} stayed locked; could not claim ports ${[...wanted].join(", ")} for ${runId}`)
+	if (conflicts.length > 0) throw new PortClaimConflict(conflicts)
 }
 
 /** A loopback port that binds now and is registered under `runId` before anything listens on it. */
@@ -97,7 +112,7 @@ export async function claimPort(runId: string, service: string): Promise<number>
 		const candidate = STATIC_LO + Math.floor(Math.random() * (hi - STATIC_LO))
 		if (registeredPorts().has(candidate) || !(await canBind(candidate))) continue
 		try {
-			await register(runId, service, candidate)
+			await claimRows(runId, { [service]: candidate }, process.pid)
 			return candidate
 		} catch (err) {
 			if (!(err instanceof PortClaimConflict)) throw err
@@ -106,9 +121,14 @@ export async function claimPort(runId: string, service: string): Promise<number>
 	throw new Error(`no free loopback port in [${STATIC_LO}, ${hi}) after ${MAX_STATIC_TRIES} probes`)
 }
 
+/** Drops every row whose owner column is `runId`, and no other; false when the lock never came free. */
+export function releaseRows(runId: string): Promise<boolean> {
+	return withRegistry((lines) => lines.filter((l) => !ownedBy(l, runId)))
+}
+
 /** Drops every row `runId` owns; throws if a live holder kept the registry locked throughout. */
 export async function releasePorts(runId: string): Promise<void> {
-	if (await withRegistry((lines) => lines.filter((l) => !ownedBy(l, runId)))) return
+	if (await releaseRows(runId)) return
 	throw new Error(`${registryPath()} stayed locked; the rows owned by ${runId} are still there`)
 }
 

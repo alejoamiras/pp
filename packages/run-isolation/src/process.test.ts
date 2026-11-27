@@ -2,7 +2,8 @@ import { afterAll, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { spawnOwned } from "./process.ts"
+import { killGroup, spawnOwned } from "./process.ts"
+import { groupAlive, signalGroup } from "./process-group"
 
 const parent = join(homedir(), ".cache/pp/run-isolation")
 mkdirSync(parent, { recursive: true })
@@ -47,4 +48,17 @@ test("a CleanupStack built with signals: false installs no signal handler", asyn
 	}
 	expect(await run("{ signals: false }")).toBe("0 0")
 	expect(await run("")).toBe("1 1")
+})
+
+test("killGroup ends the members a group keeps after its leader has exited", async () => {
+	const owned = spawnOwned("sh", ["-c", "sleep 30 & exit 0"], join(dir, "orphan.log"), { PATH: process.env.PATH ?? "" })
+	await owned.exited
+	const pgid = owned.child.pid as number
+	try {
+		expect(groupAlive(pgid)).toBe(true)
+		expect(await killGroup(owned)).toBe(true)
+		expect(groupAlive(pgid)).toBe(false)
+	} finally {
+		signalGroup(pgid, "SIGKILL")
+	}
 })
