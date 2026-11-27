@@ -13,6 +13,11 @@ export type HomeAction = { kind: LabelAction; balance: LabelBalance } | { kind: 
 
 const CAP = "text-cap font-bold tracking-[0.06em] text-ink-3 uppercase"
 
+// A grant drops a contract whole when any of its asked scopes is missing, so a wallet that left out one
+// token method withholds every read and send on the token until the whole request is granted again.
+const PARTIAL_GRANT =
+	"Your Aztec wallet did not allow everything this page asks for on the token contract, so the page can neither read nor move your token here. Nothing is lost: disconnect, connect again, and allow the whole request."
+
 /** The tree build a check is running, with the only way to stop it. */
 function AllowListProgressLine() {
 	const { source } = useApp()
@@ -53,7 +58,7 @@ function PrivateBalances({ account, onAction }: { account: AztecAddress; onActio
 	if (refused)
 		return (
 			<Callout tone="attn" title="Your balances are hidden from this page">
-				{messageOf(refused)}
+				{refused === "NOT_GRANTED" ? PARTIAL_GRANT : messageOf(refused)}
 			</Callout>
 		)
 	if (balances.isPending) return <Callout tone="wait" busy role="status" title="Reading your private balances…" />
@@ -85,15 +90,18 @@ function PrivateBalances({ account, onAction }: { account: AztecAddress; onActio
 
 function PrivateTotal({ account }: { account: AztecAddress }) {
 	const { source, aztec, refusal } = useApp()
-	const balances = useBalances(aztec, account, refusal("balances") === null).data
-	if (!balances) return null
+	const refused = refusal("balances") !== null
+	// A disabled query still hands back what an earlier connection read; a refused read shows none of it.
+	const balances = useBalances(aztec, account, !refused).data
+	if (refused || !balances) return null
 	const total = balances.reduce((sum, b) => sum + b.balance, 0n)
 	return <Amount value={total} decimals={source.deployment.decimals} symbol={source.deployment.symbol} qualifier="private" size="total" />
 }
 
 function Balances({ account, onAction }: { account: AztecAddress; onAction(a: HomeAction): void }) {
 	const { aztec, refusal, refresh, tx } = useApp()
-	const pub = usePublicBalance(aztec, account, refusal("publicBalance") === null)
+	const pubRefused = refusal("publicBalance") !== null
+	const pub = usePublicBalance(aztec, account, !pubRefused)
 	// The one place a held send is read again: a hold ends only on a Refresh the user makes.
 	const reread = () => {
 		void tx.check()
@@ -109,7 +117,7 @@ function Balances({ account, onAction }: { account: AztecAddress; onAction(a: Ho
 			<p className={CAP}>Private, by label</p>
 			<PrivateBalances account={account} onAction={onAction} />
 			<p className={CAP}>Public</p>
-			<PublicRow amount={pub.data} onAction={(kind, amount) => onAction({ kind, amount })} />
+			<PublicRow amount={pubRefused ? undefined : pub.data} onAction={(kind, amount) => onAction({ kind, amount })} />
 		</div>
 	)
 }

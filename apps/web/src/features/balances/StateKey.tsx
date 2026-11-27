@@ -1,7 +1,7 @@
 import { labelView } from "../../data/labels"
 import { StateBadge } from "../../ui"
 
-const KEYS = [labelView(0, "ACTIVE"), labelView(1, "ABSENT"), labelView(0, "ABSENT"), labelView(0, "STALE_ROOT")]
+const KEYS = [labelView(0, "ACTIVE"), labelView(1, "ACTIVE"), labelView(1, "ABSENT"), labelView(0, "ABSENT"), labelView(0, "STALE_ROOT")]
 
 /** What each label state means, so no state is read from its colour. */
 export function StateKey() {

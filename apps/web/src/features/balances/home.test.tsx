@@ -71,6 +71,25 @@ describe("home", () => {
 		expect(reasonOf(bridge)).toBe(messageOf("BRIDGE_UNAVAILABLE"))
 	})
 
+	test("a grant that leaves out part of the token's request says so, shows nothing an earlier grant read, and a full grant restores it", async () => {
+		const app = renderApp()
+		await connectAztec(app.user)
+		const pub = () => within(screen.getByTestId("public-row"))
+		await waitFor(() => pub().getByText("15.00"))
+		screen.getByText(/USDC private/)
+		await app.user.click(screen.getByTestId("disconnect-button"))
+		app.control.declineNextGrant()
+		await connectAztec(app.user)
+		await screen.findByText(/did not allow everything this page asks for on the token contract/)
+		screen.getByText(/Nothing is lost: disconnect, connect again, and allow the whole request\./)
+		expect(pub().queryByText("15.00")).toBeNull()
+		expect(screen.queryByText(/USDC private/)).toBeNull()
+		await app.user.click(screen.getByTestId("disconnect-button"))
+		await connectAztec(app.user)
+		await waitFor(() => pub().getByText("15.00"))
+		await screen.findAllByTestId("label-row")
+	})
+
 	test("ABSENT and STALE_ROOT close Send and Unshield with their reason, ragequit stays open, and the list's age is chain time", async () => {
 		const app = renderApp()
 		await connectAztec(app.user)
@@ -84,6 +103,7 @@ describe("home", () => {
 		expect(isDisabled(bridged.getByRole("button", { name: /Leave to Ethereum/ }))).toBe(false)
 		bridged.getByRole("button", { name: "Check again" })
 		const shielded = labelRow(LABELS.shielded)
+		shielded.getByText("Not enabled yet")
 		expect(reasonOf(shielded.getByRole("button", { name: "Send privately" }))).toBe("Send and Unshield open once the label is approved")
 		expect(isDisabled(labelRow(LABELS.active).getByRole("button", { name: "Send privately" }))).toBe(false)
 

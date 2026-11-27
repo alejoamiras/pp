@@ -4,8 +4,8 @@ import { labelView, listFailureView } from "./labels"
 describe("label states", () => {
 	test.each([
 		[0, "ACTIVE", "Active", "ok", true],
-		[1, "ACTIVE", "Active", "ok", true],
-		[1, "ABSENT", "Awaiting approval", "wait", false],
+		[1, "ACTIVE", "Funds enabled", "ok", true],
+		[1, "ABSENT", "Not enabled yet", "wait", false],
 		[0, "ABSENT", "Not found in the latest list", "attn", false],
 		[0, "STALE_ROOT", "List out of date", "wait", false],
 		[1, "STALE_ROOT", "List out of date", "wait", false],
