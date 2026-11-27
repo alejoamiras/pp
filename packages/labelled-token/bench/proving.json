@@ -1,0 +1,54 @@
+{
+	"machine": {
+		"cpu": "AMD EPYC 7R13 48-Core Processor",
+		"cores": 192
+	},
+	"samples": 5,
+	"rows": {
+		"transfer_private, reused": {
+			"gates": 318671,
+			"provingMs": {
+				"median": 5528,
+				"samples": [6336, 5528, 5673, 5216, 5140]
+			}
+		},
+		"transfer_private_to_private (stock), reused": {
+			"gates": 268964,
+			"provingMs": {
+				"median": 4043,
+				"samples": [4076, 4043, 4103, 3977, 4000]
+			}
+		},
+		"transfer_private, first contact": {
+			"gates": 362185,
+			"provingMs": {
+				"median": 5135,
+				"samples": [4987, 5146, 5138, 5086, 5135]
+			}
+		},
+		"transfer_private_to_private (stock), first contact": {
+			"gates": 312478,
+			"provingMs": {
+				"median": 4632,
+				"samples": [4537, 4606, 4632, 4794, 4645]
+			}
+		},
+		"transfer_private, 8 notes with change": {
+			"gates": 367316,
+			"provingMs": {
+				"median": 5093,
+				"samples": [5196, 5210, 5093, 5047, 4973]
+			}
+		}
+	},
+	"budgets": {
+		"gates": {
+			"measured": 318671,
+			"limit": 328964
+		},
+		"provingMedianMs": {
+			"measured": 5528,
+			"limit": 6065
+		}
+	}
+}

@@ -6,6 +6,7 @@ use aztec::macros::aztec;
 #[aztec]
 pub contract BridgeStub {
     use aztec::{
+        context::gas::GasOpts,
         macros::{events::event, functions::external},
         messages::delivery::MessageDelivery,
         protocol::{
@@ -18,6 +19,8 @@ pub contract BridgeStub {
         comptime { FunctionSelector::from_signature("mint_from_bridge((Field),u128,Field)") };
     global BURN_FOR_EXIT: FunctionSelector =
         comptime { FunctionSelector::from_signature("burn_for_exit((Field),u128,Field)") };
+    global BURN_PUBLIC_FOR_EXIT: FunctionSelector =
+        comptime { FunctionSelector::from_signature("burn_public_for_exit((Field),u128)") };
 
     #[event]
     struct HandshakeProbe {
@@ -40,6 +43,17 @@ pub contract BridgeStub {
             token,
             BURN_FOR_EXIT,
             [from.to_field(), amount as Field, label],
+        );
+    }
+
+    #[external("public")]
+    fn ragequit_public(token: AztecAddress, amount: u128) {
+        let from = self.msg_sender();
+        let _ = self.context.call_public_function(
+            token,
+            BURN_PUBLIC_FOR_EXIT,
+            [from.to_field(), amount as Field],
+            GasOpts::default(),
         );
     }
 
