@@ -17,6 +17,9 @@ import {
 	type WalletClient,
 } from "viem"
 
+/** A transport that refuses a redirect, which would take reads and sends off the endpoint named. */
+const pinned = (rpcUrl: string) => http(rpcUrl, { fetchOptions: { redirect: "error" } })
+
 /** L1 wallet + public client pair. Generic over chain + account so viem's
  *  literal narrowing survives — `writeContract`/`deployContract` keep their
  *  optional chain/account params at every call site, no casts needed. */
@@ -37,9 +40,9 @@ export function createL1Clients<TChain extends Chain, TAccount extends Account>(
 	const wallet = createWalletClient({
 		account: opts.account,
 		chain: opts.chain,
-		transport: opts.wrapWalletTransport ? opts.wrapWalletTransport(http(opts.rpcUrl)) : http(opts.rpcUrl),
+		transport: opts.wrapWalletTransport ? opts.wrapWalletTransport(pinned(opts.rpcUrl)) : pinned(opts.rpcUrl),
 	}) as unknown as WalletClient<Transport, TChain, TAccount>
-	const pub = createPublicClient({ chain: opts.chain, transport: http(opts.rpcUrl) })
+	const pub = createPublicClient({ chain: opts.chain, transport: pinned(opts.rpcUrl) })
 	return { wallet, pub }
 }
 
