@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs"
-import { join, resolve, sep } from "node:path"
+import { readdirSync, readFileSync } from "node:fs"
+import { join, relative, resolve, sep } from "node:path"
 import type { Logger, Plugin } from "vite"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders, securityHeaders } from "./headers.ts"
 import type { PublicTarget } from "./target.ts"
@@ -60,30 +60,39 @@ export function fixtureLeaks(moduleIds: Iterable<string>, files: Iterable<Bundle
 	return leaks
 }
 
+/** Every file under `dir`, named relative to it with `/` separators. */
+export function readOutput(dir: string): BundleFile[] {
+	return readdirSync(dir, { recursive: true, withFileTypes: true })
+		.filter((e) => e.isFile())
+		.map((e) => {
+			const path = join(e.parentPath, e.name)
+			return { fileName: relative(dir, path).split(sep).join("/"), text: readFileSync(path, "latin1") }
+		})
+}
+
 /**
  * Fails a stack build whose module graph holds any file under `src/data/fixtures/` (reachable code,
- * even if tree-shaken, means an import path exists) or whose output names the fixture marker.
+ * even if tree-shaken, means an import path exists) or whose written output names the fixture marker.
+ * The output directory is read back rather than the bundle, because Vite copies `public/` beside the
+ * bundle and the scan must cover everything that ships.
  */
 export function stackBuildGuard(appRoot: string): Plugin {
 	const fixturesDir = join(appRoot, "src", "data", "fixtures")
 	let logger: Logger | undefined
+	let outDir = ""
+	let ids: string[] = []
 	return {
 		name: "pp:stack-build-guard",
 		apply: "build",
 		configResolved(config) {
 			logger = config.logger
+			outDir = resolve(config.root, config.build.outDir)
 		},
-		generateBundle(_options, bundle) {
-			const ids = [...this.getModuleIds()]
-			const files = Object.values(bundle).map((out) => ({
-				fileName: out.fileName,
-				text:
-					out.type === "chunk"
-						? out.code
-						: typeof out.source === "string"
-							? out.source
-							: Buffer.from(out.source).toString("latin1"),
-			}))
+		generateBundle() {
+			ids = [...this.getModuleIds()]
+		},
+		writeBundle(options) {
+			const files = readOutput(options.dir ?? outDir)
 			const leaks = fixtureLeaks(ids, files, fixturesDir)
 			if (leaks.length > 0) this.error(`stack build ships fixture code:\n  ${leaks.join("\n  ")}`)
 			logger?.info(`${GUARD_PASSED}: ${ids.length} modules, ${files.length} files, no fixture module, no ${FIXTURE_MARKER}`)

@@ -1,6 +1,8 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { expect, test } from "vitest"
-import { fixtureLeaks } from "./plugins"
+import { scratchDir } from "../../scripts/proc"
+import { fixtureLeaks, readOutput } from "./plugins"
 
 test("the stack guard flags fixture modules and the fixture marker, and nothing else", () => {
 	const fixtures = join("/app", "src", "data", "fixtures")
@@ -16,4 +18,18 @@ test("the stack guard flags fixture modules and the fixture marker, and nothing 
 		fixtures,
 	)
 	expect(leaks).toHaveLength(3)
+})
+
+test("the stack guard scans every written file, so one copied beside the bundle (as from public/) is caught", () => {
+	const dir = scratchDir("guard-output")
+	try {
+		mkdirSync(join(dir, "assets"))
+		writeFileSync(join(dir, "index.html"), "<!doctype html>")
+		writeFileSync(join(dir, "assets", "copied.txt"), "window.__ppFixtures = 1")
+		const files = readOutput(dir)
+		expect(files.map((f) => f.fileName).sort()).toEqual(["assets/copied.txt", "index.html"])
+		expect(fixtureLeaks([], files, "/app/src/data/fixtures")).toEqual(["assets/copied.txt names __ppFixtures"])
+	} finally {
+		rmSync(dir, { recursive: true, force: true })
+	}
 })
