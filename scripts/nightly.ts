@@ -144,7 +144,7 @@ export const SUITES: Suite[] = [
 			"src/l1-gas.property.test.ts",
 		],
 		minutes: 10,
-		expected: 18,
+		expected: 19,
 		env: { FC_RUNS_SCALE: "10" },
 	}),
 ]

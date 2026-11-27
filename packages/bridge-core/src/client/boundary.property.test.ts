@@ -84,7 +84,7 @@ type Fields = Partial<Record<(typeof FIELDS)[number], unknown>>
 /**
  * A secret a lower layer may hold. `ident` is identifier-shaped on purpose: a value that only ever fails the
  * identifier pattern could not reveal a translation that copies it into `source`. Its leading hex digit is
- * nonzero, so a shrunk marker keeps a 23-digit `dec` that no line number in a stack can contain.
+ * nonzero, so even a shrunk `dec` has at least 23 digits, more than any line number in a stack.
  */
 type Marker = { ident: string; hex: string; dec: string; value: bigint }
 const marker = fc
@@ -219,6 +219,14 @@ const hostile = (m: Marker): fc.Arbitrary<Thrown> => {
 		fc
 			.tuple(how, name)
 			.map(([h, n]) => thrown("anonymous class", () => decorated(Object.assign(new Anonymous(m.ident), { name: n }), m, h))),
+		// A lower layer's class name is kept as the source, up to the 64-character limit.
+		name.map(
+			(n): Thrown => ({
+				kind: "named class",
+				make: () => new ({ [n]: class extends Error {} })[n](m.ident),
+				keeps: { code: "RPC_FAILED", detail: { source: n } },
+			}),
+		),
 		fc
 			.constantFrom("name", "message", "constructor", "code", "cause", "stack")
 			.map((p) => thrown(`throwing ${p}`, () => trapped(m, p))),

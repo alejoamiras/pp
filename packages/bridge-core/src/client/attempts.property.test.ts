@@ -27,7 +27,9 @@ const tries = fc
 	)
 	.chain(([o, r]) => fc.shuffledSubarray([...o, ...r], { minLength: o.length + r.length }))
 
-const recipient = fc.stringMatching(/^[0-9a-f]{8}$/).map((h) => `0x${h}AbCd`)
+// Full-length addresses, so another recipient differs in its digits, never in its length.
+const recipient = fc.stringMatching(/^[0-9a-f]{60}$/).map((h) => `0x${h}AbCd`)
+const another = (r: string) => `0x${r[2] === "0" ? "1" : "0"}${r.slice(3)}`
 
 /** Reachable inputs: no record, the evicted empty record of the caller's intent an unreadable one becomes, or a written one. */
 const input = fc
@@ -37,7 +39,6 @@ const input = fc
 		evicted: fc.boolean(),
 		recipient,
 		amount: fc.bigInt({ min: 1n, max: 3n }),
-		// The caller's intent against the record's: same, same up to case, or another recipient; same or another amount.
 		recipientChange: fc.constantFrom("same", "case", "other"),
 		otherAmount: fc.boolean(),
 		accept: fc.boolean(),
@@ -46,7 +47,7 @@ const input = fc
 		const recorded = { nullifier: NULLIFIER, recipient: v.recipient, amount: v.amount }
 		const intent: Intent = {
 			nullifier: NULLIFIER,
-			recipient: { same: v.recipient, case: v.recipient.toUpperCase().replace("0X", "0x"), other: `${v.recipient}ff` }[
+			recipient: { same: v.recipient, case: v.recipient.toUpperCase().replace("0X", "0x"), other: another(v.recipient) }[
 				v.recipientChange
 			],
 			amount: v.otherAmount ? v.amount + 1n : v.amount,

@@ -237,6 +237,16 @@ async function heldBeforeCall(m: Model, w: World, plan: Plan): Promise<void> {
 	if (show(record) !== show(want)) w.fail("I2", m, `inside the wallet call the store held ${show(record)}, not ${show(want)}`)
 }
 
+/** The record the code wrote for a send, as the model keeps it. */
+function recordSend(m: Model, w: World, plan: Plan, b: Broadcast): void {
+	m.sent.push(b)
+	const pastHashless = plan.entries.some((e) => !e.saved && e.status === "mempool")
+	m.record = { kind: "kept", who: plan.who, entries: [...plan.entries, b], evicted: plan.evicted }
+	w.reloaded = false
+	w.seen.add(`send: ${plan.kind}`)
+	if (pastHashless) w.seen.add("send: past a hashless pending send")
+}
+
 function walletFor(m: Model, w: World, s: Spec, call: Call, may: boolean, plainAfterUncertain: boolean): WalletClient {
 	const writeContract = async (args: Parameters<FakeChain["writeContract"]>[0]): Promise<Hash> => {
 		call.n++
@@ -249,13 +259,8 @@ function walletFor(m: Model, w: World, s: Spec, call: Call, may: boolean, plainA
 		const hash = await w.chain.writeContract(args)
 		const saved = s.fault !== "ambiguous" && s.fault !== "hashWrite"
 		const b: Broadcast = { hash, who: s.who, saved, status: "mempool", secretHash: args.args[2], signals: args.args[0].pubSignals }
-		m.sent.push(b)
-		const pastHashless = plan.entries.some((e) => !e.saved && e.status === "mempool")
-		m.record = { kind: "kept", who: plan.who, entries: [...plan.entries, b], evicted: plan.evicted }
-		w.reloaded = false
+		recordSend(m, w, plan, b)
 		call.sent = b
-		w.seen.add(`send: ${plan.kind}`)
-		if (pastHashless) w.seen.add("send: past a hashless pending send")
 		await settleSend(m, w, b, s.send)
 		if (s.fault === "ambiguous") throw new Error("connection reset")
 		if (s.fault === "hashWrite") w.failNextWrite = true
@@ -403,7 +408,7 @@ class Submit extends Step {
 	}
 }
 
-type ChainAction = "land" | "landNoLog" | "revert" | "drop"
+type ChainAction = "land" | "landNoLog" | "revert" | "drop" | "rebroadcast"
 
 /** Acts on the k-th broadcast the chain can still settle. */
 class OnChain extends Step {
@@ -414,6 +419,7 @@ class OnChain extends Step {
 		super()
 	}
 	targets(m: Readonly<Model>): Broadcast[] {
+		if (this.action === "rebroadcast") return m.sent.filter((b) => b.status === "dropped")
 		if ((this.action === "land" || this.action === "landNoLog") && m.spent) return []
 		return m.sent.filter((b) => b.status === "mempool" || (b.status === "dropped" && this.action !== "drop"))
 	}
@@ -426,6 +432,10 @@ class OnChain extends Step {
 		if (this.action === "drop") {
 			w.chain.pending.delete(b.hash)
 			b.status = "dropped"
+		} else if (this.action === "rebroadcast") {
+			// Any node that kept a dropped send may gossip it again.
+			w.chain.pending.add(b.hash)
+			b.status = "mempool"
 		} else {
 			m.uncertain = false
 			if (this.action === "revert") revertOn(w, b)
@@ -548,7 +558,7 @@ async function setup(seen: Set<string>): Promise<{ model: Model; real: World }> 
 }
 
 const who = fc.constantFrom<Who>("A", "A", "A", "B")
-const SIDE = ["revert or drop", "land", "elsewhere", "corrupt", "reload", "second caller"] as const
+const SIDE = ["revert, drop or rebroadcast", "land", "elsewhere", "corrupt", "reload", "second caller"] as const
 type Side = (typeof SIDE)[number]
 type Swarm = { always: boolean; sends: Send[]; faults: Fault[]; side: Side[] }
 
@@ -557,8 +567,7 @@ const someOf = <T>(xs: readonly T[]): fc.Arbitrary<T[]> => fc.tuple(...xs.map(()
 
 /**
  * Swarm generation: each run draws the send modes, faults and side commands it may use, and whether every
- * submit overrides. A spent note ends what a run can explore, so half the runs never spend it; only those
- * reach deep states, such as an eviction after five unresolved sends, often enough.
+ * submit overrides. A spent note ends what a run can explore, so half the runs never spend it.
  */
 const swarm: fc.Arbitrary<Swarm> = fc
 	.record({
@@ -582,7 +591,9 @@ function commandsOf(w: Swarm): fc.Arbitrary<Cmd> {
 		fault: fc.constantFrom(...w.faults),
 	})
 	const side: Record<Side, fc.Arbitrary<Cmd>> = {
-		"revert or drop": fc.tuple(fc.constantFrom<ChainAction>("revert", "drop"), fc.nat(7)).map(([a, k]) => new OnChain(a, k)),
+		"revert, drop or rebroadcast": fc
+			.tuple(fc.constantFrom<ChainAction>("revert", "drop", "rebroadcast"), fc.nat(7))
+			.map(([a, k]) => new OnChain(a, k)),
 		land: fc.tuple(fc.constantFrom<ChainAction>("land", "landNoLog"), fc.nat(7)).map(([a, k]) => new OnChain(a, k)),
 		elsewhere: fc.constantFrom<"other" | "spend">("other", "spend").map((h) => new Elsewhere(h)),
 		corrupt: fc.constantFrom<Corruption>("garbage", "moved", "another note").map((h) => new Corrupt(h)),
@@ -629,6 +640,10 @@ const SCENARIOS: [string, Step[]][] = [
 	],
 	["a failed hash write, then a reload", [sub("A", { fault: "hashWrite" }), new Reload(), sub("A"), new OnChain("revert", 0), sub("A")]],
 	["an earlier attempt lands", [sub("A"), new OnChain("land", 0), sub("A")]],
+	[
+		"a dropped send comes back behind a newer one",
+		[sub("A"), new OnChain("drop", 0), ov("A"), new OnChain("drop", 0), new OnChain("rebroadcast", 0), ov("A")],
+	],
 	["a rejection keeps the record", [sub("A", { send: "revert" }), sub("A", { fault: "reject" }), sub("A", { send: "land" })]],
 	["an overlapping second caller", [new SecondCaller({ override: false, who: "A", send: "land", fault: "none" }, "B", true)]],
 ]
