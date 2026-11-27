@@ -8,7 +8,7 @@ import { Tag } from "@aztec-labs/stdlib/logs"
 import { computeL2ToL1MembershipWitnessFromMessagesInEpoch } from "@aztec-labs/stdlib/messaging"
 import { TxHash, TxStatus } from "@aztec-labs/stdlib/tx"
 import vectors from "@pp/bridge-spec/vectors/v1.json" with { type: "json" }
-import { type Address, type Hash, type Hex, getAddress, toHex } from "viem"
+import { type Address, type Hash, type Hex, getAddress, toHex, UserRejectedRequestError } from "viem"
 import { describe, expect, it, vi } from "vitest"
 import { DEPLOYMENT, HUB, headRequest, PORTAL, SENDER } from "../test/client-fakes"
 import type { ClientDeployment } from "./deployment"
@@ -238,6 +238,19 @@ describe("settle", () => {
 		})
 		const e = await settle(c, t!, l1).catch((x: unknown) => x)
 		expect(e).toMatchObject({ code: "UNCERTAIN", l1TxHash: state.settled[0]?.tx })
+	})
+
+	it("reports the user's refusal of the settle as a refusal, also from a wallet client that throws at the call", async () => {
+		const { c, state, l1, writeContract } = await world()
+		state.posted = true
+		const [t] = await exitTickets(c, {})
+		const refused = { code: "RPC_FAILED", source: "UserRejectedRequestError" }
+		writeContract.mockRejectedValueOnce(new UserRejectedRequestError(new Error("no")))
+		await expect(settle(c, t!, l1)).rejects.toMatchObject(refused)
+		writeContract.mockImplementationOnce((() => {
+			throw new UserRejectedRequestError(new Error("no"))
+		}) as never)
+		await expect(settle(c, t!, l1)).rejects.toMatchObject(refused)
 	})
 
 	it("refuses a wallet on another chain, and a ticket no root covers yet, before any send", async () => {

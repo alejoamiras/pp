@@ -95,6 +95,18 @@ export function isUserRejection(e: unknown): boolean {
 }
 
 /**
+ * The error a wallet send the user refused ends in: `RPC_FAILED` with source
+ * `UserRejectedRequestError`; `null` for any other failure, which may follow a broadcast.
+ *
+ * Contract: a refusal as `isUserRejection` reads it is taken as proof the wallet sent nothing, so a
+ * caller treats the send as never made. A wallet that broadcasts and then answers 4001 breaks it; a
+ * later send of the same note or ticket then reverts, at the cost of its gas.
+ */
+export function walletRefusal(e: unknown): BridgeClientError | null {
+	return isUserRejection(e) ? new BridgeClientError("RPC_FAILED", { source: "UserRejectedRequestError" }) : null
+}
+
+/**
  * Maps any thrown value to a `BridgeClientError` built from allow-listed identifiers only. It never
  * keeps a cause, a lower message, arguments, calldata or a serialized transaction, so whatever the
  * lower layers put in their messages (amounts, openings, signatures) stops here.

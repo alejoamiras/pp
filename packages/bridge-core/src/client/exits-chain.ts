@@ -24,7 +24,7 @@ import {
 } from "viem"
 import { tokenBridgeHubArtifact } from "../artifacts"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
-import { guarded } from "./boundary"
+import { guarded, walletRefusal } from "./boundary"
 import type { ClientDeployment } from "./deployment"
 import { BridgeClientError } from "./errors"
 import { allPages, type ExitReads, type ExitWitness, messageIndices, settleWith } from "./exits"
@@ -232,22 +232,31 @@ async function sendSettle(c: ExitContext, l1: WalletClient, account: Account, t:
 	const base = { address: c.deployment.portal, abi: PROCESSOR_PORTAL_ABI, account } as const
 	const proof = [w.epoch, w.numCheckpointsInEpoch, w.leafIndex, w.path] as const
 	const chain = l1.chain ?? null
+	// Awaited inside the try: a wallet client can throw before it returns a promise.
+	const send = async (write: () => Promise<Hash>): Promise<Hash> => {
+		try {
+			return await write()
+		} catch (e) {
+			throw walletRefusal(e) ?? e
+		}
+	}
 	if (t.kind === "ragequit") {
 		const call = { ...base, functionName: "settleRagequit", args: [t.payee, t.amount, t.label, ...proof] } as const
 		await c.reader.simulateContract(call)
-		return l1.writeContract({ ...call, chain })
+		return send(() => l1.writeContract({ ...call, chain }))
 	}
 	const call = { ...base, functionName: "settlePublicExit", args: [t.payee, t.amount, ...proof] } as const
 	await c.reader.simulateContract(call)
-	return l1.writeContract({ ...call, chain })
+	return send(() => l1.writeContract({ ...call, chain }))
 }
 
 /**
  * Settles a ready ticket from `l1`, or returns the transaction that already settled it. The result is
  * always the transaction of the portal's `ExitSettled` for the ticket's exact `(epoch, leafId)`.
- * @throws BridgeClientError `CHAIN_MISMATCH`; `EXIT_NOT_READY` while no Outbox root covers it;
- * `TICKET_NOT_FOUND`; `UNCERTAIN` with `l1TxHash` when the send has no receipt in time or the event
- * read after it fails; `REVERTED`
+ * @throws BridgeClientError `CHAIN_MISMATCH` when the wallet is on another chain at the call;
+ * `RPC_FAILED` with source `UserRejectedRequestError` when the user refuses the send (`walletRefusal`
+ * states what that is taken to prove); `EXIT_NOT_READY` while no Outbox root covers it; `TICKET_NOT_FOUND`; `UNCERTAIN` with `l1TxHash`
+ * when the send has no receipt in time or the event read after it fails; `REVERTED`
  */
 export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): Promise<Hash> {
 	const { account, chain } = l1

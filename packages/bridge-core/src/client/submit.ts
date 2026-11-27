@@ -3,7 +3,7 @@ import { type Account, type Chain, type Hash, hexToBigInt, isAddressEqual, type 
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { sendGasLimit } from "../l1-gas"
 import { type Intent, latestMined, observe, planAttempt } from "./attempts"
-import { contractRevert, guarded, isUserRejection } from "./boundary"
+import { contractRevert, guarded, walletRefusal } from "./boundary"
 import { assertBridgeSpend, snapshotSpend } from "./checks"
 import { BridgeClientError, type StaleRootCode } from "./errors"
 import { Journal, type JournalRecord, type KeyValueStore } from "./journal"
@@ -197,15 +197,21 @@ function withHash(r: JournalRecord, hash: Hash): JournalRecord {
 }
 
 async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: bigint): Promise<BridgeReceipt> {
+	// Read again through the client that signs: proving and simulation leave time for the wallet to
+	// move. Before the preflight is consumed, so a mismatch spends nothing and writes nothing; the
+	// preflight's Aztec reads stay the last ones before the send. viem's own check at the send stays,
+	// but past the handoff its error may follow a broadcast.
+	if ((await run.l1.getChainId()) !== run.ctx.deployment.chainId) throw new BridgeClientError("CHAIN_MISMATCH")
 	await run.ctx.preflights.consume(run.ctx.deployment.id, s.recipient)
 	const written = await run.journal.write(plan.record)
 	let hash: Hash
 	try {
 		hash = await run.l1.writeContract({ ...bridgeCall(run, s), chain: run.chain, gas })
 	} catch (e) {
-		if (!isUserRejection(e)) return afterSendFailure(run, s)
+		const refused = walletRefusal(e)
+		if (!refused) return afterSendFailure(run, s)
 		await run.journal.restore(plan.record.nullifier, plan.previous, written)
-		throw new BridgeClientError("RPC_FAILED", { source: "UserRejectedRequestError" })
+		throw refused
 	}
 	const saved = await run.journal.write(withHash(plan.record, hash)).then(
 		() => true,
@@ -230,8 +236,12 @@ async function broadcast(run: Run, s: PreparedBridgeSpend, plan: SendPlan, gas: 
 /**
  * Sends a checked bridge spend and returns the receipt of the verified `BridgedFromPool` event for
  * its nullifier, whichever transaction carried it. Never resubmits by itself: a send whose outcome
- * is unknown ends `UNCERTAIN` and needs `acceptUncertain` to try again. A second call for the same
- * nullifier while one runs in this process is `IN_FLIGHT`, whatever deployment, vault or store it names.
+ * is unknown ends `UNCERTAIN` and needs `acceptUncertain` to try again. The wallet's chain is read
+ * again just before anything is written: another chain is `CHAIN_MISMATCH`, and a failed read is
+ * `RPC_FAILED` with its source. The user's refusal restores the journal and is `RPC_FAILED`
+ * (`UserRejectedRequestError`); `walletRefusal` states what a refusal is taken to prove. A second call
+ * for the same nullifier while one runs in this process is `IN_FLIGHT`, whatever deployment, vault or
+ * store it names.
  *
  * Known limit: the journal is authenticated, not fresh, and kept per deployment. A record deleted or
  * rolled back in the store, a second process or tab over the same storage, or a later send of the
