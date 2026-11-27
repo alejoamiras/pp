@@ -20,13 +20,17 @@ const manifest = (simulated: object[], sent: object[]) => ({
 })
 
 const A = [fn(T.hub, "claim_from_pool"), fn(T.hub, "ragequit")]
-const B = [fn(T.token, "transfer_private"), fn(T.token, "unshield"), fn(T.hub, "exit_public")]
+const B = [fn(T.token, "transfer_private"), fn(T.token, "unshield")]
+const C = [fn(T.token, "shield")]
+const D = [fn(T.hub, "exit_public")]
+const PUBLIC = fn(T.token, "balance_of_public")
 
 describe("the stage manifests", () => {
 	test.each([
 		["2a", manifest(A, A)],
-		["2b", manifest([...A, fn(T.token, "balance_of_public"), ...B], [...A, ...B])],
-		["2c", manifest([...A, fn(T.token, "balance_of_public"), ...B, fn(T.token, "shield")], [...A, ...B, fn(T.token, "shield")])],
+		["2b", manifest([...A, PUBLIC, ...B], [...A, ...B])],
+		["2c", manifest([...A, PUBLIC, ...B, ...C], [...A, ...B, ...C])],
+		["2d", manifest([...A, PUBLIC, ...B, ...C, ...D], [...A, ...B, ...C, ...D])],
 	] as const)("stage %s equals its literal and names no wildcard", (stage, literal) => {
 		const m = stageManifest(stage, T)
 		expect(m).toEqual(literal)

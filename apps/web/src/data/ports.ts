@@ -243,8 +243,8 @@ export interface Timer {
 	sleep(ms: number, signal?: AbortSignal): Promise<boolean>
 }
 
-/** Which token functions a deployment has: stage A, B or C of the labelled token. */
-export type Stage = "2a" | "2b" | "2c"
+/** Which functions a deployment has: the labelled token's stages A to C, then the hub's public exit (2d). */
+export type Stage = "2a" | "2b" | "2c" | "2d"
 
 export interface Deployment {
 	/** `chainId:portal:hub`, lower case. */
