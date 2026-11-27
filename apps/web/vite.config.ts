@@ -3,7 +3,8 @@
  * use the fixture connector; `vite build --mode sandbox` (`build:local`; Vite reserves the mode name
  * `local`) uses the real one with the wallets in `PP_WEB_WALLETS`, and reads either a stack manifest
  * (`PP_STACK_MANIFEST`: `#data` points at the adapters and the fixture guard is armed) or a sandbox
- * run (`PP_SANDBOX_ARTIFACTS`: the fixture world). `vite preview` reads no target: the kit starts it
+ * run (`PP_SANDBOX_ARTIFACTS`: the fixture world). `vite build --mode testnet` reads the testnet
+ * deployment file at `PP_DEPLOYMENT` alone and also writes `target.json`. `vite preview` reads no target: the kit starts it
  * with no `--config` and only `PP_SANDBOX_ARTIFACTS`, and the headers come from the build's own
  * `security-headers.json`.
  */
@@ -15,9 +16,10 @@ import react from "@vitejs/plugin-react"
 import { defineConfig, type UserConfig } from "vite"
 import { nodePolyfills } from "vite-plugin-node-polyfills"
 import { ISOLATION_HEADERS } from "./src/build/headers.ts"
-import { bufferSubpathAlias, emitSecurityHeaders, previewSecurityHeaders, stackBuildGuard } from "./src/build/plugins.ts"
+import { bufferSubpathAlias, emitSecurityHeaders, emitTarget, previewSecurityHeaders, stackBuildGuard } from "./src/build/plugins.ts"
 import { sponsoredFpcAddress } from "./src/build/sponsored-fpc.ts"
 import { demoSenderModule, parseDataMode, resolveTarget } from "./src/build/target.ts"
+import { testnetTarget } from "./src/build/testnet.ts"
 
 const root = dirname(fileURLToPath(import.meta.url))
 
@@ -32,12 +34,15 @@ const FONT_FILE = /\.(woff2?|ttf|otf)$/
 
 export default defineConfig(async ({ mode, isPreview }): Promise<UserConfig> => {
 	if (isPreview) return { root, plugins: [previewSecurityHeaders()] }
-	const target = resolveTarget({
-		local: mode === "sandbox",
-		env: process.env,
-		committedHandle: resolvePackageAsset("@pp/e2e-kit", "fixtures/build-artifacts/handle.json", { from: import.meta.url }),
-		...(parseDataMode(process.env) === "stack" ? await stackDerivations() : {}),
-	})
+	const testnet = mode === "testnet"
+	const target = testnet
+		? testnetTarget(process.env.PP_DEPLOYMENT, process.env, await sponsoredFpcAddress())
+		: resolveTarget({
+				local: mode === "sandbox",
+				env: process.env,
+				committedHandle: resolvePackageAsset("@pp/e2e-kit", "fixtures/build-artifacts/handle.json", { from: import.meta.url }),
+				...(parseDataMode(process.env) === "stack" ? await stackDerivations() : {}),
+			})
 	const bufferShim = resolvePackageAsset("vite-plugin-node-polyfills", "shims/buffer/dist/index.js", { from: import.meta.url })
 	return {
 		root,
@@ -78,6 +83,7 @@ export default defineConfig(async ({ mode, isPreview }): Promise<UserConfig> => 
 			nodePolyfills({ exclude: ["fs"], globals: { Buffer: true, global: true, process: true } }),
 			bufferSubpathAlias(bufferShim),
 			emitSecurityHeaders(target),
+			...(testnet ? [emitTarget(target)] : []),
 			...(target.dataMode === "stack" ? [stackBuildGuard(root)] : []),
 		],
 	}

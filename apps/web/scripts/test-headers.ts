@@ -7,19 +7,23 @@
  * malformed, incomplete or weakened it must refuse to start. `serve` must also refuse with
  * `PP_CIRCUITS_DIR` unset, empty, relative or naming a file, and answer 404 for any other pinned circuit's
  * files. Run after `bun run build`.
+ *
+ * `--target <file> [--outDir dist-testnet]` checks `serve --deployment` over that file's testnet build
+ * instead (`test-headers-testnet.ts`), with `PP_CIRCUITS_DIR` from the environment.
  */
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
-import { setTimeout as sleep } from "node:timers/promises"
+import { dirname, join, resolve } from "node:path"
+import { parseArgs } from "node:util"
 import { resolvePackageAsset } from "@nulo-sh/resolve-asset"
 import { PINNED_CIRCUITS, type PinnedCircuit } from "@pp/pool-client/circuits"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build/headers.ts"
 import { PROVED_CIRCUIT, PROVED_PINS } from "../src/data/adapters/circuit.ts"
 import { claimPort } from "./ports"
 import { APP_ROOT, bunRun, envWithout, type Group, scratchDir } from "./proc"
+import { assertRefusal, assertServed, untilUp } from "./served"
+import { checkTestnet } from "./test-headers-testnet"
 
 const DIST = join(APP_ROOT, "dist")
-const START_TIMEOUT_MS = 30_000
 const ARTIFACTS = dirname(resolvePackageAsset("@pp/e2e-kit", "fixtures/build-artifacts/handle.json", { from: import.meta.url }))
 const cidPaths = (p: PinnedCircuit) => [p.wasm, p.provingKey, p.verificationKey].map((cid) => `/${cid}`)
 const PINNED_PATHS = cidPaths(PROVED_PINS)
@@ -61,38 +65,6 @@ function startServe(outDir: string, port: number, env: NodeJS.ProcessEnv): Group
 	return bunRun(["serve", "--outDir", outDir, ...host(port)], { env: { ...envWithout(), ...env }, capture: true })
 }
 
-async function answers(port: number): Promise<boolean> {
-	try {
-		await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1_000) })
-		return true
-	} catch {
-		return false
-	}
-}
-
-/** Resolves once the server answers; rejects if it exits or stays silent past the timeout. */
-async function untilUp(name: string, port: number, g: Group): Promise<void> {
-	let exited = false
-	void g.exited.then(() => {
-		exited = true
-	})
-	const deadline = Date.now() + START_TIMEOUT_MS
-	while (Date.now() < deadline) {
-		if (exited) throw new Error(`${name} exited before answering:\n${g.output()}`)
-		if (await answers(port)) return
-		await sleep(200)
-	}
-	throw new Error(`${name} did not answer within ${START_TIMEOUT_MS} ms:\n${g.output()}`)
-}
-
-async function assertServed(name: string, port: number, path: string, expected: SecurityHeaders): Promise<void> {
-	const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { accept: "text/html,*/*" } })
-	await res.arrayBuffer()
-	const wrong = Object.entries(expected).filter(([header, value]) => res.headers.get(header) !== value)
-	if (wrong.length > 0) throw new Error(`${name} ${path} (HTTP ${res.status}): wrong or missing ${wrong.map(([n]) => n).join(", ")}`)
-	console.log(`ok   ${name} ${path} (HTTP ${res.status}) carries all ${Object.keys(expected).length} headers`)
-}
-
 /** `/` is the app whatever the request accepts: curl, a bare fetch and health probes send no text/html. */
 async function assertRoot(name: string, port: number): Promise<void> {
 	const index = readFileSync(join(DIST, "index.html"), "utf8")
@@ -124,19 +96,6 @@ const BROKEN: Record<string, (file: string) => void> = {
 		const headers = parseHeaderFile(readFileSync(file, "utf8"))
 		writeFileSync(file, JSON.stringify({ ...headers, "Content-Security-Policy": "default-src 'none';" }))
 	},
-}
-
-/** `g` must exit non-zero without ever answering, and its output must name `reason`. */
-async function assertRefusal(g: Group, port: number, what: string, reason: string): Promise<void> {
-	try {
-		const code = await Promise.race([g.exited, sleep(START_TIMEOUT_MS, "timeout" as const, { ref: false })])
-		if (code === 0 || code === "timeout") throw new Error(`${what} did not fail to start (${code})`)
-		if (await answers(port)) throw new Error(`${what} still answers on :${port}`)
-		if (!g.output().includes(reason)) throw new Error(`${what} failed for another reason:\n${g.output()}`)
-		console.log(`ok   ${what}: refuses to start (exit ${code})`)
-	} finally {
-		await g.stop()
-	}
 }
 
 async function assertRefuses(name: string, server: Server, port: number, kind: string, breakFile: (file: string) => void): Promise<void> {
@@ -183,9 +142,15 @@ async function main(): Promise<void> {
 			await assertRefusal(startServe(DIST, port, env), port, `serve, PP_CIRCUITS_DIR ${kind}`, "PP_CIRCUITS_DIR")
 	} finally {
 		await release()
-		rmSync(CIRCUITS, { recursive: true, force: true })
 	}
 	console.log("test:headers passed")
 }
 
-await main()
+const { values } = parseArgs({ options: { target: { type: "string" }, outDir: { type: "string" } } })
+try {
+	if (values.target !== undefined) await checkTestnet(resolve(values.target), resolve(APP_ROOT, values.outDir ?? "dist-testnet"))
+	else if (values.outDir !== undefined) throw new Error("--outDir goes with --target")
+	else await main()
+} finally {
+	rmSync(CIRCUITS, { recursive: true, force: true })
+}

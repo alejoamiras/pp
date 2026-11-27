@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest"
 import { contentSecurityPolicy, parseHeaderFile, securityHeaders } from "./headers"
-import type { PublicTarget } from "./target"
+import type { PublicTarget, StackTarget } from "./target"
 
 const TARGET: PublicTarget = {
 	nodeUrl: "http://127.0.0.1:8080",
@@ -91,6 +91,23 @@ describe("security headers", () => {
 			"http://127.0.0.1:8700",
 		])
 		expect(parseHeaderFile(JSON.stringify(securityHeaders(STACK)))).toEqual(securityHeaders(STACK))
+	})
+
+	test("a proxied stack target connects to its node and L1 RPC alone; its ASP and bot ride on 'self'", () => {
+		const s = STACK.stack as StackTarget
+		const proxied: PublicTarget = {
+			...STACK,
+			nodeUrl: "https://aztec-testnet.drpc.org",
+			l1RpcUrl: "https://ethereum-sepolia-rpc.publicnode.com",
+			walletUrls: [],
+			stack: { ...s, manifest: { ...s.manifest, pool: { ...s.manifest.pool, aspApiUrl: "/asp" } }, botUrl: "/bot" },
+		}
+		expect(contentSecurityPolicy(proxied)).toBe(
+			"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+				"font-src 'self'; connect-src 'self' data: https://aztec-testnet.drpc.org https://ethereum-sepolia-rpc.publicnode.com; " +
+				"frame-src 'none'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+		)
+		expect(parseHeaderFile(JSON.stringify(securityHeaders(proxied)))).toEqual(securityHeaders(proxied))
 	})
 
 	test("a stack target differs from a fixture target in connect-src alone, and only there adds data:", () => {
