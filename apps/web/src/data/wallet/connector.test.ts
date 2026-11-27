@@ -172,6 +172,28 @@ describe("the real connector", () => {
 		expect(again.epoch).toBeGreaterThan(connection.epoch + 1)
 	})
 
+	test("hands out the wallet only while its connection is live", async () => {
+		let release = () => {}
+		const fake = fakeProvider({})
+		const slow = fakeProvider({ hold: new Promise<void>((r) => (release = () => r())) })
+		const { connector, options } = await discovered([fake, slow])
+		expect(connector.current()).toBeNull()
+		const connection = await connector.connect(options[0] as WalletOption, async () => true)
+		expect(connector.current()).toMatchObject({ epoch: connection.epoch, grant: connection.grant })
+		const next = connector.connect(options[1] as WalletOption, async () => true)
+		expect(connector.current()).toBeNull()
+		release()
+		const second = await next
+		expect(connector.current()?.epoch).toBe(second.epoch)
+		fake.drop()
+		expect(connector.current()?.epoch).toBe(second.epoch)
+		slow.drop()
+		expect(connector.current()).toBeNull()
+		await connector.connect(options[0] as WalletOption, async () => true)
+		await connector.disconnect()
+		expect(connector.current()).toBeNull()
+	})
+
 	test("a target with no rollup version asks wallets for the node's", async () => {
 		vi.spyOn(globalThis, "fetch").mockImplementation(
 			async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { l1ChainId: 31337, rollupVersion: 1685378643 } })),
