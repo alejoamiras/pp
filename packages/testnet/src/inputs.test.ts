@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { encodeAbiParameters, type PublicClient } from "viem"
 import { describe, expect, it } from "vitest"
-import { checkForge, probeL1, probeNode, resolveForge } from "./inputs"
+import { checkForge, probeL1, probeNode, resolveForge, treeCheck } from "./inputs"
 import { parseDeployment } from "./schema"
 import { scratchHome } from "./test-support"
 
@@ -24,6 +24,18 @@ describe("the forge binary", () => {
 			detail: expect.stringMatching(/has sha256 [0-9a-f]{64}, the committed forge Version: 1\.7\.1/),
 		})
 		expect(checkForge(undefined)).toMatchObject({ ok: false, detail: "no forge on PATH and PP_FORGE unset" })
+	})
+})
+
+describe("the working tree", () => {
+	it("passes clean at HEAD, and fails on any staged, unstaged or untracked path", () => {
+		const head = "1".repeat(40)
+		expect(treeCheck("", head)).toEqual({ name: "tree", ok: true, detail: `clean at ${head}` })
+		expect(treeCheck(" M bun.lock\n?? scratch.ts\n", head)).toMatchObject({
+			ok: false,
+			detail: `2 uncommitted paths at ${head}, the first bun.lock`,
+		})
+		expect(treeCheck("?? scratch.ts\n", head).ok).toBe(false)
 	})
 })
 

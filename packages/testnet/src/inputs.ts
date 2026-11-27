@@ -34,6 +34,24 @@ export function resolveForge(env: NodeJS.ProcessEnv): string | undefined {
 const run = (cmd: string, args: string[], cwd: string) =>
 	spawnSync(cmd, args, { cwd, encoding: "utf8", env: { ...process.env, FOUNDRY_PROFILE: "default" }, maxBuffer: 64 * 1024 * 1024 })
 
+/**
+ * A keyed run starts from a clean tree at a named commit: `porcelain`, the output of `git status
+ * --porcelain`, lists nothing. Untracked files count, since a run can load them; ignored ones do not.
+ */
+export function treeCheck(porcelain: string, head: string): CheckResult {
+	const dirty = porcelain.split("\n").filter((l) => l.trim() !== "")
+	if (dirty.length === 0) return pass("tree", `clean at ${head}`)
+	return fail("tree", `${dirty.length} uncommitted paths at ${head}, the first ${dirty[0]?.slice(3)}`)
+}
+
+/** {@link treeCheck} on this repository, at its root. */
+export function checkTree(): CheckResult {
+	const status = run("git", ["status", "--porcelain"], ROOT)
+	const head = run("git", ["rev-parse", "HEAD"], ROOT)
+	if (status.status !== 0 || head.status !== 0) return fail("tree", `git status exited ${status.status}, git rev-parse ${head.status}`)
+	return treeCheck(status.stdout, head.stdout.trim())
+}
+
 /** A frozen install leaves `bun.lock` byte for byte as committed. */
 export function checkLockfile(): CheckResult {
 	const lock = join(ROOT, "bun.lock")
