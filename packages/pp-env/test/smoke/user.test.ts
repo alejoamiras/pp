@@ -3,10 +3,11 @@ import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { createWalletClient, getAddress, http, toHex } from "viem"
+import { MerkleService, PoseidonHashService } from "#ppv2/evm-sdk"
 import { privateKeyToAccount } from "viem/accounts"
 import { foundry } from "viem/chains"
 import { secretDerivationTypedData } from "../../src/client/derivation.ts"
-import { createPoolUser, snapshot } from "../../src/client/pool.ts"
+import { contracts, createPoolUser, snapshot } from "../../src/client/pool.ts"
 import { createProofService } from "../../src/client/prover.ts"
 import { poolClientOptions } from "../../src/client/spend.ts"
 import { checkout } from "../../src/env/checkout.ts"
@@ -106,10 +107,11 @@ test("a spend with no note to take rejects rather than throwing at the call", as
 	await expect(spend).rejects.toThrow(`no active ${addr(6)} note`)
 })
 
-test("note discovery starts at the deployment's block, never at genesis", async () => {
-	const deployBlock = 5_000_000n
+const deployBlock = 5_000_000n
+
+/** A JSON-RPC chain whose history below the deploy block is pruned, as public Sepolia nodes serve it; GETs are the ASP's. */
+function prunedChain() {
 	const reads: { address?: string; fromBlock?: string }[] = []
-	// A chain whose history below the deploy block is pruned, as public Sepolia nodes serve it; GETs are the ASP's.
 	const answer = (method: string, params: unknown[]) => {
 		if (method === "eth_chainId") return toHex(foundry.id)
 		if (method === "eth_blockNumber") return toHex(deployBlock + 100n)
@@ -132,15 +134,32 @@ test("note discovery starts at the deployment's block, never at genesis", async 
 			}
 		},
 	})
+	const rpcUrl = `http://127.0.0.1:${server.port}`
+	const base = configAt(rpcUrl)
+	const config = { ...base, deployment: { ...base.deployment, deployBlock }, circuitsDir: checkout().circuits }
+	const wallet = createWalletClient({ chain: foundry, transport: http(rpcUrl), account: privateKeyToAccount(anvilKey(USER_INDEX)) })
+	return { reads, config, wallet, stop: () => server.stop(true) }
+}
+
+test("note discovery starts at the deployment's block, never at genesis", async () => {
+	const chain = prunedChain()
 	try {
-		const rpcUrl = `http://127.0.0.1:${server.port}`
-		const base = configAt(rpcUrl)
-		const config = { ...base, deployment: { ...base.deployment, deployBlock }, circuitsDir: checkout().circuits }
-		const wallet = createWalletClient({ chain: foundry, transport: http(rpcUrl), account: privateKeyToAccount(anvilKey(USER_INDEX)) })
-		await (await createPoolUser(config, { wallet })).sync()
-		const vault = reads.filter((r) => r.address?.toLowerCase() === addr(1).toLowerCase())
+		await (await createPoolUser(chain.config, { wallet: chain.wallet })).sync()
+		const vault = chain.reads.filter((r) => r.address?.toLowerCase() === addr(1).toLowerCase())
 		expect(vault[0]?.fromBlock).toBe(toHex(deployBlock))
 	} finally {
-		await server.stop(true)
+		await chain.stop()
+	}
+})
+
+test("the SDK's rescan from block 0, taken when no ASP snapshot is served, starts at the deployment's block", async () => {
+	const chain = prunedChain()
+	try {
+		const merkleService = new MerkleService({ hashService: await PoseidonHashService.create() })
+		const { poolVaultInteractor } = contracts(chain.config, chain.wallet, merkleService)
+		await poolVaultInteractor.getDepositedEvents("0x0", toHex(deployBlock + 100n))
+		expect(chain.reads.map((r) => r.fromBlock)).toEqual([toHex(deployBlock)])
+	} finally {
+		await chain.stop()
 	}
 })

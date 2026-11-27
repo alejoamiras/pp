@@ -56,7 +56,12 @@ type SdkPublicClient = ConstructorParameters<typeof ViemRPCInteractor>[0]["publi
 type SdkWalletClient = ConstructorParameters<typeof ViemWalletInteractor>[0]["walletClient"]
 
 function contracts(pool: PoolConfig, publicClient: PublicClient, merkleService: MerkleService, wallet: LocalWallet | undefined) {
-	const rpcInteractor = new ViemRPCInteractor({ publicClient: publicClient as unknown as SdkPublicClient })
+	// Every log scan starts at the deploy block or later: with no usable ASP snapshot the SDK rescans
+	// from "0x0", which its vault adapter reads as block 0 rather than as "from deployment".
+	const rpcInteractor = new ViemRPCInteractor({
+		publicClient: publicClient as unknown as SdkPublicClient,
+		minFromBlock: pool.deployBlock,
+	})
 	const writes = wallet
 		? {
 				walletInteractor: new ViemWalletInteractor({
