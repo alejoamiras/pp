@@ -15,7 +15,9 @@ stack instead through `src/data/adapters/`: Ethereum through the injected wallet
 both chains, and the pool notes by label through pool-client, with one worker prover per page. Its
 bridge part, the Aztec balances, exits and the allow list are not wired yet: the pool view lists the
 notes and says why bridging is closed. It is served by `serve`, which also serves the pinned
-proving files from pp-env's fetched checkout; they are never part of a build.
+proving files from `PP_CIRCUITS_DIR`, the pool checkout's circuit builds that the stack's CLI
+prints; they are never part of a build. `serve` refuses to start unless that is an absolute
+directory.
 
 ## Scripts
 
@@ -28,7 +30,7 @@ Run from the repository root with `bun run --cwd apps/web <script>`.
 | `build:local` | The build the e2e kit runs, with the real wallet connector: against a stack manifest (`PP_STACK_MANIFEST`), or fixtures from a sandbox run's artifacts (`PP_SANDBOX_ARTIFACTS`) |
 | `check:stack-build` | Builds against a synthetic stack manifest and fails on any fixture or build-only module, or a bot account, in the output |
 | `preview` | Serves a fixture build with its security headers |
-| `serve` | Serves a build with its security headers and the pinned proving files at `/<cid>` |
+| `serve` | Serves a build with its security headers and the pinned proving files at `/<cid>`, read from `PP_CIRCUITS_DIR` |
 | `typecheck` | `tsc --noEmit` |
 | `test` | Unit and component tests (Vitest on Bun, jsdom for components) |
 | `test:headers` | Checks both servers' headers the way the e2e kit starts them |

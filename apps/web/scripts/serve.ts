@@ -2,11 +2,12 @@
  * The app's own server for a built `dist/`: every answer carries the build's `security-headers.json`
  * (a missing or invalid one stops it before it listens), unknown routes fall back to `index.html`, and
  * `/<cid>` serves the pinned proving files, so pool-client's artifact gateway is the page's own origin.
- * Those files are read only from pp-env's fetched checkout and checked against the pinned manifest
- * before the first byte leaves; they are GPL and never part of a build. Without a checkout their
- * routes answer 503 and everything else still works.
+ * Those files are read only from `PP_CIRCUITS_DIR` (the pool checkout's circuit builds, which the e2e
+ * kit takes from the local stack's CLI) and checked against the pinned manifest before the first byte
+ * leaves; they are GPL and never part of a build. It refuses to start unless that names an absolute
+ * directory; a directory without the files answers 503 on their routes and serves everything else.
  *
- * Usage: bun scripts/serve.ts [--outDir dist] [--host 127.0.0.1] --port <n> [--strictPort]
+ * Usage: PP_CIRCUITS_DIR=<dir> bun scripts/serve.ts [--outDir dist] [--host 127.0.0.1] --port <n> [--strictPort]
  * (the port is always strict: a taken port is an error, never another port).
  */
 import { readFileSync, statSync } from "node:fs"
@@ -14,7 +15,6 @@ import { createServer, type IncomingMessage } from "node:http"
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path"
 import { parseArgs } from "node:util"
 import { createArtifacts, PINNED_CIRCUITS } from "@pp/pool-client/circuits"
-import { checkout } from "../../../packages/pp-env/src/env/checkout.ts"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build/headers.ts"
 import { APP_ROOT } from "./proc"
 
@@ -69,11 +69,28 @@ function loadHeaders(outDir: string): SecurityHeaders {
 	}
 }
 
-/** Verified on first use and kept: the checkout is looked up only when a proving file is asked for. */
-let artifacts: ReturnType<typeof createArtifacts> | null = null
-async function pinnedReply(cid: string, entry: { circuit: string; get: Getter }): Promise<Reply> {
+/**
+ * `PP_CIRCUITS_DIR`, refused unless it names an absolute directory. There is no default: an empty or
+ * relative value resolves against the working directory, and so would serve whatever tree that is.
+ */
+function circuitsDir(value: string | undefined): string {
+	if (!value || !isAbsolute(value))
+		throw new Error(
+			`serve: PP_CIRCUITS_DIR must be the absolute path of the pool's circuit builds, got ${JSON.stringify(value ?? null)}`,
+		)
+	let directory = false
 	try {
-		artifacts ??= createArtifacts({ kind: "dir", path: checkout().circuits })
+		directory = statSync(value).isDirectory()
+	} catch {}
+	if (!directory) throw new Error(`serve: PP_CIRCUITS_DIR ${value} is not a directory`)
+	return value
+}
+
+/** Verified on first use and kept: the files are read only when a proving file is asked for. */
+let artifacts: ReturnType<typeof createArtifacts> | null = null
+async function pinnedReply(cid: string, entry: { circuit: string; get: Getter }, circuits: string): Promise<Reply> {
+	try {
+		artifacts ??= createArtifacts({ kind: "dir", path: circuits })
 		return { status: 200, type: "application/octet-stream", body: await artifacts[entry.get](entry.circuit) }
 	} catch (err) {
 		console.error(`serve: ${cid}: ${err instanceof Error ? err.message : String(err)}`)
@@ -105,11 +122,11 @@ const fileReply = (path: string): Reply => ({
 	body: readFileSync(path),
 })
 
-async function reply(req: IncomingMessage, outDir: string): Promise<Reply> {
+async function reply(req: IncomingMessage, outDir: string, circuits: string): Promise<Reply> {
 	if (req.method !== "GET" && req.method !== "HEAD") return text(405, "method not allowed")
 	const pathname = new URL(req.url ?? "/", "http://serve.invalid").pathname
 	const pinned = PINNED.get(pathname.slice(1))
-	if (pinned) return pinnedReply(pathname.slice(1), pinned)
+	if (pinned) return pinnedReply(pathname.slice(1), pinned, circuits)
 	const file = distFile(outDir, pathname)
 	if (file) return fileReply(file)
 	if ((req.headers.accept ?? "").includes("text/html")) return fileReply(join(outDir, "index.html"))
@@ -124,9 +141,10 @@ function main(): void {
 	const host = values.host ?? "127.0.0.1"
 	const port = Number(values.port)
 	if (!Number.isInteger(port) || port <= 0 || port > 65_535) throw new Error("serve: --port takes a port number")
+	const circuits = circuitsDir(process.env.PP_CIRCUITS_DIR)
 	const headers = loadHeaders(outDir)
 	const server = createServer((req, res) => {
-		void reply(req, outDir)
+		void reply(req, outDir, circuits)
 			.catch((): Reply => text(500, "internal error"))
 			.then((r) => {
 				res.writeHead(r.status, { ...headers, "Content-Type": r.type, "Content-Length": Buffer.byteLength(r.body) })
