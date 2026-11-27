@@ -125,7 +125,8 @@ describe("home", () => {
 		await screen.findByText("Allow list #129 being reset: wait for its next post")
 		await waitFor(() => labelRow(LABELS.active).getByText("Allow list being reset"))
 		const active = labelRow(LABELS.active)
-		expect(reasonOf(active.getByRole("button", { name: "Send privately" }))).toBe("Send and Unshield wait for the next allow-list post")
+		for (const name of ["Send privately", "Withdraw to Ethereum"])
+			expect(reasonOf(active.getByRole("button", { name }))).toBe("Send and Unshield wait for the next allow-list post")
 		expect(isDisabled(active.getByRole("button", { name: /Leave to Ethereum/ }))).toBe(false)
 		expect(active.queryByRole("button", { name: "Check again" })).toBeNull()
 		await app.user.click(screen.getByRole("button", { name: "Details" }))
@@ -136,7 +137,8 @@ describe("home", () => {
 		await app.user.click(screen.getByRole("button", { name: "Refresh" }))
 		await screen.findByText("Allow list #130 posted just now (chain time)")
 		await waitFor(() => labelRow(LABELS.active).getByText("Active"))
-		expect(isDisabled(labelRow(LABELS.active).getByRole("button", { name: "Send privately" }))).toBe(false)
+		for (const name of ["Send privately", "Withdraw to Ethereum"])
+			expect(isDisabled(labelRow(LABELS.active).getByRole("button", { name }))).toBe(false)
 	})
 
 	test("a list failure the adapter holds goes before a label's earlier Active, so its spends close", async () => {
@@ -156,7 +158,8 @@ describe("home", () => {
 		held = true
 		await app.user.click(screen.getByRole("button", { name: "Refresh" }))
 		await waitFor(() => labelRow(LABELS.active).getByText("Allow list does not match the chain"))
-		expect(isDisabled(labelRow(LABELS.active).getByRole("button", { name: "Send privately" }))).toBe(true)
+		for (const name of ["Send privately", "Unshield", "Withdraw to Ethereum"])
+			expect(isDisabled(labelRow(LABELS.active).getByRole("button", { name }))).toBe(true)
 	})
 
 	test("a list that failed its check closes the spends with its own words; Check again waits out its backoff, and Cancel stops a check", async () => {

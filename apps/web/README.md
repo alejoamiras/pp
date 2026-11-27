@@ -75,9 +75,9 @@ as far as a check needs:
   page shows its progress and can cancel it, which ends the worker. Such a failure closes a label the
   same list showed active before, once that label's own check answers.
 - A record with no list, before the first post or once the registry's poster is replaced (which
-  clears it until the next post), downloads nothing. Its labels read as not checkable, Send and
-  Unshield are refused as on a stale list (leaving to Ethereum never reads the list), and the next
-  post is read on the next refresh.
+  clears it until the next post), downloads nothing. Its labels read as not checkable; a private
+  send, an unshield and a withdrawal from a label are refused as on a stale list (a ragequit never
+  reads the list); and the next post is read on the next refresh.
 
 A testnet build (`build --mode testnet` with `PP_DEPLOYMENT`, a testnet deployment file, into
 `dist-testnet/`) targets the own pool on Sepolia and the public Aztec testnet. Its ASP and bot are
