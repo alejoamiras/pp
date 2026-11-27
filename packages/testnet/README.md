@@ -33,9 +33,13 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
   `deploy-pool`'s Forge child gets a key in its environment.
 - No value is ever formatted into output; every line a command prints is also scrubbed of the values it
   loaded. Every command refuses to run while `SEED` is set, which makes Aztec's randomness predictable.
-- One address is funded by hand: the L1 deployer. `fund` tops each other L1 address up, once, to the summed
+- One address is funded by hand: the L1 deployer. `fund` tops each other L1 address up to the summed
   gas budgets of the roles it holds (`src/funding.ts`) at twice the fee estimate, never below 1 gwei;
   `fund --quote` reads no key and prints what the deployer must hold, the top-ups' own gas included.
+- The budgets are Prague gas, which the rehearsals check, times live Sepolia's measured cost over Prague
+  for the role's kind of transaction: 7.67 for creations, 5.01 for fresh storage. Sepolia's fork since
+  2026-10-06 reprices state creation, which a rehearsal on anvil 1.7.1 cannot show; a role still short
+  fails at the node's gas estimate, before it sends.
 - `DEMO_OWNER_KEY` and `DEMO_SENDER_KEY` are the owner's two hand-test accounts, `expected.demoOwner` and
   `expected.demoSender`: the demo owner holds notes, the demo sender sends the bridge transactions. The
   owner reads both values from the key file in their own terminal and imports them into their

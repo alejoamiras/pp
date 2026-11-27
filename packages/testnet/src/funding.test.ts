@@ -2,18 +2,25 @@ import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import type { Address, Hex } from "viem"
 import { describe, expect, it } from "vitest"
-import { assertTopUp, FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, needOf, recipientsOf, TRANSFER_GAS } from "./funding"
+import { assertTopUp, FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, liveGasOf, needOf, recipientsOf, TRANSFER_GAS } from "./funding"
 import { parseDeployment } from "./schema"
 
 const a = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address
 const DEPLOYER = a(9)
 
 describe("fundingPlan", () => {
+	it("prices a role at its Prague budget times the live ratio measured for its kind of transaction", () => {
+		expect(liveGasOf("poolDeployer")).toBe((FUNDING_GAS.poolDeployer * 767n) / 100n)
+		expect(liveGasOf("l1Deployer")).toBe((FUNDING_GAS.l1Deployer * 767n) / 100n)
+		expect(liveGasOf("guardian")).toBe((FUNDING_GAS.guardian * 501n) / 100n)
+		expect(liveGasOf("canaryOwner")).toBe((FUNDING_GAS.canaryOwner * 501n) / 100n)
+	})
+
 	it("tops each key up to its budget at twice the fee, floored at 1 gwei, and counts the deployer's own budget in the total", () => {
 		const fee = 3n
 		const need = needOf("guardian", fee)
-		expect(need).toBe(FUNDING_GAS.guardian * FEE_FLOOR_WEI * 2n)
-		expect(needOf("guardian", 5n * FEE_FLOOR_WEI)).toBe(FUNDING_GAS.guardian * 10n * FEE_FLOOR_WEI)
+		expect(need).toBe(liveGasOf("guardian") * FEE_FLOOR_WEI * 2n)
+		expect(needOf("guardian", 5n * FEE_FLOOR_WEI)).toBe(liveGasOf("guardian") * 10n * FEE_FLOOR_WEI)
 		const plan = fundingPlan(
 			DEPLOYER,
 			[

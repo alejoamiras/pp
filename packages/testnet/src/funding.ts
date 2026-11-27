@@ -3,8 +3,9 @@ import { GuardError } from "./errors"
 import type { TestnetDeployment } from "./schema"
 
 /**
- * Gas each L1 key spends over one target's runs, deploy to the last canary. The rehearsal fails when a
- * key's measured spend exceeds its budget, so these are upper bounds checked on every rehearsal.
+ * Gas each L1 key spends over one target's runs, deploy to the last canary, at Prague prices: the
+ * rehearsals run on anvil and fail when a key's measured spend exceeds its budget, so these are upper
+ * bounds checked on every rehearsal. `fund` scales them by {@link LIVE_RATIO_PERCENT}.
  */
 export const FUNDING_GAS = {
 	l1Deployer: 8_000_000n,
@@ -20,6 +21,29 @@ export const FUNDING_GAS = {
 } as const satisfies Record<string, bigint>
 
 export type FundedRole = keyof typeof FUNDING_GAS
+
+/**
+ * Live Sepolia's gas over Prague's, in percent, for each kind of transaction a role sends, from the same
+ * `eth_estimateGas` probes on the chain and on anvil 1.7.1 at `--hardfork prague` (2026-11-27): a
+ * creation costs up to 7.67 times as much (a 24 KB runtime), a fresh storage slot 5.00 times. Sepolia's
+ * fork since 2026-10-06 reprices state creation, which no rehearsal on this Foundry's anvil can show.
+ */
+export const LIVE_RATIO_PERCENT = { creation: 767n, freshSlot: 501n } as const
+
+/** The kind of transaction that dominates each role's spend. */
+const KIND_OF: Record<FundedRole, keyof typeof LIVE_RATIO_PERCENT> = {
+	l1Deployer: "creation",
+	poolDeployer: "creation",
+	aspPostman: "freshSlot",
+	guardian: "freshSlot",
+	canaryOwner: "freshSlot",
+	canarySender: "freshSlot",
+	demoSender: "freshSlot",
+	demoOwner: "freshSlot",
+}
+
+/** A role's budget in live gas: its Prague budget times its kind's live ratio, rounded up. */
+export const liveGasOf = (role: FundedRole): bigint => (FUNDING_GAS[role] * LIVE_RATIO_PERCENT[KIND_OF[role]] + 99n) / 100n
 
 /** Each budget is priced at twice the fee estimate when funded, so a fee spike mid-run still clears. */
 export const FEE_MARGIN = 2n
@@ -49,7 +73,7 @@ export function recipientsOf(e: NonNullable<TestnetDeployment["expected"]>): Rec
 }
 
 export const needOf = (role: FundedRole, maxFeePerGas: bigint): bigint =>
-	FUNDING_GAS[role] * (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN
+	liveGasOf(role) * (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN
 
 /** One top-up per address: roles that share an address share its balance, so their needs add up. */
 export type Send = { roles: Recipient["role"][]; address: Address; balance: bigint; need: bigint; amount: bigint }
