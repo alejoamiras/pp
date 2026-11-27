@@ -1,6 +1,6 @@
 /** Before a browser opens: the run's network must be on the local chain, 31337. */
 import { readFileSync } from "node:fs"
-import { parseStackManifest } from "@pp/bridge-core"
+import { parseStackManifest } from "@pp/bridge-core/stack-manifest"
 import { readHandle } from "@pp/bridge-core/sandbox"
 import { runEnv, stackRun } from "./env"
 

@@ -4,7 +4,7 @@
  * its own heartbeat).
  */
 import { readFileSync } from "node:fs"
-import { parseStackManifest } from "@pp/bridge-core"
+import { parseStackManifest } from "@pp/bridge-core/stack-manifest"
 import { anvilKey, connectL2, createActor, freshActorSecret, l2CtxFor } from "@pp/bridge-core/sandbox"
 import type { Hex } from "viem"
 import { type RunEnv, stackRun } from "../env"

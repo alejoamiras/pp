@@ -13,7 +13,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { dirname, join } from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
-import { parseStackManifest, type StackManifest } from "@pp/bridge-core"
+import { parseStackManifest, type StackManifest } from "@pp/bridge-core/stack-manifest"
 import { ANVIL_ACCOUNTS, anvilKey } from "@pp/bridge-core/sandbox"
 import { endGroup, groupAlive, groupMembers } from "@pp/run-isolation/process-group"
 import { getAddress } from "viem"
