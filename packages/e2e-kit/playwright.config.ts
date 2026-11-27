@@ -1,11 +1,15 @@
+import { fileURLToPath } from "node:url"
 import { defineConfig, devices } from "@playwright/test"
 import { runEnv, stackRun } from "./env"
 import { PROFILES } from "./test-wallet/profile"
 
 const env = runEnv()
-const here = new URL(".", import.meta.url).pathname
+const here = fileURLToPath(new URL(".", import.meta.url))
 /** The web app under test; `agent.sh` builds it and runs this config only once it exists. */
-const appRoot = new URL("../../apps/web/", import.meta.url).pathname
+const appRoot = fileURLToPath(new URL("../../apps/web/", import.meta.url))
+
+/** POSIX single quotes: Playwright runs each webServer command through a shell, and a path may hold spaces, quotes or `$`. */
+const q = (path: string) => `'${path.replaceAll("'", `'\\''`)}'`
 
 /**
  * A fixture-world build is served by Vite's preview; a stack build by the app's own server, which also
@@ -14,11 +18,11 @@ const appRoot = new URL("../../apps/web/", import.meta.url).pathname
 const appServer: { command: string; env: Record<string, string> } =
 	env.mode === "stack"
 		? {
-				command: `bun run --cwd ${appRoot} serve --outDir ${env.appDist} ${hostFlags(env.appPort)}`,
+				command: `bun run --cwd ${q(appRoot)} serve --outDir ${q(env.appDist)} ${hostFlags(env.appPort)}`,
 				env: { PP_CIRCUITS_DIR: stackRun(env).circuitsDir ?? "" },
 			}
 		: {
-				command: `bun run --cwd ${appRoot} vite preview --outDir ${env.appDist} ${hostFlags(env.appPort)}`,
+				command: `bun run --cwd ${q(appRoot)} vite preview --outDir ${q(env.appDist)} ${hostFlags(env.appPort)}`,
 				env: { PP_SANDBOX_ARTIFACTS: env.artifactsDir },
 			}
 
@@ -66,7 +70,7 @@ export default defineConfig({
 		},
 		// The one wallet build, served once per profile so each has its own origin.
 		...PROFILES.map((profile) => ({
-			command: `bun run --cwd ${here} vite preview --config test-wallet/vite.config.mts --outDir ${env.testWalletDist} ${hostFlags(new URL(env.testWalletOrigins[profile]).port)}`,
+			command: `bun run --cwd ${q(here)} vite preview --config test-wallet/vite.config.mts --outDir ${q(env.testWalletDist)} ${hostFlags(new URL(env.testWalletOrigins[profile]).port)}`,
 			url: `${env.testWalletOrigins[profile]}/`,
 			reuseExistingServer: false,
 			timeout: 60_000,

@@ -29,7 +29,7 @@ bun run --cwd packages/e2e-kit test:browser reap               # stop networks t
 
 State lives under `.e2e-state/<run>/` (gitignored), or `PP_E2E_STATE_DIR` when set: ports, the
 network's artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the network and prints the line that reattaches to it
-(`PP_E2E_ATTACH=<state dir>`, with `PP_E2E_REBUILD=1` to rebuild).
+(`PP_E2E_ATTACH=<state dir>`, with `PP_E2E_REBUILD=1` to rebuild); a network that failed to boot is never kept.
 
 ## Stack mode
 
@@ -44,7 +44,7 @@ group and its leader's start time. `stack.ts down` sends SIGTERM to that group o
 leader still has that start time and runs the CLI, and waits up to three minutes: the CLI tears
 down every group it started itself, which SIGKILL would orphan. A live group led by anything else
 is left alone, and so is its record. `reap` runs `down` for every stack state under `.e2e-state/`
-and under `PP_E2E_STATE_DIR`.
+and under `PP_E2E_STATE_DIR`; a state's ports go back to the registry only once its `stack.pid` is gone.
 
 On the stack, `Network.l1(0)` is the seeded pool user and `l1(1)` its sender, the stack runs its own
 block heartbeat, and actors are sponsor-deployed through bridge-core's `connectL2` and

@@ -24,10 +24,20 @@ KIT_DIR=$(pwd)
 REPO_DIR=$(cd ../.. && pwd)
 APP_DIR="$REPO_DIR/apps/web"
 MODE="${PP_E2E_MODE:-sandbox}"
+# A boot that fails clears this: nothing it left is worth keeping.
+KEEP="${PP_E2E_KEEP:-}"
 case "$MODE" in
   sandbox|stack) ;;
   *) echo "[e2e] FATAL: PP_E2E_MODE is '$MODE'; use sandbox or stack" >&2; exit 2 ;;
 esac
+
+# A state dir's browser ports go back only once no stack.pid names a stack it may still own: an
+# attach reads them from ports.json, and the `reap` that stops that stack releases them then.
+release_ports() {
+  [ -f "$1/ports.json" ] || return 0
+  if [ -f "$1/stack.pid" ]; then echo "[e2e] ports kept: $1/stack.pid still names a stack"; return 0; fi
+  bun scripts/e2e/resolve-ports.ts --release "$1" 2>/dev/null || true
+}
 
 # Orphan recovery by OWNERSHIP: only the pgids this checkout's runs wrote to their pid files — never
 # a name match, which would take down another agent's network on the same host.
@@ -49,9 +59,7 @@ if [ "${1:-}" = "reap" ]; then
     fi
     rm -f "$pidfile"
     # The run's browser ports: ports.json names the owner its rows were claimed under.
-    if [ -f "$statedir/ports.json" ]; then
-      bun scripts/e2e/resolve-ports.ts --release "$statedir" 2>/dev/null || true
-    fi
+    release_ports "$statedir"
   done
   # Stacks: `stack.ts down` stops a group only while it still leads the CLI that state dir started.
   for pidfile in "$KIT_DIR"/.e2e-state/*/stack.pid ${PP_E2E_STATE_DIR:+"$PP_E2E_STATE_DIR/stack.pid"}; do
@@ -59,9 +67,7 @@ if [ "${1:-}" = "reap" ]; then
     found=1
     statedir=$(dirname "$pidfile")
     bun scripts/e2e/stack.ts down "$statedir" || true
-    if [ -f "$statedir/ports.json" ]; then
-      bun scripts/e2e/resolve-ports.ts --release "$statedir" 2>/dev/null || true
-    fi
+    release_ports "$statedir"
   done
   [ "$found" = 1 ] || echo "[e2e] nothing to reap"
   exit 0
@@ -82,7 +88,7 @@ log() { echo "[e2e] $*"; }
 # shellcheck disable=SC2317,SC2329  # invoked by the EXIT trap; shellcheck before 0.11 calls it SC2317
 stop_stack() {
   [ "$STACK_BOOTED" = 1 ] || return 0
-  if [ "${PP_E2E_KEEP:-}" = "1" ]; then
+  if [ "$KEEP" = "1" ]; then
     log "stack kept — attach with: PP_E2E_MODE=stack PP_E2E_ATTACH=$STATE_DIR bun run --cwd packages/e2e-kit test:browser -- <args>; stop with: bun run --cwd packages/e2e-kit test:browser reap (with PP_E2E_STATE_DIR=$STATE_DIR)"
     return 0
   fi
@@ -93,7 +99,7 @@ stop_stack() {
 reap() {
   stop_stack
   if [ -n "$SANDBOX_PID" ] && kill -0 "$SANDBOX_PID" 2>/dev/null; then
-    if [ "${PP_E2E_KEEP:-}" = "1" ]; then
+    if [ "$KEEP" = "1" ]; then
       log "sandbox kept (pgid $SANDBOX_PID) — attach with: PP_E2E_ATTACH=$STATE_DIR bun run --cwd packages/e2e-kit test:browser -- <args>; stop with: kill -TERM -- -$SANDBOX_PID"
       return
     fi
@@ -104,11 +110,9 @@ reap() {
   fi
   # A pid file that outlives its group would let a later `reap` mistake a recycled pgid for ours —
   # ours alone: an attached run never booted the sandbox it used and leaves the keeper's file be.
-  if [ -n "$SANDBOX_PID" ] && [ "${PP_E2E_KEEP:-}" != "1" ]; then rm -f "$STATE_DIR/sandbox.pid"; fi
+  if [ -n "$SANDBOX_PID" ] && [ "$KEEP" != "1" ]; then rm -f "$STATE_DIR/sandbox.pid"; fi
   # The browser ports' registry rows belong to this run alone; a kept run keeps them claimed.
-  if [ "${PP_E2E_KEEP:-}" != "1" ] && [ -z "${PP_E2E_ATTACH:-}" ] && [ -f "$STATE_DIR/ports.json" ]; then
-    bun scripts/e2e/resolve-ports.ts --release "$STATE_DIR" 2>/dev/null || true
-  fi
+  if [ "$KEEP" != "1" ] && [ -z "${PP_E2E_ATTACH:-}" ]; then release_ports "$STATE_DIR"; fi
 }
 trap reap EXIT
 
@@ -119,7 +123,7 @@ boot_sandbox() {
   echo "$SANDBOX_PID" >"$STATE_DIR/sandbox.pid"
   for _ in $(seq 1 600); do
     if [ -f "$ARTIFACTS/handle.json" ] && grep -q "sandbox up" "$LOG"; then break; fi
-    if ! kill -0 "$SANDBOX_PID" 2>/dev/null; then log "FATAL: the sandbox died while booting — see $LOG"; tail -40 "$LOG" >&2; exit 2; fi
+    if ! kill -0 "$SANDBOX_PID" 2>/dev/null; then KEEP=0; log "FATAL: the sandbox died while booting — see $LOG"; tail -40 "$LOG" >&2; exit 2; fi
     sleep 2
   done
   [ -f "$ARTIFACTS/handle.json" ] || { log "FATAL: sandbox did not come up in 20 min"; exit 2; }
@@ -138,7 +142,8 @@ boot_stack() {
   log "booting the local stack (log: $STATE_DIR/stack.log)"
   # Set first: an interrupt mid-boot must still stop the group `up` has already started.
   STACK_BOOTED=1
-  bun scripts/e2e/stack.ts up "$STATE_DIR" || { log "FATAL: the local stack did not come up — see $STATE_DIR/stack.log"; tail -40 "$STATE_DIR/stack.log" >&2; exit 2; }
+  # A failed `up` has ended its group or left the record `down` retries; either way nothing is kept.
+  bun scripts/e2e/stack.ts up "$STATE_DIR" || { KEEP=0; log "FATAL: the local stack did not come up — see $STATE_DIR/stack.log"; tail -40 "$STATE_DIR/stack.log" >&2; exit 2; }
 }
 
 build_wallet() {
