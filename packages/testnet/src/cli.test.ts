@@ -104,6 +104,8 @@ function deploymentFile(home: string, sections: { pool: boolean }, expected: Rec
 			poolDeployer: addr(6),
 			canaryOwner: addr(7),
 			canarySender: addr(8),
+			demoOwner: addr(24),
+			demoSender: addr(25),
 			birthIntake: word(9),
 			tokenClassId: word(10),
 			amounts: { debit: "100", note: "100", bridge: "50" },
@@ -157,13 +159,21 @@ describe("keys", () => {
 			.map((l) => JSON.parse(l))
 		expect(events.map((e) => [e.name, e.created])).toEqual(KEY_NAMES.map((k) => [k.name, true]))
 
-		writeFileSync(path, `${lines.filter((l) => !l.startsWith("GUARDIAN_KEY=")).join("\n")}\n`)
+		// A file from before the demo accounts gains them at its end, every earlier line untouched.
+		const older = lines.filter((l) => !l.startsWith("DEMO_"))
+		writeFileSync(path, `${older.join("\n")}\n`)
 		const second = await cli("keys", [], home)
 		expect(second.code).toBe(0)
 		const after = readFileSync(path, "utf8").trim().split("\n")
-		expect(after.slice(0, -1)).toEqual(lines.filter((l) => !l.startsWith("GUARDIAN_KEY=")))
-		expect(after.at(-1)?.startsWith("GUARDIAN_KEY=")).toBe(true)
-		expect(second.out.split("\n").filter((l) => l.includes('"created":true'))).toHaveLength(1)
+		expect(after.slice(0, -2)).toEqual(older)
+		expect(after.slice(-2).map((l) => l.slice(0, l.indexOf("=")))).toEqual(["DEMO_OWNER_KEY", "DEMO_SENDER_KEY"])
+		expect(
+			leaks(
+				second.out,
+				after.map((l) => l.slice(l.indexOf("=") + 1)),
+			),
+		).toEqual([])
+		expect(second.out.split("\n").filter((l) => l.includes('"created":true'))).toHaveLength(2)
 
 		chmodSync(dirname(path), 0o750)
 		const loose = await cli("keys", [], home)

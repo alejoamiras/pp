@@ -20,6 +20,8 @@ export const KEY_NAMES = [
 	{ name: "GUARDIAN_KEY", kind: "l1" },
 	{ name: "CANARY_OWNER_KEY", kind: "l1" },
 	{ name: "CANARY_SENDER_KEY", kind: "l1" },
+	{ name: "DEMO_OWNER_KEY", kind: "l1" },
+	{ name: "DEMO_SENDER_KEY", kind: "l1" },
 	{ name: "L2_DEPLOYER_SECRET", kind: "l2" },
 	{ name: "BOT_POSTER_SECRET", kind: "l2" },
 	{ name: "BOT_INTAKE_SECRET", kind: "l2" },

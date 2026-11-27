@@ -28,11 +28,16 @@ const ANVIL_MNEMONIC = "test test test test test test test test test test test j
  * Anvil indices: 0 publishes for the node and 12 to 15 are the stack's actors, so this part signs with 2 to 4.
  * 13, the stack's seeded user with two approved 100-unit notes, is the canary owner; 14 deployed the
  * stack's pool and holds its postman role, so `expected` names it for both and nothing here signs with it.
+ * The demo accounts are named here, never signed with: 5 and 6, which neither the stack nor the suites
+ * that share its anvil (9 to 12) use.
  */
-const L1_INDEX: Record<string, number> = {
+type L1KeyName = Extract<(typeof KEY_NAMES)[number], { kind: "l1" }>["name"]
+const L1_INDEX: Record<L1KeyName, number> = {
 	L1_DEPLOYER_KEY: 2,
 	GUARDIAN_KEY: 3,
 	CANARY_SENDER_KEY: 4,
+	DEMO_OWNER_KEY: 5,
+	DEMO_SENDER_KEY: 6,
 	ASP_POSTMAN_KEY: 14,
 	POOL_DEPLOYER_KEY: 14,
 	CANARY_OWNER_KEY: 13,
@@ -52,7 +57,7 @@ const anvilKey = (index: number): Hex => {
 /** Every key a CLI reads in this part: anvil's for L1, fresh for L2; passed as `PP_REHEARSE_<name>` only. */
 function rehearsalKeys(): Record<string, Hex> {
 	return Object.fromEntries(
-		KEY_NAMES.map(({ name, kind }) => [name, kind === "l1" ? anvilKey(L1_INDEX[name] as number) : generateKey("l2")]),
+		KEY_NAMES.map(({ name, kind }) => [name, kind === "l1" ? anvilKey(L1_INDEX[name as L1KeyName]) : generateKey("l2")]),
 	)
 }
 

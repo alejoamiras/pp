@@ -24,6 +24,8 @@ const ROLE_KEY: Record<FundedRole, string> = {
 	guardian: "GUARDIAN_KEY",
 	canaryOwner: "CANARY_OWNER_KEY",
 	canarySender: "CANARY_SENDER_KEY",
+	demoOwner: "DEMO_OWNER_KEY",
+	demoSender: "DEMO_SENDER_KEY",
 }
 
 /** Each funded role's gas, from `addresses` keyed by key name; any over its budget fails the rehearsal. */

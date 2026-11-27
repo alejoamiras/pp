@@ -50,6 +50,8 @@ export function expectedOf(a: Record<string, string>, amounts: Amounts): NonNull
 		poolDeployer: at("POOL_DEPLOYER_KEY"),
 		canaryOwner: at("CANARY_OWNER_KEY"),
 		canarySender: at("CANARY_SENDER_KEY"),
+		...(a.DEMO_OWNER_KEY !== undefined && { demoOwner: at("DEMO_OWNER_KEY") }),
+		...(a.DEMO_SENDER_KEY !== undefined && { demoSender: at("DEMO_SENDER_KEY") }),
 		birthIntake: at("BOT_INTAKE_SECRET"),
 		tokenClassId: committedClassIds().labelledToken as `0x${string}`,
 		amounts,
