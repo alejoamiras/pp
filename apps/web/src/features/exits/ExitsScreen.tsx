@@ -31,7 +31,7 @@ function useCollect(view: ExitView) {
 		const { account, chainId, demo } = live.context()
 		if (account === null) return setFailed("NO_SENDER")
 		if (chainId !== source.deployment.chainId) return setFailed("CHAIN_MISMATCH")
-		const on = bindL1Send(live.context, account, chainId)
+		const on = bindL1Send(live.context, account, chainId, demo)
 		setFailed(null)
 		await collecting.run(key, async () => {
 			try {

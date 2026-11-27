@@ -14,6 +14,8 @@ export interface SendContext {
 	readonly chainId: number | null
 	readonly epoch: number | null
 	readonly aztecAccounts: readonly AztecAddress[]
+	/** The page's choice of the local demo's dev account as the Ethereum sender; absent reads as not chosen. */
+	readonly demo?: boolean
 }
 
 const changed = () => new BridgeFailure("CONTEXT_CHANGED")
@@ -35,19 +37,23 @@ export function bindAztecSend(live: () => SendContext, from: AztecAddress): Azte
 }
 
 /**
- * An Ethereum send from `sender` on `chainId`. `refused` tells a failure the handoff caused, which
- * sent nothing, from one the wallet or the chain reported.
+ * An Ethereum send from `sender` on `chainId`, through the demo's dev account only when `demo`.
+ * `refused` tells a failure the handoff caused, which sent nothing, from one the wallet or the chain
+ * reported. A change of the demo choice refuses too: the demo sender's address can also be one the
+ * wallet holds, and only the choice decides which of them signs.
  */
 export function bindL1Send(
 	live: () => SendContext,
 	sender: Address,
 	chainId: number,
+	demo = false,
 ): Pick<SubmitHooks, "handoff"> & { refused(): boolean } {
 	let refused = false
 	return {
 		handoff() {
 			const now = live()
-			if (now.account !== null && isAddressEqual(now.account, sender) && now.chainId === chainId) return
+			const same = now.account !== null && isAddressEqual(now.account, sender) && now.chainId === chainId
+			if (same && (now.demo ?? false) === demo) return
 			refused = true
 			throw changed()
 		},

@@ -22,10 +22,11 @@ describe("a send's binding", () => {
 		}
 	})
 
-	test("an Ethereum send's handoff refuses once its sender or chain is no longer selected, and says it refused", () => {
-		for (const later of [{ account: OTHER }, { account: null }, { chainId: 1 }]) {
-			let ctx: SendContext = { account: SENDER, chainId: 31337, epoch: null, aztecAccounts: [] }
-			const on = bindL1Send(() => ctx, SENDER, 31337)
+	test.each([false, true])("an Ethereum send's handoff refuses once its sender, chain or demo choice changes (demo %s)", (demo) => {
+		for (const later of [{ account: OTHER }, { account: null }, { chainId: 1 }, { demo: !demo }]) {
+			// The wallet can select the demo's own address: the choice alone decides who signs.
+			let ctx: SendContext = { account: SENDER, chainId: 31337, epoch: null, aztecAccounts: [], demo }
+			const on = bindL1Send(() => ctx, SENDER, 31337, demo)
 			on.handoff()
 			expect(on.refused()).toBe(false)
 			ctx = { ...ctx, ...later }
