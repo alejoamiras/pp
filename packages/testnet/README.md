@@ -79,6 +79,13 @@ owner and one for the demo owner, `seed`, `seed --demo`, `deploy`, `verify-deplo
 `canary`, `pause`. Then the owner imports the two demo keys into their wallet, from the key file, and
 hand-tests.
 
+The key file is the only place a key rests on disk. `deploy`'s L2 deployer, `bot` and `canary`'s fresh
+account keep their wallet stores in RAM, as `/dev/shm/pp-<label>-…` directories (0700), and remove them on
+exit or on a signal. `deploy`'s run directory keeps only its journal (0600): addresses, the hub's salt and
+hashes. A run killed outright (SIGKILL, out of memory, a crash) leaves its store in RAM until the next store
+of that label is made, which removes those whose owner is gone, or the host reboots. After such a run,
+`ls -ld /dev/shm/pp-*` and remove each store whose name carries a pid no longer running.
+
 `--rehearse <stack manifest>` runs a command against the local stack, at exactly that manifest's L1 and
 node URLs, with sandbox keys from `PP_REHEARSE_<name>` (L1 keys must be anvil's) and never opens a key file.
 `--rehearse-fork <url>` runs an L1 command against a loopback anvil fork of Sepolia, once the URL answers as
