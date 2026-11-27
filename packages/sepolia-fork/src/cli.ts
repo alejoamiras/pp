@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-// `run [--target <name>] [--require-rpc] [--prepare-only]`: the fork suite; --prepare-only stops after the
-// fixture. `pins <block> [--target <name>]`: every binding as read at <block>, for a pin refresh.
-// The endpoint comes only from SEPOLIA_RPC_URL; unset, `run` skips unless --require-rpc makes that a failure.
+// `run` is the fork suite, which --prepare-only stops after the fixture; `pins` prints every binding at <block>
+// for a pin refresh. The endpoint comes only from SEPOLIA_RPC_URL; unset, `run` skips unless --require-rpc
+// makes that a failure. Usage errors never echo an argument, which may be a mistyped endpoint.
 import { parseArgs } from "node:util"
 import { DEFAULT_TARGET, isTargetName, type Pins, TARGETS } from "./pins.ts"
 import { enroll, PreflightError } from "./preflight.ts"
@@ -28,7 +28,7 @@ type Values = ReturnType<typeof parseArgs<{ options: typeof OPTIONS; allowPositi
 
 function command(pins: Pins, name: string | undefined, rest: string[], values: Values): Command | string {
 	if (name === "run") {
-		if (rest.length > 0) return `run takes no arguments, got ${rest.join(" ")}`
+		if (rest.length > 0) return "run takes no arguments"
 		return { command: name, pins, requireRpc: values["require-rpc"] === true, prepareOnly: values["prepare-only"] === true }
 	}
 	if (name === "pins") {
@@ -37,7 +37,7 @@ function command(pins: Pins, name: string | undefined, rest: string[], values: V
 		if (block === undefined || extra.length > 0 || !/^\d+$/.test(block)) return "pins takes one block number"
 		return { command: name, pins, block: BigInt(block) }
 	}
-	return `unknown command ${JSON.stringify(name ?? "")}`
+	return "the command is run or pins"
 }
 
 /** The command line, or the reason it is not one; checked before the endpoint, so a typo never reads as a skip. */
@@ -45,7 +45,7 @@ function parse(argv: string[]): Command | string {
 	try {
 		const { values, positionals } = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: true })
 		const target = values.target ?? DEFAULT_TARGET
-		if (!isTargetName(target)) return `unknown target ${JSON.stringify(target)}; known: ${Object.keys(TARGETS).join(", ")}`
+		if (!isTargetName(target)) return `unknown target; known: ${Object.keys(TARGETS).join(", ")}`
 		const [name, ...rest] = positionals
 		return command(TARGETS[target], name, rest, values)
 	} catch (err) {
@@ -55,8 +55,9 @@ function parse(argv: string[]): Command | string {
 
 async function printPins(endpoint: string, pins: Pins, block: bigint): Promise<void> {
 	const rpc = httpRpc(endpoint, { retries: ENDPOINT_RETRIES })
-	const header = await rpc<{ hash: string }>("eth_getBlockByNumber", [`0x${block.toString(16)}`, false])
 	const bindings = await enroll(rpc, pins, block)
+	const header = await rpc<{ hash: string; number: string } | null>("eth_getBlockByNumber", [`0x${block.toString(16)}`, false])
+	if (header === null || BigInt(header.number) !== block) throw new Error(`the endpoint returned no header for block ${block}`)
 	console.log(
 		JSON.stringify(
 			{ block: { number: String(block), hash: header.hash }, bindings },

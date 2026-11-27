@@ -1,6 +1,4 @@
-// The runtime code of a pool's four contracts at one block. The operator's pool is upgradeable and runs an
-// unpublished build, so compatibility holds only for these hashes and any upgrade shows as a named mismatch.
-// Loads nothing but viem: a package that only checks code imports it without the pool's clients.
+// Loads nothing but viem, so a package that only checks code imports it without the pool's clients.
 import { type Address, getAddress, type Hex, keccak256, slice } from "viem"
 
 export const EIP1967_IMPLEMENTATION_SLOT: Hex = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"

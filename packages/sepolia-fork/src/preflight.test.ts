@@ -19,6 +19,9 @@ type Options = {
 	blockHash?: Hex
 	pruned?: boolean
 	wiring?: Partial<Record<"keystore" | "aspRegistry" | "poolVault", Address>>
+	/** Calls the chain no longer answers, as `<to>:<signature>`. */
+	dropped?: string[]
+	proxyCode?: Partial<Record<PoolContract, Hex>>
 }
 
 /** A chain whose answers derive from `b`, and the pins that match it exactly. */
@@ -55,6 +58,7 @@ function chain(b: Chain, o: Options = {}) {
 		[`${b.rollup}:getOutbox()`]: word(b.outbox),
 		[`${b.rollup}:getVersion()`]: numberToHex(b.rollupVersion, { size: 32 }),
 	}
+	for (const k of o.dropped ?? []) delete calls[k]
 	const bySelector = new Map(
 		Object.entries(calls).map(([k, v]) => [`${k.split(":")[0]!.toLowerCase()}:${toFunctionSelector(k.split(":")[1]!)}`, v]),
 	)
@@ -70,19 +74,24 @@ function chain(b: Chain, o: Options = {}) {
 		if (hit === undefined) throw new Error(`unexpected call ${to} ${data}`)
 		return hit
 	}
+	const proxyCode = new Map(Object.entries(o.proxyCode ?? {}).map(([c, code]) => [getAddress(pool[c as PoolContract]), code]))
+	const codeAt = (a: Address): Hex => (a === addr(0) ? "0x" : (proxyCode.get(a) ?? codeOf(a)))
+	/** The block tag of every state read, so a test can tell they all name the block under check. */
+	const tags: unknown[] = []
 	const handlers: Record<string, (params: unknown[]) => unknown> = {
 		eth_chainId: () => numberToHex(o.chainId ?? 11_155_111),
 		eth_getBlockByNumber: () => ({ hash: o.blockHash ?? TARGET.block.hash, number: "0xba9000" }),
 		eth_getStorageAt: ([at, slot]) => storage(at as string, slot),
-		eth_getCode: ([a]) => (getAddress(a as string) === addr(0) ? "0x" : codeOf(getAddress(a as string))),
+		eth_getCode: ([a]) => codeAt(getAddress(a as string)),
 		eth_call: ([c]) => call(c as { to: string; data: string }),
 	}
 	const rpc: Rpc = async <T>(method: string, params: unknown[] = []): Promise<T> => {
 		const handler = handlers[method]
 		if (!handler) throw new Error(`unexpected ${method}`)
+		if (STATE_READS.has(method)) tags.push(params.at(-1))
 		return handler(params) as T
 	}
-	return { rpc, pins }
+	return { rpc, pins, tags }
 }
 
 const BASE: Chain = {
@@ -96,6 +105,8 @@ const BASE: Chain = {
 	outbox: addr(6),
 }
 
+const STATE_READS = new Set(["eth_getStorageAt", "eth_getCode", "eth_call"])
+
 const rejection = async (p: Promise<unknown>) => {
 	const err = await p.then(
 		() => undefined,
@@ -106,11 +117,14 @@ const rejection = async (p: Promise<unknown>) => {
 }
 
 describe("the preflight", () => {
-	test("reads every binding, the 1x1 route from the slot the real vault uses", async () => {
-		const { rpc, pins } = chain(BASE)
+	test("reads every binding, the 1x1 route from the slot the real vault uses, at the block it checks", async () => {
+		const { rpc, pins, tags } = chain(BASE)
 		expect(await readBindings(rpc, pins, pins.block.number)).toEqual(pins.bindings)
 		await checkFork(rpc, pins)
+		expect(new Set(tags)).toEqual(new Set([numberToHex(pins.block.number)]))
+		tags.length = 0
 		expect(await checkLive(rpc, pins)).toBe(0xba9000n)
+		expect(new Set(tags)).toEqual(new Set(["0xba9000"]))
 	})
 
 	test("names the pin that drifted on the fork, and the live bindings that moved", async () => {
@@ -136,6 +150,13 @@ describe("the preflight", () => {
 			`code.keystore.implementationCodeHash is ${keccak256(codeOf(addr(21)))}, pinned ${keccak256(codeOf(addr(12)))}`,
 		)
 		expect((await rejection(checkLive(upgraded, pins))).kind).toBe("live")
+		// An upgrade that drops a getter the other checks call still fails as that upgrade.
+		const dropped = chain(
+			{ ...BASE, implementations: { ...BASE.implementations, entrypoint: addr(22) } },
+			{ dropped: [`${pins.pool.entrypoint}:poolVault()`] },
+		).rpc
+		const live = await rejection(checkLive(dropped, pins))
+		expect([live.kind, live.pins]).toEqual(["live", ["code.entrypoint.implementation", "code.entrypoint.implementationCodeHash"]])
 	})
 
 	test("a vault wired to another registry fails as wiring, on the fork and live, and is never enrolled", async () => {
@@ -148,11 +169,16 @@ describe("the preflight", () => {
 		await expect(enroll(rewired, pins, pins.block.number)).rejects.toThrow("refusing to pin block 12224362: wiring.vault.aspRegistry")
 	})
 
-	test("enrollment refuses a cleared implementation slot", async () => {
-		const { pins } = chain(BASE)
+	test("enrollment refuses an unfinalized block, a cleared slot or route, and a proxy other than the pinned one", async () => {
+		const { rpc, pins } = chain(BASE)
+		expect((await enroll(rpc, pins, pins.block.number)).code).toEqual(pins.bindings.code)
+		await expect(enroll(rpc, pins, 0xba9001n)).rejects.toThrow("refusing to pin block 12226561: it is not finalized")
 		const cleared = chain({ ...BASE, implementations: { ...BASE.implementations, vault: addr(0) } }).rpc
 		await expect(enroll(cleared, pins, pins.block.number)).rejects.toThrow("vault's EIP-1967 slot is empty")
-		expect((await enroll(chain(BASE).rpc, pins, pins.block.number)).code).toEqual(pins.bindings.code)
+		const noRoute = chain({ ...BASE, transact1x1Verifier: addr(0) }).rpc
+		await expect(enroll(noRoute, pins, pins.block.number)).rejects.toThrow("transact1x1VerifierCodeHash is the hash of empty code")
+		const otherProxy = chain(BASE, { proxyCode: { keystore: "0x6001" } }).rpc
+		await expect(enroll(otherProxy, pins, pins.block.number)).rejects.toThrow("keystore runs proxy code")
 	})
 
 	test("tells an endpoint that no longer serves the block from one whose block differs from the pin", async () => {
@@ -181,13 +207,14 @@ describe("the preflight", () => {
 	})
 
 	test("compares addresses and hashes without regard to case", () => {
-		const { pins } = chain(BASE)
-		const vault = pins.bindings.code.vault
+		const want = TARGET.bindings
+		const vault = want.code.vault
 		const lower = {
-			...pins.bindings,
-			inbox: pins.bindings.inbox.toLowerCase() as Address,
-			code: { ...pins.bindings.code, vault: { ...vault, implementation: vault.implementation.toLowerCase() as Address } },
+			...want,
+			inbox: want.inbox.toLowerCase() as Address,
+			code: { ...want.code, vault: { ...vault, implementation: vault.implementation.toLowerCase() as Address } },
 		}
-		expect(drifted(lower, pins.bindings)).toEqual([])
+		expect(lower.inbox).not.toBe(want.inbox)
+		expect(drifted(lower, want)).toEqual([])
 	})
 })

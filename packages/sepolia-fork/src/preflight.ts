@@ -10,7 +10,17 @@ import {
 	slice,
 	toFunctionSelector,
 } from "viem"
-import { type CodeReader, codeMismatches, EIP1967_IMPLEMENTATION_SLOT, EMPTY_CODE_HASH, POOL_CONTRACTS, readPoolCode } from "./code.ts"
+import {
+	type CodeReader,
+	type ContractCode,
+	codeMismatches,
+	EIP1967_IMPLEMENTATION_SLOT,
+	EMPTY_CODE_HASH,
+	POOL_CONTRACTS,
+	type PoolCode,
+	type PoolContract,
+	readPoolCode,
+} from "./code.ts"
 import { missingKeyPoints, type Vkey } from "./keys.ts"
 import { type Bindings, type Pins, SEPOLIA_CHAIN_ID } from "./pins.ts"
 import type { Rpc } from "./rpc.ts"
@@ -44,14 +54,14 @@ const call = (rpc: Rpc, to: Address, signature: string, tag: string) =>
 const addressWord = (word: Hex): Address => getAddress(slice(word, 12, 32))
 const codeHash = async (rpc: Rpc, address: Address, tag: string) => keccak256(await rpc<Hex>("eth_getCode", [address, tag]))
 
-/** This transport as the shared reader takes it; each read names the block, so the reads are one snapshot. */
+/** This transport as the shared reader takes it. Every read names the block; the transport must serve that height, never its head. */
 const codeReader = (rpc: Rpc): CodeReader => ({
 	getCode: ({ address, blockNumber }) => rpc<Hex>("eth_getCode", [address, numberToHex(blockNumber)]),
 	getStorageAt: ({ address, slot, blockNumber }) => rpc<Hex>("eth_getStorageAt", [address, slot, numberToHex(blockNumber)]),
 })
 
-/** Every binding in {@link Bindings}, read at one block. */
-export async function readBindings(rpc: Rpc, pins: Pins, block: bigint): Promise<Bindings> {
+/** Every binding in {@link Bindings}, read at one block; `code`, when given, must have been read at that block. */
+export async function readBindings(rpc: Rpc, pins: Pins, block: bigint, code?: PoolCode): Promise<Bindings> {
 	const tag = numberToHex(block)
 	const { vault } = pins.pool
 	const route = await rpc<Hex>("eth_getStorageAt", [vault, routeSlot(1n, 1n), tag])
@@ -59,7 +69,7 @@ export async function readBindings(rpc: Rpc, pins: Pins, block: bigint): Promise
 	const rollup = addressWord(await call(rpc, pins.aztec.registry, "getCanonicalRollup()", tag))
 	const inbox = addressWord(await call(rpc, rollup, "getInbox()", tag))
 	return {
-		code: await readPoolCode(codeReader(rpc), pins.pool, block),
+		code: code ?? (await readPoolCode(codeReader(rpc), pins.pool, block)),
 		depositVerifier: addressWord(await call(rpc, vault, "depositVerifier()", tag)),
 		transact1x1Verifier,
 		transact1x1Selector: slice(route, 8, 12),
@@ -111,7 +121,11 @@ export async function wiringMismatches(rpc: Rpc, pins: Pins, block: bigint): Pro
 
 /** The bindings and wiring that differ at `block`, with one message each. */
 async function mismatchesAt(rpc: Rpc, pins: Pins, block: bigint): Promise<Mismatch[]> {
-	const got = await readBindings(rpc, pins, block)
+	// Code first and alone: an upgrade can drop a getter the other reads call, and must still fail as an upgrade.
+	const code = await readPoolCode(codeReader(rpc), pins.pool, block)
+	const moved = codeMismatches(pins.bindings.code, code)
+	if (moved.length > 0) return explain(moved, { ...pins.bindings, code }, pins.bindings)
+	const got = await readBindings(rpc, pins, block, code)
 	return [...explain(drifted(got, pins.bindings), got, pins.bindings), ...(await wiringMismatches(rpc, pins, block))]
 }
 
@@ -199,19 +213,33 @@ export async function checkLive(rpc: Rpc, pins: Pins): Promise<bigint> {
 	return finalized
 }
 
+/** Why one contract's code could never be a valid pin; a proxy other than the pinned one needs its dispatch reviewed first. */
+function codeProblems(c: PoolContract, got: ContractCode, pinned: ContractCode): string[] {
+	if (got.proxyCodeHash === EMPTY_CODE_HASH) return [`${c} has no code`]
+	if (!same(got.proxyCodeHash, pinned.proxyCodeHash))
+		return [`${c} runs proxy code ${got.proxyCodeHash}, pinned ${pinned.proxyCodeHash}; review its dispatch before pinning it`]
+	if (BigInt(got.implementation) === 0n) return [`${c}'s EIP-1967 slot is empty`]
+	if (got.implementationCodeHash === EMPTY_CODE_HASH) return [`${c}'s implementation ${got.implementation} has no code`]
+	return []
+}
+
 /**
  * The bindings to pin for `pins`' addresses at `block`, refused when the result could never be a valid pin:
- * a cleared implementation slot, empty code, or wiring that names other contracts than the target's.
+ * an unfinalized block, empty code, a cleared slot or route, a changed proxy, or wiring that names other
+ * contracts than the target's.
  */
 export async function enroll(rpc: Rpc, pins: Pins, block: bigint): Promise<Bindings> {
+	const finalized = await rpc<{ number: Hex } | null>("eth_getBlockByNumber", ["finalized", false])
+	// A block that can still reorg could pair its hash with another block's state.
+	if (finalized === null || block > BigInt(finalized.number)) throw new Error(`refusing to pin block ${block}: it is not finalized`)
 	const bindings = await readBindings(rpc, pins, block)
-	const problems = (await wiringMismatches(rpc, pins, block)).map((m) => m.message)
-	for (const c of POOL_CONTRACTS) {
-		const { proxyCodeHash, implementation, implementationCodeHash } = bindings.code[c]
-		if (proxyCodeHash === EMPTY_CODE_HASH) problems.push(`${c} has no code`)
-		if (BigInt(implementation) === 0n) problems.push(`${c}'s EIP-1967 slot is empty`)
-		else if (implementationCodeHash === EMPTY_CODE_HASH) problems.push(`${c}'s implementation ${implementation} has no code`)
-	}
+	const problems = [
+		...(await wiringMismatches(rpc, pins, block)).map((m) => m.message),
+		...POOL_CONTRACTS.flatMap((c) => codeProblems(c, bindings.code[c], pins.bindings.code[c])),
+		...(["transact1x1VerifierCodeHash", "inboxCodeHash"] as const)
+			.filter((k) => bindings[k] === EMPTY_CODE_HASH)
+			.map((k) => `${k} is the hash of empty code`),
+	]
 	if (problems.length > 0) throw new Error(`refusing to pin block ${block}: ${problems.join("; ")}`)
 	return bindings
 }

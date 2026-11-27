@@ -26,17 +26,18 @@ test("with no endpoint the suite skips in one line, unless --require-rpc makes t
 
 test("a command line that is not one fails with usage before any endpoint is read, so it never skips", () => {
 	for (const [args, cause] of [
-		[["run", "--target", "v8"], 'unknown target "v8"; known: pool1, vault-323c'],
+		[["run", "--target", "v8"], "unknown target; known: pool1, vault-323c"],
 		[["run", "--targt", "pool1"], "Unknown option '--targt'"],
-		[["run", "extra"], "run takes no arguments, got extra"],
+		[["run", "https://rpc.example/k3y"], "run takes no arguments"],
 		[["pins"], "pins takes one block number"],
 		[["pins", "1", "2"], "pins takes one block number"],
 		[["pins", "1", "--prepare-only"], "pins takes only --target"],
-		[["deploy"], 'unknown command "deploy"'],
+		[["https://rpc.example/k3y"], "the command is run or pins"],
 	] as const) {
 		const r = cli([...args])
 		expect([args, r.code, r.out]).toEqual([args, 2, ""])
 		expect(r.err).toContain(`sepolia-fork: ${cause}`)
+		expect(r.err).not.toContain("k3y")
 	}
 })
 
