@@ -7,16 +7,20 @@
  * exactly once, one hash per nonce in its send log, with its code checked by `deploy-pool` and again by
  * `verify-deployment --pool-only`.
  */
-import { readFileSync } from "node:fs"
+import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { type Address, type Hex, numberToHex, parseEther } from "viem"
+import { keyFilePath, loadKeys } from "../keyfile"
+import { RUN_KEYS } from "../keys"
 import { type FaultFronts, type Faults, type Fired, startFaultFronts } from "./fault-fronts"
 import { type Ctx, type OnFork, onFork, scratchFile } from "./fork"
 import { runCli } from "./runner"
-import { must, promote } from "./scratch"
+import { assertNoKeyIn, must, promote } from "./scratch"
 
 /** The nonce the negative case refuses past the budget, so three creations land before it. */
 const REFUSED = 3
+/** Below the send budget (35 s) by its backoff tail and the last attempt's reserve. */
+const MIN_REFUSED_SPAN_MS = 30_000
 
 export type SendFaultsResult = {
 	block: bigint
@@ -29,7 +33,9 @@ const everyFault = (sender: Address): Faults => ({
 	sender,
 	refuse: { nonce: 2, times: 3 },
 	loseAnswer: 5,
-	stale: { nonce: 8, receiptMs: 4_000, nonceMs: 8_000 },
+	// Stale past forge's own nonce retries (five, a second apart) after the receipt shows, so only the
+	// relay's floor lets the deploy go on.
+	stale: { nonce: 8, receiptMs: 4_000, nonceMs: 15_000 },
 	readError: 12,
 })
 
@@ -59,10 +65,26 @@ async function stopsPastBudget(c: Ctx, fronts: FaultFronts, f: OnFork, sender: A
 	const hash = fronts.fired().refusedHashes.find((h) => r.out.includes(h))
 	const sent = Number(await f.fork.rpc<Hex>("eth_getTransactionCount", [sender, "latest"]))
 	const named = r.out.includes(`(nonce ${REFUSED}) was not admitted`) && r.out.includes(`${REFUSED} transactions landed`)
-	if (r.code !== 1 || !hash || !named || sent !== REFUSED)
-		throw new Error(`deploy-pool did not stop at the refused send (exit ${r.code}, ${sent} sent):\n${r.out.trim()}`)
+	const span = fronts.fired().refusedSpanMs
+	if (r.code !== 1 || !hash || !named || sent !== REFUSED || span < MIN_REFUSED_SPAN_MS)
+		throw new Error(
+			`deploy-pool did not stop at the refused send (exit ${r.code}, ${sent} sent, refused for ${span} ms):\n${r.out.trim()}`,
+		)
 	c.log(`[send-faults] refused past the budget: deploy-pool stopped naming ${hash}, nonce ${REFUSED}, ${REFUSED} landed`)
 	return { landed: REFUSED, nonce: REFUSED, hash }
+}
+
+const filesUnder = (dir: string): string[] =>
+	readdirSync(dir, { withFileTypes: true, recursive: true })
+		.filter((e) => e.isFile())
+		.map((e) => join(e.parentPath, e.name))
+
+/** No output, log, send log or forge file of either deploy holds a value of the keys the runs loaded. */
+function assertNoKeyLeft(c: Ctx, home: string): void {
+	const keys = loadKeys([...RUN_KEYS.fund, ...RUN_KEYS["deploy-pool"]], keyFilePath(home))
+	const files = ["runs", "runs-refused"].flatMap((d) => filesUnder(join(c.dir, d)))
+	assertNoKeyIn([...c.outputs, ...files.map((f) => readFileSync(f, "utf8"))], Object.values(keys))
+	c.log(`[send-faults] no key value in ${c.outputs.length} outputs and ${files.length} run files`)
 }
 
 /** The send log's nonces are 0..n-1, each with exactly one hash; returns them in nonce order. */
@@ -129,5 +151,6 @@ export const sendFaultsRehearsal = (log: (line: string) => void): Promise<SendFa
 		if (!(await f.fork.rpc<boolean>("evm_revert", [snapshot]))) throw new Error("the fork did not revert to its snapshot")
 		const { transactions, fired } = await landsOnce(c, fronts, f, poolDeployer)
 		await must(c, "verify-deployment", [c.file, "--pool-only"])
+		assertNoKeyLeft(c, join(f.dir, "home"))
 		return { block: f.block, transactions, fired, stopped }
 	})

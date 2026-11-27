@@ -41,6 +41,8 @@ export type Fired = {
 	revertedEstimates: number
 	readErrors: number
 	refusedHashes: Hex[]
+	/** From the first refusal to the last, in ms. */
+	refusedSpanMs: number
 }
 
 export type FaultFronts = {
@@ -66,6 +68,7 @@ const zero = (): Fired => ({
 	revertedEstimates: 0,
 	readErrors: 0,
 	refusedHashes: [],
+	refusedSpanMs: 0,
 })
 const status = (code: number, text: string): Reply => ({ status: code, body: text })
 const answer = (call: Call, fields: object): Reply => ({ status: 200, body: JSON.stringify({ jsonrpc: "2.0", id: call.id, ...fields }) })
@@ -86,6 +89,7 @@ class Fronts {
 	private readonly forwarded = new Map<number, { hash: Hex; at: number }>()
 	private readonly refusals = new Map<number, number>()
 	private readonly spent = new Set<string>()
+	private firstRefusalAt = 0
 	private paused: ReturnType<typeof setTimeout> | undefined
 
 	constructor(upstream: string) {
@@ -98,6 +102,7 @@ class Fronts {
 		this.forwarded.clear()
 		this.refusals.clear()
 		this.spent.clear()
+		this.firstRefusalAt = 0
 	}
 
 	private once(what: string): boolean {
@@ -133,6 +138,8 @@ class Fronts {
 		if (f.refuse?.nonce === nonce && refused < f.refuse.times) {
 			this.refusals.set(nonce, refused + 1)
 			this.fired.refused++
+			this.firstRefusalAt ||= Date.now()
+			this.fired.refusedSpanMs = Date.now() - this.firstRefusalAt
 			if (!this.fired.refusedHashes.includes(hash)) this.fired.refusedHashes.push(hash)
 			return status(429, "Too Many Requests")
 		}
