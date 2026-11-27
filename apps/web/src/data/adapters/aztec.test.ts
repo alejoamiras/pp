@@ -73,15 +73,19 @@ describe("the Aztec adapter", () => {
 		await expect(send()).rejects.toMatchObject({ code: 4001 })
 	})
 
-	test("reads a receipt as included, reverted at its block, or pending while it is not mined", async () => {
+	test("reads its own transaction's receipt as included, reverted at its block, or pending while not mined; another's is no answer", async () => {
 		const r = rig()
 		const hash = at("1d") as Hex
+		const of = (ok: boolean, h: string = hash) => ({ ...receipt(ok), txHash: { toString: () => h } })
+		r.node.getTxReceipt.mockResolvedValueOnce(of(true))
 		await expect(readReceipt(r.d.node, hash)).resolves.toEqual({ status: "success" })
-		r.node.getTxReceipt.mockResolvedValueOnce(receipt(false))
+		r.node.getTxReceipt.mockResolvedValueOnce(of(false))
 		await expect(readReceipt(r.d.node, hash)).resolves.toEqual({ status: "reverted", block: 17 })
-		r.node.getTxReceipt.mockResolvedValueOnce({ ...receipt(true), isMined: () => false, isPending: () => true })
+		r.node.getTxReceipt.mockResolvedValueOnce({ ...of(true), isMined: () => false, isPending: () => true })
 		await expect(readReceipt(r.d.node, hash)).resolves.toEqual({ status: "pending" })
-		r.node.getTxReceipt.mockResolvedValueOnce({ ...receipt(false), blockNumber: undefined } as never)
+		r.node.getTxReceipt.mockResolvedValueOnce({ ...of(false), blockNumber: undefined } as never)
+		await expect(readReceipt(r.d.node, hash)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
+		r.node.getTxReceipt.mockResolvedValueOnce(of(true, at("1e")))
 		await expect(readReceipt(r.d.node, hash)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
 	})
 

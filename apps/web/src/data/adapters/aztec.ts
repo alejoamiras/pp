@@ -171,9 +171,10 @@ export async function sendThroughWallet(d: AztecDeps, s: AztecSend): Promise<Sen
 	return settle(d.node, txHash)
 }
 
-/** How the node reads `txHash` now. A mined receipt without a block is no answer. */
+/** How the node reads `txHash` now. A receipt for another hash, or a mined one without a block, is no answer. */
 export async function readReceipt(node: Pick<AztecNode, "getTxReceipt">, txHash: Hex): Promise<AztecReceipt> {
 	const r = await node.getTxReceipt(TxHash.fromString(txHash))
+	if (String(r.txHash).toLowerCase() !== txHash.toLowerCase()) throw new BridgeFailure("RPC_INCONSISTENT")
 	if (!r.isMined()) return { status: "pending" }
 	if (r.hasExecutionSucceeded()) return { status: "success" }
 	const block = Number(r.blockNumber)
