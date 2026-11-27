@@ -19,7 +19,7 @@ import { liveBirthSource } from "./births/live"
 import { BirthReader } from "./births/reader"
 import type { L1Block, PostArgs } from "./decide"
 import type { BotConfig } from "./handle"
-import { type BlockSource, selectBlock } from "./l1"
+import { type BlockSource, type L1Tag, selectBlock } from "./l1"
 import type { AztecTip, Ports } from "./loop"
 
 const ASP_REGISTRY_ABI = parseAbi(["function latestASPRoot() view returns (uint256)", "error ASPRegistry_EmptyAssociationSet()"])
@@ -27,7 +27,47 @@ const ASP_REGISTRY_ABI = parseAbi(["function latestASPRoot() view returns (uint2
 type Node = ReturnType<typeof createAztecNodeClient>
 type BlockDataLike = { blockHash: { toString(): string }; header: { globalVariables: { timestamp: bigint } } }
 
-export type Live = { ports: Ports; self: bigint; poster: Hex; birthIntake: Hex; blockNumber(): Promise<number> }
+/** A post once it is checkpointed. */
+export type LivePost = { sequence: bigint; txHash: Hex; l2Block: number }
+
+/** What the live adapters need, whichever entry builds them. */
+export type LiveSpec = {
+	l1Rpc: string
+	aztecNode: string
+	/** The L1 ASPRegistry whose `latestASPRoot` every posted pool root equals. */
+	aspRegistry: Hex
+	registry: Hex
+	/** Labelled tokens whose births the intake approves; none keeps the birth root 0. */
+	tokens: readonly Hex[]
+	tag: L1Tag
+	/** The wallet's PXE store, which the caller owns and removes. */
+	store: string
+	proverEnabled: boolean
+	/** "node" leaves gas to the node's estimate; "ceiling" pays up to the sandbox's `FEE_CEILING`. */
+	gas: "ceiling" | "node"
+	postTimeoutSec: number
+	/** The intake's secret is read only when `tokens` is non-empty. */
+	secrets: { poster: Hex; intake?: Hex }
+	aspLeaves(): Promise<bigint[]>
+	onPosted?(p: LivePost): void
+	/** Refuse, before the poster's account deploys, unless the registry names the derived poster and intake. */
+	checkRoles?: true
+	/** Checked before the account deploy and before each post. */
+	signal?: AbortSignal
+}
+
+export type Live = {
+	ports: Ports
+	self: bigint
+	poster: Hex
+	/** Derived only when the spec has tokens. */
+	birthIntake?: Hex
+	/** The registry's `poster` or `birth_intake` at Aztec block hash `at`, as a field. */
+	role(name: "poster" | "birth_intake", at: Hex): Promise<bigint>
+	blockNumber(): Promise<number>
+	/** Stops the wallet; the caller then removes `store`. */
+	stop(): Promise<void>
+}
 
 function l1Source(rpc: string) {
 	const client = createPublicClient({ transport: http(rpc) })
@@ -57,33 +97,37 @@ class BotWallet extends EmbeddedWallet {
 	}
 }
 
-/** The bot's wallet: its own store under `dataDir`, proving off on the local network. */
-async function walletFor(c: BotConfig, node: Node) {
-	const wallet = await BotWallet.create(c.manifest.aztecNode, {
-		pxeConfig: { proverEnabled: false, dataDirectory: join(c.dataDir as string, "pxe") },
+async function walletFor(s: LiveSpec, node: Node) {
+	const wallet = await BotWallet.create(s.aztecNode, {
+		pxeConfig: { proverEnabled: s.proverEnabled, dataDirectory: s.store },
 	})
-	const fpc = await getContractInstanceFromInstantiationParams(SponsoredFPCContract.artifact, { salt: new Fr(SPONSORED_FPC_SALT) })
-	await wallet.registerContract(fpc, SponsoredFPCContract.artifact).catch(() => {})
-	const fee = { paymentMethod: new SponsoredFeePaymentMethod(fpc.address), gasSettings: FEE_CEILING }
-	const registry = AztecAddress.fromStringUnsafe(c.registry)
-	const instance = await node.getContract(registry)
-	if (!instance) throw new Error(`node: no registry at ${c.registry}`)
-	await wallet.registerContract(instance, aspRootRegistryArtifact).catch(() => {})
-	return { wallet, fee, registry: await Contract.at(registry, aspRootRegistryArtifact, wallet) }
+	try {
+		const fpc = await getContractInstanceFromInstantiationParams(SponsoredFPCContract.artifact, { salt: new Fr(SPONSORED_FPC_SALT) })
+		await wallet.registerContract(fpc, SponsoredFPCContract.artifact).catch(() => {})
+		const paymentMethod = new SponsoredFeePaymentMethod(fpc.address)
+		const fee = s.gas === "ceiling" ? { paymentMethod, gasSettings: FEE_CEILING } : { paymentMethod }
+		const registry = AztecAddress.fromStringUnsafe(s.registry)
+		const instance = await node.getContract(registry)
+		if (!instance) throw new Error(`node: no registry at ${s.registry}`)
+		await wallet.registerContract(instance, aspRootRegistryArtifact).catch(() => {})
+		return { wallet, fee, registry: await Contract.at(registry, aspRootRegistryArtifact, wallet) }
+	} catch (e) {
+		await wallet.stop().catch(() => {})
+		throw e
+	}
 }
 
 /** The intake's account is registered locally and never deployed: decrypting needs only its keys. */
 async function birthLeavesFor(
-	c: BotConfig,
+	s: LiveSpec,
 	wallet: BotWallet,
 	node: Node,
-	birthIntake: Hex,
 	log: Ports["log"],
-): Promise<Ports["birthLeaves"]> {
-	const tokens = (c.tokens ?? []).map((t) => AztecAddress.fromStringUnsafe(t))
-	if (tokens.length === 0) return async () => []
-	const { address: intake } = await actorAccount(wallet, botSecret("intake", c.stackRunId))
-	if (intake.toString() !== birthIntake) throw new Error(`intake derivation mismatch: ${intake} != ${birthIntake}`)
+): Promise<{ birthLeaves: Ports["birthLeaves"]; intake?: Hex }> {
+	const tokens = s.tokens.map((t) => AztecAddress.fromStringUnsafe(t))
+	if (tokens.length === 0) return { birthLeaves: async () => [] }
+	if (!s.secrets.intake) throw new Error("approving births needs the intake's secret")
+	const { address: intake } = await actorAccount(wallet, s.secrets.intake)
 	const { id: classId } = await getContractClassFromArtifact(labelledTokenArtifact)
 	for (const token of tokens) {
 		const instance = await node.getContract(token)
@@ -101,58 +145,120 @@ async function birthLeavesFor(
 		intake,
 		artifact: labelledTokenArtifact,
 		syncedBlock: () => wallet.syncedBlock(),
+		blockHash: async (n) => (await blockAt(node, n)).hash,
 	})
 	const reader = new BirthReader(src, tokens, log)
-	return (tip) => reader.leaves(tip.number)
+	return { birthLeaves: (tip) => reader.leaves(tip), intake: intake.toString() as Hex }
 }
 
-export async function livePorts(c: BotConfig, log: Ports["log"]): Promise<Live> {
-	const node = createAztecNodeClient(c.manifest.aztecNode)
-	const { wallet, fee, registry } = await walletFor(c, node)
-	const actor = await createActor(wallet, node as never, fee, botSecret("poster", c.stackRunId), undefined, (l) =>
-		log("account", { line: l }),
-	)
-	const { poster, birthIntake } = await localBotAccounts(c.stackRunId)
-	if (actor.address.toString() !== poster) throw new Error(`poster derivation mismatch: ${actor.address} != ${poster}`)
-	const birthLeaves = await birthLeavesFor(c, wallet, node, birthIntake, log)
-	const posterSlot = new Fr(aspRootRegistryArtifact.storageLayout.poster?.slot ?? Fr.ZERO)
-	const l1 = l1Source(c.manifest.l1Rpc)
-	const send = { from: actor.address, fee, wait: { waitForStatus: TxStatus.CHECKPOINTED, timeout: 120 } }
+/** `latestASPRoot()` at `e`'s hash: a reorg after selection must fail the read, not pair `e`'s time with another block's root. */
+async function aspRootAt(l1: ReturnType<typeof l1Source>, aspRegistry: Hex, e: L1Block): Promise<bigint | null> {
+	try {
+		return await l1.client.readContract({
+			address: aspRegistry,
+			abi: ASP_REGISTRY_ABI,
+			functionName: "latestASPRoot",
+			blockHash: e.hash,
+			requireCanonical: true,
+		})
+	} catch (err) {
+		const revert = err instanceof BaseError ? err.walk((x) => x instanceof ContractFunctionRevertedError) : null
+		if (revert instanceof ContractFunctionRevertedError && revert.data?.errorName === "ASPRegistry_EmptyAssociationSet") return null
+		throw err
+	}
+}
 
-	const ports: Ports = {
-		async tip(): Promise<AztecTip> {
-			const number = Number(await node.getBlockNumber("checkpointed"))
-			return { number, ...(await blockAt(node, number)) }
-		},
-		record: (at) => readRootRecord({ aztecNode: c.manifest.aztecNode, registry: c.registry, at }),
-		poster: async (at) => (await node.getPublicStorageAt({ hash: at } as never, registry.address, posterSlot)).toBigInt(),
-		selectL1: (aztecTime) => selectBlock(l1.blocks, c.tag, aztecTime),
-		async aspRootAt(e) {
-			try {
-				return await l1.client.readContract({
-					address: c.manifest.pool.aspRegistry,
-					abi: ASP_REGISTRY_ABI,
-					functionName: "latestASPRoot",
-					// By hash: a reorg after selection must fail the read, not pair `e`'s time with another block's root.
-					blockHash: e.hash,
-					requireCanonical: true,
-				})
-			} catch (err) {
-				const revert = err instanceof BaseError ? err.walk((x) => x instanceof ContractFunctionRevertedError) : null
-				if (revert instanceof ContractFunctionRevertedError && revert.data?.errorName === "ASPRegistry_EmptyAssociationSet")
-					return null
-				throw err
-			}
-		},
-		aspLeaves: () => fetchLeaves(c.manifest.pool.aspApiUrl),
-		birthLeaves,
-		async post(a: PostArgs) {
-			const call = registry.methods.post_root(a.sequence, new Fr(a.poolRoot), new Fr(a.birthRoot), a.l1Block, a.rootTime)
-			const { receipt } = (await call.send(send as never)) as unknown as { receipt: { blockNumber?: number } }
-			if (receipt.blockNumber === undefined) throw new Error("post_root: no block in its receipt")
-			return { inclusionTime: (await blockAt(node, Number(receipt.blockNumber))).time }
+/** Refuses a start whose derived accounts are not the registry's roles at the checkpointed tip: every tick would halt. */
+async function assertRoles(role: Live["role"], node: Node, poster: bigint, intake: Hex | undefined): Promise<void> {
+	const { hash } = await blockAt(node, Number(await node.getBlockNumber("checkpointed")))
+	if ((await role("poster", hash)) !== poster) throw new Error(`the registry's poster is not 0x${poster.toString(16)}`)
+	if (intake && (await role("birth_intake", hash)) !== BigInt(intake)) throw new Error(`the registry's birth intake is not ${intake}`)
+}
+
+/** The live adapters over `s`; a failed start stops the wallet it created. */
+export async function liveFrom(s: LiveSpec, log: Ports["log"]): Promise<Live> {
+	const node = createAztecNodeClient(s.aztecNode)
+	const { wallet, fee, registry } = await walletFor(s, node)
+	try {
+		const births = await birthLeavesFor(s, wallet, node, log)
+		const slots = aspRootRegistryArtifact.storageLayout
+		const role = async (name: "poster" | "birth_intake", at: Hex) =>
+			(await node.getPublicStorageAt({ hash: at } as never, registry.address, new Fr(slots[name]?.slot ?? Fr.ZERO))).toBigInt()
+		if (s.checkRoles) await assertRoles(role, node, (await actorAccount(wallet, s.secrets.poster)).address.toBigInt(), births.intake)
+		s.signal?.throwIfAborted()
+		const actor = await createActor(
+			wallet,
+			node as never,
+			fee,
+			s.secrets.poster,
+			undefined,
+			(l) => log("account", { line: l }),
+			s.signal,
+		)
+		const l1 = l1Source(s.l1Rpc)
+		const send = { from: actor.address, fee, wait: { waitForStatus: TxStatus.CHECKPOINTED, timeout: s.postTimeoutSec } }
+		const ports: Ports = {
+			async tip(): Promise<AztecTip> {
+				const number = Number(await node.getBlockNumber("checkpointed"))
+				return { number, ...(await blockAt(node, number)) }
+			},
+			record: (at) => readRootRecord({ aztecNode: s.aztecNode, registry: s.registry, at }),
+			poster: (at) => role("poster", at),
+			selectL1: (aztecTime) => selectBlock(l1.blocks, s.tag, aztecTime),
+			aspRootAt: (e) => aspRootAt(l1, s.aspRegistry, e),
+			aspLeaves: s.aspLeaves,
+			birthLeaves: births.birthLeaves,
+			async post(a: PostArgs) {
+				// A proof already running when the signal aborts can still broadcast: one more correct root.
+				s.signal?.throwIfAborted()
+				const call = registry.methods.post_root(a.sequence, new Fr(a.poolRoot), new Fr(a.birthRoot), a.l1Block, a.rootTime)
+				const { receipt } = (await call.send(send as never)) as unknown as {
+					receipt: { blockNumber?: number; txHash: { toString(): string } }
+				}
+				if (receipt.blockNumber === undefined) throw new Error("post_root: no block in its receipt")
+				const l2Block = Number(receipt.blockNumber)
+				s.onPosted?.({ sequence: a.sequence, txHash: receipt.txHash.toString() as Hex, l2Block })
+				return { inclusionTime: (await blockAt(node, l2Block)).time }
+			},
+			log,
+		}
+		return {
+			ports,
+			self: actor.address.toBigInt(),
+			poster: actor.address.toString() as Hex,
+			...(births.intake ? { birthIntake: births.intake } : {}),
+			role,
+			blockNumber: async () => Number(await node.getBlockNumber()),
+			stop: () => wallet.stop(),
+		}
+	} catch (e) {
+		await wallet.stop().catch(() => {})
+		throw e
+	}
+}
+
+/** The child's adapters: secrets bound to the stack, a store under `dataDir`, proving off, the sandbox fee ceiling. */
+export async function livePorts(c: BotConfig, log: Ports["log"]): Promise<Live & { birthIntake: Hex }> {
+	const expected = await localBotAccounts(c.stackRunId)
+	const live = await liveFrom(
+		{
+			l1Rpc: c.manifest.l1Rpc,
+			aztecNode: c.manifest.aztecNode,
+			aspRegistry: c.manifest.pool.aspRegistry,
+			registry: c.registry,
+			tokens: c.tokens ?? [],
+			tag: c.tag,
+			store: join(c.dataDir as string, "pxe"),
+			proverEnabled: false,
+			gas: "ceiling",
+			postTimeoutSec: 120,
+			secrets: { poster: botSecret("poster", c.stackRunId), intake: botSecret("intake", c.stackRunId) },
+			aspLeaves: () => fetchLeaves(c.manifest.pool.aspApiUrl),
 		},
 		log,
-	}
-	return { ports, self: actor.address.toBigInt(), poster, birthIntake, blockNumber: async () => Number(await node.getBlockNumber()) }
+	)
+	if (live.poster !== expected.poster) throw new Error(`poster derivation mismatch: ${live.poster} != ${expected.poster}`)
+	if (live.birthIntake !== undefined && live.birthIntake !== expected.birthIntake)
+		throw new Error(`intake derivation mismatch: ${live.birthIntake} != ${expected.birthIntake}`)
+	return { ...live, birthIntake: expected.birthIntake }
 }

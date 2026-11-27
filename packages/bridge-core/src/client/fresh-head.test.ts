@@ -2,10 +2,27 @@ import { createPublicClient, custom, type Hex, numberToHex, type PublicClient, t
 import { describe, expect, it, vi } from "vitest"
 import { DEPLOYMENT } from "../test/client-fakes"
 import type { ClientDeployment } from "./deployment"
+import { settledAt } from "./exits"
 import { exitReads } from "./exits-chain"
 import { bridgedReceipts, resolveNullifier } from "./resolve"
+import { LOCAL_TIMING } from "./timing"
+import type { ExitTicket } from "./types"
 
 const D: ClientDeployment = { ...DEPLOYMENT, deployBlock: 0n, token: toHex(1n, { size: 32 }), outbox: DEPLOYMENT.portal }
+const TICKET: ExitTicket = {
+	kind: "public",
+	token: D.token,
+	payee: "0x00000000000000000000000000000000000000e5",
+	amount: 1n,
+	l2TxHash: toHex(2n, { size: 32 }),
+	messageIndexInTx: 0,
+}
+
+/** The block an `eth_call` names; a header's hash here is its number, so an EIP-1898 read records the same bound. */
+const callBound = (params: unknown): bigint => {
+	const at = (params as [unknown, Hex | { blockHash: Hex }])[1]
+	return BigInt(typeof at === "string" ? at : at.blockHash)
+}
 
 /**
  * A real viem client over a node that holds its first `eth_blockNumber` until released, so the bound
@@ -27,8 +44,13 @@ function heldNode() {
 					return []
 				}
 				if (method === "eth_call") {
-					n.bounds.push(BigInt((params as [unknown, Hex])[1]))
+					n.bounds.push(callBound(params))
 					return numberToHex(0n, { size: 32 })
+				}
+				if (method === "eth_getBlockByNumber") {
+					const [tag] = params as [Hex | "latest"]
+					const at = tag === "latest" ? n.head : BigInt(tag)
+					return { number: numberToHex(at), hash: toHex(at, { size: 32 }) }
 				}
 				throw new Error(`unexpected ${method}`)
 			},
@@ -42,7 +64,14 @@ const SCANS: [string, (c: PublicClient) => Promise<unknown>][] = [
 	["the nullifier resolver", (c) => resolveNullifier(c, D, { nullifier: 11n, amount: 70n, secretHash: 99n }, false)],
 	[
 		"the settled-exit lookup",
-		(c) => exitReads({ deployment: D, reader: c, node: {} as never, receiptTimeoutMs: 0 }).settledTx({ epoch: 1n, leafId: 2n }),
+		(c) =>
+			settledAt(
+				{
+					...exitReads({ deployment: D, reader: c, node: {} as never, timing: LOCAL_TIMING }),
+					witness: async () => ({ epoch: 1n, leafId: 2n }),
+				},
+				TICKET,
+			),
 	],
 ]
 

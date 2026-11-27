@@ -59,6 +59,7 @@ export async function createActor(
 	secret: Hex,
 	salt: bigint = SANDBOX_ACTOR_SALT,
 	log: (line: string) => void = console.log,
+	signal?: AbortSignal,
 ): Promise<Actor> {
 	const { address, manager } = await actorAccount(wallet, secret, salt)
 	await deployAccountIfAbsent({
@@ -67,6 +68,7 @@ export async function createActor(
 		from: address,
 		fee,
 		log: (stage) => log(`  actor account ${stage}: ${address.toString()}`),
+		...(signal ? { signal } : {}),
 	})
 	return { secret, salt, address }
 }

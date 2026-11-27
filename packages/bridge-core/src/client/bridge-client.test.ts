@@ -1,6 +1,6 @@
 import { Fr } from "@aztec-labs/foundation/curves/bn254"
 import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
-import { type Address, type Hex, toHex } from "viem"
+import { type Address, type Hex, type PublicClient, toHex } from "viem"
 import { describe, expect, expectTypeOf, it, vi } from "vitest"
 import {
 	ASSET,
@@ -17,13 +17,21 @@ import {
 	randomRecipient,
 	VAULT,
 } from "../test/client-fakes"
-import { type BridgeClient, bridgeClientOver, type ClientIo, createBridgeClient } from "./bridge-client"
+import { type BridgeClient, bridgeClientOver, type ClientIo, clientIo, createBridgeClient } from "./bridge-client"
 import type { WaitClaimableOptions } from "./claim"
 import { BridgeClientError } from "./errors"
+import type { ExitContext } from "./exits-chain"
 import type { prepareBridgeSpend } from "./prepare"
 import type { BridgeSession } from "./session"
 import type { SubmitOptions } from "./submit"
-import type { BridgeReceipt } from "./types"
+import { type ClientTiming, LOCAL_TIMING, PUBLIC_CHAIN_TIMING } from "./timing"
+import type { BridgeReceipt, ExitTicket } from "./types"
+
+// A settle that reports the context the client built for it: its chain path is exits-chain's test.
+vi.mock("./exits-chain", async (actual) => ({
+	...(await actual<typeof import("./exits-chain")>()),
+	settle: vi.fn(async (c: ExitContext) => c.timing),
+}))
 
 const IMPLEMENTATION: Address = "0x00000000000000000000000000000000000000b2"
 const INBOX: Address = "0x00000000000000000000000000000000000000b3"
@@ -56,6 +64,7 @@ type Setup = {
 	createdAt?: bigint
 	/** The head viem's `getBlockNumber` serves at any `cacheTime`: its cache, or another caller's request in flight. */
 	viemHead?: bigint
+	timing?: ClientTiming
 }
 
 function setup(o: Setup = {}) {
@@ -73,7 +82,15 @@ function setup(o: Setup = {}) {
 			: chain.reader.getLogs(q as never),
 	)
 	const getBlockNumber = async () => o.viemHead ?? chain.head
-	const reader = { ...chain.reader, getChainId: vi.fn(async () => o.chainId ?? 31337), readContract, getLogs, getBlockNumber }
+	const waitForTransactionReceipt = vi.fn(chain.reader.waitForTransactionReceipt)
+	const reader = {
+		...chain.reader,
+		getChainId: vi.fn(async () => o.chainId ?? 31337),
+		readContract,
+		getLogs,
+		getBlockNumber,
+		waitForTransactionReceipt,
+	}
 	const node = {
 		getNodeInfo: vi.fn(async () => ({
 			l1ChainId: o.l1ChainId ?? 31337,
@@ -91,7 +108,7 @@ function setup(o: Setup = {}) {
 		findLeavesIndexes: vi.fn(async () => []),
 	}
 	const { store } = memoryStore()
-	const client = bridgeClientOver(m, { reader, node, store } as unknown as ClientIo)
+	const client = bridgeClientOver(m, { reader, node, store } as unknown as ClientIo, o.timing ? { timing: o.timing } : {})
 	const bindingReads = () => readContract.mock.calls.filter(([q]) => q.functionName in BINDINGS).length
 	return { chain, client, reader, node, readContract, bindingReads }
 }
@@ -168,6 +185,35 @@ describe("createBridgeClient", () => {
 		expect(t.chain.writeContract.mock.calls[0]?.[0].args[2]).not.toBe(mutable.secretHash)
 	})
 
+	it.each([
+		["no timing", undefined, LOCAL_TIMING],
+		["a public chain's timing", PUBLIC_CHAIN_TIMING, PUBLIC_CHAIN_TIMING],
+	])("with %s, bounds the submit and settle receipt waits and polls as that timing says", async (_, given, want) => {
+		const t = setup({ timing: given })
+		const session = await openSession()
+		const recipient = await randomRecipient()
+		const wallet = {
+			...aztecWallet([recipient]),
+			getChainInfo: vi.fn(async () => ({ chainId: new Fr(31337), version: new Fr(1) })),
+			simulateTx: vi.fn(async () => ({})),
+		}
+		await t.client.preflight({ recipient, wallet: wallet as never })
+		await t.client.submit(await bridgeSpend(recipient), t.chain.wallet(), session)
+		expect(t.reader.waitForTransactionReceipt).toHaveBeenCalledWith(expect.objectContaining({ timeout: want.receiptTimeoutMs }))
+		expect(await t.client.settle({} as ExitTicket, t.chain.wallet())).toEqual(want)
+		const { reader } = clientIo(manifest(), memoryStore().store, given)
+		expect((reader as unknown as PublicClient).pollingInterval).toBe(want.pollingIntervalMs)
+	})
+
+	it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])("refuses a timing value of %s when it is built", (v) => {
+		const journal = memoryStore().store
+		for (const timing of [
+			{ receiptTimeoutMs: v, pollingIntervalMs: 1_000 },
+			{ receiptTimeoutMs: 1_000, pollingIntervalMs: v },
+		])
+			expect(() => createBridgeClient({ manifest: manifest(), journal, timing })).toThrow(RangeError)
+	})
+
 	it("refuses a manifest without a bridge when it is built", () => {
 		const { bridge: _, ...noBridge } = manifest()
 		expect(() => createBridgeClient({ manifest: noBridge, journal: memoryStore().store })).toThrow(
@@ -176,7 +222,8 @@ describe("createBridgeClient", () => {
 	})
 
 	it("offers no fee or payment option: every L2 transaction pays through the SponsoredFPC", () => {
-		expectTypeOf<keyof Parameters<typeof createBridgeClient>[0]>().toEqualTypeOf<"manifest" | "journal">()
+		expectTypeOf<keyof Parameters<typeof createBridgeClient>[0]>().toEqualTypeOf<"manifest" | "journal" | "timing">()
+		expectTypeOf<keyof ClientTiming>().toEqualTypeOf<"receiptTimeoutMs" | "pollingIntervalMs">()
 		expectTypeOf<keyof Parameters<typeof prepareBridgeSpend>[1]>().toEqualTypeOf<"note" | "amount" | "portal" | "recipient">()
 		expectTypeOf<keyof Parameters<BridgeClient["preflight"]>[0]>().toEqualTypeOf<"recipient" | "wallet">()
 		expectTypeOf<keyof SubmitOptions>().toEqualTypeOf<"onReprove" | "acceptUncertain">()

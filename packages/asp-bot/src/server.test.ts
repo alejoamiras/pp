@@ -52,6 +52,17 @@ describe("snapshot routes", () => {
 		book.setCurrent({ sequence: 3n, poolRoot: 7n, birthRoot: 0n })
 		expect(respond("GET", "/v1/snapshots/3", book).status).toBe(404)
 	})
+
+	it("says /latest serves a post only once that post's own snapshot is current, not an older one", () => {
+		const book = new SnapshotBook()
+		book.hold(snapshot(4n))
+		book.setCurrent(snapshot(4n))
+		// Sequence 5 is held and posted, but the read after its checkpoint failed: 4 is still current.
+		book.hold(snapshot(5n))
+		expect(book.servesLatest(5n)).toBe(false)
+		book.setCurrent(snapshot(5n))
+		expect(book.servesLatest(5n)).toBe(true)
+	})
 })
 
 describe("block selection", () => {

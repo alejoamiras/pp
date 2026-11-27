@@ -30,6 +30,7 @@ describe("liveBirthSource", () => {
 			intake: owner,
 			artifact: labelledTokenArtifact,
 			syncedBlock: async () => 7,
+			blockHash: async () => "0x07",
 		})
 		const tx = await src.tx(token, txHash)
 		expect(tx.debits.map((d) => d.birthId)).toEqual(Array.from({ length: 21 }, (_, i) => BigInt(i)))

@@ -37,14 +37,26 @@ export function messageIndices(ticketHashes: readonly Hex[], messagesInTx: reado
 /** A ticket's identity on L1: the Outbox `(epoch, leafId)` its witness proves. */
 export type ExitWitness = { epoch: bigint; leafId: bigint }
 
+/** The L1 header one decision's reads are bound to. */
+export type ExitPin = { number: bigint; hash: Hash }
+
 export type ExitReads<W extends ExitWitness = ExitWitness> = {
-	witness(t: ExitTicket): Promise<W | undefined>
+	/** The endpoint's latest header, at or above `floor` (such as a receipt's block: a backend can lag the one that served it). */
+	pin(floor?: bigint): Promise<ExitPin>
+	/** @throws BridgeClientError `RPC_INCONSISTENT` unless `at` is still the header at its height. */
+	holds(at: ExitPin): Promise<void>
+	/** The ticket's witness once an Outbox root at `at` covers it. */
+	witness(t: ExitTicket, at: ExitPin): Promise<W | undefined>
 	/**
-	 * The transaction of the portal's `ExitSettled` with exactly this pair, if any. The scan reaches at
-	 * least `floor`, such as a receipt's block: a node can lag the one that served the receipt.
+	 * The transaction of the portal's `ExitSettled` with exactly this pair up to `at`, if any. Callers
+	 * accept it only with {@link ExitReads.consumed} true at the same `at`: the scan is by number, so
+	 * the event may come from a backend on another branch.
+	 * @throws BridgeClientError `RPC_INCONSISTENT` when that event's payee, amount or label is not the
+	 * ticket's, or its block is not canonical
 	 */
-	settledTx(w: ExitWitness, floor?: bigint): Promise<Hash | null>
-	consumed(w: ExitWitness): Promise<boolean>
+	settledTx(t: ExitTicket, w: ExitWitness, at: ExitPin): Promise<Hash | null>
+	/** Whether the Outbox had consumed the pair at `at`. */
+	consumed(w: ExitWitness, at: ExitPin): Promise<boolean>
 }
 
 export type ExitState<W extends ExitWitness = ExitWitness> =
@@ -52,17 +64,66 @@ export type ExitState<W extends ExitWitness = ExitWitness> =
 	| { status: "ready"; witness: W }
 	| { status: "settled"; tx: Hash }
 
+/** `read` at one fresh header at or above `floor`, which must still be canonical once `read` returns. */
+async function atOnePin<W extends ExitWitness, T>(
+	io: ExitReads<W>,
+	floor: bigint | undefined,
+	read: (at: ExitPin) => Promise<T>,
+): Promise<[T, ExitPin]> {
+	const at = await io.pin(floor)
+	const value = await read(at)
+	await io.holds(at)
+	return [value, at]
+}
+
 /**
- * `settled` needs the portal's event for the exact pair; a consumed leaf whose event the RPC does
- * not show is re-read once (the consume and the event are one transaction) and then reported.
+ * The settling transaction and the consumed flag at `at`. An event the header's own state has not
+ * consumed came from another branch.
+ * @throws BridgeClientError `RPC_INCONSISTENT` for an event with the pair unconsumed at `at`
+ */
+async function settledAtPin<W extends ExitWitness>(
+	io: ExitReads<W>,
+	t: ExitTicket,
+	w: ExitWitness,
+	at: ExitPin,
+): Promise<{ tx: Hash | null; consumed: boolean }> {
+	const [tx, consumed] = await Promise.all([io.settledTx(t, w, at), io.consumed(w, at)])
+	if (tx && !consumed) throw new BridgeClientError("RPC_INCONSISTENT")
+	return { tx, consumed }
+}
+
+/**
+ * The transaction that settled `t`, read at a fresh header at or above `floor` with the ticket's
+ * witness derived at that same header: an identical exit at the pair, where `t` itself is gone, is
+ * not `t`'s settlement.
+ */
+export async function settledAt<W extends ExitWitness>(io: ExitReads<W>, t: ExitTicket, floor?: bigint): Promise<Hash | null> {
+	const [tx] = await atOnePin(io, floor, async (at) => {
+		const w = await io.witness(t, at)
+		return w ? (await settledAtPin(io, t, w, at)).tx : null
+	})
+	return tx
+}
+
+type Decision<W extends ExitWitness> = ExitState<W> | { status: "consumed"; witness: W }
+
+/**
+ * Every read of one decision is bound to one header: the Outbox root and the consumed flag at its
+ * hash, the event scan up to it. `settled` needs the portal's event for the exact pair; a leaf
+ * consumed with no event at the same header (the consume and the event are one transaction) is
+ * re-read once at a later header and then reported.
+ * @throws BridgeClientError `RPC_INCONSISTENT` when the header moved during the reads, or as `settledTx` does
  */
 export async function exitState<W extends ExitWitness>(io: ExitReads<W>, t: ExitTicket): Promise<ExitState<W>> {
-	const witness = await io.witness(t)
-	if (!witness) return { status: "proving" }
-	const settled = await io.settledTx(witness)
-	if (settled) return { status: "settled", tx: settled }
-	if (!(await io.consumed(witness))) return { status: "ready", witness }
-	const reread = await io.settledTx(witness)
+	const [s, at] = await atOnePin(io, undefined, async (at): Promise<Decision<W>> => {
+		const witness = await io.witness(t, at)
+		if (!witness) return { status: "proving" }
+		const { tx, consumed } = await settledAtPin(io, t, witness, at)
+		if (tx) return { status: "settled", tx }
+		return consumed ? { status: "consumed", witness } : { status: "ready", witness }
+	})
+	if (s.status !== "consumed") return s
+	const reread = await settledAt(io, t, at.number)
 	if (reread) return { status: "settled", tx: reread }
 	throw new BridgeClientError("RPC_INCONSISTENT")
 }
@@ -71,8 +132,10 @@ export const exitStatusOf = (s: ExitState<ExitWitness>): ExitStatus => s.status
 
 /**
  * Settles a ready ticket, or returns the transaction that already did. If another payer settles
- * between the read and the send, the send reverts and the exact pair's event names that payer's
- * transaction.
+ * between the read and the send, the send fails before broadcasting and the exact pair's event names
+ * that payer's transaction. A `send` that broadcast re-reads at its receipt's block itself, and its
+ * error carries `l1TxHash`; that error is final here, since a re-read without the floor could land on
+ * a backend below the receipt.
  */
 export async function settleWith<W extends ExitWitness>(io: ExitReads<W>, t: ExitTicket, send: (w: W) => Promise<Hash>): Promise<Hash> {
 	const s = await exitState(io, t)
@@ -81,8 +144,9 @@ export async function settleWith<W extends ExitWitness>(io: ExitReads<W>, t: Exi
 	try {
 		return await send(s.witness)
 	} catch (e) {
-		// The send's own error (an UNCERTAIN carries its hash) outlives a failed re-read.
-		const raced = await io.settledTx(s.witness).catch(() => null)
+		if (e instanceof BridgeClientError && e.l1TxHash) throw e
+		// The send's own error outlives a failed re-read.
+		const raced = await settledAt(io, t).catch(() => null)
 		if (raced) return raced
 		throw e
 	}

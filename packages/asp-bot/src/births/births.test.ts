@@ -17,6 +17,7 @@ const otherToken = AztecAddress.fromBigIntUnsafe(0x7002n)
 // Wide values: a short one would turn up by chance inside the hashes the leak check searches.
 const owner = AztecAddress.fromBigIntUnsafe(0x1f2e3d4c5b6a79881726354453627180a9b8c7d6e5f40312233445566778899an)
 const PIN = 10
+const AT = { number: PIN, hash: "0x01" }
 
 type Birth = { token: AztecAddress; txHash: string; event: BirthAnnouncement; tx: BirthTx }
 
@@ -31,10 +32,11 @@ async function birth(t: AztecAddress, txHash: string, secret: bigint, amount = 1
 	return { token: t, txHash, event: { label, secret, owner, amount }, tx }
 }
 
-function source(births: Birth[], synced = PIN) {
+function source(births: Birth[], synced = PIN, hashes: string[] = []) {
 	const queried: string[] = []
 	const src: BirthSource = {
 		syncedBlock: async () => synced,
+		blockHash: async () => hashes.shift() ?? AT.hash,
 		announcements: async (t, toBlock) => {
 			queried.push(t.toString())
 			return births.filter((b) => b.token.equals(t) && b.tx.block <= toBlock).map(({ event, txHash }) => ({ event, txHash }))
@@ -78,13 +80,19 @@ describe("a birth", () => {
 		const { src, queried } = source([a, twice, forged, elsewhere])
 		const reader = new BirthReader(src, [token], (event, f) => logs.push(`${event} ${f.txHash} ${f.reason}`))
 
-		expect(await reader.leaves(PIN)).toEqual([aspLeaf(a.event.label)])
-		expect(await reader.leaves(PIN)).toEqual([aspLeaf(a.event.label)])
+		expect(await reader.leaves(AT)).toEqual([aspLeaf(a.event.label)])
+		expect(await reader.leaves(AT)).toEqual([aspLeaf(a.event.label)])
 		expect(queried).toEqual([token.toString(), token.toString()])
 		expect(logs).toEqual(["birth_refused 0xa3 no_debit"])
 
 		const behind = new BirthReader(source([a], PIN - 1).src, [token], () => {})
-		await expect(behind.leaves(PIN)).rejects.toThrow("behind the pinned block 10")
+		await expect(behind.leaves(AT)).rejects.toThrow("behind the pinned block 10")
+	})
+
+	it("refuses a set read across a change of its pinned block", async () => {
+		const a = await birth(token, "0xa1", 0x5ec0n)
+		const moved = new BirthReader(source([a], PIN, ["0x02"]).src, [token], () => {})
+		await expect(moved.leaves(AT)).rejects.toThrow("block 10 changed during the birth scan")
 	})
 
 	it("never lets a birth secret, an owner or the intake's keys reach a log, a snapshot or the ready event", async () => {
@@ -105,7 +113,7 @@ describe("a birth", () => {
 			selectL1: async () => ({ number: 10n, hash: "0x0a", timestamp: 900n }),
 			aspRootAt: async () => buildLeanImt(poolLeaves).root,
 			aspLeaves: async () => poolLeaves,
-			birthLeaves: (tip) => reader.leaves(tip.number),
+			birthLeaves: (tip) => reader.leaves(tip),
 			post: async (a) => {
 				record = { ...a }
 				return { inclusionTime: 1_072n }

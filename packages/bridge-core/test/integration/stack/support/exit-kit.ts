@@ -12,6 +12,7 @@ import { exitReads } from "../../../../src/client/exits-chain"
 import { callPayload, sponsored } from "../../../../src/client/payload"
 import { prepareBridgeSpend } from "../../../../src/client/prepare"
 import type { BridgeSession } from "../../../../src/client/session"
+import { LOCAL_TIMING } from "../../../../src/client/timing"
 import type { BridgeReceipt, ExitStatus, ExitTicket } from "../../../../src/client/types"
 import { memoryStore } from "../../../../src/test/client-fakes"
 import { type Account, account, type Device, device, type Owner, owner, seedOf, send, sender, sessionOf } from "./actors"
@@ -114,7 +115,8 @@ export function exitKit(name: string) {
 	async function witness(t: ExitTicket) {
 		const io = clientIo(m, memoryStore().store)
 		const deployment = await verifyDeployment(io.reader, io.node, namedDeployment(m))
-		return exitReads({ deployment, reader: io.reader, node: io.node, receiptTimeoutMs: 120_000 }).witness(t)
+		const reads = exitReads({ deployment, reader: io.reader, node: io.node, timing: LOCAL_TIMING })
+		return reads.witness(t, await reads.pin())
 	}
 
 	/**

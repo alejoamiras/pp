@@ -97,7 +97,7 @@ function assertSame(actual: string, expected: string, label: string): void {
 
 /** The class ids of the two artifacts a generation instantiates, recomputed on every run so a
  *  toolchain that moved either one is caught before it can be journalled as this generation's. */
-async function artifactClassIds(): Promise<{ tokenClassId: string; hubClassId: string }> {
+export async function artifactClassIds(): Promise<{ tokenClassId: string; hubClassId: string }> {
 	const token = await getContractClassFromArtifact(labelledTokenArtifact)
 	const hub = await getContractClassFromArtifact(tokenBridgeHubArtifact)
 	return { tokenClassId: token.id.toString(), hubClassId: hub.id.toString() }
@@ -286,7 +286,7 @@ function hubSalt(factory: Address): Fr {
 	return new Fr(BigInt(factory))
 }
 
-function deriveHub(tokenClassId: string, factory: Address, aspRegistry: string): Promise<ContractInstanceWithAddress> {
+export function deriveHub(tokenClassId: string, factory: Address, aspRegistry: string): Promise<ContractInstanceWithAddress> {
 	return deriveInstance(
 		tokenBridgeHubArtifact,
 		[Fr.fromHexString(tokenClassId), EthAddress.fromString(factory), AztecAddress.fromStringUnsafe(aspRegistry)],

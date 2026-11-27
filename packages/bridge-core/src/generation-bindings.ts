@@ -3,7 +3,7 @@
  * can sweep a clone, so a spend accepted by a portal bound to another hub, rollup, vault or cap is
  * stuck for good: the guardian opens entries only once this passes.
  */
-import type { Address, Hex, PublicClient } from "viem"
+import type { Address, Hash, Hex, PublicClient } from "viem"
 import { PORTAL_FACTORY_ABI, PROCESSOR_PORTAL_ABI } from "./factory-abi"
 
 export interface ExpectedBindings {
@@ -65,15 +65,21 @@ export async function rollupEndpointsOf(node: RollupInfoSource): Promise<Pick<Ex
  * Says nothing about the entry pause: opening it is the caller's next step.
  *
  * @param label prefixes the error message, naming which deploy path or caller ran the check.
+ * @param at binds every read to one header (EIP-1898); latest when absent.
  * @throws BindingMismatchError at the first disagreement; a failed read rejects with viem's error.
  */
-export async function assertGenerationBindings(client: BindingsClient, expected: ExpectedBindings, label = "generation"): Promise<void> {
+export async function assertGenerationBindings(
+	client: BindingsClient,
+	expected: ExpectedBindings,
+	label = "generation",
+	at: { blockHash?: Hash; requireCanonical?: boolean } = {},
+): Promise<void> {
 	const check = (binding: string, actual: string | bigint, want: string | bigint) => {
 		if (String(actual).toLowerCase() !== String(want).toLowerCase())
 			throw new BindingMismatchError(binding, String(actual), String(want), label)
 	}
-	const factory = { address: expected.factory, abi: PORTAL_FACTORY_ABI } as const
-	const implementation = { address: expected.implementation, abi: PROCESSOR_PORTAL_ABI } as const
+	const factory = { address: expected.factory, abi: PORTAL_FACTORY_ABI, ...at } as const
+	const implementation = { address: expected.implementation, abi: PROCESSOR_PORTAL_ABI, ...at } as const
 
 	check("factory.IMPLEMENTATION", await client.readContract({ ...factory, functionName: "IMPLEMENTATION" }), expected.implementation)
 	check("factory.L2_HUB", await client.readContract({ ...factory, functionName: "L2_HUB" }), expected.hub)
@@ -99,7 +105,7 @@ export async function assertGenerationBindings(client: BindingsClient, expected:
 		check(`factory.portalOf(${token})`, await client.readContract({ ...factory, functionName: "portalOf", args: [token] }), portal)
 		check(
 			`${portal}.underlying`,
-			await client.readContract({ address: portal, abi: PROCESSOR_PORTAL_ABI, functionName: "underlying" }),
+			await client.readContract({ address: portal, abi: PROCESSOR_PORTAL_ABI, functionName: "underlying", ...at }),
 			token,
 		)
 	}
