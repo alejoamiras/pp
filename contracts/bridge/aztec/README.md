@@ -94,14 +94,16 @@ What each key can do:
   other than its list's (a collapsed list then passes the client's check), pair an old root with a
   fresh time, or stop posting. It cannot change the poster, the admin or the birth intake,
   and nothing here can mint, burn, move notes or block a claim or a ragequit.
-- **Admin.** Replace the poster (which clears the roots, the lengths, the block and the time for
-  later anchors, and keeps the sequence) and set the birth intake (zero pauses shields). A new or zero intake
+- **Admin.** Replace the poster and set the birth intake (zero pauses shields). Replacing the poster
+  clears the roots, the lengths, the block and the time for later anchors, at the next sequence, so a
+  post prepared against the record before the reset fails as not next. Two resets in flight land in
+  either order, and each fences the posts prepared before it. A new or zero intake
   applies to shields anchored after it: a shield anchored earlier still announces to the old intake
   until its transaction expires. It cannot post unless it makes itself poster, and nobody can change
   the admin.
 
 Events: `post_root` emits `RootPosted` (the record's five fields, then both lengths), `set_poster` emits
-`PosterChanged` (the kept sequence and the new poster) and `set_birth_intake` emits
+`PosterChanged` (the cleared record's sequence and the new poster) and `set_birth_intake` emits
 `BirthIntakeChanged`. They keep the order of several updates in one block for a watcher; storage
 stays the authority, and nothing on chain reads them.
 
