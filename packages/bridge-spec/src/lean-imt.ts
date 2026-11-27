@@ -13,17 +13,31 @@ export type LabelPath = { index: number; depth: number; siblings: readonly bigin
 
 export type LeanImt = { root: bigint; size: number; path(leafIndex: number): LabelPath }
 
+/** `onProgress` runs after each hash of the build, with the exact total the build makes. */
+export type BuildLeanImtOptions = { onProgress?: (hashed: number, total: number) => void }
+
 /**
  * Up to 2^18 leaves (past that an old leaf can need depth 19, which the circuit refuses), each in
  * [1, p): zk-kit's `insertMany` treats a zero right child as absent, so a zero leaf could yield a
  * root no path reproduces. Empty → root 0. The leaves are copied, so later edits to the array change nothing.
  */
-export function buildLeanImt(leaves: readonly bigint[]): LeanImt {
+export function buildLeanImt(leaves: readonly bigint[], opts: BuildLeanImtOptions = {}): LeanImt {
 	if (leaves.length > 2 ** MAX_DEPTH) throw new SpecRangeError("TreeTooLarge", "leaves", String(leaves.length))
 	const all = [...leaves]
 	for (const [i, leaf] of all.entries()) assertRange(leaf, 1n, BN254_P - 1n, "FieldOutOfRange", `leaves[${i}]`)
 	const size = all.length
-	const tree = new LeanIMT<bigint>(circomPoseidon2)
+	const { onProgress } = opts
+	// Each hash merges two nodes into one, so n leaves take n - 1 hashes, promotions or not.
+	const total = Math.max(0, size - 1)
+	let hashed = 0
+	const hash = onProgress
+		? (a: bigint, b: bigint) => {
+				const h = circomPoseidon2(a, b)
+				onProgress(++hashed, total)
+				return h
+			}
+		: circomPoseidon2
+	const tree = new LeanIMT<bigint>(hash)
 	if (size > 0) tree.insertMany(all)
 	return {
 		root: size === 0 ? 0n : tree.root,

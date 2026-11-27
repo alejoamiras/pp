@@ -43,6 +43,18 @@ describe("LeanIMT", () => {
 		}
 	})
 
+	it("reports progress up to the exact hash count of the build without changing its root or paths", () => {
+		for (const n of [0, 1, 2, 3, 5, 8, 13, 100]) {
+			const calls: [number, number][] = []
+			const tree = buildLeanImt(leaves(n), { onProgress: (hashed, total) => calls.push([hashed, total]) })
+			const plain = buildLeanImt(leaves(n))
+			expect(tree.root, `n=${n}`).toBe(plain.root)
+			for (let i = 0; i < n; i++) expect(tree.path(i)).toEqual(plain.path(i))
+			const total = Math.max(0, n - 1)
+			expect(calls, `n=${n}`).toEqual(Array.from({ length: total }, (_, i) => [i + 1, total]))
+		}
+	})
+
 	it("an empty tree has root 0 and no paths; more than 2^18 leaves are refused", () => {
 		const empty = buildLeanImt([])
 		expect(empty.root).toBe(0n)

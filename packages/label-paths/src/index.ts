@@ -1,5 +1,7 @@
 // Browser-safe: nothing here may import an Aztec package, viem or a `node:` module (a test scans every specifier).
-export { parseAspSnapshot, serializeAspSnapshot } from "./codec"
+export type { LabelCheck, LabelPathCacheOptions } from "./cache"
+export { LabelPathCache } from "./cache"
+export { parseAspSnapshot, parseAspSnapshotUnverified, serializeAspSnapshot } from "./codec"
 export type { Hex } from "./record"
 export { RegistryAddressError, ROOT_RECORD_SLOT, readRootRecord } from "./record"
 export type { AspSnapshot, LabelState, Origin, RootRecord, SnapshotErrorCode } from "./snapshot"

@@ -39,11 +39,8 @@ function checkLeaves(leaves: readonly bigint[], field: string): void {
 	}
 }
 
-/**
- * Throws a `SnapshotError` unless each root is the LeanIMT root of its leaves (0 for an empty list),
- * every leaf is in [1, p), each list has at most `MAX_LEAVES`, and birth leaves are strictly ascending.
- */
-export function verifySnapshot(s: AspSnapshot): void {
+/** Every check of `verifySnapshot` but the roots; builds no tree. */
+export function checkSnapshotFields(s: AspSnapshot): void {
 	if (s.sequence < 1n || s.sequence >= U64_LIMIT) throw new SnapshotError("OutOfRange", "sequence")
 	checkLeaves(s.poolLeaves, "poolLeaves")
 	checkLeaves(s.birthLeaves, "birthLeaves")
@@ -51,11 +48,19 @@ export function verifySnapshot(s: AspSnapshot): void {
 		if ((s.birthLeaves[i - 1] as bigint) >= (s.birthLeaves[i] as bigint))
 			throw new SnapshotError("UnsortedBirthLeaves", `birthLeaves[${i}]`)
 	}
+}
+
+/**
+ * Throws a `SnapshotError` unless each root is the LeanIMT root of its leaves (0 for an empty list),
+ * every leaf is in [1, p), each list has at most `MAX_LEAVES`, and birth leaves are strictly ascending.
+ */
+export function verifySnapshot(s: AspSnapshot): void {
+	checkSnapshotFields(s)
 	if (buildLeanImt(s.poolLeaves).root !== s.poolRoot) throw new SnapshotError("RootMismatch", "poolRoot")
 	if (buildLeanImt(s.birthLeaves).root !== s.birthRoot) throw new SnapshotError("RootMismatch", "birthRoot")
 }
 
-function treeOf(s: AspSnapshot, origin: Origin): { leaves: readonly bigint[]; root: bigint; field: string } {
+export function treeOf(s: AspSnapshot, origin: Origin): { leaves: readonly bigint[]; root: bigint; field: string } {
 	if (origin === 0) return { leaves: s.poolLeaves, root: s.poolRoot, field: "poolRoot" }
 	if (origin === 1) return { leaves: s.birthLeaves, root: s.birthRoot, field: "birthRoot" }
 	throw new SnapshotError("OutOfRange", "origin")
