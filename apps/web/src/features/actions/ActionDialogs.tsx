@@ -1,6 +1,6 @@
 import { useApp } from "../../app/context"
 import type { HomeAction } from "../balances/AztecPanel"
-import { RagequitDialog, WithdrawDialog } from "./ExitDialogs"
+import { LabelExitDialog, RagequitDialog, WithdrawDialog } from "./ExitDialogs"
 import { SendDialog, ShieldDialog, UnshieldDialog } from "./SpendDialogs"
 
 /** The dialog for one Home action, from the connected Aztec account; nothing opens without one. */
@@ -19,5 +19,7 @@ export function ActionDialogs({ action, onClose }: { action: HomeAction; onClose
 			return <ShieldDialog account={account} amount={action.amount} onClose={onClose} />
 		case "withdraw":
 			return <WithdrawDialog account={account} amount={action.amount} onClose={onClose} />
+		case "exit":
+			return <LabelExitDialog account={account} balance={action.balance} onClose={onClose} />
 	}
 }

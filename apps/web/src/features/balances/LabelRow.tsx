@@ -1,16 +1,16 @@
 import { useEffect, useId, useState } from "react"
 import { useApp } from "../../app/context"
 import { useLabelCheck } from "../../app/queries"
-import { AllowListError } from "../../data/errors"
+import { AllowListError, messageOf } from "../../data/errors"
 import { labelView, listFailureView } from "../../data/labels"
 import type { AllowListView, LabelBalance } from "../../data/ports"
 import { ActionButton, Amount, LabelChip, StateBadge } from "../../ui"
 import { useActionReason } from "./reasons"
 
-export type LabelAction = "send" | "unshield" | "ragequit"
+export type LabelAction = "send" | "unshield" | "exit" | "ragequit"
 
 const ORIGIN = { 0: "Bridged from the pool", 1: "Born on Aztec by a shield" } as const
-const PUBLIC_EXIT = "Leaving this way is public: it shows the label on Ethereum."
+const PUBLIC_EXIT = "Ragequit is public: it shows the label on Ethereum."
 
 interface Props {
 	balance: LabelBalance
@@ -49,13 +49,17 @@ function useLabelState(allow: AllowListView | undefined, balance: LabelBalance) 
 
 /** One label's private balance, its allow-list state in words, and what it can do. */
 export function LabelRow({ balance, allow, onAction, onCheckAgain }: Props) {
-	const { source } = useApp()
+	const { source, refusal } = useApp()
 	const reasonOf = useActionReason()
 	const sharedId = useId()
 	const { state, failure, view } = useLabelState(allow, balance)
 	const send = reasonOf("transferPrivate", view)
 	const unshield = reasonOf("unshield", view)
+	// The withdrawal reads the label's notes for its cap, then sends an unshield and a public exit.
+	const notes = refusal("notes")
+	const exit = (notes === null ? undefined : messageOf(notes)) ?? unshield ?? reasonOf("exitPublic")
 	const shared = send !== undefined && send === unshield
+	const sharedWith = (reason: string | undefined) => (shared && reason === send ? sharedId : undefined)
 	return (
 		<li
 			data-testid="label-row"
@@ -76,19 +80,14 @@ export function LabelRow({ balance, allow, onAction, onCheckAgain }: Props) {
 				<span>{ORIGIN[balance.origin]}</span>
 			</div>
 			<div className="flex flex-wrap items-start gap-1.5">
-				<ActionButton
-					disabledReason={send}
-					sharedReasonId={shared ? sharedId : undefined}
-					onClick={() => onAction("send", balance)}
-				>
+				<ActionButton disabledReason={send} sharedReasonId={sharedWith(send)} onClick={() => onAction("send", balance)}>
 					Send privately
 				</ActionButton>
-				<ActionButton
-					disabledReason={unshield}
-					sharedReasonId={shared ? sharedId : undefined}
-					onClick={() => onAction("unshield", balance)}
-				>
+				<ActionButton disabledReason={unshield} sharedReasonId={sharedWith(unshield)} onClick={() => onAction("unshield", balance)}>
 					Unshield
+				</ActionButton>
+				<ActionButton disabledReason={exit} sharedReasonId={sharedWith(exit)} onClick={() => onAction("exit", balance)}>
+					Withdraw to Ethereum
 				</ActionButton>
 				<ActionButton tag="public" disabledReason={reasonOf("ragequit")} onClick={() => onAction("ragequit", balance)}>
 					Leave to Ethereum (ragequit)
@@ -103,7 +102,7 @@ export function LabelRow({ balance, allow, onAction, onCheckAgain }: Props) {
 			<p className="text-xs text-ink-3">
 				{view && !view.can.send ? `${view.meaning} ` : ""}
 				{PUBLIC_EXIT}
-				{view?.can.send ? " To keep it private, Unshield, then withdraw." : ""}
+				{view?.can.unshield ? " Withdraw to Ethereum does not show the label." : ""}
 			</p>
 		</li>
 	)
