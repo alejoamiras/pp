@@ -1,7 +1,8 @@
 /**
  * Rehearsal part 1, on an anvil fork of Sepolia this run owns: `keys` into a scratch home, `fund`,
- * `deploy-pool`, `verify-deployment --pool-only`, the mock ASP (`asp --owner`), `seed` and
- * `seed --recipient`, all through the real CLIs with every guard; then each L1 key's gas against its budget.
+ * `deploy-pool`, `verify-deployment --pool-only`, the mock ASP for both owners (`asp --owner` twice),
+ * `seed`, `seed --recipient` and `seed --demo`, all through the real CLIs with every guard; then each L1
+ * key's gas against its budget.
  */
 import { mkdirSync, readFileSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
@@ -48,7 +49,8 @@ async function scratchFile(c: Ctx, scratchHome: string, runId: string): Promise<
 async function startAsp(c: Ctx, cleanup: CleanupStack): Promise<{ asp: OwnedChild; url: string; logFile: string }> {
 	const d = loadScratch(c)
 	const logFile = join(c.dir, "asp.log")
-	const asp = startCli("asp", [c.file, "--owner", d.expected?.canaryOwner as string, "--rehearse-fork", c.forkUrl], c.env, logFile)
+	const owners = [d.expected?.canaryOwner, d.expected?.demoOwner].flatMap((o) => ["--owner", o as string])
+	const asp = startCli("asp", [c.file, ...owners, "--rehearse-fork", c.forkUrl], c.env, logFile)
 	cleanup.push(async () => void (await killGroup(asp)))
 	const url = (await untilEvent(logFile, "asp-ready", asp, 300_000)).url as string
 	const admin = await fetch(`${url}/admin/approve-label`, { method: "POST", body: '{"label":"0x01"}' })
@@ -114,7 +116,18 @@ async function approvals(c: Ctx, url: string): Promise<bigint> {
 	if (pending !== "PENDING" || received !== "ACTIVE")
 		throw new Error(`the stranger's own note is ${pending} and its received note ${received}; expected PENDING and ACTIVE`)
 	c.log("[fork] the owner's deposit and its deposit for a registered recipient approved; the stranger's own stays pending")
+	await demoDeposit(c, url)
 	return debit
+}
+
+/** `seed --demo`: the demo owner registers itself, then the canary owner's deposit for it is approved. */
+async function demoDeposit(c: Ctx, url: string): Promise<void> {
+	const demoOwner = loadScratch(c).expected?.demoOwner as string
+	const seeded = (await must(c, "seed", [c.file, "--demo"])).find((e) => e.event === "seeded")
+	if (String(seeded?.recipient).toLowerCase() !== demoOwner.toLowerCase())
+		throw new Error(`seed --demo deposited for ${String(seeded?.recipient)}, not the demo owner ${demoOwner}`)
+	await untilLeaves(url, 3, 300_000)
+	c.log("[fork] the deposit for the demo owner approved")
 }
 
 export async function forkRehearsal(log: (line: string) => void): Promise<ForkResult> {
@@ -155,6 +168,7 @@ export async function forkRehearsal(log: (line: string) => void): Promise<ForkRe
 		if (!(await killGroup(asp)) || asp.exitReason() !== "exit code 0" || !readFileSync(logFile, "utf8").includes('"asp-stopped"'))
 			throw new Error(`the asp did not stop clean (${asp.exitReason()})`)
 		const gas = budgetCheck(await gasBySender(fork.url, block), addresses)
+		if (!gas.demoOwner) throw new Error("the demo owner spent no gas, so its keystore was not registered from its own key")
 		rmSync(dir, { recursive: true, force: true })
 		return { block, gas, debit }
 	} catch (e) {

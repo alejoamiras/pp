@@ -36,6 +36,13 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
 - One address is funded by hand: the L1 deployer. `fund` tops each other L1 address up, once, to the summed
   gas budgets of the roles it holds (`src/funding.ts`) at twice the fee estimate, never below 1 gwei;
   `fund --quote` reads no key and prints what the deployer must hold, the top-ups' own gas included.
+- `DEMO_OWNER_KEY` and `DEMO_SENDER_KEY` are the owner's two hand-test accounts, `expected.demoOwner` and
+  `expected.demoSender`: the demo owner holds notes, the demo sender sends the bridge transactions. The
+  owner reads both values from the key file himself, in his own terminal, and imports them into his
+  wallet; no command prints, logs or hands over either. A key file made before them gains both from
+  `keys`, which `addresses` needs first. Once `expected` names them, `fund` tops each up to 5 M gas,
+  `seed --demo` registers the demo owner and deposits for it, and `asp` approves the demo owner's own
+  deposits when given its address.
 
 ## Commands
 
@@ -49,8 +56,8 @@ hashes and allowlisted URLs only. A guard refusal exits 2 before any key is read
 | `fund [--quote]` | L1 deployer | tops the other L1 addresses up to their roles' budgets |
 | `verify-inputs` | none | a clean working tree (naming HEAD), frozen lockfile, the pinned Forge binary with FFI off, a forced bridge build and the pool build against their pins, L2 class ids, and both endpoints' reads by block hash |
 | `deploy-pool` (own) | pool deployer | the pinned pool, built with no key and checked against `pool-creation-codes.json` before its key reaches Forge; the test token minted to the canary owner, the postman role for the ASP key, every contract's runtime code checked against the build |
-| `asp --owner <address>` (own) | ASP postman | the mock ASP on its loopback port: approves only that owner's deposits, posts roots, serves reads only |
-| `seed [--recipient <address>]` | canary owner | registers and makes the canary deposit; with `--recipient`, deposits it for that registered address instead |
+| `asp --owner <address>…` (own) | ASP postman | the mock ASP on its loopback port: approves only the deposits of the owners given, each the canary owner or the demo owner, posts roots, serves reads only |
+| `seed [--recipient <address> \| --demo]` | canary owner; demo owner with `--demo` | registers and makes the canary deposit; with `--recipient`, deposits it for that registered address instead; with `--demo`, registers the demo owner's keystore from its own key and gas, then deposits for it |
 | `deploy` | L1 deployer, L2 deployer | the bridge generation with entries paused |
 | `verify-deployment [--pool-only] [--bot] [--label <l> --min-sequence <s>]` | none | code, bindings, the deploy block's history, the factory's creation, class ids, paused entries, the checks before opening, the bot's record |
 | `bot` | bot poster, bot intake | the ASP-root poster, snapshot server and birth intake, on the file's loopback port |
@@ -66,9 +73,11 @@ same way with its hash (an open's is in `open`'s log). A replacement reads that 
 pinned endpoint, refuses one that is not the guardian's at that nonce, and outbids each of its fee fields
 by a quarter, paying at least four times the estimate.
 
-Run order for the own target: `keys`, `addresses` (commit `expected`), `fund`, `verify-inputs`,
-`deploy-pool`, `verify-deployment --pool-only`, `asp`, `seed`, `deploy`, `verify-deployment`, `bot`,
-`open`, `canary`, `pause`.
+Run order for the own target: `keys`, `addresses` (commit `expected`, the demo accounts included), `fund`,
+`verify-inputs`, `deploy-pool`, `verify-deployment --pool-only`, `asp` with an `--owner` for the canary
+owner and one for the demo owner, `seed`, `seed --demo`, `deploy`, `verify-deployment`, `bot`, `open`,
+`canary`, `pause`. Then the owner imports the two demo keys into his wallet, from the key file, and
+hand-tests.
 
 `--rehearse <stack manifest>` runs a command against the local stack, at exactly that manifest's L1 and
 node URLs, with sandbox keys from `PP_REHEARSE_<name>` (L1 keys must be anvil's) and never opens a key file.
