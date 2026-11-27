@@ -12,9 +12,11 @@ import { Fr } from "@aztec-labs/aztec.js/fields"
 import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { labelledTokenArtifact } from "@pp/bridge-core/artifacts"
+import { rootFresh } from "@pp/label-paths"
 import { BridgeFailure } from "../errors"
 import type { AllowListPort, AllowListView, AztecPort, AztecSendHooks, Sent } from "../ports"
 import type { AztecAddress, LabelPath, Origin } from "../stack-types"
+import { PROVING_BUDGET_SEC } from "./allow-list"
 import { type AztecDeps, boundTo, sendThroughWallet } from "./aztec"
 import { rootsKey } from "./snapshot-protocol"
 
@@ -34,13 +36,17 @@ const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
  */
 export async function checkedPath(allowList: TokenSendDeps["allowList"], label: bigint, origin: Origin): Promise<LabelPath> {
 	let view = await allowList.current()
-	// A check can wait behind others, a download and a tree build, while new roots land. Its path is
-	// taken only once the record read after it still has the roots it was checked against; a list that
-	// keeps moving past that many checks is too new to spend against yet.
+	// A check can wait behind others, a download and a tree build, while new roots land and chain time
+	// passes. Its path is taken only once the record read after it still has the roots it was checked
+	// against and is still young enough at that read; a list that keeps moving past that many checks is
+	// too new to spend against yet.
 	for (let checks = 0; checks < MAX_CHECKS; checks++) {
 		const path = await pathIn(allowList, view, label, origin)
 		const after = await allowList.current()
-		if (rootsKey(after.record) === rootsKey(view.record)) return path
+		if (rootsKey(after.record) === rootsKey(view.record)) {
+			if (!rootFresh(after.record, after.nowSec + PROVING_BUDGET_SEC)) throw new BridgeFailure("LIST_STALE")
+			return path
+		}
 		view = after
 	}
 	throw new BridgeFailure("LIST_STALE")

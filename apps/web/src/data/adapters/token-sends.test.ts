@@ -131,6 +131,22 @@ describe("the token's checked spends", () => {
 		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
 	})
 
+	test("refuses a path whose roots held through the check but aged past spending by the read after it", async () => {
+		const r = rig()
+		// For rootTime 1, 1501 is the last read time still fresh once the proving budget is added.
+		const read = (nowSec: bigint) => ({ record: { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n }, nowSec })
+		const check = vi.fn().mockResolvedValue(ACTIVE)
+		const through = (later: bigint) =>
+			stackTokenSends({
+				aztec: r.aztec,
+				allowList: { current: vi.fn().mockResolvedValueOnce(read(2n)).mockResolvedValueOnce(read(later)), check },
+				sponsoredFpc: FPC,
+			}).unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())
+		await through(1501n)
+		await expect(through(1502n)).rejects.toMatchObject({ code: "LIST_STALE" })
+		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
+	})
+
 	test("sends the label's checked path, paid by the SponsoredFPC, and refuses a label the list does not hold", async () => {
 		const r = rig()
 		const sent = unshield(r)
