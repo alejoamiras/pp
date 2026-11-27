@@ -54,18 +54,18 @@ describe("the stack's Ethereum port", () => {
 		expect(sent).toEqual([TX])
 	})
 
-	test("a spend from the dev account goes through the demo sender only once the page chose it; until then the wallet sends", async () => {
+	test("a spend from the dev account goes through the demo sender only for an attempt made under the page's choice", async () => {
 		const DEV: Address = "0x00000000000000000000000000000000000000Aa"
 		const own = wallet(TARGET.l1ChainId)
 		const injected = wallet(TARGET.l1ChainId)
 		const l1 = stackL1(TARGET, injected.w, { address: DEV, ready: async () => {}, provider: own.w })
-		const spend = () =>
-			l1.spendWallet({ sender: DEV } as Attempt, () => {}, { sent: () => {} }).sendTransaction({ to: PORTAL, value: 0n })
-		// A wallet holding the dev account sends as itself while the page has not chosen the demo sender.
-		await expect(spend()).resolves.toBe(TX)
-		expect([injected.from, own.from]).toEqual([[DEV], []])
+		const spend = (demo: boolean) =>
+			l1.spendWallet({ sender: DEV, demo } as Attempt, () => {}, { sent: () => {} }).sendTransaction({ to: PORTAL, value: 0n })
+		// A passed check chooses nothing: a wallet holding the dev account still sends as itself.
 		await l1.demo?.ready()
-		await expect(spend()).resolves.toBe(TX)
+		await expect(spend(false)).resolves.toBe(TX)
+		expect([injected.from, own.from]).toEqual([[DEV], []])
+		await expect(spend(true)).resolves.toBe(TX)
 		expect([injected.from, own.from]).toEqual([[DEV], [DEV]])
 		expect(stackL1(TARGET, injected.w).demo).toBeUndefined()
 	})

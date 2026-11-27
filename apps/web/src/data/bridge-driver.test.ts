@@ -39,6 +39,7 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 		owner: OWNER,
 		account: SENDER,
 		selected: SENDER,
+		demo: false,
 		chainId: 31337,
 		deployment: "31337:portal:hub",
 		epoch: 1,
@@ -262,6 +263,20 @@ describe("each refusal sends nothing", () => {
 		})
 		expect(await superseded).toEqual({ ok: false, code: "CONTEXT_CHANGED" })
 		expect(signTypedData).not.toHaveBeenCalled()
+	})
+
+	test("a bridge made under the demo choice sends nothing once the choice is cleared, even with the wallet on the dev address", async () => {
+		const h = harness()
+		// The wallet itself selects the dev account, so clearing the choice leaves the sender unchanged.
+		Object.assign(h.ctx, { account: OTHER, selected: OTHER, demo: true })
+		h.hold("prove")
+		const run = h.submit()
+		await h.reached("prove")
+		Object.assign(h.ctx, { demo: false })
+		h.open("prove")
+		await run
+		expect(h.sent).toEqual([])
+		expect(h.machine().failure?.code).toBe("CONTEXT_CHANGED")
 	})
 
 	test("a second Submit for the note is ignored", async () => {

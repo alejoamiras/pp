@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { type Address, isAddressEqual } from "viem"
 import { useApp } from "../../app/context"
 import { type Live, useLive } from "../../app/live"
@@ -49,6 +49,13 @@ function SenderCheck({ now, sender }: { now: Live; sender: Address | null }) {
 	const { source, live } = useApp()
 	const demo = source.l1.demo
 	const [refused, setRefused] = useState<UiCode | null>(null)
+	const mounted = useRef(true)
+	useEffect(() => {
+		mounted.current = true
+		return () => {
+			mounted.current = false
+		}
+	}, [])
 	if (now.demo && demo)
 		return (
 			<Callout tone="neutral" role="status">
@@ -56,11 +63,15 @@ function SenderCheck({ now, sender }: { now: Live; sender: Address | null }) {
 			</Callout>
 		)
 	if (sender === null || now.owner === null || !isAddressEqual(sender, now.owner)) return null
-	const chooseDemo = () =>
+	// The check answers later: a choice the owner, the account or this form no longer stands behind is dropped.
+	const chooseDemo = () => {
+		const at = live.get()
+		const still = () => mounted.current && live.get().owner === at.owner && live.get().account === at.account
 		void demo?.ready().then(
-			() => live.set({ demo: true }),
-			(err: unknown) => setRefused(codeOf(err) ?? "RPC_FAILED"),
+			() => still() && live.set({ demo: true }),
+			(err: unknown) => still() && setRefused(codeOf(err) ?? "RPC_FAILED"),
 		)
+	}
 	return (
 		<Callout tone="attn" title="Switch to a separate Ethereum account" role="status">
 			{messageOf("SENDER_IS_OWNER")} The page waits for your wallet to switch.

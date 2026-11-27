@@ -13,7 +13,7 @@ export interface Live {
 	chainId: number | null
 	epoch: number | null
 	aztecAccounts: readonly AztecAddress[]
-	/** A bridge sends from the local demo's dev account, not the wallet's selected one. */
+	/** A bridge sends from the local demo's dev account, not the wallet's selected one; cleared on sign-out and on a wallet switch. */
 	demo: boolean
 }
 
@@ -40,8 +40,8 @@ export function createLiveStore(deployment: string, demoSender: Address | null =
 			return () => void listeners.delete(f)
 		},
 		context: () => {
-			const { demo, account, ...rest } = live
-			return { ...rest, account: demo && demoSender ? demoSender : account, selected: account, deployment }
+			const { account, ...rest } = live
+			return { ...rest, account: live.demo && demoSender ? demoSender : account, selected: account, deployment }
 		},
 	}
 }

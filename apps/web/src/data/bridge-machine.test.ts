@@ -8,6 +8,7 @@ const attempt: Attempt = {
 	seq: 1,
 	owner: "0x0000000000000000000000000000000000000001",
 	sender: "0x0000000000000000000000000000000000000002",
+	demo: false,
 	recipient,
 	deployment: "d",
 	chainId: 31337,

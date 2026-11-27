@@ -88,9 +88,68 @@ async function reload(store: ReturnType<typeof memoryStore>, patch?: (s: DataSou
 	return app
 }
 
+const DEV = getAddress("0x00000000000000000000000000000000000000aa")
+const OFFER = { name: "Send from the local dev account" } as const
+
+/** A local-stack build whose dev account answers its check with `ready`, owner signed in and Aztec connected. */
+async function demoApp(ready: () => Promise<void>) {
+	const app = renderApp({ patch: (s) => ({ ...s, l1: { ...s.l1, demo: { address: DEV, ready } } }) })
+	await signIn(app.user)
+	await connectAztec(app.user)
+	return app
+}
+
+async function openForm(app: Awaited<ReturnType<typeof demoApp>>) {
+	await app.user.click(noteRow(NOTE).getByRole("button", { name: "Bridge to Aztec" }))
+	await app.user.type(screen.getByLabelText(/Amount to bridge/), "70")
+}
+
+describe("the dev-account choice", () => {
+	test("clears when the wallet switches account and on sign-out", async () => {
+		const app = await demoApp(async () => {})
+		await openForm(app)
+		await app.user.click(screen.getByRole("button", OFFER))
+		await screen.findByTestId("demo-sender")
+		act(() => app.control.selectL1Account("sender"))
+		await waitFor(() => expect(screen.queryByTestId("demo-sender")).toBeNull())
+		act(() => app.control.selectL1Account("owner"))
+		await app.user.click(await screen.findByRole("button", OFFER))
+		await screen.findByTestId("demo-sender")
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		await app.user.click(screen.getByRole("button", { name: "Sign out" }))
+		await signIn(app.user)
+		await openForm(app)
+		await screen.findByRole("button", OFFER)
+		expect(screen.queryByTestId("demo-sender")).toBeNull()
+	})
+
+	test("is not made by a check that answers after the form closed", async () => {
+		let answer = () => {}
+		const app = await demoApp(() => new Promise<void>((r) => (answer = r)))
+		await openForm(app)
+		await app.user.click(screen.getByRole("button", OFFER))
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		await act(async () => answer())
+		await openForm(app)
+		await screen.findByRole("button", OFFER)
+		expect(screen.queryByTestId("demo-sender")).toBeNull()
+	})
+
+	test("is not made by a check that answers after the account changed", async () => {
+		let answer = () => {}
+		const app = await demoApp(() => new Promise<void>((r) => (answer = r)))
+		await openForm(app)
+		await app.user.click(screen.getByRole("button", OFFER))
+		act(() => app.control.selectL1Account("sender"))
+		await act(async () => answer())
+		act(() => app.control.selectL1Account("owner"))
+		await screen.findByRole("button", OFFER)
+		expect(screen.queryByTestId("demo-sender")).toBeNull()
+	})
+})
+
 describe("the bridge screen", () => {
 	test("with the owner selected, a local-stack build offers its dev account, and a bridge sends from it once its check passes", async () => {
-		const DEV = getAddress("0x00000000000000000000000000000000000000aa")
 		const checks = [() => Promise.reject(new BridgeFailure("DEPLOYMENT_MISMATCH")), () => Promise.resolve()]
 		const attempts: Attempt[] = []
 		const app = renderApp({

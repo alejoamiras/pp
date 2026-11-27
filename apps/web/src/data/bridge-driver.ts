@@ -26,6 +26,8 @@ export interface LiveContext {
 	readonly account: Address | null
 	/** The Ethereum wallet's own selection, which the demo's dev account never stands in for. */
 	readonly selected: Address | null
+	/** The page's choice of the local demo's dev account as the sender, which signing out or a wallet switch clears. */
+	readonly demo: boolean
 	readonly chainId: number | null
 	readonly deployment: string
 	/** The Aztec connection's epoch; `null` when disconnected. */
@@ -49,6 +51,7 @@ export function isCurrent(a: Attempt, ctx: LiveContext): boolean {
 	return (
 		same(ctx.owner, a.owner) &&
 		same(ctx.account, a.sender) &&
+		ctx.demo === a.demo &&
 		ctx.chainId === a.chainId &&
 		ctx.deployment === a.deployment &&
 		ctx.epoch === a.epoch &&
@@ -266,6 +269,7 @@ function freeze(st: State, input: SubmitInput, ctx: LiveContext): Attempt {
 		seq: ++st.seq,
 		owner: ctx.owner as Address,
 		sender: ctx.account as Address,
+		demo: ctx.demo,
 		recipient: parseAztecAddress(input.recipient) as AztecAddress,
 		deployment: st.deps.deployment.id,
 		chainId: st.deps.deployment.chainId,

@@ -30,6 +30,8 @@ export type Attempt = Readonly<{
 	seq: number
 	owner: Address
 	sender: Address
+	/** Whether the page chose the local demo's dev account as the sender; only such an attempt sends through it. */
+	demo: boolean
 	recipient: AztecAddress
 	deployment: string
 	chainId: number

@@ -34,9 +34,10 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 			.chainId()
 			.then((chainId) => current && !heard.chain && live.set({ chainId }))
 			.catch(() => {})
+		// A wallet switch ends the dev-account choice: the user picks a sender again.
 		const offAccounts = source.l1.onAccountsChanged((a) => {
 			heard.account = true
-			live.set({ account: a[0] ?? null })
+			live.set({ account: a[0] ?? null, demo: false })
 		})
 		const offChain = source.l1.onChainChanged((chainId) => {
 			heard.chain = true
@@ -55,7 +56,7 @@ export function useEthereum(source: DataSource, live: LiveStore) {
 		run.current++
 		session.current?.close()
 		session.current = null
-		live.set({ owner: null })
+		live.set({ owner: null, demo: false })
 		setStatus({ kind: "out" })
 	}, [live])
 
