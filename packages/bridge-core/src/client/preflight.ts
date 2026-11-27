@@ -1,5 +1,11 @@
-import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
+import { getFeeJuiceBalance } from "@aztec-labs/aztec.js/utils"
+import type { Wallet } from "@aztec-labs/aztec.js/wallet"
+import type { AztecNode } from "@aztec-labs/stdlib/interfaces/client"
+import { AztecAddress } from "@aztec-labs/stdlib/aztec-address"
+import { ExecutionPayload } from "@aztec-labs/stdlib/tx"
+import { guarded } from "./boundary"
 import { BridgeClientError } from "./errors"
+import { sponsored, sponsoredFpcAddress } from "./payload"
 
 /** What a passing preflight keeps of the Aztec wallet: enough to ask again whether it holds the recipient. */
 export type AccountLister = { getAccounts(): Promise<readonly { item: { toString(): string } }[]> }
@@ -53,4 +59,40 @@ export class Preflights {
 		if (!listed || this.#live(key) !== entry) throw required()
 		this.#entries.delete(key)
 	}
+}
+
+/** The wallet surface preflight uses: its accounts, and a simulation from one of them. */
+export type PreflightWallet = Pick<Wallet, "getAccounts" | "simulateTx">
+
+/** The node surface preflight uses: public storage, where the FPC's Fee Juice balance lives. */
+export type PreflightNode = Pick<AztecNode, "getPublicStorageAt">
+
+/**
+ * Checks that `recipient` can claim: a valid address, one of the wallet's own accounts (only the
+ * recipient's account can claim), a SponsoredFPC holding Fee Juice, and an empty transaction from
+ * it, paid by that FPC, simulating; the wallet simulates with a stub account, so this tests the fee
+ * path, not the account's own deployment. The FPC is probed by its balance, not by `getContract`: a
+ * network's genesis FPC is never published as an instance, so the node serves none for it.
+ * On success `preflights` keeps the wallet for this deployment and recipient for ten minutes.
+ * @throws BridgeClientError `RECIPIENT_INVALID`, `RECIPIENT_NOT_IN_WALLET`, `FEE_PATH_FAILED`
+ */
+export function preflight(
+	ctx: { deploymentId: string; node: PreflightNode; preflights: Preflights },
+	a: { recipient: AztecAddress; wallet: PreflightWallet },
+): Promise<void> {
+	return guarded(async () => {
+		const recipient = AztecAddress.fromStringUnsafe(String(a.recipient.toString()))
+		const wallet = a.wallet
+		if (!(await recipient.isValid())) throw new BridgeClientError("RECIPIENT_INVALID")
+		const wanted = recipient.toString().toLowerCase()
+		if (!(await wallet.getAccounts()).some((x) => x.item.toString().toLowerCase() === wanted))
+			throw new BridgeClientError("RECIPIENT_NOT_IN_WALLET")
+		if ((await getFeeJuiceBalance(await sponsoredFpcAddress(), ctx.node as AztecNode)) === 0n)
+			throw new BridgeClientError("FEE_PATH_FAILED")
+		const empty = await sponsored(new ExecutionPayload([], [], []))
+		await wallet.simulateTx(empty, { from: recipient }).catch(() => {
+			throw new BridgeClientError("FEE_PATH_FAILED")
+		})
+		ctx.preflights.record(ctx.deploymentId, recipient, wallet)
+	})
 }
