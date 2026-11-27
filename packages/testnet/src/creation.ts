@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type Hex, hexToNumber, keccak256, size, slice } from "viem"
 
@@ -29,19 +30,27 @@ export const CREATION_CODES = JSON.parse(readFileSync(fileURLToPath(new URL("../
 	CreationPin
 >
 
-/** The forge artifact `@pp/bridge-core`'s deploy loads for `name`. */
-export const forgeArtifact = (name: string): string =>
-	fileURLToPath(new URL(`../../../contracts/bridge/evm/out/${name}.sol/${name}.json`, import.meta.url))
+const FORGE_OUT = fileURLToPath(new URL("../../../contracts/bridge/evm/out/", import.meta.url))
+
+/** The forge artifact for `name` under `out`; by default the one `@pp/bridge-core`'s deploy loads. */
+export const forgeArtifact = (name: string, out = FORGE_OUT): string => join(out, `${name}.sol`, `${name}.json`)
+
+/**
+ * The build directory `deploy`'s check reads: a `--rehearse` run's own copy when `PP_TESTNET_FORGE_OUT`
+ * names one, so a rehearsal never rewrites the shared build; every other mode reads the checkout's.
+ */
+export const checkedForgeOut = (mode: { kind: string }, env: NodeJS.ProcessEnv): string =>
+	(mode.kind === "rehearse" && env.PP_TESTNET_FORGE_OUT) || FORGE_OUT
 
 /**
  * Every contract in {@link CREATION_CODES}, as the deploy will load it, matches its pin's hash and size.
  * @returns the first mismatch as `name: actual, committed pin`, or undefined
  */
-export function buildMismatch(): string | undefined {
+export function buildMismatch(out = FORGE_OUT): string | undefined {
 	for (const [name, want] of Object.entries(CREATION_CODES)) {
 		let actual: string
 		try {
-			const code = JSON.parse(readFileSync(forgeArtifact(name), "utf8")).bytecode.object as Hex
+			const code = JSON.parse(readFileSync(forgeArtifact(name, out), "utf8")).bytecode.object as Hex
 			actual = `${creationCodeHash(code)} (${size(code)} bytes)`
 		} catch (e) {
 			actual = `unreadable (${e instanceof Error ? e.message : String(e)})`

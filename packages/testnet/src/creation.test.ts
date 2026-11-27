@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { concat, type Hex, keccak256, numberToHex, size } from "viem"
 import { describe, expect, it } from "vitest"
-import { buildMismatch, CREATION_CODES, creationCodeHash, forgeArtifact as artifact, stripMetadata } from "./creation"
+import { buildMismatch, CREATION_CODES, checkedForgeOut, creationCodeHash, forgeArtifact as artifact, stripMetadata } from "./creation"
 
 describe("creation-code hashes", () => {
 	it("hash the code without its trailing metadata, so only what the code does is compared", () => {
@@ -19,5 +19,15 @@ describe("creation-code hashes", () => {
 			expect({ hash: creationCodeHash(code), size: size(code) }, name).toEqual(want)
 		}
 		expect(buildMismatch()).toBeUndefined()
+	})
+})
+
+describe("the build deploy checks", () => {
+	it("is a rehearsal's own copy only under --rehearse, and the checkout's build in every other mode", () => {
+		const env = { PP_TESTNET_FORGE_OUT: "/case/out" }
+		const own = checkedForgeOut({ kind: "live" }, {})
+		expect(checkedForgeOut({ kind: "rehearse" }, env)).toBe("/case/out")
+		for (const kind of ["live", "rehearse-fork"]) expect(checkedForgeOut({ kind }, env)).toBe(own)
+		expect(checkedForgeOut({ kind: "rehearse" }, { PP_TESTNET_FORGE_OUT: "" })).toBe(own)
 	})
 })

@@ -1,13 +1,13 @@
 /**
- * `deploy` against a stale `contracts/bridge/evm/out`: the rehearsal swaps the factory's build file for
- * one whose code differs by a byte, runs the real `deploy`, and puts the file back byte for byte, so no
- * other deploy may run from this checkout for those few seconds. The CLI must refuse at its build check,
- * with no transaction sent and no run directory written. Its node guard runs against a stub that answers
- * `getNodeInfo` only, since the case needs no L2.
+ * `deploy` against a stale build: the case writes a copy of the factory's build file whose code differs
+ * by a byte into its own directory, and the real `deploy` checks that copy (`PP_TESTNET_FORGE_OUT`,
+ * honoured under `--rehearse` only), so the shared build is never rewritten. The CLI must refuse at its
+ * build check, with no transaction sent and no run directory written. Its node guard runs against a stub
+ * that answers `getNodeInfo` only, since the case needs no L2.
  */
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { claimPort } from "@pp/run-isolation/ports"
 import { killGroup } from "@pp/run-isolation/process"
 import { type Hex, size, slice } from "viem"
@@ -31,21 +31,13 @@ function staleCopy(original: string): string {
 	return JSON.stringify(artifact)
 }
 
-/**
- * Swaps the build file for {@link staleCopy} until the returned restore runs; the original also stays in
- * `dir` so a killed run can be undone by hand.
- */
-function swapInStale(dir: string): () => void {
-	const path = forgeArtifact("PortalFactory")
-	const original = readFileSync(path)
-	copyFileSync(path, join(dir, "PortalFactory.json.orig"))
-	let restored = false
-	writeFileSync(path, staleCopy(original.toString("utf8")))
-	return () => {
-		if (restored) return
-		writeFileSync(path, original)
-		restored = true
-	}
+/** A build directory under `dir` holding {@link staleCopy} of the factory's build file; returns it. */
+function staleOut(dir: string): string {
+	const out = join(dir, "out")
+	const path = forgeArtifact("PortalFactory", out)
+	mkdirSync(dirname(path), { recursive: true })
+	writeFileSync(path, staleCopy(readFileSync(forgeArtifact("PortalFactory"), "utf8")))
+	return out
 }
 
 export async function staleBuild(c: CaseCtx): Promise<string[]> {
@@ -65,23 +57,17 @@ export async function staleBuild(c: CaseCtx): Promise<string[]> {
 		PP_TESTNET_RUN_ROOT: runRoot,
 		PP_REHEARSE_L1_DEPLOYER_KEY: DEPLOYER_KEY,
 		PP_REHEARSE_L2_DEPLOYER_SECRET: generateKey("l2"),
+		PP_TESTNET_FORGE_OUT: staleOut(c.dir),
 	}
 	const before = {
 		block: await chain.rpc<Hex>("eth_blockNumber"),
 		nonce: await chain.rpc<Hex>("eth_getTransactionCount", [deployer, "latest"]),
 	}
-	const restore = swapInStale(c.dir)
-	c.cleanup.push(async () => restore())
 	const logFile = join(c.dir, "deploy.log")
 	const t0 = performance.now()
-	let r: Awaited<ReturnType<typeof ended>>
-	try {
-		const child = startCli("deploy", [file, "--rehearse", manifest], env, logFile)
-		c.cleanup.push(async () => void (await killGroup(child)))
-		r = await ended(child, logFile, 120_000)
-	} finally {
-		restore()
-	}
+	const child = startCli("deploy", [file, "--rehearse", manifest], env, logFile)
+	c.cleanup.push(async () => void (await killGroup(child)))
+	const r = await ended(child, logFile, 120_000)
 	const ms = Math.round(performance.now() - t0)
 	const refusal = /refused: build: the forge build is not the committed one: PortalFactory: /.test(r.out)
 	check(r.code === 2 && refusal, `deploy over a stale build: expected exit 2 at the build check, got exit ${r.code}\n${r.out.trim()}`)
@@ -89,10 +75,10 @@ export async function staleBuild(c: CaseCtx): Promise<string[]> {
 	check((await chain.rpc<Hex>("eth_getTransactionCount", [deployer, "pending"])) === before.nonce, "the deployer signed")
 	check(!existsSync(runRoot), "deploy wrote a run directory")
 	check(node.calls.join() === NODE_INFO, `deploy asked the node ${node.calls.join(", ")}`)
-	check(buildMismatch() === undefined, "the build file was not restored")
+	check(buildMismatch() === undefined, "the shared build changed")
 	return [
-		"PortalFactory's build file swapped for one with a byte of other code",
+		"a copy of PortalFactory's build file with a byte of other code, in the case's own directory",
 		`deploy: exit 2 at its build check in ${ms} ms, after the chain and node guards; no block, no deployer nonce, no run directory`,
-		"build file restored; it hashes to the committed creation code again",
+		"the shared build still hashes to the committed creation code",
 	]
 }

@@ -8,7 +8,7 @@ import { deployBridgeGeneration, readDeployJournal } from "@pp/bridge-core/deplo
 import { SANDBOX_ACTOR_SALT } from "@pp/bridge-core/sandbox"
 import { isAddressEqual } from "viem"
 import { l1AddressOf, l2AddressOf } from "../accounts"
-import { buildMismatch } from "../creation"
+import { buildMismatch, checkedForgeOut } from "../creation"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { BRIDGE_FIELDS } from "../schema"
@@ -23,7 +23,7 @@ await main(async () => {
 	const { d } = await guarded(file, mode, ["expected", "pool"], true)
 	assertOwnTarget(d)
 	if (d.bridge) throw new GuardError("bridge", "the file already has a bridge; a new generation is a new file")
-	const mismatch = buildMismatch()
+	const mismatch = buildMismatch(checkedForgeOut(mode, process.env))
 	if (mismatch) throw new GuardError("build", `the forge build is not the committed one: ${mismatch}`)
 	const { L1_DEPLOYER_KEY, L2_DEPLOYER_SECRET } = readKeys(RUN_KEYS.deploy, mode, { env: process.env }, l1AddressOf)
 	const deployerKey = L1_DEPLOYER_KEY as `0x${string}`
