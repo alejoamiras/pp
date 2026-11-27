@@ -4,15 +4,17 @@ import { privateKeyToAccount } from "viem/accounts"
 import { expect, test } from "vitest"
 import { BRIDGE_DEPLOYER_INDEX, DEMO_SENDER_ADDRESS, DEMO_SENDER_INDEX, POOL_DEPLOYER_INDEX, SEED_USER_INDEX } from "./accounts.ts"
 
+/** An import or re-export whose braces hold an inline `type` specifier; group 1 is its module. */
+const INLINE_TYPE = /\b(?:import|export)\s*\{[^}]*\btype\b[^}]*\}(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*)*from\s*["']([^"']+)/g
+
 /**
  * What `source` loads at runtime under Node's type stripping: every import, re-export and dynamic
- * import Bun's scanner sees, plus `import { type X } from`, which Bun drops but Node keeps as a bare
- * import of its module.
+ * import Bun's scanner sees, plus an inline-`type` import or re-export, which Bun drops but Node
+ * keeps as a bare import of its module.
  */
 function runtimeEdges(source: string): string[] {
 	const scanned = new Bun.Transpiler({ loader: "ts" }).scanImports(source).map((i) => i.path)
-	const inlineTypes = [...source.matchAll(/\bimport\s*\{[^}]*\btype\b[^}]*\}\s*from\s*["']([^"']+)/g)].map((m) => m[1] as string)
-	return [...scanned, ...inlineTypes]
+	return [...scanned, ...[...source.matchAll(INLINE_TYPE)].map((m) => m[1] as string)]
 }
 
 test("the edge check sees every form a runtime edge can take, and no type-only one", () => {
@@ -24,6 +26,8 @@ test("the edge check sees every form a runtime edge can take, and no type-only o
 		'import /* c */ "v"': ["v"],
 		'export const m = () => import\n("v")': ["v"],
 		'import { type A } from "v"': ["v"],
+		'export { type A } from "v"': ["v"],
+		'import { type A } /* c */ from "v"': ["v"],
 	}
 	for (const [source, expected] of Object.entries(edges)) expect(runtimeEdges(source), source).toEqual(expected)
 })
