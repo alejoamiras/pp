@@ -5,25 +5,29 @@ mod test;
 use aztec::macros::aztec;
 
 /// A token whose every private note carries a deposit label and its origin. Value enters a note only
-/// through the bridge's mint, and the bridge's exit burn reads no registry, so a holder can always
-/// leave with the notes its wallet can find.
+/// through the bridge's mint (a pool label) or a shield (a new birth label), and the bridge's exit burn
+/// reads no registry, so a holder can always leave with the notes its wallet can find.
 #[aztec]
 pub contract LabelledToken {
     use crate::{
-        balance_set::{LabelledBalanceSet, LABELS_PER_PAGE, VALUES_PER_PAGE},
-        note::ORIGIN_POOL,
+        balance_set::{delivery, LabelledBalanceSet, LABELS_PER_PAGE, VALUES_PER_PAGE},
+        note::{ORIGIN_BIRTH, ORIGIN_POOL},
     };
-    use asp_registry::label_check::{AnchorRoots, assert_current, check_label, LabelPath};
+    use asp_registry::label_check::{
+        AnchorRoots, assert_current, birth_intake_at_anchor, check_label, LabelPath, SPEND_WINDOW,
+    };
     use aztec::{
         macros::{
             events::event,
             functions::{external, initializer, internal, only_self, view},
             storage::storage,
         },
+        oracle::random::random,
         protocol::{address::AztecAddress, traits::{Deserialize, FromField, Packable, Serialize}},
         state_vars::{Map, Owned, PublicImmutable, PublicMutable},
     };
     use compressed_string::FieldCompressedString;
+    use pp_hash::birth::{birth_id, birth_label, birth_nullifier};
 
     /// The private side of a public balance change in `Transfer`, as in aztec-standards.
     global PRIVATE_ADDRESS_MAGIC_VALUE: AztecAddress =
@@ -33,6 +37,25 @@ pub contract LabelledToken {
     struct Transfer {
         from: AztecAddress,
         to: AztecAddress,
+        amount: u128,
+    }
+
+    /// A shield's birth, for the registry's birth intake only: enough to recompute the label and match
+    /// the shield's `ShieldDebited`.
+    #[event]
+    struct BirthAnnouncement {
+        label: Field,
+        secret: Field,
+        owner: AztecAddress,
+        amount: u128,
+    }
+
+    /// The public side of a shield. `birth_id` ties it to one announcement and reveals the label only
+    /// to whoever holds the secret.
+    #[event]
+    struct ShieldDebited {
+        birth_id: Field,
+        owner: AztecAddress,
         amount: u128,
     }
 
@@ -127,6 +150,42 @@ pub contract LabelledToken {
         assert_current(self.context, self.storage.config.read().registry, roots);
         self.internal._credit_public(owner, amount);
         self.emit(Transfer { from: PRIVATE_ADDRESS_MAGIC_VALUE, to: owner, amount });
+    }
+
+    /// Moves `amount` of the caller's public balance into a birth-origin note under a new label, and
+    /// announces the label to the registry's birth intake. The note spends once the birth tree admits
+    /// its label; it can be ragequit at any time.
+    #[external("private")]
+    fn shield(amount: u128) {
+        // The note, the birth nullifier and the announcement must revert with the public debit.
+        assert(self.context.in_revertible_phase(), "setup phase");
+        assert(amount != 0, "zero amount");
+        let owner = self.msg_sender();
+        // Safety: the prover picks the secret. A repeated one hits the birth nullifier; a guessable one
+        // lets a later holder of the label link it to this debit.
+        let secret = unsafe { random() };
+        let label = birth_label(self.address, owner, amount, secret);
+        // The bridge's settlement encoder rejects a zero label: such a note could never exit.
+        assert(label != 0, "zero label");
+        self.enqueue_self.debit_for_shield(owner, amount, birth_id(label, secret));
+        self.context.push_nullifier_unsafe(birth_nullifier(owner, secret));
+        self.storage.private_balances.at(owner).add(label, ORIGIN_BIRTH, amount);
+        // Read at the anchor, so an intake rotation reaches proofs anchored after it; the expiry bounds
+        // how long an older proof still announces to the old intake.
+        let intake = birth_intake_at_anchor(self.context, self.storage.config.read().registry);
+        // As for a note: an announcement to an off-curve address is encrypted to a random key.
+        assert(intake.is_valid(), "invalid intake");
+        let anchor = self.context.get_anchor_block_header().timestamp();
+        self.context.set_expiration_timestamp(anchor + SPEND_WINDOW);
+        self.emit(BirthAnnouncement { label, secret, owner, amount }).deliver_to(intake, delivery());
+    }
+
+    #[external("public")]
+    #[only_self]
+    fn debit_for_shield(owner: AztecAddress, amount: u128, birth_id: Field) {
+        self.internal._debit_public(owner, amount);
+        self.emit(ShieldDebited { birth_id, owner, amount });
+        self.emit(Transfer { from: owner, to: PRIVATE_ADDRESS_MAGIC_VALUE, amount });
     }
 
     /// Moves `amount` of the caller's public balance to `to`.

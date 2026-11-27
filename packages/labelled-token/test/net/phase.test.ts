@@ -1,5 +1,5 @@
-// `unshield` refuses to run before `end_setup`, where its effects would not revert with its public
-// step. TXE marks every top-level call revertible and bypasses the account entrypoint, so only a
+// `shield` and `unshield` refuse to run before `end_setup`, where their effects would not revert with
+// their public step. TXE marks every top-level call revertible and bypasses the account entrypoint, so only a
 // real fee-payment call can put it in the setup phase.
 import type { Contract } from "@aztec-labs/aztec.js/contracts"
 import type { FeePaymentMethod } from "@aztec-labs/aztec.js/fee"
@@ -33,6 +33,14 @@ beforeAll(async () => {
 		(v) => v === 10n,
 		"balance 10",
 	)
+	// A public balance for the shield to debit.
+	await registry.post(LIVE.root, BIRTH.root)
+	await holder.token.methods.unshield(5n, L, LIVE.path(L)).send(sendOpts(holder) as never)
+	await settled(
+		() => balance(holder.token, holder.from),
+		(v) => v === 5n,
+		"the change",
+	)
 })
 
 /** `sponsor` with `call` run ahead of it, before the sponsor ends the setup phase. */
@@ -55,6 +63,16 @@ describe("phase", () => {
 		const app = holder.stub.methods.mint(deployed.token.address, holder.from, 1n, L)
 		await expect(
 			app.simulate({ from: holder.from, fee: { ...holder.fee, paymentMethod: runInSetup(sponsor, unshield) } } as never),
+		).rejects.toThrow(/setup phase/)
+	})
+
+	test('a shield run as a setup-phase call fails in simulation with "setup phase"', async () => {
+		const shield = holder.token.methods.shield(3n)
+		await shield.simulate({ from: holder.from, fee: holder.fee } as never)
+		const sponsor = holder.fee.paymentMethod as FeePaymentMethod
+		const app = holder.stub.methods.mint(deployed.token.address, holder.from, 1n, L)
+		await expect(
+			app.simulate({ from: holder.from, fee: { ...holder.fee, paymentMethod: runInSetup(sponsor, shield) } } as never),
 		).rejects.toThrow(/setup phase/)
 	})
 })

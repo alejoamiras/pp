@@ -4,7 +4,8 @@ The labelled token's artifact and its tooling. The contract lives in
 [`contracts/bridge/aztec/labelled_token`](../../contracts/bridge/aztec/labelled_token): an Aztec 6.0.0
 token whose every private note carries a deposit **label** and an **origin** (`0` pool, `1` birth).
 Stage A is the hold-and-leave surface; stage B adds spends checked against the ASP root registry
-([`asp_registry`](../../contracts/bridge/aztec/asp_registry)) and a public balance.
+([`asp_registry`](../../contracts/bridge/aztec/asp_registry)) and a public balance; stage C adds
+shields, which create labels born on Aztec.
 
 | Function | Caller | Effect |
 |---|---|---|
@@ -16,18 +17,23 @@ Stage A is the hold-and-leave surface; stage B adds spends checked against the A
 | `private_notes_by_label(owner, label, start)` | utility | One label's note values, largest first, 10 per page: the exact chunks a caller can burn. |
 | `transfer_private(to, amount, label, path)` | any holder | Spends the caller's `label` notes as `burn_for_exit` does, then proves `label` is in the registry's tree of those notes' origin at the anchor (`check_label`), which also sets the expiry to anchor + 1800 s. Writes `(label, origin, amount)` to `to` and the change to the caller. Refuses a zero or off-curve `to` and a zero amount. |
 | `unshield(amount, label, path)` | any holder | As `transfer_private`, crediting the caller's public balance instead. Refused in the setup phase. The public step `finish_unshield` (callable only by the token) reverts unless both registry roots are still the ones the spend was checked against; after such a revert the notes stay spendable, and until that tx is final any spend that returns change to the caller fails (the change's delivery must follow the dropped one), so it can leave only in exact chunks. |
+| `shield(amount)` | any holder | Moves `amount` of the caller's public balance into one note of origin birth under a new label, `label′ = birth_label(token, owner, amount, secret)` (`pp_hash::birth`; the prover draws the secret). Pushes the birth nullifier and announces `BirthAnnouncement { label, secret, owner, amount }` to the registry's birth intake, read at the anchor. The public step `debit_for_shield` (callable only by the token) debits the caller and emits `ShieldDebited { birth_id, owner, amount }`. Refused in the setup phase, for a zero amount, and while the intake is zero (shields paused) or off-curve. Sets the expiry to anchor + 1800 s. The note spends once the birth tree admits `label′`; it can be burnt for exit at any time. A shield over the public balance reverts and leaves no note, announcement or nullifier, but as after a reverted unshield, the owner's next constrained send fails until that tx is final. |
 | `transfer_public(to, amount)` | any holder | Moves public balance. Refuses a zero or off-curve `to`, the private-side sentinel address and a zero amount. |
 | `burn_public_for_exit(from, amount)` | minter only | Burns `from`'s public balance. |
 | `balance_of_public(owner)` | public view | The owner's public balance. |
 
-Every balance note is delivered constrained under a non-interactive handshake (`balance_set.nr`,
-`delivery()`), so a recipient finds it from the chain with no registered sender, unless the pair
-already shares an interactive handshake (see below).
+Every balance note and every birth announcement is delivered constrained under a non-interactive
+handshake (`balance_set.nr`, `delivery()`), so a recipient finds it from the chain with no registered
+sender, unless the pair already shares an interactive handshake (see below).
 
 ## Entries
 
 - `.` ([`src/index.ts`](src/index.ts)): the artifact and its type. Browser-safe; nothing Node-only is
   reachable from it.
+- `./testing` ([`test/net/testing.ts`](test/net/testing.ts)): helpers for another package's network
+  suite, run under Bun like this package's own: deploy the token with its test minter and a real
+  registry, post roots, move the birth intake, shield, and read the announcement, the `ShieldDebited`
+  log and a tx's nullifiers.
 - `scripts/gates.ts`: `bun run gates` profiles every private function into `bench/gates.json`;
   `gates:check` fails on drift or on a function over `bench/budget.json`; `gates -- --stock` profiles
   the stock aztec-standards Token into `bench/stock-gates.json`.
@@ -40,7 +46,8 @@ already shares an interactive handshake (see below).
 - `scripts/prove.ts`: `bun run bench:prove` boots its own local network and measures, on one proving
   wallet, the whole-tx gates and the client proving time of a 1-note `transfer_private` against the
   stock token's `transfer_private_to_private`, to a recipient the sender has paid before and to a
-  fresh one, plus an 8-note spend. It writes `bench/proving.json` and fails unless the reused-recipient
+  fresh one, plus an 8-note spend; the two tokens' proofs alternate, so changing host load hits both
+  alike. It writes `bench/proving.json` and fails unless the reused-recipient
   row stays within stock + 60,000 gates and 1.5 × stock's median proving time.
 
 ## Tests
@@ -49,7 +56,7 @@ already shares an interactive handshake (see below).
 |---|---|---|
 | Unit | `bun run test` | The ABI surface (no parameter named `offset`, which aztec-nr's call stubs shadow), the gate budgets, the handoff vector. |
 | TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | The contract's rules, against an artifact the runner rebuilds from source (and those of the test minter and the registry). |
-| Network | `bun run test:net` | Stage A and B across separate devices on a local network: discovery, recovery, spends proven against one registry record and landing under another, expiry, and the setup-phase refusal. |
+| Network | `bun run test:net` | Every stage across separate devices on a local network: discovery, recovery, spends proven against one registry record and landing under another, expiry, the setup-phase refusals, and births: an intake device started after the shield finds the announcement, the label, `birth_id` and birth nullifier recompute with `@pp/bridge-spec/birth`, an intake move, and a birth label's approval. |
 | Proving | `bun run bench:prove` | The cost budget against the stock token, with a real prover. |
 
 `test:net` boots one anvil and one local network for the run under the run id `tok-<pid>-<time>` and

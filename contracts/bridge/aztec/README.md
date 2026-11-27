@@ -56,7 +56,8 @@ never a re-pin of a deployed hub.
   (`publish_contract_instance_for_public_execution`) and a TXE block carries no L2→L1 message, so
   the hub network suite (`bun run --cwd packages/bridge-core test:hub`) is the gate for both.
 - **Sole-consumer invariant** (two consume sites, `_bind` and `claim_from_pool`, none in a path
-  dependency; the claim's recipient, portal, commitment, secret and content are pinned) enforced
+  dependency; no nullifier push in the hub or a path dependency but two pinned labelled-token
+  statements that run as the token; the claim's recipient, portal, commitment, secret and content are pinned) enforced
   statically by `scripts/check-sole-consumer.sh`.
 - **Keystone**: the register hash (Solidity ↔ Noir ↔ TS) is pinned in
   `contracts/bridge/evm/test/Keystone.t.sol`, the `keystone` crate and

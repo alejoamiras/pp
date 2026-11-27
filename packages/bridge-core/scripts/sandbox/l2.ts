@@ -46,6 +46,12 @@ export async function actorAccount(
 	return { address, secretKey, completeAddress: await manager.getCompleteAddress(), manager }
 }
 
+/** The address an actor secret derives to — the same derivation the browser test wallet runs, so a
+ *  fixture can fund an account before any wallet holds it. */
+export async function actorAddress(wallet: unknown, secret: Hex, salt: bigint = SANDBOX_ACTOR_SALT): Promise<AztecAddress> {
+	return (await actorAccount(wallet, secret, salt)).address
+}
+
 export async function createActor(
 	wallet: unknown,
 	node: L2Ctx["node"],
