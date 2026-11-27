@@ -11,14 +11,22 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 	return hex(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>))
 }
 
+// The slice of Cache Storage used here, typed locally so a consumer compiling these sources needs no DOM lib.
+type CacheLike = {
+	match(key: string): Promise<Response | undefined>
+	put(key: string, response: Response): Promise<void>
+	delete(key: string): Promise<boolean>
+}
+
 /**
  * Artifacts kept across page loads in Cache Storage, or `undefined` where the runtime has none (Node, Bun).
  * An entry that no longer matches its pinned digest is deleted and read as a miss, so the loader refetches
  * instead of failing on a poisoned cache. Storage errors also read as misses: the cache is only a speed-up.
  */
 export function cacheStorageStore(digestOf: (cid: string) => string | undefined): ICacheStore | undefined {
-	if (typeof caches === "undefined") return undefined
-	const open = () => caches.open(ARTIFACT_CACHE_NAME)
+	const storage = (globalThis as { caches?: { open(name: string): Promise<CacheLike> } }).caches
+	if (storage === undefined) return undefined
+	const open = () => storage.open(ARTIFACT_CACHE_NAME)
 	return {
 		async get(cid) {
 			try {

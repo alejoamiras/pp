@@ -1,5 +1,4 @@
 import {
-	AddressSchema,
 	ASPClient,
 	ASPRegistryInteractor,
 	CryptoService,
@@ -7,14 +6,10 @@ import {
 	createEvmKeystoreInteractor,
 	createEvmPoolSession,
 	createEvmPoolVaultInteractor,
-	EvmAddressEqualityComparator,
-	EvmAddressFieldConverter,
-	EvmContextHashService,
-	EvmPayoutRoutingCodec,
-	EvmRelayBatchCodec,
 	type Hex as SdkHex,
 	HTTPClient,
 	HttpASPDataProvider,
+	type IGroth16Prover,
 	type IRelayerInteractor,
 	KeystoreManager,
 	MerkleService,
@@ -23,15 +18,15 @@ import {
 	NoteManager,
 	NoteStatus,
 	PoseidonHashService,
-	TransactOrchestrator,
 	ViemRPCInteractor,
 	ViemWalletInteractor,
 	WitnessPreparationService,
 } from "#ppv2/evm-sdk"
-import { type Address, createPublicClient, decodeFunctionData, getAddress, type Hex, http, keccak256, toHex, verifyTypedData } from "viem"
-import { POOL_VAULT_TRANSACT_ABI } from "./abi.ts"
+import { createProver, openPoolClient, type PoolClient } from "@pp/pool-client"
+import { type Address, createPublicClient, getAddress, type Hex, http, keccak256, toHex, verifyTypedData } from "viem"
 import { secretDerivationTypedData } from "./derivation.ts"
 import { createProofService } from "./prover.ts"
+import { poolClientOptions, toPreparedSpend } from "./spend.ts"
 import type { ClientConfig, LocalWallet, PoolNote, PoolUser, PreparedSpend, SpendRequest } from "./types.ts"
 
 type SdkPublicClient = ConstructorParameters<typeof ViemRPCInteractor>[0]["publicClient"]
@@ -67,8 +62,6 @@ function toPoolNote(n: Note): PoolNote {
 	}
 }
 
-type Sdk = { session: ReturnType<typeof createEvmPoolSession>; orchestrator: TransactOrchestrator; noteManager: NoteManager }
-
 function contracts(config: ClientConfig, wallet: LocalWallet, merkleService: MerkleService) {
 	const d = config.deployment
 	const deploymentBlock = d.deployBlock
@@ -98,51 +91,33 @@ function contracts(config: ClientConfig, wallet: LocalWallet, merkleService: Mer
 	}
 }
 
-/**
- * The SDK session (keys, deposit, discovery) and the spend orchestrator share one NoteManager and
- * one KeystoreManager, so both see the same notes.
- */
-async function wireSdk(
+/** The checkout's session: keys, registration, deposits and note discovery. Spends go to @pp/pool-client. */
+async function wireSession(
 	config: ClientConfig,
 	wallet: LocalWallet,
 	keystoreManager: KeystoreManager,
 	cryptoService: CryptoService,
-): Promise<Sdk> {
+	prover: IGroth16Prover,
+) {
 	const noteManager = new NoteManager({})
 	const hashService = await PoseidonHashService.create()
 	const merkleService = new MerkleService({ hashService })
 	const noteComputationService = new NoteComputationService({ hashService, cryptoService })
-	const { entrypointInteractor, aspDataProvider, ...chain } = contracts(config, wallet, merkleService)
-	const shared = {
-		...chain,
+	const session = createEvmPoolSession({
+		...contracts(config, wallet, merkleService),
+		chainId: config.chainId,
 		ownerAddress: wallet.account.address,
 		noteManager,
 		keystoreManager,
 		cryptoService,
 		noteComputationService,
 		witnessPreparationService: new WitnessPreparationService({ noteComputationService, hashService, merkleService }),
-		proofService: createProofService(config.circuitsDir),
-	}
-	const session = createEvmPoolSession({
-		...shared,
-		chainId: config.chainId,
-		entrypointInteractor,
+		proofService: createProofService(config.circuitsDir, prover),
 		hashService,
 		merkleService,
-		aspDataProvider,
 		relayerInteractor: noRelayer(),
 	})
-	// PoolSession keeps its orchestrator private, and its withdraw flow cannot take raw transactParams.
-	const orchestrator = new TransactOrchestrator({
-		...shared,
-		contextHashService: new EvmContextHashService(),
-		payoutRoutingCodec: new EvmPayoutRoutingCodec(),
-		relayBatchCodec: new EvmRelayBatchCodec(),
-		addressFieldConverter: new EvmAddressFieldConverter(),
-		addressEqualityComparator: new EvmAddressEqualityComparator(),
-		addressSchema: AddressSchema,
-	})
-	return { session, orchestrator, noteManager }
+	return { session, noteManager }
 }
 
 function pickInput(noteManager: NoteManager, asset: Address, input: bigint | undefined): Note {
@@ -155,36 +130,20 @@ function pickInput(noteManager: NoteManager, asset: Address, input: bigint | und
 	return note
 }
 
-async function prepareSpend(sdk: Sdk, pool: Address, { processor, data, asset, amountOut, input }: SpendRequest): Promise<PreparedSpend> {
-	const note = pickInput(sdk.noteManager, asset, input)
-	const amount = toHex(amountOut) as SdkHex
-	const r = await sdk.orchestrator.prepareTransact({
-		inputCommitments: [note.commitment],
-		amount,
-		amountOut: amount,
-		feeAmount: "0x0" as SdkHex,
-		tokenId: asset,
-		processorAddress: processor,
-		relayAddress: processor,
-		recipientAddress: processor,
-		transactParams: { processor, data },
-	})
-	if (!same(r.transactTx.to, pool)) throw new Error(`SDK built a transact to ${r.transactTx.to}, not the pool ${pool}`)
-	const { args } = decodeFunctionData({ abi: POOL_VAULT_TRANSACT_ABI, data: r.transactTx.data })
-	const signals = args[0].pubSignals
-	const [nullifier, changeCommitment] = [signals[0]?.[0], signals[1]?.[0]]
-	const change = r.changePendingNotes[0]
-	if (nullifier === undefined || changeCommitment === undefined || !change)
-		throw new Error("SDK built a spend without one input and one output")
-	return {
-		args,
-		input: BigInt(note.commitment),
-		nullifier,
-		changeCommitment,
-		changeValue: BigInt(change.value),
-		amountOut,
-		asset: getAddress(asset),
-		label: BigInt(note.label),
+/** One pool-client per asset, opened on first spend; a failed open is retried on the next. */
+function spender(config: ClientConfig, owner: Address, signature: Hex, prover: IGroth16Prover) {
+	const clients = new Map<Address, Promise<PoolClient>>()
+	const clientFor = (asset: Address) => {
+		const known = clients.get(asset)
+		if (known) return known
+		const opened = openPoolClient({ ...poolClientOptions(config, asset, owner, signature), prover })
+		opened.catch(() => clients.delete(asset))
+		clients.set(asset, opened)
+		return opened
+	}
+	return async (note: Note, { processor, data, asset, amountOut }: SpendRequest): Promise<PreparedSpend> => {
+		const client = await clientFor(getAddress(asset))
+		return toPreparedSpend(await client.prepareSpend({ note: BigInt(note.commitment), amount: amountOut, processor, data }))
 	}
 }
 
@@ -199,13 +158,14 @@ export async function createPoolUser(config: ClientConfig, o: { wallet: LocalWal
 	if (o.signature && !(await verifyTypedData({ address: owner, signature: o.signature, ...typedData })))
 		throw new Error(`the signature is not ${owner}'s secret-derivation signature`)
 	const signature = o.signature ?? (await wallet.signTypedData({ account: wallet.account, ...typedData }))
+	const prover = createProver()
 	const cryptoService = new CryptoService()
 	const keystoreManager = KeystoreManager.fromSignature(
 		{ signature, signerAddress: owner, addressHash: keccak256(owner), revocableKeyIndex: "0x0" },
 		{ cryptoService },
 	)
-	const sdk = await wireSdk(config, wallet, keystoreManager, cryptoService)
-	const { session, noteManager } = sdk
+	const { session, noteManager } = await wireSession(config, wallet, keystoreManager, cryptoService, prover)
+	const spend = spender(config, owner, signature, prover)
 	return {
 		address: owner,
 		async registerKeystore() {
@@ -222,6 +182,6 @@ export async function createPoolUser(config: ClientConfig, o: { wallet: LocalWal
 			await session.discoverNotes()
 		},
 		notes: () => noteManager.getNotes().map(toPoolNote),
-		prepareSpend: (p) => prepareSpend(sdk, config.deployment.pool, p),
+		prepareSpend: (p) => spend(pickInput(noteManager, p.asset, p.input), p),
 	}
 }

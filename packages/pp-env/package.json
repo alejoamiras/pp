@@ -38,6 +38,7 @@
 		"up": "bun src/cli.ts up"
 	},
 	"dependencies": {
+		"@pp/pool-client": "workspace:*",
 		"viem": "2.45.3"
 	},
 	"devDependencies": {

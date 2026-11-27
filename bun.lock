@@ -180,6 +180,7 @@
         "pp-env": "./src/cli.ts",
       },
       "dependencies": {
+        "@pp/pool-client": "workspace:*",
         "viem": "2.45.3",
       },
       "devDependencies": {
