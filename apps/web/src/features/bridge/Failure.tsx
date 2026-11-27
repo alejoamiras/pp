@@ -1,5 +1,5 @@
 import { useApp } from "../../app/context"
-import type { Failure, Offer } from "../../data/bridge-machine"
+import { type Failure, type Offer, RESUBMITS } from "../../data/bridge-machine"
 import { messageOf, UNCERTAIN_WORST_CASE, type UiCode } from "../../data/errors"
 import { ActionButton, Callout } from "../../ui"
 import { RevertLine } from "../actions/shared"
@@ -36,7 +36,7 @@ export function FailureCallout({ failure }: { failure: Failure }) {
 	const act = (offer: Offer) => {
 		if (offer === "prepare-again") return bridge.restart()
 		if (offer === "claim") return void bridge.claim()
-		resubmit(offer === "send-again")
+		if (RESUBMITS.has(offer)) resubmit(offer === "send-again")
 	}
 	const { offer } = failure
 	return (

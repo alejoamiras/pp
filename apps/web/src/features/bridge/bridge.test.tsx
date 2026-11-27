@@ -5,7 +5,8 @@ import { afterEach, describe, expect, test } from "vitest"
 import { BridgeFailure, messageOf, UNCERTAIN_WORST_CASE } from "../../data/errors"
 import type { Attempt } from "../../data/ports"
 import type { DataSource } from "../../data/source"
-import { connectAztec, memoryStore, noteRow, renderApp, signIn } from "../../test-utils/app"
+import { LABELS } from "../../data/fixtures/seed"
+import { connectAztec, labelRow, memoryStore, noteRow, renderApp, signIn } from "../../test-utils/app"
 
 afterEach(cleanup)
 
@@ -238,6 +239,39 @@ describe("the bridge screen", () => {
 		expect(app.control.state()).toMatchObject({ sent: { l1: 0 }, bridges: [] })
 		await submit(app)
 		await landed()
+	})
+
+	test("a preflight that fails offers Start again, which checks the recipient again and keeps a held account held, sending nothing", async () => {
+		const app = renderApp()
+		await signIn(app.user)
+		await connectAztec(app.user)
+		// A private send whose outcome the page could not read holds the Aztec account.
+		app.control.failNext("transferPrivate", "UNCONFIRMED")
+		await screen.findAllByTestId("label-row")
+		await app.user.click(labelRow(LABELS.active).getByRole("button", { name: "Send privately" }))
+		const dialog = within(await screen.findByTestId("action-dialog"))
+		await app.user.type(dialog.getByLabelText(/Amount/), "5")
+		await app.user.type(dialog.getByLabelText("Recipient on Aztec"), `0x${"2d".repeat(32)}`)
+		await app.user.click(dialog.getByRole("button", { name: "Send" }))
+		await dialog.findByText(messageOf("TX_UNCONFIRMED"))
+		await app.user.click(dialog.getByRole("button", { name: "Cancel" }))
+		await waitFor(() => labelRow(LABELS.active).getAllByText(messageOf("TX_UNSETTLED")))
+		const sent = app.control.state().sent
+
+		act(() => app.control.selectL1Account("sender"))
+		app.control.failNext("preflight", "RPC_FAILED")
+		await app.user.click(noteRow(NOTE).getByRole("button", { name: "Bridge to Aztec" }))
+		await screen.findByText(messageOf("RPC_FAILED"))
+		expect(screen.queryByRole("button", { name: "Prove again" })).toBeNull()
+		await app.user.click(screen.getByRole("button", { name: "Start again" }))
+		await app.user.type(screen.getByLabelText(/Amount to bridge/), "70")
+		const bridge = () => within(screen.getByTestId("bridge-form")).getByRole<HTMLButtonElement>("button", { name: "Bridge to Aztec" })
+		await waitFor(() => expect(bridge().disabled).toBe(false))
+		expect(screen.queryByTestId("bridge-failure")).toBeNull()
+		expect(app.control.state().sent).toEqual(sent)
+
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		await waitFor(() => labelRow(LABELS.active).getAllByText(messageOf("TX_UNSETTLED")))
 	})
 
 	test("UNCERTAIN states the worst case; Check again answers from the journal with no submit, Send again sends with the override", async () => {

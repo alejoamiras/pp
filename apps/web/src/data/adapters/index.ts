@@ -6,12 +6,14 @@
  * registry's record and the bot's snapshots, checked in a worker.
  *
  * Everything that carries aztec.js, the contract artifacts, the bridge client or the allow list's
- * reader loads on first use, so the main chunk stays free of them.
+ * reader loads on first use, so the main chunk stays free of them. A failed load is not kept here: the
+ * next call runs it again.
  */
 import { demoSender } from "#demo-sender"
 import { getAddress } from "viem"
 import { target } from "../../target"
 import { stageManifest } from "../capabilities"
+import { importChunk, loadOnce } from "../lazy"
 import { parseAztecAddress } from "../parse"
 import type { AllowListPort, AztecPort, Deployment, ExitPort, SessionPort } from "../ports"
 import type { DataSource } from "../source"
@@ -53,69 +55,73 @@ const l1 = stackL1(target, (globalThis as { ethereum?: InjectedWallet }).ethereu
 
 /** One connector per page: the adapters send only through the wallet it holds for the live connection. */
 let connector: RealConnector | null = null
-let connectorLoad: Promise<RealConnector> | undefined
-const loadConnector = (): Promise<RealConnector> =>
-	(connectorLoad ??= loadRealConnector(stageManifest(deployment.stage, deployment)).then((c) => (connector = c)))
+const loadConnector = loadOnce(() => loadRealConnector(stageManifest(deployment.stage, deployment)).then((c) => (connector = c)))
 const current = (): HeldWallet | null => connector?.current() ?? null
 
 type AztecSide = { deps: AztecDeps; port: Pick<AztecPort, "balancesByLabel" | "notesByLabel" | "publicBalance"> }
-let aztecLoad: Promise<AztecSide> | undefined
-const loadAztec = (): Promise<AztecSide> =>
-	(aztecLoad ??= import("./aztec").then((m) => {
-		const deps = m.aztecDeps(target.nodeUrl, deployment, current)
-		return { deps, port: m.stackAztec(deps) }
-	}))
-
-let sessionsLoad: Promise<SessionPort> | undefined
-/** The session module and the page's prover load on first use; proving files come from this page's own server. */
-const loadSessions = (): Promise<SessionPort> =>
-	(sessionsLoad ??= Promise.all([import("./session"), loadAztec()]).then(([m, side]) =>
-		m.stackSessions({
-			manifest,
-			reads: l1.reads,
-			prover: m.proverFor(browserTimer),
-			artifacts: { kind: "gateway", urls: [location.origin] },
-			l1,
-			aztec: side.deps,
-			storage: localStorage,
+const aztecChunk = () => importChunk(import("./aztec"))
+const loadAztec = loadOnce(
+	(): Promise<AztecSide> =>
+		aztecChunk().then((m) => {
+			const deps = m.aztecDeps(target.nodeUrl, deployment, current)
+			return { deps, port: m.stackAztec(deps) }
 		}),
-	))
+)
+
+const sessionChunk = () => importChunk(import("./session"))
+/** The session module and the page's prover load on first use; proving files come from this page's own server. */
+const loadSessions = loadOnce(
+	(): Promise<SessionPort> =>
+		Promise.all([sessionChunk(), loadAztec()]).then(([m, side]) =>
+			m.stackSessions({
+				manifest,
+				reads: l1.reads,
+				prover: m.proverFor(browserTimer),
+				artifacts: { kind: "gateway", urls: [location.origin] },
+				l1,
+				aztec: side.deps,
+				storage: localStorage,
+			}),
+		),
+)
 
 type ExitSide = {
 	exits: Pick<AztecPort, "ragequit"> & ExitPort
 	withdraw: Pick<AztecPort, "exitPublic" | "exitPrivate">
 }
-let exitsLoad: Promise<ExitSide> | undefined
 /** The exits and the withdrawals share one bridge client, in the chunk the build lets carry it. */
-const loadExits = (): Promise<ExitSide> =>
-	(exitsLoad ??= Promise.all([import("./session"), loadAztec()]).then(([m, side]) => {
-		const client = m.exitClient(manifest)
-		const notes: AztecPort["notesByLabel"] = (owner, label) => side.port.notesByLabel(owner, label)
-		return {
-			exits: m.stackExits({ manifest, deployment, aztec: side.deps, notes, l1, client }),
-			withdraw: m.stackWithdraw({
+const loadExits = loadOnce(
+	(): Promise<ExitSide> =>
+		Promise.all([sessionChunk(), loadAztec()]).then(([m, side]) => {
+			const client = m.exitClient(manifest)
+			const notes: AztecPort["notesByLabel"] = (owner, label) => side.port.notesByLabel(owner, label)
+			return {
+				exits: m.stackExits({ manifest, deployment, aztec: side.deps, notes, l1, client }),
+				withdraw: m.stackWithdraw({
+					aztec: side.deps,
+					allowList,
+					sponsoredFpc: deployment.sponsoredFpc,
+					client,
+					notes,
+					publicBalance: (owner) => side.port.publicBalance(owner),
+				}),
+			}
+		}),
+)
+
+type SendSide = Pick<AztecPort, "transferPrivate" | "unshield" | "shield">
+const loadSends = loadOnce(
+	(): Promise<SendSide> =>
+		Promise.all([importChunk(import("./token-sends")), loadAztec()]).then(([m, side]) =>
+			m.stackTokenSends({
 				aztec: side.deps,
 				allowList,
 				sponsoredFpc: deployment.sponsoredFpc,
-				client,
-				notes,
+				notes: (owner, label) => side.port.notesByLabel(owner, label),
 				publicBalance: (owner) => side.port.publicBalance(owner),
 			}),
-		}
-	}))
-
-type SendSide = Pick<AztecPort, "transferPrivate" | "unshield" | "shield">
-let sendsLoad: Promise<SendSide> | undefined
-const loadSends = (): Promise<SendSide> =>
-	(sendsLoad ??= Promise.all([import("./token-sends"), loadAztec()]).then(([m, side]) =>
-		m.stackTokenSends({
-			aztec: side.deps,
-			allowList,
-			sponsoredFpc: deployment.sponsoredFpc,
-			notes: (owner, label) => side.port.notesByLabel(owner, label),
-			publicBalance: (owner) => side.port.publicBalance(owner),
-		}),
-	))
+		),
+)
 
 const sessions: SessionPort = {
 	open: async (a) => (await loadSessions()).open(a),
@@ -138,24 +144,25 @@ const exits: ExitPort = {
 	settle: async (t, from, on) => (await loadExits()).exits.settle(t, from, on),
 }
 /** The allow list loads on first use; its worker starts at the first check. */
-let allowLoad: Promise<AllowListPort> | undefined
 let allowPort: AllowListPort | null = null
 const progress = new Set<Parameters<AllowListPort["onProgress"]>[0]>()
-const loadAllowList = (): Promise<AllowListPort> =>
-	(allowLoad ??= import("./allow-list").then((m) => {
-		const port = m.stackAllowList({
-			nodeUrl: target.nodeUrl,
-			registry: aztecAddress(manifest.bridge.registry, "bridge.registry"),
-			botUrl: stack.botUrl,
-			timer: browserTimer,
-			worker: m.browserWorker,
-		})
-		port.onProgress((p) => {
-			for (const f of [...progress]) f(p)
-		})
-		allowPort = port
-		return port
-	}))
+const loadAllowList = loadOnce(
+	(): Promise<AllowListPort> =>
+		importChunk(import("./allow-list")).then((m) => {
+			const port = m.stackAllowList({
+				nodeUrl: target.nodeUrl,
+				registry: aztecAddress(manifest.bridge.registry, "bridge.registry"),
+				botUrl: stack.botUrl,
+				timer: browserTimer,
+				worker: m.browserWorker,
+			})
+			port.onProgress((p) => {
+				for (const f of [...progress]) f(p)
+			})
+			allowPort = port
+			return port
+		}),
+)
 
 const allowList: AllowListPort = {
 	current: async () => (await loadAllowList()).current(),
@@ -171,7 +178,7 @@ const allowList: AllowListPort = {
 const ports: Omit<DataSource, "deployment"> = {
 	mode: "stack",
 	clock: stackClock(l1.reads, target.nodeUrl),
-	receipts: { aztec: async (txHash) => (await import("./aztec")).readReceipt((await loadAztec()).deps.node, txHash) },
+	receipts: { aztec: async (txHash) => (await aztecChunk()).readReceipt((await loadAztec()).deps.node, txHash) },
 	timer: browserTimer,
 	l1,
 	sessions,
@@ -181,17 +188,12 @@ const ports: Omit<DataSource, "deployment"> = {
 	wallet: loadConnector,
 }
 
-let loading: Promise<DataSource> | undefined
-/** The source once the factory's registration confirms the manifest's portal; a failed read is retried on the next call. */
-export const loadSource = (): Promise<DataSource> =>
-	(loading ??= readToken(l1.reads, {
-		factory: getAddress(manifest.bridge.factory),
-		asset: getAddress(manifest.pool.asset),
-		portal: deployment.portal,
-	}).then(
-		(token) => ({ ...ports, deployment: { ...deployment, ...token } }),
-		(err: unknown) => {
-			loading = undefined
-			throw err
-		},
-	))
+/** The source once the factory's registration confirms the manifest's portal. */
+export const loadSource = loadOnce(
+	(): Promise<DataSource> =>
+		readToken(l1.reads, {
+			factory: getAddress(manifest.bridge.factory),
+			asset: getAddress(manifest.pool.asset),
+			portal: deployment.portal,
+		}).then((token) => ({ ...ports, deployment: { ...deployment, ...token } })),
+)

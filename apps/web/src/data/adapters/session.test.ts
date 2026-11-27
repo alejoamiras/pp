@@ -378,6 +378,43 @@ describe("the stack session", () => {
 		expect(ensure.mock.calls).toEqual([["transact_1x1"]])
 	})
 
+	test("the warm-up reads a failed proving file as PROVING_FILES_FAILED, checks again after any failure, and passes once for every sign-in", async () => {
+		const other = new Error("the worker crashed")
+		const ensure = vi
+			.fn<() => Promise<void>>()
+			.mockRejectedValueOnce(new PoolClientError("ARTIFACT_MISMATCH", "transact_1x1 provingKey: HTTP 404"))
+			.mockRejectedValueOnce(other)
+			.mockResolvedValueOnce(undefined)
+		const files = { ensure } as never
+		vi.mocked(createArtifacts).mockReturnValueOnce(files).mockReturnValueOnce(files).mockReturnValueOnce(files)
+		const sessions = rig().sessions()
+		const signIn = () => sessions.open({ owner: OWNER, sign: async () => SIGNATURE })
+		const first = await signIn()
+		await expect(first.warmUp()).rejects.toMatchObject({ name: "BridgeFailure", code: "PROVING_FILES_FAILED" })
+		await expect(first.warmUp()).rejects.toBe(other)
+		await first.warmUp()
+		await (await signIn()).warmUp()
+		expect(ensure).toHaveBeenCalledTimes(3)
+	})
+
+	test("a proof or a re-proof whose proving files failed reads PROVING_FILES_FAILED; a spend that failed its checks keeps SPEND_MISMATCH", async () => {
+		const { BridgeClientError } = await import("@pp/bridge-core")
+		const filesFailed = () => new BridgeClientError("SPEND_MISMATCH", { source: "ARTIFACT_MISMATCH" })
+		const r = rig()
+		const session = await r.open()
+		const a = attempt(1)
+		r.prepare.mockRejectedValueOnce(filesFailed())
+		await expect(session.prove(a)).rejects.toMatchObject({ name: "BridgeFailure", code: "PROVING_FILES_FAILED" })
+		r.client.submit.mockRejectedValueOnce(filesFailed())
+		await expect(session.submit(await session.prove(a), a, hooks())).rejects.toMatchObject({
+			name: "BridgeFailure",
+			code: "PROVING_FILES_FAILED",
+		})
+		const spend = new BridgeClientError("SPEND_MISMATCH", { source: "ASSET_MISMATCH" })
+		r.prepare.mockRejectedValueOnce(spend)
+		await expect(session.prove(a)).rejects.toBe(spend)
+	})
+
 	test("the journal keeps to the app's prefix, and forgetting deletes only it", async () => {
 		const r = rig()
 		journalStore(r.storage).setItem("pp.bridge.j1.x", "sealed")
