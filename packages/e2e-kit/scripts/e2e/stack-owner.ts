@@ -32,9 +32,13 @@ export interface GroupRecord {
  * Records `pgid` with its leader's start time. Call it before the spawner awaits anything: until the
  * event loop reaps the child, no other process can hold its pid.
  */
-export function recordGroup(path: string, pgid: number): void {
-	const start = startTime(pgid)
-	if (start === undefined) throw new Error(`stack: pid ${pgid} has no start time; recording the stack needs /proc`)
+export function recordGroup(path: string, pgid: number, proc: ProcFs = HOST): void {
+	const start = startTime(pgid, proc)
+	if (start === undefined && startTime(process.pid, proc) === undefined)
+		throw new Error(
+			"stack: this machine has no /proc, so up cannot record the group it starts; stack mode runs only where /proc exists",
+		)
+	if (start === undefined) throw new Error(`stack: pid ${pgid} exited before its start time was read; see stack.log`)
 	writeFileSync(path, `${pgid} ${start}\n`)
 }
 

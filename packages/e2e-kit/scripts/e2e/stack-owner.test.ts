@@ -26,6 +26,17 @@ test("the start time is field 22 as text, past a command name holding ') (' and 
 	expect(startTime(4242, procWith({}))).toBeUndefined()
 })
 
+test("recording a group on a machine without /proc fails naming the missing /proc, and writes no record", () => {
+	const dir = stateDir()
+	try {
+		const record = join(dir, "stack.pid")
+		expect(() => recordGroup(record, 4242, procWith({}))).toThrow(/this machine has no \/proc/)
+		expect(existsSync(record)).toBe(false)
+	} finally {
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
 const CLI = "/kit/local-stack/src/cli.ts"
 const GRACE_MS = 10_000
 
