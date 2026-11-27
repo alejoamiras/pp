@@ -193,6 +193,17 @@ describe("each refusal sends nothing", () => {
 		expect(h.sent).toEqual([])
 	})
 
+	test.each(["preflight", "warmUp"] as const)("an uncoded failure of the %s reads NOT_SENT and offers a retry", async (step) => {
+		const h = harness()
+		h.session[step] = async () => {
+			throw new Error("the node's socket closed")
+		}
+		await h.preflight()
+		expect(h.machine().failure).toMatchObject({ code: "NOT_SENT", during: "preparing", offer: "prove-again" })
+		expect(h.session.prove).not.toHaveBeenCalled()
+		expect(h.sent).toEqual([])
+	})
+
 	test.each([
 		["chain mismatch", (h: ReturnType<typeof harness>) => Object.assign(h.ctx, { chainId: 1 }), INPUT, "CHAIN_MISMATCH"],
 		["sender is the owner", (h: ReturnType<typeof harness>) => Object.assign(h.ctx, { account: OWNER }), INPUT, "SENDER_IS_OWNER"],

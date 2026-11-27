@@ -206,7 +206,8 @@ async function preflight(st: State, rawRecipient: string, dispatch: Dispatch, si
 	try {
 		await runPreflight(st, recipient, epoch, dispatch, true)
 	} catch (err) {
-		if (!signal.aborted) dispatch(failure(codeOf(err) ?? "UNKNOWN", "preparing"))
+		// The preflight and the warm-up only read and simulate: an uncoded failure still sent nothing.
+		if (!signal.aborted) dispatch(failure(codeOf(err) ?? "NOT_SENT", "preparing"))
 		return
 	}
 	const now = st.deps.context()
