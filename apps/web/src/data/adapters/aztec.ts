@@ -1,9 +1,7 @@
 /**
- * Aztec for a stack build, through the connected wallet and nothing else. A read runs the token's
- * utilities as its owner. A send names its account, carries the SponsoredFPC's payment inside its
- * payload, and goes out only through the wallet of the connection it is bound to, right after its
- * handoff check; every function it calls must be granted as a transaction before the wallet sees it.
- * The wallet learns the hub and the token on first use, and only those the grant lets it register.
+ * Aztec for a stack build, through the connected wallet and nothing else. A send goes out only through
+ * the wallet of the connection it is bound to, right after its handoff check, and only when every call
+ * in it is granted as a transaction. The app registers only the hub and the token, as the grant allows.
  */
 import { AztecAddress as SdkAddress } from "@aztec-labs/aztec.js/addresses"
 import { Contract, NO_WAIT } from "@aztec-labs/aztec.js/contracts"

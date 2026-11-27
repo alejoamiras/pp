@@ -1,9 +1,8 @@
 /**
  * The local demo's sender. Anvil signs for its unlocked dev accounts, so a local-stack build can bridge
- * from the stack's demo address with no second wallet. Only a local-stack build carries this module;
- * every other build gets the throwing stub in its place. It holds an address, never a key; it talks
- * only to the manifest's literal loopback L1 endpoint, with redirects refused; it reads the chain id
- * from that node; and it sends nothing until the deployment check has passed.
+ * from the stack's demo address with no second wallet. It holds an address, never a key; it talks only
+ * to the manifest's literal loopback L1 endpoint, with redirects refused; and it sends nothing until
+ * its deployment check has passed, then only from its own address to the portal.
  */
 import { type Address, getAddress, isAddressEqual } from "viem"
 import { BridgeFailure, ProviderError } from "../errors"
