@@ -5,45 +5,45 @@
 			"host": "accounts.google.com:443",
 			"context": "browser",
 			"purpose": "Chromium's own account service; tried with no extension loaded",
-			"approval": "pending"
+			"approval": "R166"
 		},
 		{
 			"host": "android.clients.google.com:443",
 			"context": "browser",
 			"purpose": "Chromium's own; tried with no extension loaded",
-			"approval": "pending"
+			"approval": "R166"
 		},
 		{
 			"host": "clients2.google.com:80",
 			"context": "browser",
 			"purpose": "Chromium's own update check; tried with no extension loaded",
-			"approval": "pending"
+			"approval": "R166"
 		},
 		{
 			"host": "update.googleapis.com:443",
 			"context": "browser",
 			"purpose": "Chromium's component updater; tried with no extension loaded",
-			"approval": "pending"
+			"approval": "R166"
 		},
 		{
 			"host": "www.google.com:443",
 			"context": "browser",
 			"purpose": "Chromium's own; tried with no extension loaded",
-			"approval": "pending"
+			"approval": "R166"
 		},
 		{
 			"host": "aztec-mainnet.drpc.org:443",
 			"context": "service worker",
 			"purpose": "the seeded Mainnet node (MAINNET_RPC_URL); a new profile starts on Mainnet",
-			"approval": "pending"
+			"approval": "R166"
 		},
 		{
 			"host": "rpc.nulo.sh:443",
 			"context": "service worker",
 			"purpose": "the wallet's Mainnet relay (network seeds)",
-			"approval": "pending"
+			"approval": "R166"
 		},
-		{ "host": "api.coingecko.com:443", "context": "service worker", "purpose": "fiat prices (price service)", "approval": "pending" },
-		{ "host": "tokens.nulo.sh:443", "context": "service worker", "purpose": "the token list (TOKEN_LIST_URL)", "approval": "pending" }
+		{ "host": "api.coingecko.com:443", "context": "service worker", "purpose": "fiat prices (price service)", "approval": "R166" },
+		{ "host": "tokens.nulo.sh:443", "context": "service worker", "purpose": "the token list (TOKEN_LIST_URL)", "approval": "R166" }
 	]
 }

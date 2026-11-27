@@ -123,9 +123,13 @@ Playwright's output ends with `real-wallet: N/4 passed as expected`.
   release under seven days old, and checks the build attestation against the tag's commit.
   Re-measure the points with `bun real-wallet/crs.ts --pin` when bb.js changes.
 - **Fence.** Chromium's proxy is a recorder that refuses everything; only the run's own
-  `127.0.0.1` ports bypass it. Each launch proves it first: a remote host and an unowned loopback
-  port both reach the recorder, that port's listener sees nothing, an owned probe answers. Every
-  refused host must be listed in `real-wallet/declared-refusals.json`, and listed hosts stay refused.
+  `127.0.0.1` ports bypass it. The proxy and resolver rules are in force from process start. The
+  canaries are the fixture's first action on each launch, before it drives the app page or any
+  wallet page; they check the fence, they do not establish it: a remote host and an unowned
+  loopback port both reach the recorder, that port's listener sees nothing, an owned probe answers.
+  Every refused host must be listed in `real-wallet/declared-refusals.json`, and listed hosts stay
+  refused; any other host fails the test that tried it. A new profile starts on Mainnet, so the
+  wallet's first requests go to the Mainnet node and its relay, which the fence refuses.
 - **Proving points.** Node downloads the exact pinned ranges from the Aztec CDN, checks them,
   decompresses G1 with bb.js's WASM backend and checks the result. A launch of its own writes them
   into the wallet's IndexedDB; the test launch reads them back at their pinned hashes before onboarding.
@@ -138,8 +142,6 @@ Known limits:
 - Chromium's sandbox needs unprivileged user namespaces. Where AppArmor restricts them (Ubuntu
   23.10 and later with `kernel.apparmor_restrict_unprivileged_userns=1`, as on the agents' Linux
   host) the suite runs without it, after the canaries pass; no host setting is changed to get it.
-- The wallet's service worker and its first-run tab start with the browser, before the canaries
-  can run. The recorder holds every request from the first.
 - A Playwright worker killed with SIGKILL can leave Chromium running: a persistent context exposes
   no pid. `run.ts` reports it; nothing kills by name.
 
