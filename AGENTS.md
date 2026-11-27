@@ -18,7 +18,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 | [`packages/local-stack`](packages/local-stack/README.md) | `@pp/local-stack`: `bun run demo`, one anvil carrying the Aztec local network and the pool, with its manifest and heartbeat. |
 | [`packages/asp-bot`](packages/asp-bot/README.md) | `@pp/asp-bot`: posts the ASP root to the Aztec registry and serves the snapshots, as a child process group. |
 | [`packages/pool-client`](packages/pool-client/README.md) | `@pp/pool-client`: Privacy Pools v2 notes and a checked one-input spend to a processor, in Node, Bun and the browser; never submits. `@pp/pool-client/testing` seeds a running `pp-env up`. |
-| [`packages/run-isolation`](packages/run-isolation/README.md) | `@pp/run-isolation`: the primitives a local run uses to own its ports and processes: the host port registry and its lock, group-leader children and their teardown, and `./process-group`, which tells a running group from one of unreaped zombies. Node-only, no dependencies. |
+| [`packages/run-isolation`](packages/run-isolation/README.md) | `@pp/run-isolation`: the primitives a local run uses to own its ports and processes: the host port registry and its lock, group-leader children that end with the process that spawned them and their teardown, and `./process-group`, which tells a running group from one of unreaped zombies. Node-only, no dependencies. |
 | [`scripts/`](scripts) | CI-gating tests (`scripts/ci-cd/`), the complexity baseline, the absolute-path guard. |
 | [`.github/`](.github) | PR workflows, each with a `changes` filter and an exact-state aggregator. |
 
@@ -108,7 +108,9 @@ another. A suite that passes no test fails. The L1 fuzz and invariant suites are
 - **Local services are parallel-safe.** The sandbox claims its ports from the host registry
   `~/.agents/ports.md`, runs each child in its own process group, keeps data under `~/.cache/pp/`
   and tears down only what it started. Never stop a service by name. Process-group liveness and
-  teardown come from `@pp/run-isolation`, not a new `process.kill` on a negative pid.
+  teardown come from `@pp/run-isolation`, not a new `process.kill` on a negative pid. Teardown is
+  registered in hooks (`afterAll`, `onTestFinished`) or global setup, never only in a test body's
+  `finally`, which vitest skips when it kills a timed-out worker.
 
 ## Branching and merging
 

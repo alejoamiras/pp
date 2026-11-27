@@ -7,16 +7,16 @@
  * `SANDBOX_L1_RPC` + `SANDBOX_NODE_URL` together attach to an already-running network instead
  * (a no-op `stop()`), which is how `--keep` is re-entered.
  */
-import { type ChildProcess, execFileSync, spawn } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { randomBytes, randomInt } from "node:crypto"
-import { accessSync, constants, createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs"
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { delimiter, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { groupAlive, signalGroup } from "@pp/run-isolation/process-group"
-import { claimRows, PortClaimConflict, registeredPorts, registryPath, releaseRows, rowsOwnedBy } from "@pp/run-isolation/ports"
-import { killGroup, own as ownChild, type OwnedChild, ownsGroup } from "@pp/run-isolation/process"
+import { groupAlive } from "@pp/run-isolation/process-group"
+import { claimRows, PortClaimConflict, type RowRef, registeredPorts, registryPath, releaseRows, rowsOwnedBy } from "@pp/run-isolation/ports"
+import { killGroup, type OwnedChild, spawnOwned } from "@pp/run-isolation/process"
 import { ANVIL_ACCOUNTS } from "./constants"
 
 export { killGroup, type OwnedChild } from "@pp/run-isolation/process"
@@ -131,12 +131,18 @@ export async function releaseHostPorts(runId: string, ports: Record<string, numb
 
 const releasePorts = (runId: string, ports: SandboxPorts) => releaseHostPorts(runId, ports)
 
+const SANDBOX_LABEL = "bridge-sandbox"
+
+/** The rows `claimSandboxPorts` wrote for `services`: what that service's group releases once it is seen empty after this process dies. */
+const sandboxRows = (runId: string, ports: SandboxPorts, services: (keyof SandboxPorts)[]): RowRef[] =>
+	services.map((s) => ({ port: ports[s], service: `${SANDBOX_LABEL}-${s}`, owner: runId }))
+
 /** Four ports reserved AND claimed: a pick another run claimed in between is simply picked again. */
 async function claimSandboxPorts(runId: string): Promise<SandboxPorts> {
 	for (let attempt = 0; ; attempt++) {
 		const ports = await reserveSandboxPorts()
 		try {
-			await registerHostPorts(runId, "bridge-sandbox", ports, process.pid)
+			await registerHostPorts(runId, SANDBOX_LABEL, ports, process.pid)
 			return ports
 		} catch (e) {
 			if (!(e instanceof PortClaimConflict) || attempt >= 4) throw e
@@ -264,12 +270,6 @@ async function waitHealthy(label: string, probe: () => Promise<boolean>, timeout
 
 const pidsOf = (spawned: readonly OwnedChild[]) => spawned.map((o) => o.child.pid).filter((p): p is number => p !== undefined)
 
-/** Logs a spawn error with the sandbox's prefix; the child's own exit stays the authority on whether it runs. */
-export function own(child: ChildProcess): OwnedChild {
-	child.on("error", (e) => console.error(`[sandbox] ${child.spawnfile}: ${e.message}`))
-	return ownChild(child)
-}
-
 /** What a stopped run still holds, found by its own identifiers: directories that exist, process
  *  groups with a running member, registry rows it owns. */
 export function runLeftovers(run: { runId: string; dirs: readonly string[]; pgids: readonly number[] }): string[] {
@@ -306,26 +306,24 @@ export function assertSocketRoom(tmpDir: string): void {
  *  so a failed CI run can still upload it. */
 export const SANDBOX_LOG_DIR = join(SANDBOX_CACHE_DIR, "logs")
 
-/** The full stream to a per-run file; errors echoed to the console as they happen. Both streams must be
- *  read: a full 64 KiB pipe blocks the child's next write, and the node stops sequencing silently. */
-function drainOutput(child: ChildProcess, label: string, logFile: string): void {
-	mkdirSync(dirname(logFile), { recursive: true })
-	const sink = createWriteStream(logFile, { flags: "a" })
-	// Open and write errors arrive asynchronously; unhandled, they would crash the host past `stop`.
-	sink.on("error", (e) => console.error(`[${label}] cannot write ${logFile}: ${e.message}`))
-	const report = (data: Buffer) => {
-		sink.write(data)
-		const line = data.toString().trim()
-		if (/\bERROR\b|\bFATAL\b|already in use/i.test(line)) console.error(`[${label}]`, line.slice(0, 200))
+/** Prints each log's last error lines and its path, for a boot that failed; the log holds the rest. Never
+ *  throws: the teardown that follows must run. */
+function reportLogs(logs: Record<string, string>): void {
+	for (const [label, logFile] of Object.entries(logs)) {
+		let text: string
+		try {
+			text = readFileSync(logFile, "utf8")
+		} catch {
+			continue
+		}
+		const errors = text.split("\n").filter((line) => /\bERROR\b|\bFATAL\b|already in use|could not start/i.test(line))
+		for (const line of errors.slice(-20)) console.error(`[${label}]`, line.slice(0, 200))
+		console.error(`[${label}] full log: ${logFile}`)
 	}
-	child.stdout?.on("data", report)
-	child.stderr?.on("data", report)
-	// `close` follows the stdio streams' end; `exit` can precede their last chunks.
-	child.once("close", () => sink.end())
 }
 
-function spawnAnvil(tool: Toolchain, port: number): ChildProcess {
-	const child = spawn(
+function spawnAnvil(tool: Toolchain, port: number, logFile: string, release: RowRef[]): OwnedChild {
+	return spawnOwned(
 		tool.anvilBin,
 		// Every key the handle advertises (`deploy.ts` funds none itself) must be one anvil pre-funds.
 		// The base fee starts at 7 wei, below which EIP-1559's per-block decrease rounds to zero. From anvil's
@@ -346,9 +344,10 @@ function spawnAnvil(tool: Toolchain, port: number): ChildProcess {
 			String(ANVIL_ACCOUNTS),
 			"--silent",
 		],
-		{ stdio: "pipe", detached: true },
+		logFile,
+		process.env,
+		{ release },
 	)
-	return child
 }
 
 /**
@@ -398,8 +397,11 @@ export function nodeEnv(tool: Toolchain, anvilUrl: string, dirs: { data: string;
 
 /** Runs the CLI entry, not `aztecBin`: for `start --local-network` that wrapper also starts its own
  *  anvil on a fixed port (8545 unless ANVIL_PORT is set), outside the registry. */
-function spawnNode(tool: Toolchain, p: { ports: SandboxPorts; anvilUrl: string; dirs: { data: string; tmp: string } }): ChildProcess {
-	const child = spawn(
+function spawnNode(
+	tool: Toolchain,
+	p: { ports: SandboxPorts; anvilUrl: string; dirs: { data: string; tmp: string }; logFile: string; release: RowRef[] },
+): OwnedChild {
+	return spawnOwned(
 		"node",
 		[
 			"--no-warnings",
@@ -415,9 +417,11 @@ function spawnNode(tool: Toolchain, p: { ports: SandboxPorts; anvilUrl: string; 
 			"--l1-rpc-urls",
 			p.anvilUrl,
 		],
-		{ stdio: "pipe", detached: true, env: nodeEnv(tool, p.anvilUrl, p.dirs) },
+		p.logFile,
+		nodeEnv(tool, p.anvilUrl, p.dirs),
+		// The node's own shutdown has taken seconds on a loaded host, and its rows free only if it ends in time.
+		{ release: p.release, graceMs: 15_000 },
 	)
-	return child
 }
 
 // ─── Public surface ──────────────────────────────────────────────────────────
@@ -547,44 +551,32 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 				removeDirs()
 				// A stopped network's handlers would otherwise exit the host during a later network's teardown.
 				unregister()
-				process.off("exit", onExit)
 			}
 		})()
 		return stopping
 	}
+	// A host that exits without `stop` (vitest's own signal handling, an uncaught error, SIGKILL) needs no
+	// hook: each group's leader sees the host gone, ends its group and frees its rows. The store stays on
+	// disk, since removing it while its holders shut down could stall them.
 	const unregister = opts.signals === false ? () => {} : reapOnSignals(stop)
-	// A host that exits without waiting (vitest's own signal handling, an uncaught error) still must
-	// not orphan a node holding a multi-GB store: the last-resort reap is synchronous.
-	const onExit = () => {
-		for (const owned of spawned) {
-			if (owned.child.pid === undefined || !ownsGroup(owned)) continue
-			signalGroup(owned.child.pid, "SIGKILL")
-		}
-		removeDirs()
-	}
-	process.once("exit", onExit)
-	// Owned before its output is wired, so a failure there still reaches the child through `stop`.
-	const track = (child: ChildProcess, label: string, logFile: string) => {
-		spawned.push(own(child))
-		drainOutput(child, label, logFile)
-	}
 	// `stop` reaps the children it sees when it starts; a signal mid-boot must not let one spawn after.
 	const stillBooting = () => {
 		if (stopping) throw new Error("[sandbox] stopped while booting")
 	}
+	// Files, not pipes: a command writing into a pipe whose reader has died may never stop.
+	const logs = { anvil: join(SANDBOX_LOG_DIR, `${opts.runId}-anvil.log`), aztec: join(SANDBOX_LOG_DIR, `${opts.runId}-aztec.log`) }
 	try {
 		for (const dir of [dataDir, tmpDir]) {
 			if (mkdirSync(dir, { recursive: true }) === undefined) throw new Error(`${dir} already exists; a run owns only what it creates`)
 			created.push(dir)
 		}
 		console.log(`[sandbox] anvil ${anvilUrl}, aztec ${nodeUrl}, data ${dataDir}, tmp ${tmpDir}`)
-		const anvilLog = join(SANDBOX_LOG_DIR, `${opts.runId}-anvil.log`)
 		stillBooting()
-		track(spawnAnvil(tool, ports.anvil), "anvil", anvilLog)
+		spawned.push(spawnAnvil(tool, ports.anvil, logs.anvil, sandboxRows(opts.runId, ports, ["anvil"])))
 		await waitHealthy(`anvil at ${anvilUrl}`, () => rpcResponds(anvilUrl, "eth_chainId"), 60_000)
-		const nodeLog = join(SANDBOX_LOG_DIR, `${opts.runId}-aztec.log`)
 		stillBooting()
-		track(spawnNode(tool, { ports, anvilUrl, dirs: { data: dataDir, tmp: tmpDir } }), "aztec", nodeLog)
+		const release = sandboxRows(opts.runId, ports, ["aztec", "aztecAdmin", "aztecP2P"])
+		spawned.push(spawnNode(tool, { ports, anvilUrl, dirs: { data: dataDir, tmp: tmpDir }, logFile: logs.aztec, release }))
 		await waitHealthy(`aztec node at ${nodeUrl}`, () => rpcResponds(nodeUrl, "node_getNodeInfo"), 180_000)
 		stillBooting()
 		const listeners = groupListeners(pidsOf(spawned))
@@ -598,6 +590,7 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 			throw new Error(`the run listens outside its claimed ports: ${stray.map((l) => `${l.address} (pid ${l.pid})`).join(", ")}`)
 		}
 	} catch (e) {
+		reportLogs(logs)
 		// The boot failure is the error to surface; a release that also failed is reported beside it.
 		await stop().catch((released: Error) => console.error(`[sandbox] ${released.message}`))
 		throw e

@@ -43,7 +43,9 @@ export async function startAnvil(runId: string, cleanup: CleanupStack): Promise<
 		String(ANVIL_ACCOUNTS),
 		"--silent",
 	]
-	const anvil = spawnOwned(anvilBin(), args, join(LOG_DIR, `${runId}-anvil.log`), cleanEnv())
+	const anvil = spawnOwned(anvilBin(), args, join(LOG_DIR, `${runId}-anvil.log`), cleanEnv(), {
+		release: [{ port, service: "pp-env-anvil", owner: runId }],
+	})
 	cleanup.push(async () => {
 		if (!(await killGroup(anvil))) throw new Error(`process group ${anvil.child.pid} survived SIGKILL`)
 	})

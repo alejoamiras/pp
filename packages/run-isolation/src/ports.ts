@@ -66,8 +66,7 @@ const REGISTRY_HEADER = [
 	"|---|---|---|---|---|---|",
 ]
 
-async function withRegistry(mutate: (lines: string[]) => string[]): Promise<boolean> {
-	const registry = registryPath()
+async function withRegistry(mutate: (lines: string[]) => string[], registry = registryPath()): Promise<boolean> {
 	mkdirSync(dirname(registry), { recursive: true })
 	const done = await withFileLock(`${registry}.lock`, { staleMs: LOCK_STALE_MS, waitMs: LOCK_WAIT_MS }, () => {
 		const current = existsSync(registry) ? readFileSync(registry, "utf8") : `${REGISTRY_HEADER.join("\n")}\n`
@@ -146,6 +145,27 @@ export async function claimPort(runId: string, service: string, opts: ClaimOptio
 /** Drops every row whose owner column is `runId`, and no other; false when the lock never came free. */
 export function releaseRows(runId: string): Promise<boolean> {
 	return withRegistry((lines) => lines.filter((l) => !ownedBy(l, runId)))
+}
+
+/** One registry row, named by all three of its port, service and owner cells. */
+export interface RowRef {
+	port: number
+	service: string
+	owner: string
+}
+
+const isRow = (line: string, r: RowRef): boolean => {
+	const cells = line.split("|").map((c) => c.trim())
+	return portOf(line) === r.port && cells[2] === r.service && cells[3] === r.owner
+}
+
+/**
+ * Drops exactly the rows `refs` names from the registry at `registry`, and no other, under the same lock
+ * as a claim; false when the lock never came free.
+ */
+export function releaseNamed(refs: readonly RowRef[], registry = registryPath()): Promise<boolean> {
+	if (refs.length === 0) return Promise.resolve(true)
+	return withRegistry((lines) => lines.filter((l) => !refs.some((r) => isRow(l, r))), registry)
 }
 
 /** Drops every row `runId` owns; throws if a live holder kept the registry locked throughout. */

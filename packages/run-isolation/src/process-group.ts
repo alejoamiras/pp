@@ -96,6 +96,17 @@ function procHidesPids(proc: ProcLinks): boolean {
 	return options.split(",").some((o) => o.startsWith("hidepid=") && !/^hidepid=(0|off)$/.test(o))
 }
 
+/** Whether `/proc` can vouch that a pid it does not list is gone: it numbers this process's own pid
+ *  namespace and hides no pid. */
+function procVouches(proc: ProcLinks): boolean {
+	if (!PROC) return false
+	try {
+		return procNumbersOwnNamespace(proc) && !procHidesPids(proc)
+	} catch {
+		return false
+	}
+}
+
 /**
  * The token under which a pid and its `startTime` name one process: this boot, pid namespace and time
  * namespace (which offsets field 22 for its readers). Undefined when `/proc` cannot vouch that a pid it
@@ -103,9 +114,8 @@ function procHidesPids(proc: ProcLinks): boolean {
  * or one mounted with `hidepid`. Another container sharing a directory has another token.
  */
 export function pidNamespace(proc: ProcLinks = HOST): string | undefined {
-	if (!PROC) return undefined
+	if (!procVouches(proc)) return undefined
 	try {
-		if (!procNumbersOwnNamespace(proc) || procHidesPids(proc)) return undefined
 		const boot = proc.readFile("/proc/sys/kernel/random/boot_id").trim()
 		const time = proc.exists("/proc/self/ns/time") ? proc.readlink("/proc/self/ns/time") : ""
 		return `${boot}/${proc.readlink("/proc/self/ns/pid")}/${time}`
@@ -141,10 +151,10 @@ export function groupMembers(pgid: number, proc: ProcFs = HOST): { pid: number; 
  * listed with their listed threads. A thread that exits is gone before its stat is read, so the listing,
  * not the stats, is what a later pass compares.
  */
-function scanGroup(pgid: number, proc: ProcFs): { running: boolean; members: string } {
+function scanGroup(pgid: number, proc: ProcFs, skip?: number): { running: boolean; members: string } {
 	const members: string[] = []
 	for (const pid of proc.readdir("/proc")) {
-		if (!/^\d+$/.test(pid)) continue
+		if (!/^\d+$/.test(pid) || Number(pid) === skip) continue
 		const st = readStat(`/proc/${pid}/stat`, proc)
 		if (st?.pgrp !== pgid) continue
 		if (!exited(st.state)) return { running: true, members: "" }
@@ -160,10 +170,10 @@ function scanGroup(pgid: number, proc: ProcFs): { running: boolean; members: str
  * child forked, or a thread started, after it was listed by a creator that exits before the pass reads
  * it, so a pass that finds only zombies is repeated until two in a row list the same members and threads.
  */
-function hasRunningMember(pgid: number, proc: ProcFs): boolean {
+function hasRunningMember(pgid: number, proc: ProcFs, skip?: number): boolean {
 	let last: string | undefined
 	for (let i = 0; i < SCANS; i++) {
-		const { running, members } = scanGroup(pgid, proc)
+		const { running, members } = scanGroup(pgid, proc, skip)
 		if (running) return true
 		if (members === last) return false
 		last = members
@@ -179,6 +189,15 @@ function hasRunningMember(pgid: number, proc: ProcFs): boolean {
  */
 export function groupAlive(pgid: number, proc: ProcFs = HOST): boolean {
 	return signalable(pgid) && (!PROC || hasRunningMember(pgid, proc))
+}
+
+/**
+ * Whether a member of `pgid` other than `self` is still running, by `groupAlive`'s rules. Always true
+ * when `/proc` cannot vouch for a member it does not list (no `/proc`, another pid namespace's, or
+ * `hidepid`): only the kernel's view of the whole group remains, and `self` is in it.
+ */
+export function othersRunning(pgid: number, self: number, proc: ProcLinks = HOST): boolean {
+	return !procVouches(proc) || hasRunningMember(pgid, proc, self)
 }
 
 /** Sends `s` to every member of `pgid`; false when the kernel refused it (no such group, or not ours to signal). */
