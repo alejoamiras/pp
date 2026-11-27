@@ -123,7 +123,12 @@ describe("the Aztec adapter", () => {
 		moved.node.getNodeInfo.mockResolvedValue({ l1ChainId: 1, rollupVersion: 5 })
 		moved.wallet.getChainInfo.mockResolvedValue({ chainId: new Fr(1n), version: new Fr(5n) })
 		await expect(send(moved)).rejects.toMatchObject({ code: "CONTEXT_CHANGED" })
-		for (const listed of [[null], [{}], [{ alias: "x", item: null }], null]) {
+		const hostile = {
+			toString() {
+				throw new Error("no text")
+			},
+		}
+		for (const listed of [[null], [{}], [{ alias: "x", item: null }], [{ item: Object.create(null) }], [{ item: hostile }], null]) {
 			const odd = rig()
 			odd.wallet.getAccounts.mockResolvedValue(listed as never)
 			await expect(send(odd)).rejects.toMatchObject({ code: "RECIPIENT_NOT_IN_WALLET" })

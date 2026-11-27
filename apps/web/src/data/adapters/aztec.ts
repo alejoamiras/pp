@@ -113,10 +113,8 @@ type Accounts = Awaited<ReturnType<Wallet["getAccounts"]>>
 type Chain = Awaited<ReturnType<Wallet["getChainInfo"]>>
 
 /** An entry the wallet lists, read as untrusted: anything that is no account names none. */
-const listedAccount = (entry: unknown): AztecAddress | null => {
-	const item = entry !== null && typeof entry === "object" ? (entry as { item?: unknown }).item : undefined
-	return item === null || item === undefined ? null : parseAztecAddress(String(item))
-}
+const listedAccount = (entry: unknown): AztecAddress | null =>
+	parseAztecAddress(entry !== null && typeof entry === "object" ? (entry as { item?: unknown }).item : undefined)
 
 /** Whether the wallet still lists `from`, and it and the node sit on the deployment's chain and the node's rollup. */
 function assertWalletStill(
