@@ -69,7 +69,11 @@ describe("lint-pr-title.sh", () => {
 		expect(title("Automatic merge release notes")).toBe(1)
 		// 95 characters pass alone; " (#123)" takes the subject to 102.
 		const long = `fix: ${"a".repeat(90)}`
-		expect(spawnSync("bash", ["-c", `printf '%s\\n' "$T" | ${ROOT}/node_modules/.bin/commitlint --cwd ${ROOT}`], { env: { ...process.env, T: long } }).status).toBe(0)
+		expect(
+			spawnSync("bash", ["-c", `printf '%s\\n' "$T" | ${ROOT}/node_modules/.bin/commitlint --cwd ${ROOT}`], {
+				env: { ...process.env, T: long },
+			}).status,
+		).toBe(0)
 		expect(title(long)).toBe(1)
 	})
 

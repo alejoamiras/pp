@@ -11,11 +11,7 @@ const ROOT = join(import.meta.dir, "..", "..")
 const EXACT = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/
 
 const CONSUMERS: Record<string, string[]> = {
-	"packages/e2e-kit": [
-		"@nulo-sh/resolve-asset",
-		"@nulo-sh/wallet-crypto",
-		"@nulo-sh/wallet-sdk-schema-patch",
-	],
+	"packages/e2e-kit": ["@nulo-sh/resolve-asset", "@nulo-sh/wallet-crypto", "@nulo-sh/wallet-sdk-schema-patch"],
 	"packages/bridge-core": ["@nulo-sh/resolve-asset", "@nulo-sh/wallet-crypto"],
 	"packages/labelled-token": ["@nulo-sh/resolve-asset"],
 	"packages/asp-bot": ["@nulo-sh/wallet-crypto"],
@@ -36,7 +32,15 @@ const declaredBy = (path: string): Deps => ({ ...lock.workspaces[path]?.dependen
 
 test("exactly the expected workspaces depend on the published packages", () => {
 	const found = Object.keys(lock.workspaces)
-		.map((path) => [path, Object.keys(declaredBy(path)).filter((name) => Object.hasOwn(PEERS, name)).sort()] as const)
+		.map(
+			(path) =>
+				[
+					path,
+					Object.keys(declaredBy(path))
+						.filter((name) => Object.hasOwn(PEERS, name))
+						.sort(),
+				] as const,
+		)
 		.filter(([, names]) => names.length > 0)
 	expect(Object.fromEntries(found)).toEqual(CONSUMERS)
 })
