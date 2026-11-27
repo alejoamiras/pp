@@ -8,10 +8,13 @@ export type BirthAnnouncement = { label: bigint; secret: bigint; owner: AztecAdd
 /** The token's public `ShieldDebited`. */
 export type ShieldDebited = { birthId: bigint; owner: AztecAddress; amount: bigint }
 
-/** The node's view of an announcement's transaction; `debits` holds only events the token emitted. */
+/**
+ * The node's view of an announcement's transaction; `debits` holds only events the token emitted.
+ * A transaction not yet in a block has `block` = Infinity.
+ */
 export type BirthTx = { success: boolean; block: number; nullifiers: bigint[]; debits: ShieldDebited[] }
 
-export type Refusal = "reverted" | "above_pin" | "invalid_fields" | "label_mismatch" | "no_debit" | "no_nullifier"
+export type Refusal = "above_pin" | "reverted" | "invalid_fields" | "label_mismatch" | "no_debit" | "no_nullifier"
 
 export type Verdict = { ok: true; leaf: bigint } | { ok: false; reason: Refusal }
 
@@ -22,8 +25,8 @@ export type Verdict = { ok: true; leaf: bigint } | { ok: false; reason: Refusal 
  * shielder's word.
  */
 export async function checkBirth(token: AztecAddress, pin: number, a: BirthAnnouncement, tx: BirthTx): Promise<Verdict> {
-	if (!tx.success) return { ok: false, reason: "reverted" }
 	if (tx.block > pin) return { ok: false, reason: "above_pin" }
+	if (!tx.success) return { ok: false, reason: "reverted" }
 	let label: bigint
 	try {
 		label = birthLabel({ token, owner: a.owner, amount: a.amount, birthSecret: a.secret })

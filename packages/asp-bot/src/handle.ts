@@ -15,6 +15,8 @@ export type BotConfig = {
 	manifest: BotManifest
 	/** The registry's `AztecAddress.toString()`. */
 	registry: Hex
+	/** Labelled tokens whose births the intake approves; none by default, so the birth root stays 0. */
+	tokens?: Hex[]
 	tag: L1Tag
 	/** Binds the bot's local account seeds to one stack. */
 	stackRunId: string
