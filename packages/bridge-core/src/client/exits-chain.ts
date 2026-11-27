@@ -24,7 +24,7 @@ import {
 } from "viem"
 import { tokenBridgeHubArtifact } from "../artifacts"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
-import { guarded, unsentError } from "./boundary"
+import { guarded, walletRefusal } from "./boundary"
 import type { ClientDeployment } from "./deployment"
 import { BridgeClientError } from "./errors"
 import { allPages, type ExitReads, type ExitWitness, messageIndices, settleWith } from "./exits"
@@ -237,7 +237,7 @@ async function sendSettle(c: ExitContext, l1: WalletClient, account: Account, t:
 		try {
 			return await write()
 		} catch (e) {
-			throw unsentError(e) ?? e
+			throw walletRefusal(e) ?? e
 		}
 	}
 	if (t.kind === "ragequit") {
@@ -253,9 +253,9 @@ async function sendSettle(c: ExitContext, l1: WalletClient, account: Account, t:
 /**
  * Settles a ready ticket from `l1`, or returns the transaction that already settled it. The result is
  * always the transaction of the portal's `ExitSettled` for the ticket's exact `(epoch, leafId)`.
- * @throws BridgeClientError `CHAIN_MISMATCH`, also when viem finds the wallet on another chain just
- * before the send; `RPC_FAILED` with source `UserRejectedRequestError` when the user refuses it;
- * `EXIT_NOT_READY` while no Outbox root covers it; `TICKET_NOT_FOUND`; `UNCERTAIN` with `l1TxHash`
+ * @throws BridgeClientError `CHAIN_MISMATCH` when the wallet is on another chain at the call;
+ * `RPC_FAILED` with source `UserRejectedRequestError` when the user refuses the send (`walletRefusal`
+ * states what that is taken to prove); `EXIT_NOT_READY` while no Outbox root covers it; `TICKET_NOT_FOUND`; `UNCERTAIN` with `l1TxHash`
  * when the send has no receipt in time or the event read after it fails; `REVERTED`
  */
 export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): Promise<Hash> {

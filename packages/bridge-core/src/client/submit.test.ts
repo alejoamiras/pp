@@ -189,8 +189,9 @@ describe("submit: preflight at handoff", () => {
 		expect(t.values.size).toBe(0)
 	})
 
-	it("restores the record and answers CHAIN_MISMATCH when viem finds the wallet on another chain before sending", async () => {
+	it("answers CHAIN_MISMATCH with nothing written when the wallet moves to another chain during the simulation", async () => {
 		const t = await setup()
+		const writes = vi.spyOn(t.store, "setItem")
 		const methods: string[] = []
 		const answers = [31337, 1]
 		const wallet = createWalletClient({
@@ -201,7 +202,7 @@ describe("submit: preflight at handoff", () => {
 				nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
 				rpcUrls: { default: { http: [] } },
 			}),
-			// The run's own check reads 31337; the wallet then moves, and viem's check at the send reads 1.
+			// The run's first check reads 31337; the wallet then moves, and the read before the send reads 1.
 			transport: custom({
 				request: async ({ method }: { method: string }) => {
 					methods.push(method)
@@ -212,27 +213,38 @@ describe("submit: preflight at handoff", () => {
 		})
 		expect(await code(submit(t.ctx, t.spend, wallet, t.session))).toBe("CHAIN_MISMATCH")
 		expect(methods).toEqual(["eth_chainId", "eth_chainId"])
-		expect(t.values.size).toBe(0)
+		expect(writes).not.toHaveBeenCalled()
 	})
 
-	it.each<[string, Parameters<typeof foreignError>, string, number]>([
-		[
-			"another copy of viem's send wrappers",
-			[["ContractFunctionExecutionError"], ["TransactionExecutionError"], ["ChainMismatchError"]],
-			"CHAIN_MISMATCH",
-			0,
-		],
+	it("answers RPC_FAILED with its source and nothing written when the read before the send fails", async () => {
+		const t = await setup()
+		const writes = vi.spyOn(t.store, "setItem")
+		class HttpRequestError extends Error {}
+		let reads = 0
+		const wallet = Object.assign(t.chain.wallet(), {
+			getChainId: async () => {
+				if (reads++ === 0) return 31337
+				throw new HttpRequestError("down")
+			},
+		})
+		const e = await submit(t.ctx, t.spend, wallet, t.session).catch((x: unknown) => x)
+		expect(e).toMatchObject({ code: "RPC_FAILED", source: "HttpRequestError" })
+		expect(writes).not.toHaveBeenCalled()
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+	})
+
+	// Past the handoff a chain error may follow a broadcast: a wallet can throw viem's own class.
+	it.each<[string, Parameters<typeof foreignError>]>([
+		["viem's send wrappers", [["ContractFunctionExecutionError"], ["TransactionExecutionError"], ["ChainMismatchError"]]],
 		[
 			"a wallet's own error, which viem wraps as UnknownRpcError",
 			[["ContractFunctionExecutionError"], ["TransactionExecutionError"], ["UnknownRpcError"], ["ChainMismatchError"]],
-			"UNCERTAIN",
-			1,
 		],
-	])("reads a ChainMismatchError under %s", async (_, links, expected, attempts) => {
+	])("keeps the attempt as UNCERTAIN when the send fails with a ChainMismatchError under %s", async (_, links) => {
 		const t = await setup()
 		t.chain.writeContract.mockRejectedValueOnce(foreignError(...links))
-		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe(expected)
-		expect((await t.journal.read(t.spend.nullifier)).record?.attempts.length ?? 0).toBe(attempts)
+		expect(await code(submit(t.ctx, t.spend, t.chain.wallet(), t.session))).toBe("UNCERTAIN")
+		expect((await t.journal.read(t.spend.nullifier)).record?.attempts).toHaveLength(1)
 	})
 
 	it.each<[string, Parameters<typeof foreignError>]>([
