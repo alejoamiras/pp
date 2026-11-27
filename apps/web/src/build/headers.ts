@@ -4,6 +4,7 @@
  * set verbatim, so the policy is fixed at build time and never depends on the serving process's env.
  */
 import { z } from "zod"
+import { isSameOriginPath } from "./same-origin.ts"
 import { isPublicOrigin, type PublicTarget } from "./target.ts"
 
 export const HEADER_FILE = "security-headers.json"
@@ -30,11 +31,11 @@ const uniqueOrigins = (urls: readonly string[]): string[] => [...new Set(urls.ma
 
 /**
  * Every origin the page fetches from: the node and the L1 RPC; on a stack target also the pool's ASP
- * API, which the pool client reads note states from, and the ASP bot's snapshot server. Proving
- * artifacts come from the page's own origin. Wallets are frames, not fetches.
+ * API, which the pool client reads note states from, and the ASP bot's snapshot server, unless they
+ * are same-origin paths. Proving artifacts come from the page's own origin. Wallets are frames, not fetches.
  */
 export function connectOrigins(t: PublicTarget): string[] {
-	const stack = t.stack ? [t.stack.manifest.pool.aspApiUrl, t.stack.botUrl] : []
+	const stack = t.stack ? [t.stack.manifest.pool.aspApiUrl, t.stack.botUrl].filter((u) => !isSameOriginPath(u)) : []
 	return uniqueOrigins([t.nodeUrl, t.l1RpcUrl, ...stack])
 }
 

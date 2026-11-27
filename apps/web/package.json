@@ -14,6 +14,7 @@
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "bun --bun vitest run",
 		"test:headers": "bun scripts/test-headers.ts",
+		"test:testnet-smoke": "bun scripts/testnet-smoke.ts",
 		"e2e": "PP_E2E_MODE=stack bun run --cwd ../../packages/e2e-kit test:browser"
 	},
 	"dependencies": {
@@ -48,6 +49,7 @@
 		"@pp/e2e-kit": "workspace:*",
 		"@pp/local-stack": "workspace:*",
 		"@pp/run-isolation": "workspace:*",
+		"@pp/testnet": "workspace:*",
 		"@testing-library/dom": "^10.4.1",
 		"@testing-library/react": "^16.3.3",
 		"@testing-library/user-event": "^14.6.13",

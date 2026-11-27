@@ -71,6 +71,11 @@ as far as a check needs:
   5 minutes. One check runs at a time; the page shows its progress and can cancel it, which ends
   the worker.
 
+A testnet build (`build --mode testnet` with `PP_DEPLOYMENT`, a testnet deployment file, into
+`dist-testnet/`) targets the own pool on Sepolia and the public Aztec testnet. Its ASP and bot are
+the page's own `/asp` and `/bot`, which `serve --deployment` proxies to the file's loopback ports.
+[`TESTNET.md`](TESTNET.md) is the runbook.
+
 ## Scripts
 
 Run from the repository root with `bun run --cwd apps/web <script>`.
@@ -80,12 +85,13 @@ Run from the repository root with `bun run --cwd apps/web <script>`.
 | `dev` | Vite dev server on fixtures and the fixture wallet, on a port claimed from the host registry |
 | `build` | Production build on fixtures and the fixture wallet, plus `dist/security-headers.json` |
 | `build:local` | The build the e2e kit runs, with the real wallet connector: against a stack manifest (`PP_STACK_MANIFEST`), or fixtures from a sandbox run's artifacts (`PP_SANDBOX_ARTIFACTS`) |
-| `check:stack-build` | Builds against a synthetic local and remote stack manifest, and the fixture build; fails on any fixture or build-only module or bot account in a stack build, and unless the demo sender is in the local stack build alone, with no build holding its key |
+| `check:stack-build` | Builds against a synthetic local and remote stack manifest, the testnet fixture file and fixtures; fails on any fixture or build-only module or bot account in a stack build, on an `expected` value in the testnet build or any origin beyond its node and L1 RPC, and unless the demo sender is in the local stack build alone, with no build holding its key |
 | `preview` | Serves a fixture build with its security headers |
-| `serve` | Serves a build with its security headers and the three `transact_1x1` proving files at `/<cid>`, read from `PP_CIRCUITS_DIR` |
+| `serve` | Serves a build with its security headers and the three `transact_1x1` proving files at `/<cid>`, read from `PP_CIRCUITS_DIR`; with `--deployment <file>`, a testnet build on 127.0.0.1 with `/asp` and `/bot` proxied |
 | `typecheck` | `tsc --noEmit` |
 | `test` | Unit and component tests (Vitest on Bun, jsdom for components) |
-| `test:headers` | Checks both servers' headers the way the e2e kit starts them |
+| `test:headers` | Checks both servers' headers the way the e2e kit starts them; `-- --target <file>` checks `serve --deployment` over that file's testnet build instead |
+| `test:testnet-smoke` | `-- --target <file> [--no-upstreams]`: the testnet build in Chromium behind `serve --deployment`, reading the node and the L1 RPC from the page |
 | `e2e` | Runs the e2e kit in stack mode: the local stack, the test wallet and Playwright against `build:local` |
 
 ## Recovery
