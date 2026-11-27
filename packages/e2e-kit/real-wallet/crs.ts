@@ -10,7 +10,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { downloadPinned, sha256 } from "./download"
+import { downloadPinned, SHA256_HEX, sha256 } from "./download"
 
 const G1_POINTS = 2 ** 19
 const GRUMPKIN_POINTS = 2 ** 16
@@ -68,8 +68,6 @@ async function fetchInput(input: CrsInput, fetchImpl?: typeof fetch): Promise<Bu
 
 type PrepareOptions = { fetchImpl?: typeof fetch; decompress?: Decompress }
 
-const SHA256 = /^[0-9a-f]{64}$/
-
 /**
  * Downloads and checks the inputs into `crsDir` (created, must not exist), decompresses G1, checks it.
  * @throws Error when a pin hash is not a sha256 (before any download), or when an input or the
@@ -77,7 +75,7 @@ const SHA256 = /^[0-9a-f]{64}$/
  */
 export async function prepareCrs(pin: CrsPin, crsDir: string, o: PrepareOptions = {}): Promise<SeedArrays> {
 	const pinned = [...Object.entries(pin.inputs), ["decompressed G1", pin.g1Uncompressed] as const]
-	for (const [name, p] of pinned) if (!SHA256.test(p.sha256)) throw new Error(`crs: the pin's hash for ${name} is not a sha256`)
+	for (const [name, p] of pinned) if (!SHA256_HEX.test(p.sha256)) throw new Error(`crs: the pin's hash for ${name} is not a sha256`)
 	return prepare(pin, crsDir, o)
 }
 

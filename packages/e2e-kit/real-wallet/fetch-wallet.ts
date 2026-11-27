@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { downloadPinned, sha256 } from "./download"
+import { downloadPinned, SHA256_HEX, sha256 } from "./download"
 import { extractZip } from "./zip"
 
 export interface WalletPin {
@@ -44,9 +44,13 @@ async function cachedZip(pin: WalletPin, cacheDir: string, fetchImpl: typeof fet
 
 /**
  * Unpacks the pinned release into `extensionDir`, which must not exist.
- * @throws Error when the download or the cache does not match the pin, or the archive is refused
+ * @throws Error when the pin's hash or size is malformed (before any download), when the download or
+ *   the cache does not match the pin, or when the archive is refused
  */
 export async function fetchWallet(pin: WalletPin, o: { cacheDir: string; extensionDir: string; fetchImpl?: typeof fetch }): Promise<void> {
+	// An absent hash would skip the check, and the hash also names the cache file.
+	if (!SHA256_HEX.test(String(pin.sha256)) || !Number.isSafeInteger(pin.size) || pin.size <= 0)
+		throw new Error("wallet: the pin's sha256 or size is malformed")
 	const zip = await cachedZip(pin, o.cacheDir, o.fetchImpl ?? fetch)
 	extractZip(zip, o.extensionDir, CAPS)
 	if (!existsSync(join(o.extensionDir, "manifest.json"))) throw new Error("wallet: the release has no manifest.json at its root")

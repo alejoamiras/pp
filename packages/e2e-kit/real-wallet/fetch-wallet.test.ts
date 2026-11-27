@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { crc32 } from "node:zlib"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { downloadPinned } from "./download"
 import { fetchWallet, readWalletPin, type WalletPin } from "./fetch-wallet"
 import { extractZip } from "./zip"
@@ -126,6 +126,19 @@ describe("fetchWallet", () => {
 		await expect(downloadPinned(pin.url, { ...e, fetchImpl: serve(body, { "content-length": "999999999" }) })).rejects.toThrow(
 			/declares/,
 		)
+	})
+
+	it.each([
+		["no hash", { sha256: undefined }],
+		["a hash that is a path", { sha256: "../x" }],
+		["no size", { size: undefined }],
+	])("refuses a pin with %s before downloading", async (_why, broken) => {
+		const fetchImpl = vi.fn(serve(body))
+		const bad = { ...pin, ...broken } as unknown as WalletPin
+		await expect(fetchWallet(bad, { cacheDir: scratch(), extensionDir: join(scratch(), "ext"), fetchImpl })).rejects.toThrow(
+			/the pin's sha256 or size is malformed/,
+		)
+		expect(fetchImpl).not.toHaveBeenCalled()
 	})
 
 	it("re-downloads over a cached zip that no longer matches", async () => {

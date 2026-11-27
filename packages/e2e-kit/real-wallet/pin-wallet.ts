@@ -7,7 +7,7 @@
  *   bun real-wallet/pin-wallet.ts <tag>      (from packages/e2e-kit)
  */
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { downloadPinned } from "./download"
@@ -68,6 +68,7 @@ async function main(tag: string): Promise<void> {
 	const sha256 = asset.digest.slice("sha256:".length)
 	const commit = gh("api", `repos/${REPO}/commits/${tag}`, "--jq", ".sha").trim()
 
+	mkdirSync(join(homedir(), ".cache/pp"), { recursive: true })
 	const dir = mkdtempSync(join(homedir(), ".cache/pp/pin-wallet-"))
 	try {
 		const zip = join(dir, asset.name)

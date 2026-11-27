@@ -7,6 +7,8 @@ import { createHash } from "node:crypto"
 
 export const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex")
 
+export const SHA256_HEX = /^[0-9a-f]{64}$/
+
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000
 
 export interface Expected {
