@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { once } from "node:events"
 import { setTimeout as sleep } from "node:timers/promises"
 import { describe, expect, it } from "bun:test"
-import { endGroup, groupAlive, type ProcFs } from "./process-group"
+import { endGroup, groupAlive, pidNamespace, type ProcFs, startTime } from "./process-group"
 
 // Without /proc these semantics do not apply (macOS); CI is Linux, so there the suite always runs.
 const proc = existsSync("/proc/self/stat") || process.env.CI !== undefined
@@ -143,5 +143,25 @@ describe.skipIf(!proc)("groupAlive", () => {
 		} finally {
 			kill()
 		}
+	})
+})
+
+describe.skipIf(!proc)("startTime", () => {
+	it("names a running process by its start, and a zombie by nothing", async () => {
+		// `sleep 30` replaces the shell and never reaps the short sleep, which stays a zombie.
+		const parent = spawn("sh", ["-c", "sleep 0.5 & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "inherit"] })
+		try {
+			const [chunk] = (await once(parent.stdout, "data")) as [Buffer]
+			const pid = Number(chunk.toString().trim())
+			const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+			expect(startTime(pid)).toBe(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19])
+			expect(startTime(pid)).not.toBe(startTime(process.pid))
+			for (let i = 0; i < 100 && state(pid) !== "Z"; i++) await sleep(50)
+			expect(state(pid)).toBe("Z")
+			expect(startTime(pid)).toBeUndefined()
+		} finally {
+			parent.kill("SIGKILL")
+		}
+		expect(pidNamespace()).toMatch(/^[0-9a-f-]{36}\/pid:\[\d+\]$/)
 	})
 })

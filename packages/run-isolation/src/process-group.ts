@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs"
 import { setTimeout as sleep } from "node:timers/promises"
 
 const PROC = existsSync("/proc/self/stat")
@@ -27,17 +27,18 @@ const signalable = (pgid: number) => {
 
 const exited = (state: string | undefined) => state === undefined || state === "Z" || state === "X"
 
-/** State and process group from a `/proc` stat file, or undefined once it is gone. */
-function readStat(path: string, proc: ProcFs): { state?: string; pgrp: number } | undefined {
+/** State, process group and start time from a `/proc` stat file, or undefined once it is gone. */
+function readStat(path: string, proc: ProcFs): { state?: string; pgrp: number; start?: string } | undefined {
 	let stat: string
 	try {
 		stat = proc.readFile(path)
 	} catch {
 		return undefined
 	}
-	// The command name may hold spaces and parentheses; after its last ")" come state, ppid, pgrp.
-	const [state, , pgrp] = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
-	return { state, pgrp: Number(pgrp) }
+	// The command name may hold spaces and parentheses; after its last ")" come state (field 3), ppid,
+	// pgrp, and later starttime (field 22).
+	const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
+	return { state: fields[0], pgrp: Number(fields[2]), start: fields[19] }
 }
 
 /**
@@ -52,6 +53,32 @@ function threadsOf(pid: string, proc: ProcFs): { running: boolean; tids: string[
 		return { running: false, tids: [] }
 	}
 	return { running: tids.some((tid) => !exited(readStat(`/proc/${pid}/task/${tid}/stat`, proc)?.state)), tids }
+}
+
+/**
+ * The start time of `pid` (`/proc` stat field 22, clock ticks since boot) while it has not exited;
+ * undefined once it is gone or every thread has exited, and always without `/proc`. A pid and its start
+ * time name one process for the life of a boot, since a pid handed out again starts later.
+ */
+export function startTime(pid: number, proc: ProcFs = HOST): string | undefined {
+	if (!PROC) return undefined
+	const st = readStat(`/proc/${pid}/stat`, proc)
+	if (!st || (exited(st.state) && !threadsOf(String(pid), proc).running)) return undefined
+	return st.start
+}
+
+/**
+ * The boot and pid namespace this process's pids are numbered in, as one token; undefined without
+ * `/proc`. A pid and its `startTime` name a process only under the same token: another container that
+ * shares a directory with this one numbers its own processes, which this `/proc` does not show.
+ */
+export function pidNamespace(): string | undefined {
+	if (!PROC) return undefined
+	try {
+		return `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}/${readlinkSync("/proc/self/ns/pid")}`
+	} catch {
+		return undefined
+	}
 }
 
 /** Every process in `pgid` with its state and command line (`[]` without `/proc`), for a log line. */
