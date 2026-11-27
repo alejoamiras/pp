@@ -2,53 +2,18 @@ import { randomBytes } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
-import { Contract, getContractInstanceFromInstantiationParams } from "@aztec-labs/aztec.js/contracts"
-import { Fr } from "@aztec-labs/aztec.js/fields"
-import { PublicKeys } from "@aztec-labs/aztec.js/keys"
-import { TxStatus } from "@aztec-labs/aztec.js/tx"
-import { aspRootRegistryArtifact } from "@pp/bridge-core/asp-registry-artifact"
 import { connectL2 } from "@pp/bridge-core/sandbox"
 import { type Hex, parseAspSnapshot, pathFor, readRootRecord } from "@pp/label-paths"
 import { createPublicClient, http, parseAbi } from "viem"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { type BotHandle, type BotManifest, localBotAccounts, startBot } from "../../src/index"
+import { type BotHandle, type BotManifest, startBot } from "../../src/index"
+import { approve, deployRegistry } from "./support"
 
 // Run through `bun run test:integration`, which boots the stack and sets PP_STACK_MANIFEST.
 const MANIFEST = process.env.PP_STACK_MANIFEST
 const RUN = process.env.PP_BOT_INTEGRATION === "1" && MANIFEST !== undefined
 const LABELS = [0x5eed01n, 0x5eed02n]
 const ABI = parseAbi(["function latestASPRoot() view returns (uint256)"])
-
-/** The mock ASP publishes the grown root to the L1 ASPRegistry before it answers. */
-async function approve(aspApiUrl: string, label: bigint): Promise<void> {
-	const res = await fetch(`${aspApiUrl}/admin/approve-label`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ label: `0x${label.toString(16)}` }),
-	})
-	if (!res.ok) throw new Error(`approve-label ${label}: ${res.status} ${await res.text()}`)
-}
-
-async function deployRegistry(nodeUrl: string, stackRunId: string): Promise<Hex> {
-	const base = await connectL2(nodeUrl)
-	const accounts = await localBotAccounts(stackRunId)
-	const args = [base.relayer, AztecAddress.fromStringUnsafe(accounts.poster), AztecAddress.fromStringUnsafe(accounts.birthIntake)]
-	const salt = Fr.random()
-	const instance = await getContractInstanceFromInstantiationParams(aspRootRegistryArtifact, {
-		constructorArgs: args,
-		salt,
-		publicKeys: PublicKeys.default(),
-		deployer: AztecAddress.ZERO,
-		constructorArtifact: "constructor",
-	})
-	await Contract.deploy(base.wallet, aspRootRegistryArtifact, args, "constructor", { salt, universalDeploy: true } as never).send({
-		...base.relayerOpts,
-		wait: { waitForStatus: TxStatus.CHECKPOINTED, timeout: 300 },
-	} as never)
-	if (!(await base.node.getContract(instance.address))) throw new Error("registry is not at its derived address")
-	return instance.address.toString() as Hex
-}
 
 describe.skipIf(!RUN)("asp-bot against the local stack", () => {
 	const stackRunId = `it-${process.pid}-${randomBytes(3).toString("hex")}`
@@ -60,7 +25,7 @@ describe.skipIf(!RUN)("asp-bot against the local stack", () => {
 	beforeAll(async () => {
 		manifest = JSON.parse(readFileSync(MANIFEST as string, "utf8")) as BotManifest
 		for (const label of LABELS) await approve(manifest.pool.aspApiUrl, label)
-		registry = await deployRegistry(manifest.aztecNode, stackRunId)
+		registry = await deployRegistry(await connectL2(manifest.aztecNode), stackRunId)
 		bot = await startBot({ manifest, registry, tag: "latest", stackRunId, runId, inclusionMarginSec: 60 }, { removeDataOnStop: true })
 	})
 

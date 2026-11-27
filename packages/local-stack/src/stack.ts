@@ -257,6 +257,7 @@ function botStep(o: StartStackOptions, b: Booted, bridge: StackBridgeBlock): Pro
 				pool: { aspRegistry: b.pool.deployment.aspRegistry, aspApiUrl: b.pool.asp.url },
 			},
 			registry: bridge.registry,
+			tokens: [bridge.token],
 			tag: "latest",
 			stackRunId: b.runId,
 			runId: `${b.runId}-bot`,

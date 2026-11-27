@@ -1,6 +1,6 @@
 import { join } from "node:path"
 import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
-import { Contract, getContractInstanceFromInstantiationParams } from "@aztec-labs/aztec.js/contracts"
+import { Contract, getContractClassFromArtifact, getContractInstanceFromInstantiationParams } from "@aztec-labs/aztec.js/contracts"
 import { SponsoredFeePaymentMethod } from "@aztec-labs/aztec.js/fee"
 import { Fr } from "@aztec-labs/aztec.js/fields"
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
@@ -9,11 +9,14 @@ import { SPONSORED_FPC_SALT } from "@aztec-labs/constants"
 import { SponsoredFPCContract } from "@aztec-labs/noir-contracts.js/SponsoredFPC"
 import { EmbeddedWallet } from "@aztec-labs/wallets/embedded"
 import { aspRootRegistryArtifact } from "@pp/bridge-core/asp-registry-artifact"
-import { createActor, FEE_CEILING } from "@pp/bridge-core/sandbox"
+import { actorAccount, createActor, FEE_CEILING } from "@pp/bridge-core/sandbox"
 import { type Hex, readRootRecord } from "@pp/label-paths"
+import { labelledTokenArtifact } from "@pp/labelled-token"
 import { BaseError, ContractFunctionRevertedError, createPublicClient, http, parseAbi } from "viem"
 import { botSecret, localBotAccounts } from "./accounts"
 import { fetchLeaves } from "./asp"
+import { liveBirthSource } from "./births/live"
+import { BirthReader } from "./births/reader"
 import type { L1Block, PostArgs } from "./decide"
 import type { BotConfig } from "./handle"
 import { type BlockSource, selectBlock } from "./l1"
@@ -46,9 +49,17 @@ async function blockAt(node: Node, number: number): Promise<{ hash: Hex; time: b
 	return { hash: data.blockHash.toString() as Hex, time: data.header.globalVariables.timestamp }
 }
 
+class BotWallet extends EmbeddedWallet {
+	/** Syncs the PXE and returns the block it reads at; a query sent after this reads at that block or above. */
+	async syncedBlock(): Promise<number> {
+		await this.pxe.sync()
+		return Number((await this.pxe.getSyncedBlockHeader()).getBlockNumber())
+	}
+}
+
 /** The bot's wallet: its own store under `dataDir`, proving off on the local network. */
 async function walletFor(c: BotConfig, node: Node) {
-	const wallet = await EmbeddedWallet.create(c.manifest.aztecNode, {
+	const wallet = await BotWallet.create(c.manifest.aztecNode, {
 		pxeConfig: { proverEnabled: false, dataDirectory: join(c.dataDir as string, "pxe") },
 	})
 	const fpc = await getContractInstanceFromInstantiationParams(SponsoredFPCContract.artifact, { salt: new Fr(SPONSORED_FPC_SALT) })
@@ -61,6 +72,40 @@ async function walletFor(c: BotConfig, node: Node) {
 	return { wallet, fee, registry: await Contract.at(registry, aspRootRegistryArtifact, wallet) }
 }
 
+/** The intake's account is registered locally and never deployed: decrypting needs only its keys. */
+async function birthLeavesFor(
+	c: BotConfig,
+	wallet: BotWallet,
+	node: Node,
+	birthIntake: Hex,
+	log: Ports["log"],
+): Promise<Ports["birthLeaves"]> {
+	const tokens = (c.tokens ?? []).map((t) => AztecAddress.fromStringUnsafe(t))
+	if (tokens.length === 0) return async () => []
+	const { address: intake } = await actorAccount(wallet, botSecret("intake", c.stackRunId))
+	if (intake.toString() !== birthIntake) throw new Error(`intake derivation mismatch: ${intake} != ${birthIntake}`)
+	const { id: classId } = await getContractClassFromArtifact(labelledTokenArtifact)
+	for (const token of tokens) {
+		const instance = await node.getContract(token)
+		if (!instance) throw new Error(`node: no token at ${token}`)
+		// The PXE registers a mismatched artifact silently and fails later on every sync. The original
+		// class counts too: the scan reads the token's whole history, events from before an upgrade included.
+		const { currentContractClassId: now, originalContractClassId: first } = instance
+		if (!now.equals(classId) || !first.equals(classId))
+			throw new Error(`token ${token} runs class ${now} (deployed as ${first}), not the labelled token's ${classId}`)
+		await wallet.registerContract(instance, labelledTokenArtifact)
+	}
+	const src = await liveBirthSource({
+		wallet,
+		node: node as never,
+		intake,
+		artifact: labelledTokenArtifact,
+		syncedBlock: () => wallet.syncedBlock(),
+	})
+	const reader = new BirthReader(src, tokens, log)
+	return (tip) => reader.leaves(tip.number)
+}
+
 export async function livePorts(c: BotConfig, log: Ports["log"]): Promise<Live> {
 	const node = createAztecNodeClient(c.manifest.aztecNode)
 	const { wallet, fee, registry } = await walletFor(c, node)
@@ -69,6 +114,7 @@ export async function livePorts(c: BotConfig, log: Ports["log"]): Promise<Live> 
 	)
 	const { poster, birthIntake } = await localBotAccounts(c.stackRunId)
 	if (actor.address.toString() !== poster) throw new Error(`poster derivation mismatch: ${actor.address} != ${poster}`)
+	const birthLeaves = await birthLeavesFor(c, wallet, node, birthIntake, log)
 	const posterSlot = new Fr(aspRootRegistryArtifact.storageLayout.poster?.slot ?? Fr.ZERO)
 	const l1 = l1Source(c.manifest.l1Rpc)
 	const send = { from: actor.address, fee, wait: { waitForStatus: TxStatus.CHECKPOINTED, timeout: 120 } }
@@ -99,7 +145,7 @@ export async function livePorts(c: BotConfig, log: Ports["log"]): Promise<Live> 
 			}
 		},
 		aspLeaves: () => fetchLeaves(c.manifest.pool.aspApiUrl),
-		birthLeaves: async () => [],
+		birthLeaves,
 		async post(a: PostArgs) {
 			const call = registry.methods.post_root(a.sequence, new Fr(a.poolRoot), new Fr(a.birthRoot), a.l1Block, a.rootTime)
 			const { receipt } = (await call.send(send as never)) as unknown as { receipt: { blockNumber?: number } }

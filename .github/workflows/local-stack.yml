@@ -66,8 +66,15 @@ jobs:
               - 'packages/pool-client/test/support/**'
               - 'packages/asp-bot/src/**'
               - 'packages/asp-bot/package.json'
+              - 'packages/asp-bot/scripts/**'
+              - 'packages/asp-bot/test/integration/**'
+              - 'packages/asp-bot/vitest.integration.config.ts'
               - 'packages/label-paths/src/**'
               - 'packages/label-paths/package.json'
+              - 'packages/labelled-token/src/**'
+              - 'packages/labelled-token/package.json'
+              - 'packages/labelled-token/test/net/testing.ts'
+              - 'packages/labelled-token/test/net/**'
               - 'packages/run-isolation/src/**'
               - 'packages/run-isolation/package.json'
               - 'package.json'
@@ -199,10 +206,62 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  bot-births:
+    # The asp-bot's births suite, with its own registry and labelled token, against one stack this
+    # job boots and stops (packages/asp-bot/scripts/with-stack.ts).
+    name: asp-bot births suite
+    needs: changes
+    if: needs.changes.outputs.stack == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: ./.github/actions/setup-aztec
+
+      - uses: ./.github/actions/ppv2-fetch
+
+      - uses: ./.github/actions/bridge-evm-build
+
+      - name: Births suite
+        # Twice the measured step time (boot, cases, teardown), rounded up to whole minutes.
+        timeout-minutes: 9
+        working-directory: packages/asp-bot
+        # The suite skips itself without a stack, so a skipped, missing or renamed case fails here.
+        run: |
+          start=$(date +%s)
+          set +e
+          bun run test:integration test/integration/births.integration.test.ts \
+            --reporter=verbose --reporter=json --outputFile.json="$GITHUB_WORKSPACE/births.json" 2>&1 | tee "$GITHUB_WORKSPACE/births.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "asp-bot births wall-clock: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$status" -eq 0 ] || exit "$status"
+          jq -e '.success and .numFailedTests == 0 and .numPendingTests == 0 and .numTodoTests == 0 and .numPassedTests == 2
+            and ([.testResults[].assertionResults[] | select(.status == "passed") | .title | split(" ")[0]] | sort) == ["B1", "B2"]' \
+            "$GITHUB_WORKSPACE/births.json"
+
+      - name: Upload stack logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: asp-bot-births-logs
+          path: |
+            births.log
+            births.json
+            ~/.cache/pp/bridge-sandbox/logs/*.log
+            ~/.cache/pp/asp-bot/logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   status:
     name: local-stack-status
     if: always()
-    needs: [changes, stack, bridge-stack]
+    needs: [changes, stack, bridge-stack, bot-births]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -215,3 +274,4 @@ jobs:
         run: |
           bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.stack.result }}"
           bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.bridge-stack.result }}"
+          bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.bot-births.result }}"

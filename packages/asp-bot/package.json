@@ -17,11 +17,13 @@
 		"@aztec-labs/constants": "6.0.0",
 		"@aztec-labs/foundation": "6.0.0",
 		"@aztec-labs/noir-contracts.js": "6.0.0",
+		"@aztec-labs/stdlib": "6.0.0",
 		"@aztec-labs/wallets": "6.0.0",
 		"@nulo-sh/wallet-crypto": "0.3.0",
 		"@pp/bridge-core": "workspace:*",
 		"@pp/bridge-spec": "workspace:*",
 		"@pp/label-paths": "workspace:*",
+		"@pp/labelled-token": "workspace:*",
 		"viem": "2.57.1"
 	},
 	"devDependencies": {
