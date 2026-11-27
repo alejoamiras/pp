@@ -29,7 +29,8 @@ type Stdio = [IOType | number, IOType | number, IOType | number]
  * The parent is the process that calls this: under vitest's `forks` pool the worker, under `threads` the
  * vitest process itself, whose end closes only when it exits. While the parent lives, the group behaves as
  * if `cmd` led it: group signals reach `cmd` directly, and the launcher exits as `cmd` did. A member `cmd`
- * leaves behind after it exits is no longer watched.
+ * leaves behind after it exits is no longer watched. The returned child's `stdio[3]` is the watch: closing
+ * it ends the group as this process's death would.
  *
  * Give `cmd` files (as `spawnOwned` does), not pipes, for output: a pipe's reader is this process, and a
  * command whose output has no reader may not stop on SIGTERM (the Aztec node does not). Such a group takes
@@ -42,8 +43,9 @@ export function spawnWatched(
 	watch: Watch = {},
 ): ChildProcess {
 	const spec: WatchSpec = { cmd, args, release: watch.release ?? [], registry: registryPath(), graceMs: watch.graceMs ?? 5_000 }
-	// Node warns on stripping the launcher's types; Bun takes no such flag.
-	const flags = process.versions.bun ? [] : ["--no-warnings"]
+	// Bun would load a .env from the working directory into the environment `cmd` inherits; Node warns on
+	// stripping the launcher's types.
+	const flags = process.versions.bun ? ["--no-env-file"] : ["--no-warnings"]
 	return spawn(process.execPath, [...flags, LAUNCHER, JSON.stringify(spec)], {
 		stdio: [...options.stdio, "pipe"],
 		detached: true,

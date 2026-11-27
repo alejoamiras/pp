@@ -14,9 +14,9 @@ import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { delimiter, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { groupAlive, signalGroup } from "@pp/run-isolation/process-group"
+import { groupAlive } from "@pp/run-isolation/process-group"
 import { claimRows, PortClaimConflict, type RowRef, registeredPorts, registryPath, releaseRows, rowsOwnedBy } from "@pp/run-isolation/ports"
-import { killGroup, type OwnedChild, ownsGroup, spawnOwned } from "@pp/run-isolation/process"
+import { killGroup, type OwnedChild, spawnOwned } from "@pp/run-isolation/process"
 import { ANVIL_ACCOUNTS } from "./constants"
 
 export { killGroup, type OwnedChild } from "@pp/run-isolation/process"
@@ -306,13 +306,17 @@ export function assertSocketRoom(tmpDir: string): void {
  *  so a failed CI run can still upload it. */
 export const SANDBOX_LOG_DIR = join(SANDBOX_CACHE_DIR, "logs")
 
-/** Prints each log's last error lines and its path, for a boot that failed; the log holds the rest. */
+/** Prints each log's last error lines and its path, for a boot that failed; the log holds the rest. Never
+ *  throws: the teardown that follows must run. */
 function reportLogs(logs: Record<string, string>): void {
 	for (const [label, logFile] of Object.entries(logs)) {
-		if (!existsSync(logFile)) continue
-		const errors = readFileSync(logFile, "utf8")
-			.split("\n")
-			.filter((line) => /\bERROR\b|\bFATAL\b|already in use|could not start/i.test(line))
+		let text: string
+		try {
+			text = readFileSync(logFile, "utf8")
+		} catch {
+			continue
+		}
+		const errors = text.split("\n").filter((line) => /\bERROR\b|\bFATAL\b|already in use|could not start/i.test(line))
 		for (const line of errors.slice(-20)) console.error(`[${label}]`, line.slice(0, 200))
 		console.error(`[${label}] full log: ${logFile}`)
 	}
@@ -415,7 +419,8 @@ function spawnNode(
 		],
 		p.logFile,
 		nodeEnv(tool, p.anvilUrl, p.dirs),
-		{ release: p.release },
+		// The node's own shutdown has taken seconds on a loaded host, and its rows free only if it ends in time.
+		{ release: p.release, graceMs: 15_000 },
 	)
 }
 
@@ -546,22 +551,14 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 				removeDirs()
 				// A stopped network's handlers would otherwise exit the host during a later network's teardown.
 				unregister()
-				process.off("exit", onExit)
 			}
 		})()
 		return stopping
 	}
+	// A host that exits without `stop` (vitest's own signal handling, an uncaught error, SIGKILL) needs no
+	// hook: each group's leader sees the host gone, ends its group and frees its rows. The store stays on
+	// disk, since removing it while its holders shut down could stall them.
 	const unregister = opts.signals === false ? () => {} : reapOnSignals(stop)
-	// A host that exits without waiting (vitest's own signal handling, an uncaught error) still must
-	// not orphan a node holding a multi-GB store: the last-resort reap is synchronous.
-	const onExit = () => {
-		for (const owned of spawned) {
-			if (owned.child.pid === undefined || !ownsGroup(owned)) continue
-			signalGroup(owned.child.pid, "SIGKILL")
-		}
-		removeDirs()
-	}
-	process.once("exit", onExit)
 	// `stop` reaps the children it sees when it starts; a signal mid-boot must not let one spawn after.
 	const stillBooting = () => {
 		if (stopping) throw new Error("[sandbox] stopped while booting")

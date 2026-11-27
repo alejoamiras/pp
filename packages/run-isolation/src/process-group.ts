@@ -182,11 +182,12 @@ export function groupAlive(pgid: number, proc: ProcFs = HOST): boolean {
 }
 
 /**
- * Whether a member of `pgid` other than `self` is still running, by `groupAlive`'s rules; always true
- * without `/proc`, where only the kernel's view of the whole group exists and `self` is in it.
+ * Whether a member of `pgid` other than `self` is still running, by `groupAlive`'s rules. Always true
+ * when `/proc` cannot vouch for a member it does not list (`pidNamespace` is undefined): only the
+ * kernel's view of the whole group remains, and `self` is in it.
  */
-export function othersRunning(pgid: number, self: number, proc: ProcFs = HOST): boolean {
-	return !PROC || hasRunningMember(pgid, proc, self)
+export function othersRunning(pgid: number, self: number, proc: ProcLinks = HOST): boolean {
+	return pidNamespace(proc) === undefined || hasRunningMember(pgid, proc, self)
 }
 
 /** Sends `s` to every member of `pgid`; false when the kernel refused it (no such group, or not ours to signal). */

@@ -10,11 +10,12 @@ import { INTEGRATION } from "./sandbox"
 
 const LOCAL_NETWORK = fileURLToPath(new URL("../../scripts/sandbox/local-network.ts", import.meta.url))
 
-// A host that boots the network and then holds, with nothing of its own to tear it down.
+// A host that boots the network, then holds with nothing of its own to tear it down, until a line on
+// stdin makes it exit at once.
 const HOST = `import { startLocalNetwork } from ${JSON.stringify(LOCAL_NETWORK)}
 await startLocalNetwork({ runId: process.argv[2], signals: false })
+process.stdin.once("data", () => process.exit(0))
 console.log("READY")
-setInterval(() => {}, 1_000)
 `
 
 /** The groups led by direct children of `parent`: one per watched spawn, its launcher the leader. */
@@ -35,49 +36,67 @@ function ledGroups(parent: number): number[] {
 	return led
 }
 
+interface Run {
+	runId: string
+	host?: ChildProcess
+	pgids: number[]
+	output: string
+}
+
+/** Ends what a run left: its host, its groups (found from the host if boot never got that far), then its
+ *  rows and directories once nothing in those groups can hold them. */
+async function cleanUp(run: Run): Promise<void> {
+	if (run.pgids.length === 0 && run.host?.pid !== undefined) run.pgids = ledGroups(run.host.pid)
+	run.host?.kill("SIGKILL")
+	for (const pgid of run.pgids) signalGroup(pgid, "SIGKILL")
+	for (const pgid of run.pgids) await groupGone(pgid, 10_000)
+	await releaseRows(run.runId)
+	// The host never ran its teardown, so its directories are still there.
+	for (const dir of /, data (\S+), tmp (\S+)/.exec(run.output)?.slice(1) ?? []) rmSync(dir, { recursive: true, force: true })
+}
+
 describe.skipIf(!INTEGRATION || !existsSync("/proc/self/stat"))("a sandbox whose host dies", () => {
-	const runId = `bridge-parent-death-${process.pid}-${Date.now().toString(36)}`
-	let host: ChildProcess | undefined
-	let work: string | undefined
-	let pgids: number[] = []
-	let output = ""
+	const root = join(homedir(), ".cache/pp/bridge-core")
+	mkdirSync(root, { recursive: true })
+	const work = mkdtempSync(join(root, "parent-death-"))
+	const script = join(work, "host.ts")
+	writeFileSync(script, HOST)
+	const runs: Run[] = []
 	afterAll(async () => {
-		host?.kill("SIGKILL")
-		for (const pgid of pgids) signalGroup(pgid, "SIGKILL")
-		await releaseRows(runId)
-		// A SIGKILLed host removes none of its directories.
-		const dirs = /, data (\S+), tmp (\S+)/.exec(output)?.slice(1) ?? []
-		for (const dir of [...dirs, ...(work ? [work] : [])]) rmSync(dir, { recursive: true, force: true })
+		for (const run of runs) await cleanUp(run)
+		rmSync(work, { recursive: true, force: true })
 	})
 
-	it("ends both of its process groups and frees every row it claimed when SIGKILLed", async () => {
-		const parent = join(homedir(), ".cache/pp/bridge-core")
-		mkdirSync(parent, { recursive: true })
-		work = mkdtempSync(join(parent, "parent-death-"))
-		const script = join(work, "host.ts")
-		writeFileSync(script, HOST)
-		const child = spawn("bun", [script, runId], { stdio: ["ignore", "pipe", "inherit"] })
-		host = child
-		const exited = new Promise((resolve) => child.once("exit", resolve))
-		await new Promise<void>((resolve, reject) => {
-			child.stdout.on("data", (d: Buffer) => {
-				output += d.toString()
-				if (output.includes("READY")) resolve()
+	for (const death of ["SIGKILL", "process.exit"] as const) {
+		it(`ends both of its process groups and frees every row it claimed, on ${death}`, async () => {
+			const run: Run = { runId: `bridge-parent-death-${process.pid}-${Date.now().toString(36)}`, pgids: [], output: "" }
+			runs.push(run)
+			// Without the attach pair the host boots its own network rather than reusing the suite's.
+			const { SANDBOX_L1_RPC: _rpc, SANDBOX_NODE_URL: _node, ...env } = process.env
+			const host = spawn("bun", [script, run.runId], { stdio: ["pipe", "pipe", "inherit"], env })
+			run.host = host
+			const exited = new Promise((resolve) => host.once("exit", resolve))
+			await new Promise<void>((resolve, reject) => {
+				host.stdout.on("data", (d: Buffer) => {
+					run.output += d.toString()
+					if (run.output.includes("READY")) resolve()
+				})
+				host.once("exit", (code, signal) =>
+					reject(new Error(`the host exited (${signal ?? code}) before the network was up:\n${run.output}`)),
+				)
 			})
-			child.once("exit", (code, signal) =>
-				reject(new Error(`the host exited (${signal ?? code}) before the network was up:\n${output}`)),
-			)
-		})
-		pgids = ledGroups(child.pid as number)
-		expect(pgids).toHaveLength(2)
-		expect(rowsOwnedBy(runId)).toBe(4)
+			run.pgids = ledGroups(host.pid as number)
+			expect(run.pgids).toHaveLength(2)
+			expect(rowsOwnedBy(run.runId)).toBe(4)
 
-		const killed = Date.now()
-		child.kill("SIGKILL")
-		await exited
-		for (const pgid of pgids) expect(await groupGone(pgid, 60_000)).toBe(true)
-		console.log(`[parent-death] both groups gone ${Date.now() - killed} ms after the host's SIGKILL`)
-		// A leader frees its rows before it exits, and only once it has seen its group empty.
-		expect(rowsOwnedBy(runId)).toBe(0)
-	}, 360_000)
+			const killed = Date.now()
+			if (death === "SIGKILL") host.kill("SIGKILL")
+			else host.stdin.write("exit\n")
+			await exited
+			for (const pgid of run.pgids) expect(await groupGone(pgid, 60_000)).toBe(true)
+			console.log(`[parent-death] both groups gone ${Date.now() - killed} ms after the host's ${death}`)
+			// A leader frees its rows before it exits, and only once it has seen its group empty.
+			expect(rowsOwnedBy(run.runId)).toBe(0)
+		}, 360_000)
+	}
 })

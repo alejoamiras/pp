@@ -164,6 +164,7 @@ const isRow = (line: string, r: RowRef): boolean => {
  * as a claim; false when the lock never came free.
  */
 export function releaseNamed(refs: readonly RowRef[], registry = registryPath()): Promise<boolean> {
+	if (refs.length === 0) return Promise.resolve(true)
 	return withRegistry((lines) => lines.filter((l) => !refs.some((r) => isRow(l, r))), registry)
 }
 
