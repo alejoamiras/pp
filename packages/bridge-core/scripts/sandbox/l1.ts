@@ -1,7 +1,7 @@
 /** L1 side of the sandbox: the token fixtures the generation and the flows need, and the small write
  *  helpers every flow shares. */
 import type { Address, Hex } from "viem"
-import type { L1Ctx } from "../../src/flows"
+import type { L1Ctx } from "../l1-ctx"
 import { evmArtifact } from "../script-artifacts"
 import { lc, type SpecKey, SPECS, type TokenSpec } from "./constants"
 

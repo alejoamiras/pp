@@ -6,7 +6,6 @@
 export * from "./claim-secret"
 export * from "./content-hash"
 export * from "./erc20"
-export * from "./flows"
 export * from "./l1-receipt"
 export * from "./l1-to-l2-readiness"
 export * from "./journal"

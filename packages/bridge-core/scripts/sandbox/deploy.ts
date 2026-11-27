@@ -2,7 +2,7 @@
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { privateKeyToAccount } from "viem/accounts"
-import type { L1Ctx } from "../../src/flows"
+import type { L1Ctx } from "../l1-ctx"
 import type { ManifestV2 } from "../../src/manifest-v2"
 import { openDeployJournal, writeCandidateAtomically } from "../deploy-manifest"
 import { deployGeneration, NO_ASP_REGISTRY, preCreateToken } from "../generation"
