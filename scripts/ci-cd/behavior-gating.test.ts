@@ -60,7 +60,7 @@ function assertGraphCovered(patterns: string[], target: string, label: string) {
   }
 }
 
-const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml"]
+const FILTER_WORKFLOWS = ["pr-quick.yml", "bridge-contracts.yml", "actionlint.yml", "pp-env.yml", "local-stack.yml"]
 
 /**
  * The check-run each PR workflow's aggregator job produces. Branch protection matches these by
@@ -70,6 +70,8 @@ const AGGREGATOR_CHECKS: Record<string, string> = {
   "pr-quick.yml": "quality-status",
   "bridge-contracts.yml": "bridge-contracts-status",
   "actionlint.yml": "actionlint-status",
+  "pp-env.yml": "pp-env-status",
+  "local-stack.yml": "local-stack-status",
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed-YAML shape is dynamic.
@@ -164,6 +166,7 @@ describe("CI behavior-gating guard", () => {
     const contracts = filtersOf("bridge-contracts.yml")["contracts"]
     expect(contracts, "the Solidity + Noir sources").toContain("contracts/bridge/**")
     assertGraphCovered(contracts, "bridge-core", "bridge-contracts")
+    assertGraphCovered(contracts, "labelled-token", "bridge-contracts")
     for (const p of [
       "vitest.base.ts",
       "package.json",
@@ -176,6 +179,74 @@ describe("CI behavior-gating guard", () => {
       expect(contracts, `bridge-contracts must gate ${p}`).toContain(p)
     }
   })
+
+  test("pp-env covers its package, its graph, the shared vitest config, and every action its suites job calls", () => {
+    const ppEnv = filtersOf("pp-env.yml")["pp-env"]
+    assertGraphCovered(ppEnv, "pp-env", "pp-env")
+    const calls: string[] = workflow("pp-env.yml")
+      .jobs.suites.steps.map((step: { uses?: string }) => step.uses)
+      .filter((uses: string | undefined) => uses?.startsWith("./.github/actions/"))
+    expect(calls.length).toBeGreaterThan(0)
+    for (const p of [
+      ...calls.map((c) => `${c.slice(2)}/**`),
+      "vitest.base.ts",
+      "package.json",
+      "bun.lock",
+      "bunfig.toml",
+      "patches/**",
+    ]) {
+      expect(ppEnv, `pp-env must gate ${p}`).toContain(p)
+    }
+    expect(workflow("pp-env.yml").jobs.suites.if).toBe("needs.changes.outputs.pp-env == 'true'")
+  })
+
+  // A job-level bound would also count setup and the pool fetch, which is cold on every run of a
+  // pull request that changes the pin.
+  test("local-stack bounds each integration suite on its step, under a 20 min job", () => {
+    const stack = workflow("local-stack.yml").jobs.stack
+    expect(stack["timeout-minutes"]).toBe(20)
+    const step = stack.steps.find((s: { name?: string }) => s.name === "Integration suite")
+    const map = /^\$\{\{ fromJSON\('(\{[^']+\})'\)\[matrix\.suite\] \|\| 20 \}\}$/.exec(step?.["timeout-minutes"])?.[1]
+    expect(map, "the suite step's bound comes from a suite → minutes map").toBeDefined()
+    const bounds: Record<string, number> = JSON.parse(map ?? "{}")
+    const suites = readdirSync(join(ROOT, "packages/local-stack/test/integration"))
+      .filter((f) => f.endsWith(".integration.test.ts"))
+      .map((f) => f.slice(0, -".integration.test.ts".length))
+      .sort()
+    expect(Object.keys(bounds).sort()).toEqual(suites)
+    for (const [suite, minutes] of Object.entries(bounds)) {
+      expect(minutes, suite).toBeGreaterThanOrEqual(2)
+      expect(minutes, suite).toBeLessThan(20)
+    }
+  })
+})
+
+// A title on a public repo is written by whoever opens the PR: no write token, no secret, and the
+// title reaches the script only through the environment.
+test("commit-messages.yml runs on pull_request alone, re-judges every head and edit, title as data", () => {
+  const wf = workflow("commit-messages.yml")
+  expect(Object.keys(wf.on)).toEqual(["pull_request"])
+  expect(wf.on.pull_request.types).toEqual(["opened", "edited", "reopened", "synchronize"])
+  expect(wf.concurrency.group).toContain("github.event.pull_request.head.sha")
+  expect(wf.permissions).toEqual({ contents: "read" })
+  const job = wf.jobs["commit-messages"]
+  expect(job.name).toBe("commit-messages-status")
+  expect(job.permissions).toBeUndefined()
+  type Step = { run?: string; env?: Record<string, string> }
+  for (const step of job.steps as Step[]) expect(step.run ?? "").not.toContain("${{")
+  const title = (job.steps as Step[]).find((s) => s.run === "bash scripts/ci-cd/lint-pr-title.sh")
+  expect(title?.env).toEqual({ PR_TITLE: "${{ github.event.pull_request.title }}", PR_NUMBER: "${{ github.event.pull_request.number }}" })
+  const commits = (job.steps as Step[]).find((s) => s.run?.startsWith("bash scripts/ci-cd/commitlint-own.sh"))
+  expect(commits?.run).toBe('bash scripts/ci-cd/commitlint-own.sh "$HEAD_SHA" "$BASE_SHA" origin/main')
+  expect(commits?.env).toEqual({ BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" })
+})
+
+// The excluded main needs every branch fetched, which fetch-depth 0 does.
+test("Commitlint lints only the PR's own commits, excluding its base and main", () => {
+  expect(workflow("commit-messages.yml").jobs["commit-messages"].steps[0].with["fetch-depth"]).toBe(0)
+  const job = workflow("pr-quick.yml").jobs.commitlint
+  expect(job.steps[0].with["fetch-depth"]).toBe(0)
+  expect(job.steps.map((s: { run?: string }) => s.run)).toContain('bash scripts/ci-cd/commitlint-own.sh "$HEAD_SHA" "$BASE_SHA" origin/main')
 })
 
 test("the unit-test workflow runs this suite", () => {

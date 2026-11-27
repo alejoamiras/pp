@@ -16,7 +16,8 @@
 		"deploy:sandbox": "bun scripts/deploy-sandbox.ts",
 		"sandbox:up": "bun scripts/sandbox/cli.ts up",
 		"sandbox:smoke": "bun scripts/sandbox/cli.ts run --smoke",
-		"test:integration": "BRIDGE_INTEGRATION=1 bun --bun vitest run --config vitest.integration.config.ts"
+		"test:integration": "BRIDGE_INTEGRATION=1 bun --bun vitest run --config vitest.integration.config.ts",
+		"test:registry": "BRIDGE_INTEGRATION=1 bun --bun vitest run --config vitest.registry.config.ts"
 	},
 	"dependencies": {
 		"@pp/bridge-spec": "workspace:*",

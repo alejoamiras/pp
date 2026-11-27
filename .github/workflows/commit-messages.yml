@@ -1,0 +1,46 @@
+name: Commit messages
+
+# A squash merge writes "<title> (#<number>)" as the commit subject, and no commit range contains it
+# before the merge, so this lints that exact string beside the PR's own commits. It is a workflow of
+# its own because `edited`, which a title change or a retarget needs, also fires on every body edit:
+# here that re-runs one cheap job instead of cancelling the Quality run. `synchronize` puts the
+# status on every new head.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+# Keyed by head too: an `edited` run for an old head must not cancel the run for a newer one.
+concurrency:
+  group: commit-messages-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  commit-messages:
+    name: commit-messages-status
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Full history with every branch: the range excludes origin/main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      # Also here, not only in Quality: a retarget changes the base and fires only `edited`.
+      - name: Lint the PR's own commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/ci-cd/commitlint-own.sh "$HEAD_SHA" "$BASE_SHA" origin/main
+
+      # The title is handed over in the environment; it never appears inside the script text.
+      - name: Lint the squash subject
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash scripts/ci-cd/lint-pr-title.sh

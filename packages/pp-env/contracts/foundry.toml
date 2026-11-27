@@ -1,0 +1,11 @@
+# Dependencies are remapped to wherever the package manager put them, at each call; build and
+# test this project through `bun run forge:fixtures <build|test> ...`.
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+solc = "0.8.28"
+ffi = false
+
+[fuzz]
+runs = 256

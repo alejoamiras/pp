@@ -1,0 +1,19 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"resolvePackageJsonImports": false
+	},
+	"include": [
+		"types/**/*.d.ts",
+		"src/client/abi.ts",
+		"src/client/types.ts",
+		"src/env/types.ts",
+		"src/env/checkout.ts",
+		"src/env/deploy.ts",
+		"src/env/pins.ts",
+		"src/env/tools.ts",
+		"src/env/fetch/**/*.ts",
+		"src/env/harness/**/*.ts",
+		"scripts/**/*.ts"
+	]
+}

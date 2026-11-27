@@ -1,9 +1,9 @@
 name: _Bridge contracts (reusable)
 
-# Runs the L1 (Foundry) and L2 (Noir) contract suites for contracts/bridge/**, the hub's TXE
-# suite, and packages/bridge-core's integration suite: one anvil + `aztec start --local-network`
-# per job, a generation deployed onto it, every round trip driven through the same seams the
-# tools app calls.
+# Runs the L1 (Foundry) and L2 (Noir) contract suites for contracts/bridge/**, the hub's and the
+# labelled token's TXE suites, the token's gate budgets, and packages/bridge-core's integration
+# suite: one anvil + `aztec start --local-network` per job, a generation deployed onto it, every
+# round trip driven through the same seams the tools app calls.
 #
 # Nothing under contracts/ was gated before this workflow existed, so a build-breaking
 # remap regression went unnoticed: the only signal was a local run on a machine that
@@ -263,6 +263,79 @@ jobs:
           AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
         run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate asp_registry_probe
 
+  token-parity:
+    name: labelled token parity and gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Resolve the pinned Aztec toolchain
+        id: aztec-pin
+        run: |
+          TAG=$(sed -n 's/.*aztec-nr".*tag = "v\([^"]*\)".*/\1/p' \
+            contracts/bridge/aztec/labelled_token/Nargo.toml | head -1)
+          if [ -z "$TAG" ]; then
+            echo "::error::could not read the aztec-nr tag from labelled_token/Nargo.toml"
+            exit 1
+          fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-aztec
+        with:
+          version: ${{ steps.aztec-pin.outputs.version }}
+
+      # The TXE suite deploys the committed bridge_stub artifact, so it is parity-checked too.
+      - name: compile.sh --check labelled_token bridge_stub
+        env:
+          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
+        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/compile.sh --check labelled_token bridge_stub
+
+      # Parity above fixes every private function's circuit, so profiling the committed artifact
+      # measures the source; a hand-edited bench/gates.json fails here.
+      - name: gates:check
+        env:
+          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
+        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bun run --cwd packages/labelled-token gates:check
+
+  token-txe:
+    name: labelled token TXE suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Resolve the pinned Aztec toolchain
+        id: aztec-pin
+        run: |
+          TAG=$(sed -n 's/.*aztec-nr".*tag = "v\([^"]*\)".*/\1/p' \
+            contracts/bridge/aztec/labelled_token/Nargo.toml | head -1)
+          if [ -z "$TAG" ]; then
+            echo "::error::could not read the aztec-nr tag from labelled_token/Nargo.toml"
+            exit 1
+          fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-aztec
+        with:
+          version: ${{ steps.aztec-pin.outputs.version }}
+
+      - name: run-txe-tests.sh labelled_token
+        env:
+          AZTEC_PIN: ${{ steps.aztec-pin.outputs.version }}
+        run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_PIN" bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token
+
   integration:
     name: sandbox integration (anvil + local network)
     runs-on: ubuntu-latest
@@ -315,6 +388,33 @@ jobs:
           path: |
             /tmp/bridge-integration-*
             ~/.cache/pp/bridge-sandbox/logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  registry-network:
+    name: ASP registry on a local network
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      # Defaults to bridge-core's @aztec-labs pin, the node the suite talks to.
+      - uses: ./.github/actions/setup-aztec
+
+      # No forge build: the suite deploys only the committed registry and probe artifacts on L2.
+      - name: Registry network suite
+        run: bun run --cwd packages/bridge-core test:registry
+
+      - name: Upload sandbox logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: asp-registry-network-logs
+          path: ~/.cache/pp/bridge-sandbox/logs/*.log
           if-no-files-found: ignore
           retention-days: 7
 

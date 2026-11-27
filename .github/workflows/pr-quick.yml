@@ -95,11 +95,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-bun
+      # Only the PR's own commits: a sync of main into an integration branch carries main's history,
+      # which that PR cannot change. commit-messages.yml lints them on a retarget, and the squash subject.
       - name: Lint PR commits
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: bunx commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
+        run: bash scripts/ci-cd/commitlint-own.sh "$HEAD_SHA" "$BASE_SHA" origin/main
 
   lint-and-typecheck:
     name: Lint + Typecheck

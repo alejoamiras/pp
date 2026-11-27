@@ -5,9 +5,6 @@
 //! - a spend needs `root_time + MAX_ROOT_AGE >= anchor + SPEND_WINDOW` and expires by
 //!   `anchor + SPEND_WINDOW`.
 //! So a record serves anchors up to `root_time + 1800`, and their spends land by `root_time + 3600`.
-//!
-//! Callers pass their own immutable registry address, never an argument, and the constrained common
-//! origin of the notes they spend.
 
 use crate::AspRootRegistry::{self, RootRecord};
 use aztec::{
@@ -16,6 +13,9 @@ use aztec::{
     protocol::{address::AztecAddress, traits::{Deserialize, FromField, Serialize}},
     utils::WithHash,
 };
+use pp_hash::{assert_lean_imt_member, hash_1};
+
+pub use pp_hash::LabelPath;
 
 pub global MAX_OBSERVATION_LAG: u64 = 1800;
 pub global MAX_ROOT_AGE: u64 = 3600;
@@ -38,6 +38,23 @@ pub struct TreeRoot {
 pub struct AnchorRoots {
     pub pool: TreeRoot,
     pub birth: TreeRoot,
+}
+
+/// The one call a checked spend makes: `label` is in the `origin` tree of the record at the anchor,
+/// which is fresh; returns both trees for the unshield's public step. Callers must pass their own
+/// immutable registry, never an argument; the constrained common origin and label of every note they
+/// spend; and, for an unshield, emit its effects only while `context.in_revertible_phase()`, then
+/// pass the result unchanged to an `only_self` step that calls `assert_current` before the credit.
+pub fn check_label(
+    context: &mut PrivateContext,
+    registry: AztecAddress,
+    origin: u8,
+    label: Field,
+    path: LabelPath,
+) -> AnchorRoots {
+    let (root, roots) = fresh_roots(context, registry, origin);
+    assert_lean_imt_member(hash_1([label]), path, root);
+    roots
 }
 
 /// For the unshield's `only_self` public step, enqueued with the roots its private check returned:

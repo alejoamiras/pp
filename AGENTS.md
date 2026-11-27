@@ -7,10 +7,12 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 | Path | What it is |
 |---|---|
 | [`contracts/bridge/evm`](contracts/bridge/evm/README.md) | L1 contracts (Foundry): `PortalFactory` and the per-token `ProcessorPortalImpl` clones, each a Privacy Pools processor that holds bridged funds. |
-| [`contracts/bridge/aztec`](contracts/bridge/aztec/README.md) | L2 contracts (Noir): `TokenBridgeHub`, its hashing libraries and the TXE runner. |
+| [`contracts/bridge/aztec`](contracts/bridge/aztec/README.md) | L2 contracts (Noir): `TokenBridgeHub`, the labelled token and its test minter, the hashing libraries and the TXE runner. |
 | [`packages/bridge-core`](packages/bridge-core/README.md) | `@pp/bridge-core`: claim, exit and readiness logic over viem and aztec.js, and the local-network harness (`scripts/sandbox/`). |
 | [`packages/bridge-spec`](packages/bridge-spec/README.md) | `@pp/bridge-spec`: the normative v1 wire format and hashes in TS, and the vectors that bind `BridgeMessageV1` (Solidity) and `bridge_message`/`pp_hash` (Noir) to it. |
 | [`packages/e2e-kit`](packages/e2e-kit/README.md) | `@pp/e2e-kit`: the Playwright kit a web app under `apps/` will use (test wallet, injected Ethereum wallet, egress fence, runner). |
+| [`packages/labelled-token`](packages/labelled-token/README.md) | `@pp/labelled-token`: the labelled token's artifact (browser-safe root), its gate budgets, the hub's derivation vector and its two-device network suite. |
+| [`packages/local-stack`](packages/local-stack/README.md) | `@pp/local-stack`: `bun run demo`, one anvil carrying the Aztec local network and the pool, with its manifest and heartbeat. |
 | [`scripts/`](scripts) | CI-gating tests (`scripts/ci-cd/`), the complexity baseline, the absolute-path guard. |
 | [`.github/`](.github) | PR workflows, each with a `changes` filter and an exact-state aggregator. |
 
@@ -46,12 +48,17 @@ with warm package and toolchain caches.
 | L1 symbolic proofs | `bash contracts/bridge/evm/scripts/check-halmos.sh` | 67 s |
 | L2 artifact parity | `bash contracts/bridge/aztec/scripts/compile.sh --check` | 76 s |
 | L2 TXE suite | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh` | 3.5 min |
+| Labelled token TXE | `bash contracts/bridge/aztec/scripts/compile.sh labelled_token && bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | 3 min |
+| Labelled token gates | `bun run --cwd packages/labelled-token gates:check` | 4 s |
 | L2 hash vectors | `bun run --cwd packages/bridge-spec vectors:nargo` (keystone, every v1 test by name) | 33 s |
 | L2 hash library | `bash contracts/bridge/aztec/scripts/nargo.sh contracts/bridge/aztec/pp_hash test --force` | 23 s |
 | Wire-format vectors | `bun run --cwd packages/bridge-spec vectors:check`, then `vectors:mutate -- --suite ts\|sol\|nr` | < 1 s, then 3 s · 5 s · 45 s |
 | Sole consumer | `bash contracts/bridge/aztec/scripts/check-sole-consumer.sh` | < 1 s |
 | Integration (local network) | `bun run --cwd packages/bridge-core test:integration` | 10 min |
 | Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | 7.5 min |
+| Labelled token, two devices | `bun run --cwd packages/labelled-token test:net` | 3 min |
+| Local stack | `bun run demo` (`--keep` holds it up) | 44 s (ready in 40 s) |
+| Local stack integration | `bun run --cwd packages/local-stack test:integration` | — |
 | E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | 15 s |
 
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row
@@ -85,6 +92,8 @@ the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contr
 
 - `main` is the only long-lived branch. Work lands through squash-merged pull requests; the PR
   title becomes the commit subject, so write it as a Conventional Commit of at most 93 characters.
+  `commit-messages-status` lints "<title> (#<number>)" and the PR's own commits, never main's (a sync
+  carries those), and re-runs on a title edit or a retarget.
 - Pull-request workflows have no `branches:` filter, so CI runs whatever the base: `main`, an
   integration branch or a lower PR in a stack. `scripts/ci-cd/behavior-gating.test.ts` pins this.
 - Required on `main`: `quality-status`, `bridge-contracts-status` and `actionlint-status`, each
