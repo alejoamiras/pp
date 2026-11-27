@@ -17,6 +17,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 | [`packages/local-stack`](packages/local-stack/README.md) | `@pp/local-stack`: `bun run demo`, one anvil carrying the Aztec local network and the pool, with its manifest and heartbeat. |
 | [`packages/asp-bot`](packages/asp-bot/README.md) | `@pp/asp-bot`: posts the ASP root to the Aztec registry and serves the snapshots, as a child process group. |
 | [`packages/pool-client`](packages/pool-client/README.md) | `@pp/pool-client`: Privacy Pools v2 notes and a checked one-input spend to a processor, in Node, Bun and the browser; never submits. `@pp/pool-client/testing` seeds a running `pp-env up`. |
+| [`packages/run-isolation`](packages/run-isolation/README.md) | `@pp/run-isolation`: the primitives a local run uses to own its processes; `./process-group` tells a running group from one of unreaped zombies. Node-only, no dependencies. |
 | [`scripts/`](scripts) | CI-gating tests (`scripts/ci-cd/`), the complexity baseline, the absolute-path guard. |
 | [`.github/`](.github) | PR workflows, each with a `changes` filter and an exact-state aggregator. |
 
@@ -109,7 +110,8 @@ another. A suite that passes no test fails. The L1 fuzz and invariant suites are
   `bun run baseline:complexity` writes it.
 - **Local services are parallel-safe.** The sandbox claims its ports from the host registry
   `~/.agents/ports.md`, runs each child in its own process group, keeps data under `~/.cache/pp/`
-  and tears down only what it started. Never stop a service by name.
+  and tears down only what it started. Never stop a service by name. Process-group liveness and
+  teardown come from `@pp/run-isolation`, not a new `process.kill` on a negative pid.
 
 ## Branching and merging
 

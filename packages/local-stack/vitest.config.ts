@@ -5,6 +5,6 @@ export default defineConfig({
 	test: {
 		...sharedTest,
 		environment: "node",
-		include: ["src/**/*.test.ts"],
+		include: ["src/**/*.test.ts", "test/integration/residue.test.ts"],
 	},
 })
