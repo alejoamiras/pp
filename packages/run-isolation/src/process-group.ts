@@ -56,26 +56,36 @@ function threadsOf(pid: string, proc: ProcFs): { running: boolean; tids: string[
 }
 
 /**
- * The start time of `pid` (`/proc` stat field 22, clock ticks since boot) while it has not exited;
- * undefined once it is gone or every thread has exited, and always without `/proc`. A pid and its start
- * time name one process for the life of a boot, since a pid handed out again starts later.
+ * The start time of `pid` (`/proc` stat field 22, clock ticks since boot) while `/proc` lists it, a
+ * zombie included; undefined once it is gone, and always without `/proc`. A pid and its start time name
+ * one process under one `pidNamespace` token, since a pid handed out again starts later.
  */
 export function startTime(pid: number, proc: ProcFs = HOST): string | undefined {
-	if (!PROC) return undefined
-	const st = readStat(`/proc/${pid}/stat`, proc)
-	if (!st || (exited(st.state) && !threadsOf(String(pid), proc).running)) return undefined
-	return st.start
+	return PROC ? readStat(`/proc/${pid}/stat`, proc)?.start : undefined
+}
+
+/** A `/proc` mounted with `hidepid` hides live processes, so a missing pid there proves nothing. */
+function procHidesPids(): boolean {
+	const mount = readFileSync("/proc/self/mountinfo", "utf8")
+		.split("\n")
+		.find((line) => line.split(" ")[4] === "/proc")
+	const options = mount?.split(" - ")[1]?.split(" ")[2] ?? ""
+	return options.split(",").some((o) => o.startsWith("hidepid=") && !/^hidepid=(0|off)$/.test(o))
 }
 
 /**
- * The boot and pid namespace this process's pids are numbered in, as one token; undefined without
- * `/proc`. A pid and its `startTime` name a process only under the same token: another container that
- * shares a directory with this one numbers its own processes, which this `/proc` does not show.
+ * The token under which a pid and its `startTime` name one process: this boot, pid namespace and time
+ * namespace (which offsets field 22 for its readers). Undefined when `/proc` cannot vouch that a pid it
+ * does not list is gone: no `/proc`, a `/proc` that numbers another pid namespace than this process's,
+ * or one mounted with `hidepid`. Another container sharing a directory has another token.
  */
 export function pidNamespace(): string | undefined {
 	if (!PROC) return undefined
 	try {
-		return `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}/${readlinkSync("/proc/self/ns/pid")}`
+		if (readlinkSync("/proc/self") !== String(process.pid) || procHidesPids()) return undefined
+		const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()
+		const time = existsSync("/proc/self/ns/time") ? readlinkSync("/proc/self/ns/time") : ""
+		return `${boot}/${readlinkSync("/proc/self/ns/pid")}/${time}`
 	} catch {
 		return undefined
 	}

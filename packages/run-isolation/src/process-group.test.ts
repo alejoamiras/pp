@@ -147,21 +147,28 @@ describe.skipIf(!proc)("groupAlive", () => {
 })
 
 describe.skipIf(!proc)("startTime", () => {
-	it("names a running process by its start, and a zombie by nothing", async () => {
+	it("names a process by its start while /proc lists it, a zombie included, and nothing once it is reaped", async () => {
 		// `sleep 30` replaces the shell and never reaps the short sleep, which stays a zombie.
-		const parent = spawn("sh", ["-c", "sleep 0.5 & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "inherit"] })
+		const parent = spawn("sh", ["-c", "sleep 0.3 & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "inherit"] })
 		try {
 			const [chunk] = (await once(parent.stdout, "data")) as [Buffer]
 			const pid = Number(chunk.toString().trim())
 			const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
-			expect(startTime(pid)).toBe(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19])
+			const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]
+			expect(startTime(pid)).toBe(start)
 			expect(startTime(pid)).not.toBe(startTime(process.pid))
 			for (let i = 0; i < 100 && state(pid) !== "Z"; i++) await sleep(50)
 			expect(state(pid)).toBe("Z")
-			expect(startTime(pid)).toBeUndefined()
+			expect(startTime(pid)).toBe(start)
 		} finally {
 			parent.kill("SIGKILL")
 		}
-		expect(pidNamespace()).toMatch(/^[0-9a-f-]{36}\/pid:\[\d+\]$/)
+		const reaped = spawn("true")
+		await once(reaped, "exit")
+		expect(startTime(reaped.pid as number)).toBeUndefined()
+	})
+
+	it("gives a token only where /proc numbers this process's own pid namespace", () => {
+		expect(pidNamespace()).toMatch(/^[0-9a-f-]{36}\/pid:\[\d+\]\/(time:\[\d+\])?$/)
 	})
 })

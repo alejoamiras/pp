@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -7,14 +7,18 @@ import { storeRoot } from "./wallet-store"
 
 const module = join(import.meta.dirname, "wallet-store.ts")
 const keepAlive = "setInterval(() => {}, 1000);"
-const disk = join(homedir(), ".cache", "pp")
+const disk = join(homedir(), ".cache", "pp", "wallet-stores")
 /** Above Linux's largest `pid_max` (2^22), so no process here ever has it. */
 const NO_SUCH_PID = 4_194_305
 
 /** A child that takes a store and prints its path; `before` runs first, `after` keeps it alive or not. */
-function child(before: string, after: string): { proc: ChildProcess; lines: string[]; exited: Promise<number | null> } {
+function child(
+	before: string,
+	after: string,
+	env: Record<string, string> = {},
+): { proc: ChildProcess; lines: string[]; exited: Promise<number | null> } {
 	const body = `${before} const { ownedWalletStore } = await import(${JSON.stringify(module)}); console.log(ownedWalletStore("test", { sandboxKeysOnly: true })); ${after}`
-	const proc = spawn("bun", ["-e", body], { stdio: ["ignore", "pipe", "inherit"] })
+	const proc = spawn("bun", ["-e", body], { stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, ...env } })
 	const lines: string[] = []
 	proc.stdout?.on("data", (chunk: Buffer) => lines.push(...chunk.toString().split("\n").filter(Boolean)))
 	const exited = new Promise<number | null>((resolve) => proc.on("exit", (code) => resolve(code)))
@@ -28,9 +32,9 @@ async function storeOf(lines: string[]): Promise<string> {
 }
 
 /** A store directory named as if `pid`, started at `start` under namespace `tag`, owned it. */
-function plant(tag: string, pid: number, start: string, files = 1): string {
-	mkdirSync(disk, { recursive: true })
-	const dir = mkdtempSync(join(disk, `pp-test-${tag}-${pid}-${start}-`))
+function plant(tag: string, pid: number, start: string, files = 1, root = disk): string {
+	mkdirSync(root, { recursive: true, mode: 0o700 })
+	const dir = mkdtempSync(join(root, `pp-test-${tag}-${pid}-${start}-`))
 	for (let i = 0; i < files; i++) writeFileSync(join(dir, `f${i}`), "x")
 	return dir
 }
@@ -103,11 +107,41 @@ describe.skipIf(process.platform !== "linux")("a new store removes the stores of
 		rmSync(foreign, { recursive: true, force: true })
 	})
 
+	it("leaves a root another user could write in, so nothing in it can be swapped before removal", async () => {
+		const home = mkdtempSync(join(homedir(), ".cache", "pp", "wallet-home-"))
+		try {
+			const root = join(home, ".cache", "pp", "wallet-stores")
+			const dead = plant(await ownTag(), NO_SUCH_PID, "1", 1, root)
+			const take = async () => {
+				const next = child("", "", { HOME: home })
+				await storeOf(next.lines)
+				expect(await next.exited).toBe(0)
+			}
+			chmodSync(root, 0o775)
+			await take()
+			expect(existsSync(dead)).toBe(true)
+			chmodSync(root, 0o700)
+			await take()
+			expect(existsSync(dead)).toBe(false)
+		} finally {
+			rmSync(home, { recursive: true, force: true })
+		}
+	})
+
 	it("lets creators that race to remove the same dead store all take their own", async () => {
 		const dead = plant(await ownTag(), NO_SUCH_PID, "1", 3_000)
-		const racers = Array.from({ length: 4 }, () => child("", ""))
-		expect(await Promise.all(racers.map((r) => r.exited))).toEqual([0, 0, 0, 0])
-		expect(racers.every((r) => r.lines.length === 1)).toBe(true)
+		const go = join(disk, `pp-test-go-${process.pid}`)
+		// Each racer has its module loaded and waits on one go file, so all of them reap at once.
+		const barrier = `const { existsSync } = await import("node:fs"); await import(${JSON.stringify(module)}); console.log("ready"); while (!existsSync(${JSON.stringify(go)})) await Bun.sleep(1);`
+		const racers = Array.from({ length: 4 }, () => child(barrier, ""))
+		try {
+			while (!racers.every((r) => r.lines.includes("ready"))) await new Promise((r) => setTimeout(r, 10))
+			writeFileSync(go, "")
+			expect(await Promise.all(racers.map((r) => r.exited))).toEqual([0, 0, 0, 0])
+		} finally {
+			rmSync(go, { force: true })
+		}
+		expect(racers.every((r) => r.lines.length === 2)).toBe(true)
 		expect(existsSync(dead)).toBe(false)
 	})
 })

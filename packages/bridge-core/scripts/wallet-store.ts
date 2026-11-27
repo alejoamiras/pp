@@ -17,10 +17,11 @@ function isTmpfs(path: string): boolean {
 	}
 }
 
-const diskRoot = () => join(homedir(), ".cache", "pp")
+/** Its own directory, so the reaper never lists other runs' data and no other user can write in it. */
+const diskRoot = () => join(homedir(), ".cache", "pp", "wallet-stores")
 
 /**
- * Where a store is created. Public sandbox keys go to real disk under `~/.cache/pp`, like any run's
+ * Where a store is created. Public sandbox keys go to real disk under `~/.cache/pp/wallet-stores`, like any run's
  * data, so a store a killed run leaves pins no RAM. Real keys go to the RAM-backed `shm`, for secrecy
  * (never written to disk), not for speed.
  * @throws for real keys when `shm` is not a tmpfs.
@@ -44,13 +45,17 @@ function namespaceTag(): string | undefined {
  * Removes the `label` stores in `root` whose owner, named in the store's name, is no longer running:
  * its pid is gone, or now belongs to a process with another start time. A store named under another
  * pid namespace (another container sharing the directory) is left alone, since its owner cannot be seen
- * from here. Only real directories this uid owns, so nothing another user planted in the world-writable
- * `/dev/shm` is followed or removed. A removal that fails, such as one racing another creator's, is
- * skipped: it never fails the caller's own store.
+ * from here. Only real directories this uid owns, in a root that is a real directory either sticky (the
+ * world-writable `/dev/shm`) or owned by this uid and writable by no one else, so no other user can swap
+ * what is checked for something else before it is removed. A removal that fails, such as one racing
+ * another creator's, is skipped: it never fails the caller's own store.
  */
 function reapOrphans(root: string, label: string, tag: string): void {
 	let names: string[]
 	try {
+		const st = lstatSync(root)
+		const sticky = (st.mode & 0o1000) !== 0
+		if (!st.isDirectory() || (!sticky && (st.uid !== process.getuid?.() || (st.mode & 0o022) !== 0))) return
 		names = readdirSync(root)
 	} catch {
 		return
