@@ -71,6 +71,7 @@ jobs:
               - '.github/actions/setup-aztec/**'
               - '.github/actions/setup-bun/**'
               - '.github/actions/ppv2-fetch/**'
+              - '.github/actions/bridge-evm-build/**'
       - name: Override for manual dispatch
         if: github.event_name == 'workflow_dispatch'
         id: override
@@ -101,24 +102,7 @@ jobs:
 
       - uses: ./.github/actions/ppv2-fetch
 
-      # Same pins as the bridge-contracts integration job: the stack's bridge step deploys from
-      # these artifacts.
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: "1.7.1"
-
-      - name: Install forge libraries
-        working-directory: contracts/bridge/evm
-        run: |
-          forge install \
-            foundry-rs/forge-std@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b \
-            OpenZeppelin/openzeppelin-contracts@cab19933c33c2ad1d4c7a84864a3601dddfd16f3
-
-      - name: Generate remappings + forge build
-        run: |
-          bun packages/bridge-core/scripts/gen-remappings.ts
-          forge build --root contracts/bridge/evm
+      - uses: ./.github/actions/bridge-evm-build
 
       - name: Unit tests
         run: bun run --cwd packages/local-stack test
@@ -157,10 +141,58 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  bridge-stack:
+    # bridge-core's stack suite against one stack this job boots and stops (scripts/with-stack.ts).
+    name: bridge stack suite
+    needs: changes
+    if: needs.changes.outputs.stack == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: ./.github/actions/setup-aztec
+
+      - uses: ./.github/actions/ppv2-fetch
+
+      - uses: ./.github/actions/bridge-evm-build
+
+      - name: Stack suite
+        # Twice the measured step time (boot, cases, teardown), rounded up to whole minutes.
+        timeout-minutes: 6
+        working-directory: packages/bridge-core
+        # A required case that was skipped, filtered or renamed fails check-cases.
+        run: |
+          start=$(date +%s)
+          set +e
+          bun run test:integration:stack -- deploy \
+            --reporter=verbose --reporter=json --outputFile.json="$GITHUB_WORKSPACE/stack.json" 2>&1 | tee "$GITHUB_WORKSPACE/stack.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "bridge stack wall-clock: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$status" -eq 0 ] || exit "$status"
+          bun scripts/check-cases.ts deploy "$GITHUB_WORKSPACE/stack.json"
+
+      - name: Upload stack logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bridge-stack-logs
+          path: |
+            stack.log
+            stack.json
+            ~/.cache/pp/bridge-sandbox/logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   status:
     name: local-stack-status
     if: always()
-    needs: [changes, stack]
+    needs: [changes, stack, bridge-stack]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -170,4 +202,6 @@ jobs:
           sparse-checkout: scripts/ci-cd/aggregate-status.sh
           sparse-checkout-cone-mode: false
       - name: Aggregate results
-        run: bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.stack.result }}"
+        run: |
+          bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.stack.result }}"
+          bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.bridge-stack.result }}"

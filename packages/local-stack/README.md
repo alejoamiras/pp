@@ -3,7 +3,8 @@
 One command brings up everything the bridge and the pool need on one machine:
 
 ```bash
-bun run demo          # boot, print how to reach it, tear down
+bun run demo:prepare  # once per clone (networked): the pool's checkout and the bridge contracts
+bun run demo          # boot (about 97 s), print how to reach it, tear down
 bun run demo --keep   # boot and hold until SIGINT, SIGTERM or SIGHUP
 ```
 
@@ -19,6 +20,10 @@ Besides the toolchain (Bun, Foundry 1.7.1, Aztec 6.0.0), a fresh clone needs one
 and builds the bridge contracts the `bridge` step deploys. Every boot after that is offline, and a
 boot that finds either missing fails in under a second naming that command. Set `FORGE` to point
 it at CI's Foundry 1.7.1 when the one on your `PATH` is newer.
+
+A boot takes about 97 s on a 192-core host: network 37 s, pool 5 s, bridge 40 s, seed 12 s, then
+the manifest and the first beat. Every local-stack CI job installs Foundry and builds the bridge
+contracts (`.github/actions/bridge-evm-build`) before its suite.
 
 ## Output and exit codes
 
