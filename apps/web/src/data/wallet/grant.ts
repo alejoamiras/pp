@@ -31,9 +31,11 @@ interface Side {
 const fieldOf = (value: unknown, key: string): unknown =>
 	typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined
 
-function readContracts(value: unknown, out: Side): void {
+/** Contracts the app may not register count as none: every send needs its contracts registered first. */
+function readContracts(cap: unknown, out: Side): void {
+	const value = fieldOf(cap, "contracts")
 	if (value === WILDCARD) out.wildcard = true
-	if (!Array.isArray(value)) return
+	if (!Array.isArray(value) || fieldOf(cap, "canRegister") !== true) return
 	for (const entry of value.slice(0, MAX_CONTRACTS)) {
 		const address = parseAztecAddress(entry)
 		if (address !== null && !out.contracts.includes(address)) out.contracts.push(address)
@@ -47,7 +49,8 @@ function readScope(scope: unknown, bucket: ScopeBucket, out: Side): void {
 		if (out.scopes.size >= MAX_SCOPE_ENTRIES) return
 		const contract = fieldOf(pattern, "contract")
 		const fn = fieldOf(pattern, "function")
-		if (contract === WILDCARD || fn === WILDCARD) {
+		// `additionalScopes: "*"` lets the call read every account the wallet knows, not just the sender's.
+		if (contract === WILDCARD || fn === WILDCARD || fieldOf(pattern, "additionalScopes") === WILDCARD) {
 			out.wildcard = true
 			return
 		}
@@ -61,7 +64,7 @@ function readSide(list: unknown): Side {
 	if (!Array.isArray(list)) return out
 	for (const cap of list) {
 		const type = fieldOf(cap, "type")
-		if (type === "contracts") readContracts(fieldOf(cap, "contracts"), out)
+		if (type === "contracts") readContracts(cap, out)
 		else if (type === "transaction") readScope(fieldOf(cap, "scope"), "transaction", out)
 		else if (type === "simulation") {
 			readScope(fieldOf(fieldOf(cap, "transactions"), "scope"), "simulation.transactions", out)
@@ -76,13 +79,14 @@ function grantedAccountsEntries(answer: unknown): unknown[] {
 	if (!Array.isArray(granted)) return []
 	const cap = granted.find((c) => fieldOf(c, "type") === "accounts")
 	const accounts = fieldOf(cap, "accounts")
-	return Array.isArray(accounts) ? accounts : []
+	// Without `canGet` the wallet refuses `getAccounts`, which every send's last check reads.
+	return Array.isArray(accounts) && fieldOf(cap, "canGet") === true ? accounts : []
 }
 
 /**
  * The account addresses a wallet's answer grants: each entry must parse as an Aztec address (syntax
  * only; the wallet enforces authorization per call), malformed or throwing entries are skipped,
- * duplicates collapse, and the list stops at `MAX_GRANTED_ACCOUNTS`.
+ * duplicates collapse, and the list stops at `MAX_GRANTED_ACCOUNTS`. None without `canGet: true`.
  */
 export function grantedAccounts(answer: unknown): AztecAddress[] {
 	const out: AztecAddress[] = []
@@ -96,9 +100,10 @@ export function grantedAccounts(answer: unknown): AztecAddress[] {
 
 /**
  * The request intersected with the answer. A requested contract is kept only when the answer lists it
- * and returns every scope the request named on it; a scope on a contract the request does not register
- * (the fee contract) is kept on its own. Anything the request did not name is ignored, and a `"*"` on
- * either side grants no contract and no scope.
+ * with `canRegister: true` and returns every scope the request named on it; a scope on a contract the
+ * request does not register (the fee contract) is kept on its own. Anything the request did not name
+ * is ignored, and a `"*"` on either side (a contract, a function or `additionalScopes`) grants no
+ * contract and no scope.
  */
 export function parseGrant(request: unknown, answer: unknown): Grant {
 	const accounts = grantedAccounts(answer)

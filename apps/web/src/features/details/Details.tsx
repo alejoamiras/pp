@@ -73,12 +73,12 @@ function AllowList() {
 	const { source } = useApp()
 	const allow = useAllowList(source, true).data
 	if (!allow) return <p className="text-meta text-ink-3">Not read yet.</p>
-	const { record } = allow.view
+	const { record, nowSec } = allow
 	return (
 		<Facts
 			facts={[
 				{ key: "seq", term: "Sequence", value: `#${record.sequence}` },
-				{ key: "age", term: "Posted", value: chainAge(record.rootTime, allow.nowSec).text },
+				{ key: "age", term: "Posted", value: chainAge(record.rootTime, nowSec).text },
 				{ key: "pool", term: "Pool root", value: `0x${record.poolRoot.toString(16)}`, mono: true },
 				{ key: "birth", term: "Birth root", value: `0x${record.birthRoot.toString(16)}`, mono: true },
 			]}

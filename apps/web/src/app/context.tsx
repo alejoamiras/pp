@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
-import type { Address } from "viem"
+import type { Address, Hash } from "viem"
 import { dispatchRefusal, guardAztec } from "../data/actions"
 import type { AztecAction } from "../data/capabilities"
 import type { UiCode } from "../data/errors"
@@ -11,9 +11,17 @@ import { createLiveStore, type LiveStore } from "./live"
 import { POOL_KEY, usePool } from "./queries"
 import { type BridgeFlow, useBridgeFlow } from "./useBridgeFlow"
 import { type Ethereum, useEthereum } from "./useEthereum"
+import { type InFlight, useInFlight } from "./useInFlight"
 import { type Tx, useTx } from "./useTx"
 
 export type View = "home" | "bridge" | "exits"
+
+/**
+ * Why a collect did not end collected, and the Ethereum transaction it names, if any. `earlier` holds
+ * every earlier collect's transaction that may still pay the exit out, oldest first, kept through later
+ * attempts.
+ */
+export type CollectFailure = { code: UiCode; txHash?: Hash; earlier?: readonly Hash[] }
 
 export interface App {
 	source: DataSource
@@ -31,6 +39,8 @@ export interface App {
 	/** Payees whose exits the Exits screen lists, beyond the owner and the selected account. */
 	payees: readonly Address[]
 	addPayee(payee: Address): void
+	/** Collects in flight by exit key, so leaving and reopening the Exits screen cannot send one twice or lose its failure. */
+	collecting: InFlight<CollectFailure>
 	refresh(): void
 	forget(): Promise<void>
 }
@@ -105,6 +115,7 @@ export function AppProvider({ source, frame, children }: Props) {
 	}, [bridge, eth, connect, source, queryClient])
 
 	const addPayee = useCallback((p: Address) => setPayees((list) => (list.includes(p) ? list : [...list, p])), [])
-	const app: App = { source, live, eth, ...side, bridge, tx, view, go, payees, addPayee, refresh, forget }
+	const collecting = useInFlight<CollectFailure>()
+	const app: App = { source, live, eth, ...side, bridge, tx, view, go, payees, addPayee, collecting, refresh, forget }
 	return <AppContext.Provider value={app}>{children}</AppContext.Provider>
 }

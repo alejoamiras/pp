@@ -3,16 +3,20 @@
  * the user's call once the balances say what happened.
  */
 import { codeOf, isUserRejection, type UiCode } from "./errors"
+import type { Hex } from "viem"
 import type { Sent } from "./ports"
 
 export type TxAction = "transferPrivate" | "unshield" | "shield" | "ragequit" | "exitPublic"
 
-/** `reason` is untrusted chain text: interpolate only. */
-export type TxOutcome = { ok: true } | { ok: false; code: UiCode; reason?: string }
+/** `reason` is untrusted chain text: it reaches the screen only through `revertCopy`. */
+export type TxOutcome = { ok: true } | { ok: false; code: UiCode; reason?: string; txHash?: Hex }
 
 export function sentOutcome(action: TxAction, sent: Sent): TxOutcome {
 	if (sent.status === "success") return { ok: true }
 	if (sent.status === "dropped") return { ok: false, code: "TX_DROPPED" }
+	// Without a hash the wallet's send threw: whether it went out, only a reload and the wallet can tell.
+	if (sent.status === "unconfirmed")
+		return sent.txHash ? { ok: false, code: "TX_UNCONFIRMED", txHash: sent.txHash } : { ok: false, code: "UNKNOWN" }
 	return { ok: false, code: action === "unshield" ? "UNSHIELD_REVERTED" : "TX_REVERTED", ...(sent.reason ? { reason: sent.reason } : {}) }
 }
 
@@ -24,12 +28,10 @@ export function thrownOutcome(err: unknown): TxOutcome {
 
 /**
  * A reverted unshield leaves the account's notes in a state the wallet settles only once that block is
- * final, so a change-making spend before then could clash with it. Until a port reports the proven
- * block, a revert counts as final two Aztec slots of chain time after it was seen.
+ * final, so a change-making spend before then could clash with it. Final means the node's proven block
+ * has reached it; an unread proven block is not final.
  */
-export const FINALITY_SECONDS = 144n
-
-export const isFinal = (seenAt: bigint, now: bigint): boolean => now >= seenAt + FINALITY_SECONDS
+export const isFinal = (revertBlock: number, proven: number | undefined): boolean => proven !== undefined && proven >= revertBlock
 
 /** Actions that spend notes and make change; an exact-chunk ragequit leaves none. */
 export const MAKES_CHANGE: ReadonlySet<TxAction> = new Set(["transferPrivate", "unshield"])

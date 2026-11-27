@@ -22,10 +22,23 @@ export type AppCode =
 	| "TX_REVERTED"
 	| "UNSHIELD_REVERTED"
 	| "TX_DROPPED"
+	| "TX_UNCONFIRMED"
+	| "TX_UNSETTLED"
+	| "TX_UNSETTLED_NO_HASH"
 	| "WAIT_FINALITY"
 	| "TX_BUSY"
 	| "BRIDGE_UNAVAILABLE"
+	| AllowListCode
+	| "LABEL_ABSENT"
+	| "LIST_STALE"
 	| "UNKNOWN"
+
+/**
+ * Why a label could not be checked. A list that timed out, did not match the chain, was larger than
+ * any list can be or whose check was stopped stays failed until a manual Check again; an unavailable
+ * one is read again on the next refresh.
+ */
+export type AllowListCode = "LIST_TIMEOUT" | "LIST_MISMATCH" | "LIST_OVERSIZED" | "LIST_CANCELLED" | "LIST_UNAVAILABLE"
 
 export type UiCode = BridgeClientErrorCode | AppCode
 
@@ -70,10 +83,24 @@ const MESSAGES: Record<UiCode, string> = {
 	TX_REVERTED: "The transaction reverted on Aztec. Refresh your balances, then try again.",
 	UNSHIELD_REVERTED:
 		"The unshield reverted: the fee was paid; your notes are safe. Sending and unshielding wait until that transaction is final.",
-	TX_DROPPED: "Aztec has not included the transaction yet. The page will not send it again; refresh your balances before you retry.",
-	WAIT_FINALITY: "Send and Unshield wait for finality: the reverted unshield must be final first (chain time). Refresh to check.",
+	TX_DROPPED:
+		"Aztec has not included the transaction yet, and it may still be. The page will not send it again, and sending from this account waits until Refresh reads it included.",
+	TX_UNCONFIRMED:
+		"Your wallet sent the transaction, but the page could not read whether it landed. The page will not send it again, and sending from this account waits until Refresh reads it included.",
+	TX_UNSETTLED:
+		"Your last send from this account may still land on Aztec. Sending waits until Refresh reads that transaction included or reverted, so the same funds cannot go out twice.",
+	TX_UNSETTLED_NO_HASH:
+		"Your last send from this account may have gone out, and the page has no transaction to check. Sending stays closed until you reload; check your wallet's activity first, or the same funds can go out twice.",
+	WAIT_FINALITY: "Send and Unshield wait for finality: the reverted unshield's block must be proven first. Refresh to check.",
 	TX_BUSY: "Wait for your last Aztec transaction to finish.",
 	BRIDGE_UNAVAILABLE: "Bridging is not available in this version of the app yet. Your notes stay in the pool.",
+	LIST_TIMEOUT: "The allow list took too long to download, so no label was checked. Check again.",
+	LIST_MISMATCH: "The allow list the server sent does not match the one on chain, so no label was checked against it.",
+	LIST_OVERSIZED: "The allow list the server sent is larger than any allow list can be, so it was not read.",
+	LIST_CANCELLED: "You stopped the allow-list check. Check again when you are ready.",
+	LIST_UNAVAILABLE: "The allow list could not be read. The page reads it again on the next refresh.",
+	LABEL_ABSENT: "This label is not in the latest allow list, so nothing was sent.",
+	LIST_STALE: "The allow list is out of date, so nothing was sent. Wait for its next post.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",
 }
 
@@ -103,6 +130,27 @@ export const ROOT_NAMES: Record<StaleRootCode, string> = {
 
 export const reprovingMessage = (code: StaleRootCode): string => `A root changed (${ROOT_NAMES[code]}); proving again.`
 
+/**
+ * The contract assertions a transaction can revert on after it was sent, each with the page's own
+ * sentence. The token's unshield finishes in a public step that re-reads the allow list; nothing
+ * else the page sends has a public step that can fail.
+ */
+const REVERTS = [
+	["roots changed", "The allow list changed before the transaction landed. Check the label again, then retry."],
+	["current root too old", "The allow list grew too old before the transaction landed. Wait for its next post, then retry."],
+] as const
+
+export type KnownRevert = (typeof REVERTS)[number][0]
+
+/**
+ * The page's sentence for a revert reason that names one of the listed assertions, else `null`. A
+ * chain's reason is untrusted text: it is matched, never shown.
+ */
+export function revertCopy(reason: string | undefined): string | null {
+	if (reason === undefined) return null
+	return REVERTS.find(([assertion]) => reason.includes(assertion))?.[1] ?? null
+}
+
 /** Follows `cause` a few levels: wallets and viem wrap the code that matters. */
 function* chain(err: unknown): Generator<Record<string, unknown>> {
 	let current = err
@@ -114,13 +162,58 @@ function* chain(err: unknown): Generator<Record<string, unknown>> {
 
 const REJECTION_WORDS = /rejected by user|user rejected|user denied|denied by user|user cancel/i
 
-/** An explicit no from the user (EIP-1193 4001, viem's rejection, the wallet's wording); never an outage. */
+/**
+ * An explicit no from the user (EIP-1193 4001, viem's rejection, the wallet's wording); never an outage.
+ * Only for a failure before a send was handed over: past the handoff, wording is no proof, so
+ * `isWalletRefusal` decides.
+ */
 export function isUserRejection(err: unknown): boolean {
 	for (const e of chain(err)) {
 		if (e.code === 4001 || e.name === "UserRejectedRequestError") return true
 		if (typeof e.message === "string" && REJECTION_WORDS.test(e.message)) return true
 	}
 	return false
+}
+
+/** wallet-sdk 6.0.0's extension transport throws each wallet error as `new Error(JSON.stringify(error))`. */
+function sdkEnvelope(message: unknown): Record<string, unknown> | null {
+	if (typeof message !== "string" || !message.startsWith("{")) return null
+	try {
+		const parsed: unknown = JSON.parse(message)
+		return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null
+	} catch {
+		return null
+	}
+}
+
+/**
+ * The refusals the page trusts once a send was handed to the wallet, where any other failure may hide
+ * a broadcast. Each is a typed signal or a tested wallet's exact error, read on the thrown error itself,
+ * never a phrase inside a message. The kit's test wallet has no decline, so it has no entry: an injected
+ * failure there holds like any other.
+ */
+export const REFUSAL_SHAPES: readonly { readonly wallet: string; matches(e: Record<string, unknown>): boolean }[] = [
+	{ wallet: "EIP-1193 provider (4001)", matches: (e) => e.code === 4001 },
+	{ wallet: "viem", matches: (e) => e.name === "UserRejectedRequestError" },
+	{
+		// Measured on wallet v1.3.0's Reject; its other 4001s (a cancelled job) are not shown to send nothing.
+		// Fields the wallet adds are ignored, so a new one does not turn every decline into a hold.
+		wallet: "wallet-sdk 6.0.0 extension (released wallet)",
+		matches: (e) => {
+			const env = sdkEnvelope(e.message)
+			const data = env?.data
+			if (env?.code !== 4001 || env.message !== "User rejected" || typeof data !== "object" || data === null) return false
+			const d = data as Record<string, unknown>
+			return d.walletErrorCode === "USER_REJECTED" && typeof d.walletTraceId === "string"
+		},
+	},
+]
+
+/** Whether `err` is a refusal past the handoff: one of `REFUSAL_SHAPES`, else the send may have gone out. */
+export function isWalletRefusal(err: unknown): boolean {
+	if (typeof err !== "object" || err === null) return false
+	const e = err as Record<string, unknown>
+	return REFUSAL_SHAPES.some((s) => s.matches(e))
 }
 
 /** The EIP-1193 provider code in `err`'s chain: 4001, 4100, 4200, 4900 or 4901. */
@@ -151,6 +244,17 @@ export class BridgeFailure extends Error {
 		this.name = "BridgeFailure"
 		if (extra.stale !== undefined) this.stale = extra.stale
 		if (extra.l1TxHash !== undefined) this.l1TxHash = extra.l1TxHash
+	}
+}
+
+/** Why a label could not be checked; `retryInMs` is how long a manual Check again must wait. */
+export class AllowListError extends Error {
+	constructor(
+		readonly code: AllowListCode,
+		readonly retryInMs = 0,
+	) {
+		super(code)
+		this.name = "AllowListError"
 	}
 }
 

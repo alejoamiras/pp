@@ -1,8 +1,9 @@
-import { useId } from "react"
+import { useEffect, useId, useState } from "react"
 import { useApp } from "../../app/context"
-import type { AllowListAt } from "../../app/queries"
-import { labelView } from "../../data/labels"
-import type { LabelBalance } from "../../data/ports"
+import { useLabelCheck } from "../../app/queries"
+import { AllowListError } from "../../data/errors"
+import { labelView, listFailureView } from "../../data/labels"
+import type { AllowListView, LabelBalance } from "../../data/ports"
 import { ActionButton, Amount, LabelChip, StateBadge } from "../../ui"
 import { useActionReason } from "./reasons"
 
@@ -13,9 +14,37 @@ const PUBLIC_EXIT = "Leaving this way is public: it shows the label on Ethereum.
 
 interface Props {
 	balance: LabelBalance
-	allow: AllowListAt | undefined
+	allow: AllowListView | undefined
 	onAction(kind: LabelAction, balance: LabelBalance): void
 	onCheckAgain(): void
+}
+
+/** Opens once the failed list's backoff has passed, on the page's timer. */
+function CheckAgain({ waitMs, onClick }: { waitMs: number; onClick(): void }) {
+	const { source } = useApp()
+	const [ready, setReady] = useState(waitMs === 0)
+	useEffect(() => {
+		setReady(waitMs === 0)
+		if (waitMs === 0) return
+		const stop = new AbortController()
+		void source.timer.sleep(waitMs, stop.signal).then((elapsed) => elapsed && setReady(true))
+		return () => stop.abort()
+	}, [source, waitMs])
+	return (
+		<ActionButton disabledReason={ready ? undefined : "Wait a moment before checking again"} onClick={onClick}>
+			Check again
+		</ActionButton>
+	)
+}
+
+/** The label's state under `allow`, or why its list could not be checked; neither while the check runs. */
+function useLabelState(allow: AllowListView | undefined, balance: LabelBalance) {
+	const { source } = useApp()
+	const check = useLabelCheck(source, allow, balance.label, balance.origin)
+	const failure = check.error instanceof AllowListError ? check.error : check.isError ? new AllowListError("LIST_UNAVAILABLE") : null
+	const state = check.data?.state ?? null
+	const view = state ? labelView(balance.origin, state) : failure ? listFailureView(failure.code) : null
+	return { state, failure, view }
 }
 
 /** One label's private balance, its allow-list state in words, and what it can do. */
@@ -23,8 +52,7 @@ export function LabelRow({ balance, allow, onAction, onCheckAgain }: Props) {
 	const { source } = useApp()
 	const reasonOf = useActionReason()
 	const sharedId = useId()
-	const state = allow ? source.allowList.state(allow.view, balance.label, balance.origin, allow.nowSec) : null
-	const view = state ? labelView(balance.origin, state) : null
+	const { state, failure, view } = useLabelState(allow, balance)
 	const send = reasonOf("transferPrivate", view)
 	const unshield = reasonOf("unshield", view)
 	const shared = send !== undefined && send === unshield
@@ -32,7 +60,7 @@ export function LabelRow({ balance, allow, onAction, onCheckAgain }: Props) {
 		<li
 			data-testid="label-row"
 			data-label={balance.label.toString()}
-			data-state={state ?? "reading"}
+			data-state={state ?? failure?.code ?? "reading"}
 			className="grid gap-2 rounded-row border border-edge bg-glass-2 px-3 py-2.5"
 		>
 			<div className="flex flex-wrap items-center justify-between gap-2.5">
@@ -65,7 +93,7 @@ export function LabelRow({ balance, allow, onAction, onCheckAgain }: Props) {
 				<ActionButton tag="public" disabledReason={reasonOf("ragequit")} onClick={() => onAction("ragequit", balance)}>
 					Leave to Ethereum (ragequit)
 				</ActionButton>
-				{view?.checkAgain ? <ActionButton onClick={onCheckAgain}>Check again</ActionButton> : null}
+				{view?.checkAgain ? <CheckAgain waitMs={failure?.retryInMs ?? 0} onClick={onCheckAgain} /> : null}
 			</div>
 			{shared ? (
 				<p id={sharedId} className="text-xs text-ink-3">

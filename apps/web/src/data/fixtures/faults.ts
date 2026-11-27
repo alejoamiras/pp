@@ -7,7 +7,8 @@
  *   wallet says no), `LOST` (the request fails with no code, so it may have gone out) or `PENDING` (a
  *   hash that is never mined); `hangNext("send")` is a wallet that never answers, leaving the journal
  *   record without a transaction hash.
- * - `claim` and the token calls: `REJECTED` (the wallet says no), `REVERTED` or `DROPPED`.
+ * - `claim` and the token calls: `REJECTED` (the wallet says no), `REVERTED`, `DROPPED` or `UNCONFIRMED`
+ *   (sent, with an outcome the page could not read).
  * - `open`, `settle`: throw the code.
  */
 export const FIXTURE_OPS = [

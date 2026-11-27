@@ -11,6 +11,7 @@ export {
 	MAX_OBSERVATION_LAG,
 	MAX_ROOT_AGE,
 	pathFor,
+	rootFresh,
 	SnapshotError,
 	SPEND_WINDOW,
 	verifySnapshot,

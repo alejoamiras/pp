@@ -1,5 +1,5 @@
 import { useApp } from "../../app/context"
-import { useAllowList, useBalances, usePublicBalance } from "../../app/queries"
+import { useAllowList, useAllowListProgress, useBalances, usePublicBalance } from "../../app/queries"
 import type { AztecAddress } from "../../data/stack-types"
 import { messageOf } from "../../data/errors"
 import { chainAge } from "../../data/model"
@@ -13,15 +13,30 @@ export type HomeAction = { kind: LabelAction; balance: LabelBalance } | { kind: 
 
 const CAP = "text-cap font-bold tracking-[0.06em] text-ink-3 uppercase"
 
+/** The tree build a check is running, with the only way to stop it. */
+function AllowListProgressLine() {
+	const { source } = useApp()
+	const p = useAllowListProgress(source)
+	if (p === null) return null
+	return (
+		<span data-testid="allow-list-progress" className="flex flex-wrap items-center gap-2 text-meta text-ink-2" role="status">
+			{p.total === 0
+				? "Checking the allow list…"
+				: `Checking the allow list: ${p.hashed.toLocaleString("en")} of ${p.total.toLocaleString("en")} hashed`}
+			<ActionButton onClick={() => source.allowList.cancel()}>Cancel</ActionButton>
+		</span>
+	)
+}
+
 function AllowListLine() {
 	const { source } = useApp()
 	const allow = useAllowList(source, true)
 	if (allow.isError) return <StateBadge tone="bad">Allow list unreadable: refresh to try again</StateBadge>
 	if (!allow.data) return <StateBadge tone="neutral">Reading the allow list</StateBadge>
-	const { record } = allow.data.view
+	const { record, nowSec } = allow.data
 	return (
 		<span data-testid="allow-list-age">
-			<StateBadge tone="ok">{`Allow list #${record.sequence} posted ${chainAge(record.rootTime, allow.data.nowSec).text}`}</StateBadge>
+			<StateBadge tone="ok">{`Allow list #${record.sequence} posted ${chainAge(record.rootTime, nowSec).text}`}</StateBadge>
 		</span>
 	)
 }
@@ -31,6 +46,10 @@ function PrivateBalances({ account, onAction }: { account: AztecAddress; onActio
 	const refused = refusal("balances")
 	const balances = useBalances(aztec, account, refused === null)
 	const allow = useAllowList(source, true)
+	const checkAgain = () => {
+		if (allow.data) source.allowList.checkAgain(allow.data)
+		refresh()
+	}
 	if (refused)
 		return (
 			<Callout tone="attn" title="Your balances are hidden from this page">
@@ -57,7 +76,7 @@ function PrivateBalances({ account, onAction }: { account: AztecAddress; onActio
 					balance={b}
 					allow={allow.data}
 					onAction={(kind, balance) => onAction({ kind, balance })}
-					onCheckAgain={refresh}
+					onCheckAgain={checkAgain}
 				/>
 			))}
 		</ul>
@@ -73,14 +92,20 @@ function PrivateTotal({ account }: { account: AztecAddress }) {
 }
 
 function Balances({ account, onAction }: { account: AztecAddress; onAction(a: HomeAction): void }) {
-	const { aztec, refusal, refresh } = useApp()
+	const { aztec, refusal, refresh, tx } = useApp()
 	const pub = usePublicBalance(aztec, account, refusal("publicBalance") === null)
+	// The one place a held send is read again: a hold ends only on a Refresh the user makes.
+	const reread = () => {
+		void tx.check()
+		refresh()
+	}
 	return (
 		<div className="mt-4 grid gap-2">
 			<div className="flex flex-wrap items-center justify-between gap-2">
 				<AllowListLine />
-				<ActionButton onClick={refresh}>Refresh</ActionButton>
+				<ActionButton onClick={reread}>Refresh</ActionButton>
 			</div>
+			<AllowListProgressLine />
 			<p className={CAP}>Private, by label</p>
 			<PrivateBalances account={account} onAction={onAction} />
 			<p className={CAP}>Public</p>

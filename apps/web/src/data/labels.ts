@@ -1,13 +1,15 @@
 /**
- * What a label's allow-list state means on screen. ABSENT is the snapshot server's claim, not proof:
- * a server can withhold part of the tree, or collapse it and still match the root, while ACTIVE cannot
- * be faked. One snapshot also cannot tell a label never approved from one dropped. So the copy never
+ * What a label's allow-list state means on screen. ABSENT is the snapshot server's claim, while ACTIVE
+ * is proved by a path to the posted root. One snapshot also cannot tell a label never approved from
+ * one dropped. So the copy never
  * says a label was revoked or removed: a fresh shield (origin 1) reads as awaiting approval, a bridged
- * label (origin 0) as not found in the latest list, with a fresh read offered. Leaving to Ethereum
- * never reads the allow list, so ragequit stays open in every state.
+ * label (origin 0) as not found in the latest list, with a fresh read offered and no advice to leave:
+ * an absence alone never recommends a public exit. Leaving to Ethereum never reads the allow list, so
+ * ragequit stays open in every state.
  */
 import type { LabelState, Origin } from "./stack-types"
 import type { Tone } from "../ui"
+import { type AllowListCode, messageOf } from "./errors"
 
 export interface LabelView {
 	text: string
@@ -45,7 +47,7 @@ export function labelView(origin: Origin, state: LabelState): LabelView {
 		return {
 			text: "Awaiting approval",
 			tone: "wait",
-			meaning: "Not in the allow list yet: it can only leave to Ethereum.",
+			meaning: "Not in the allow list yet. Send and Unshield open once it is approved.",
 			can: CLOSED,
 			reason: "Send and Unshield open once the label is approved",
 			checkAgain: false,
@@ -53,9 +55,29 @@ export function labelView(origin: Origin, state: LabelState): LabelView {
 	return {
 		text: "Not found in the latest list",
 		tone: "attn",
-		meaning: "Not found in the latest allow list. Check again, or leave to Ethereum (ragequit).",
+		meaning: "Not found in the list the server sent, which does not show the label was dropped. Check again later.",
 		can: CLOSED,
 		reason: "Send and Unshield wait until the label is found in the allow list",
 		checkAgain: true,
+	}
+}
+
+const FAILURE_TEXT: Record<AllowListCode, string> = {
+	LIST_TIMEOUT: "Allow list timed out",
+	LIST_MISMATCH: "Allow list does not match the chain",
+	LIST_OVERSIZED: "Allow list too large",
+	LIST_CANCELLED: "Check stopped",
+	LIST_UNAVAILABLE: "Allow list unavailable",
+}
+
+/** A label whose list could not be checked: its state is unknown, so only the ragequit stays open. */
+export function listFailureView(code: AllowListCode): LabelView {
+	return {
+		text: FAILURE_TEXT[code],
+		tone: code === "LIST_CANCELLED" ? "neutral" : "bad",
+		meaning: messageOf(code),
+		can: CLOSED,
+		reason: "Send and Unshield wait until the allow list can be checked",
+		checkAgain: code !== "LIST_UNAVAILABLE",
 	}
 }

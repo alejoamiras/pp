@@ -190,7 +190,9 @@ async function claim(c: Ctx, id: string, on: ClaimHooks): Promise<Sent> {
 	const txHash = w.nextHex(32)
 	w.update((s) => void s.sent.aztec++)
 	if (fault === "DROPPED") return { txHash, status: "dropped" }
-	if (fault === "REVERTED") return { txHash, status: "reverted", reason: "claim_from_pool: message already consumed" }
+	if (fault === "UNCONFIRMED") return { txHash, status: "unconfirmed" }
+	if (fault === "REVERTED")
+		return { txHash, status: "reverted", block: w.aztecBlock(), reason: "claim_from_pool: message already consumed" }
 	w.update((s) => {
 		b.state = "claimed"
 		s.aztecNotes.push({ owner: b.recipient, label: b.label, origin: 0, value: b.amount })

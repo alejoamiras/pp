@@ -5,10 +5,12 @@ import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { labelledTokenArtifact, tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
 import { describe, expect, test, vi } from "vitest"
 import { stageManifest } from "../capabilities"
+import type { Hex } from "viem"
+import { ProviderError } from "../errors"
 import type { AztecAddress } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
 import { parseGrant } from "../wallet/grant"
-import { type AztecDeps, entries, grantedPayload, registerScoped, sendThroughWallet } from "./aztec"
+import { type AztecDeps, entries, grantedPayload, noteValues, readReceipt, registerScoped, sendThroughWallet } from "./aztec"
 
 const at = (n: string) => `0x${n.repeat(32)}` as AztecAddress
 const [HUB, TOKEN, FPC, ME, STRANGER] = [at("08"), at("09"), at("0c"), at("1c"), at("2d")]
@@ -28,6 +30,7 @@ const receipt = (ok: boolean) => ({
 	isDropped: () => false,
 	isMined: () => true,
 	hasExecutionSucceeded: () => ok,
+	blockNumber: 17,
 })
 
 function rig(o: { contracts?: AztecAddress[]; served?: (a: { toString(): string }) => unknown; ok?: boolean } = {}) {
@@ -53,6 +56,49 @@ const payload = (...calls: [AztecAddress, string][]) =>
 const CLAIM = payload([FPC, "sponsor_unconditionally"], [HUB, "claim_from_pool"])
 
 describe("the Aztec adapter", () => {
+	test("keeps the wallet's hash as unconfirmed when the outcome cannot be read after the send", async () => {
+		const r = rig()
+		r.node.getTxReceipt.mockRejectedValue(new Error("node down"))
+		const sent = sendThroughWallet(r.d, { epoch: 3, from: ME, payload: CLAIM, contracts: ["hub", "token"], handoff: () => {} })
+		await expect(sent).resolves.toEqual({ txHash: at("dd"), status: "unconfirmed" })
+		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
+	}, 10_000)
+
+	test("reads a wallet send that throws past the handoff as unconfirmed with no hash, and the wallet's no as a refusal", async () => {
+		const r = rig()
+		const send = () => sendThroughWallet(r.d, { epoch: 3, from: ME, payload: CLAIM, contracts: ["hub", "token"], handoff: () => {} })
+		r.wallet.sendTx.mockRejectedValueOnce(new Error("the wallet's socket closed"))
+		await expect(send()).resolves.toEqual({ status: "unconfirmed" })
+		r.wallet.sendTx.mockRejectedValueOnce(new ProviderError(4001, "User rejected the request."))
+		await expect(send()).rejects.toMatchObject({ code: 4001 })
+		const reject = { code: 4001, message: "User rejected", data: { walletErrorCode: "USER_REJECTED", walletTraceId: "1" } }
+		r.wallet.sendTx.mockRejectedValueOnce(new Error(JSON.stringify(reject)))
+		await expect(send()).rejects.toThrow(/USER_REJECTED/)
+		// Wording is no proof past the handoff.
+		r.wallet.sendTx.mockRejectedValueOnce(new Error("User rejected the request"))
+		await expect(send()).resolves.toEqual({ status: "unconfirmed" })
+	})
+
+	test("reads its own transaction's receipt as included, reverted at its block, or pending while not mined; another's is no answer", async () => {
+		const r = rig()
+		const hash = at("1d") as Hex
+		const of = (ok: boolean, h: string = hash) => ({ ...receipt(ok), txHash: { toString: () => h } })
+		r.node.getTxReceipt.mockResolvedValueOnce(of(true))
+		await expect(readReceipt(r.d.node, hash)).resolves.toEqual({ status: "success" })
+		r.node.getTxReceipt.mockResolvedValueOnce(of(false))
+		await expect(readReceipt(r.d.node, hash)).resolves.toEqual({ status: "reverted", block: 17 })
+		r.node.getTxReceipt.mockResolvedValueOnce({ ...of(true), isMined: () => false, isPending: () => true })
+		await expect(readReceipt(r.d.node, hash)).resolves.toEqual({ status: "pending" })
+		r.node.getTxReceipt.mockResolvedValueOnce({ ...of(false), blockNumber: undefined } as never)
+		await expect(readReceipt(r.d.node, hash)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
+		r.node.getTxReceipt.mockResolvedValueOnce(of(true, at("1e")))
+		await expect(readReceipt(r.d.node, hash)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
+	})
+
+	test("keeps only the wallet's note values a ragequit can burn: positive u128s", () => {
+		expect(noteValues([5n, 0n, 0, -1n, 1n << 128n, "7", 3])).toEqual([5n, 3n])
+	})
+
 	test("teaches a fresh wallet the app's granted contracts once each, and nothing it was not granted or the node does not serve", async () => {
 		const r = rig()
 		await registerScoped(r.d, r.held, ["hub", "token"])
@@ -123,6 +169,12 @@ describe("the Aztec adapter", () => {
 		moved.node.getNodeInfo.mockResolvedValue({ l1ChainId: 1, rollupVersion: 5 })
 		moved.wallet.getChainInfo.mockResolvedValue({ chainId: new Fr(1n), version: new Fr(5n) })
 		await expect(send(moved)).rejects.toMatchObject({ code: "CONTEXT_CHANGED" })
+		for (const chain of [{}, { chainId: {}, version: new Fr(5n) }, { chainId: { toBigInt: () => 31337 }, version: new Fr(5n) }, null]) {
+			const garbled = rig()
+			garbled.wallet.getChainInfo.mockResolvedValue(chain as never)
+			await expect(send(garbled)).rejects.toMatchObject({ code: "CONTEXT_CHANGED" })
+			expect(garbled.wallet.sendTx).not.toHaveBeenCalled()
+		}
 		const hostile = {
 			toString() {
 				throw new Error("no text")
@@ -144,10 +196,10 @@ describe("the Aztec adapter", () => {
 		expect(entries({ storage: [1, 2, 3], len: 2n })).toEqual([1, 2])
 	})
 
-	test("answers a sent transaction's hash with its outcome", async () => {
+	test("answers a sent transaction's hash with its outcome, and a revert with the block it landed in", async () => {
 		const send = (r: ReturnType<typeof rig>) =>
 			sendThroughWallet(r.d, { epoch: 3, from: ME, payload: CLAIM, contracts: ["hub", "token"], handoff: () => {} })
 		await expect(send(rig())).resolves.toEqual({ txHash: at("dd"), status: "success" })
-		await expect(send(rig({ ok: false }))).resolves.toEqual({ txHash: at("dd"), status: "reverted" })
+		await expect(send(rig({ ok: false }))).resolves.toEqual({ txHash: at("dd"), status: "reverted", block: 17 })
 	})
 })

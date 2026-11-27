@@ -16,7 +16,6 @@ import {
 	type BridgeSession,
 	type BridgeRecordView as CoreRecordView,
 	createBridgeClient,
-	isBridgeClientError,
 	type KeyValueStore,
 	openBridgeSession,
 	type PreflightWallet,
@@ -29,7 +28,7 @@ import { type ArtifactSource, secretDerivationTypedData, workerProver } from "@p
 import { createArtifacts } from "@pp/pool-client/circuits"
 import { type Hash, type PublicClient, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem"
 import type { StackManifestJson } from "../../build/target"
-import { BridgeFailure, ProviderError } from "../errors"
+import { BridgeFailure } from "../errors"
 import { parseAztecAddress } from "../parse"
 import type { Attempt, L1TxState, Proved, Session, SessionPort, SubmitHooks, Timer } from "../ports"
 import type { AztecAddress, BridgeRecordView } from "../stack-types"
@@ -37,7 +36,12 @@ import type { HeldWallet } from "../wallet/connector"
 import { type AztecDeps, boundTo, grantedPayload, sendThroughWallet } from "./aztec"
 import { PROVED_CIRCUIT } from "./circuit"
 import type { StackL1 } from "./l1"
+import { asPageError } from "./page-error"
+import { bridgeTiming } from "./timing"
 import { type DelegatingProver, delegatingProver } from "./prover"
+
+// The exits run over the same bridge-core, whose SponsoredFPC artifact the build lets only this chunk carry.
+export { stackExits } from "./exits"
 
 /** Every journal key this app writes starts with this; nothing else in the page's storage does. */
 export const JOURNAL_PREFIX = "pp.web.bridge."
@@ -116,13 +120,6 @@ export function preflightWallet(d: Pick<AztecDeps, "current">, epoch: number): P
 			return held.wallet.simulateTx(exec, opts)
 		},
 	}
-}
-
-/** bridge-core reports the wallet's no before broadcast as `RPC_FAILED`; the driver reads it as the wallet's refusal. */
-function asPageError(err: unknown): unknown {
-	if (isBridgeClientError(err) && err.code === "RPC_FAILED" && err.source === "UserRejectedRequestError")
-		return new ProviderError(4001, "The wallet declined the request.")
-	return err
 }
 
 interface Known {
@@ -256,7 +253,7 @@ export function stackSessions(deps: SessionDeps): SessionPort {
 	const manifest = parseStackManifest(deps.manifest)
 	const bridge = manifest.bridge
 	if (!bridge) throw new BridgeFailure("DEPLOYMENT_MISMATCH")
-	const client = deps.client ?? createBridgeClient({ manifest, journal: journalStore(deps.storage) })
+	const client = deps.client ?? createBridgeClient({ manifest, journal: journalStore(deps.storage), timing: bridgeTiming(manifest) })
 	return {
 		async open({ owner, sign }) {
 			const signature = await sign(secretDerivationTypedData(owner))
