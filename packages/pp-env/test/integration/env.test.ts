@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { anvilKey, LOG_DIR, USER_INDEX } from "../../src/env/harness/anvil.ts"
-import { rowsOwnedBy } from "@pp/run-isolation/ports"
+import { claimPort, registryPath, releasePorts, rowsOwnedBy } from "@pp/run-isolation/ports"
 import { getAddress, keccak256, parseAbiItem, toHex } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { rpc } from "../../src/env/harness/rpc.ts"
@@ -154,30 +154,47 @@ describe.skipIf(!process.env.PP_ENV_INTEGRATION)("pool env", () => {
 		}
 		await expect(attachForkPoolEnv({ ...options, clientVersion: `${clientVersion}-other` })).rejects.toThrow(/expected exactly/)
 		await expect(attachForkPoolEnv({ ...options, runId: a.runId })).rejects.toThrow(`registered to ${b.runId}, not ${a.runId}`)
-		expect(rowsOwnedBy(`${b.runId}-pool`)).toBe(0)
-		const attaches = await Promise.allSettled([attachForkPoolEnv(options), attachForkPoolEnv(options)])
-		const won = attaches.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
-		const lost = attaches.flatMap((r) => (r.status === "rejected" ? [r.reason as Error] : []))
-		const fork = won[0]
-		if (won.length !== 1 || !fork) {
-			await Promise.all(won.map((f) => f.stop()))
-			throw new Error(`expected exactly one of two concurrent attaches to win, got ${won.length}`)
-		}
+		expect(rowsOwnedBy(`${b.runId}:pool`)).toBe(0)
+		// local-stack starts pp-env as `<id>-pool`: an attach whose run id is that stack's must not share its owner.
+		const stackRun = `${b.runId}-pool`
+		await claimPort(stackRun, "stack-pool")
+		let fork: Awaited<ReturnType<typeof attachForkPoolEnv>>
 		try {
-			expect(lost.map((e) => e.message)).toEqual([`run ${b.runId} already has a fork attach; stop it first`])
-			expect(rowsOwnedBy(`${b.runId}-pool`)).toBe(1)
-			const root = await fork.asp.approveLabel(789n)
-			expect(await admin.client.readContract({ address: aspRegistry, abi: ROOT_ABI, functionName: "latestASPRoot" })).toBe(root)
-			// The deployer is a postman too, so only the update's sender shows the impersonation published it.
-			const [update] = await admin.client.getLogs({ address: aspRegistry, event: ROOT_UPDATED, args: { _root: root }, fromBlock: 0n })
-			if (!update) throw new Error("no ASPRootUpdated for the approved root")
-			expect(getAddress((await admin.client.getTransaction({ hash: update.transactionHash })).from)).toBe(postman)
-			expect(fork.clientConfig.aspUrl).toBe(fork.asp.url)
+			const attaches = await Promise.allSettled([attachForkPoolEnv(options), attachForkPoolEnv(options)])
+			const won = attaches.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
+			const lost = attaches.flatMap((r) => (r.status === "rejected" ? [r.reason as Error] : []))
+			const winner = won[0]
+			if (won.length !== 1 || !winner) {
+				await Promise.all(won.map((f) => f.stop()))
+				throw new Error(`expected exactly one of two concurrent attaches to win, got ${won.length}`)
+			}
+			fork = winner
+			try {
+				expect(lost.map((e) => e.message)).toEqual([
+					`run ${b.runId} already has a fork attach: ${registryPath()} lists a row owned by ${b.runId}:pool. Stop that attach, or remove the row by hand if no attach is running`,
+				])
+				expect(rowsOwnedBy(`${b.runId}:pool`)).toBe(1)
+				const root = await fork.asp.approveLabel(789n)
+				expect(await admin.client.readContract({ address: aspRegistry, abi: ROOT_ABI, functionName: "latestASPRoot" })).toBe(root)
+				// The deployer is a postman too, so only the update's sender shows the impersonation published it.
+				const [update] = await admin.client.getLogs({
+					address: aspRegistry,
+					event: ROOT_UPDATED,
+					args: { _root: root },
+					fromBlock: 0n,
+				})
+				if (!update) throw new Error("no ASPRootUpdated for the approved root")
+				expect(getAddress((await admin.client.getTransaction({ hash: update.transactionHash })).from)).toBe(postman)
+				expect(fork.clientConfig.aspUrl).toBe(fork.asp.url)
+			} finally {
+				await Promise.all([fork.stop(), fork.stop()])
+			}
+			await expect(fork.asp.approveLabel(790n)).rejects.toThrow("stopped")
+			expect(rowsOwnedBy(`${b.runId}:pool`)).toBe(0)
+			expect(rowsOwnedBy(stackRun)).toBe(1)
 		} finally {
-			await Promise.all([fork.stop(), fork.stop()])
+			await releasePorts(stackRun)
 		}
-		await expect(fork.asp.approveLabel(790n)).rejects.toThrow("stopped")
-		expect(rowsOwnedBy(`${b.runId}-pool`)).toBe(0)
 		expect(rowsOwnedBy(b.runId)).toBe(2)
 		expect(
 			await fetch(fork.asp.url).then(

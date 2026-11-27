@@ -1,5 +1,5 @@
 import { EvmDeploymentSnapshotSource, startEvmMockAsp } from "#ppv2/mock-asp/evm"
-import { claimPort, OwnerHoldsRows, releasePorts } from "@pp/run-isolation/ports"
+import { claimPort, OwnerHoldsRows, registryPath, releasePorts } from "@pp/run-isolation/ports"
 import { toHex } from "viem"
 import type { ClientConfig, ClientDeployment } from "../client/types.ts"
 import { stopAsp } from "./asp.ts"
@@ -47,11 +47,15 @@ export async function attachForkPoolEnv(o: AttachForkOptions): Promise<ForkPoolE
 	const { pool, entrypoint, keystore, aspRegistry, deployBlock } = o.deployment
 	const deployment: ClientDeployment = { pool, entrypoint, keystore, aspRegistry, deployBlock }
 	if (!isRunId(runId)) throw new Error(`runId ${JSON.stringify(runId)} must match ${RUN_ID}`)
-	const aspRun = `${runId}-pool`
+	// ":" is outside every run-id grammar, so no other run (local-stack's `<id>-pool` among them) shares this owner.
+	const aspRun = `${runId}:pool`
 	await assertForkNode({ rpcUrl, clientVersion, chainId, runId })
 	// Outside the try: a refused claim leaves the other attach's row in place.
 	const port = await claimPort(aspRun, "pp-env-asp", { sole: true }).catch((err: unknown) => {
-		throw err instanceof OwnerHoldsRows ? new Error(`run ${runId} already has a fork attach; stop it first`) : err
+		if (!(err instanceof OwnerHoldsRows)) throw err
+		throw new Error(
+			`run ${runId} already has a fork attach: ${registryPath()} lists a row owned by ${aspRun}. Stop that attach, or remove the row by hand if no attach is running`,
+		)
 	})
 	try {
 		const asp = await startEvmMockAsp({
