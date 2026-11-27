@@ -1,0 +1,16 @@
+// Browser-safe: nothing here may import an Aztec package, viem or a `node:` module (a test scans every specifier).
+export { parseAspSnapshot, serializeAspSnapshot } from "./codec"
+export type { Hex } from "./record"
+export { RegistryAddressError, ROOT_RECORD_SLOT, readRootRecord } from "./record"
+export type { AspSnapshot, LabelState, Origin, RootRecord, SnapshotErrorCode } from "./snapshot"
+export {
+	labelState,
+	MAX_LEAVES,
+	MAX_OBSERVATION_LAG,
+	MAX_ROOT_AGE,
+	pathFor,
+	SnapshotError,
+	SPEND_WINDOW,
+	verifySnapshot,
+} from "./snapshot"
+export type { LabelPath } from "@pp/bridge-spec"

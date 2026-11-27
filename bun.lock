@@ -10,6 +10,28 @@
         "@commitlint/config-conventional": "^21.0.2",
       },
     },
+    "packages/asp-bot": {
+      "name": "@pp/asp-bot",
+      "version": "0.1.0",
+      "dependencies": {
+        "@aztec-labs/accounts": "6.0.0",
+        "@aztec-labs/aztec.js": "6.0.0",
+        "@aztec-labs/constants": "6.0.0",
+        "@aztec-labs/foundation": "6.0.0",
+        "@aztec-labs/noir-contracts.js": "6.0.0",
+        "@aztec-labs/wallets": "6.0.0",
+        "@nulo-sh/wallet-crypto": "0.3.0",
+        "@pp/bridge-core": "workspace:*",
+        "@pp/bridge-spec": "workspace:*",
+        "@pp/label-paths": "workspace:*",
+        "viem": "2.57.1",
+      },
+      "devDependencies": {
+        "@types/node": "^24.13.2",
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.9",
+      },
+    },
     "packages/bridge-core": {
       "name": "@pp/bridge-core",
       "version": "0.1.0",
@@ -83,6 +105,18 @@
         "typescript": "^6.0.3",
         "vite": "^8.0.16",
         "vite-plugin-node-polyfills": "^0.28.0",
+        "vitest": "^4.1.9",
+      },
+    },
+    "packages/label-paths": {
+      "name": "@pp/label-paths",
+      "version": "0.1.0",
+      "dependencies": {
+        "@pp/bridge-spec": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.13.2",
+        "typescript": "^6.0.3",
         "vitest": "^4.1.9",
       },
     },
@@ -448,11 +482,15 @@
 
     "@playwright/test": ["@playwright/test@1.63.0", "", { "dependencies": { "playwright": "1.63.0" }, "bin": { "playwright": "cli.js" } }, "sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ=="],
 
+    "@pp/asp-bot": ["@pp/asp-bot@workspace:packages/asp-bot"],
+
     "@pp/bridge-core": ["@pp/bridge-core@workspace:packages/bridge-core"],
 
     "@pp/bridge-spec": ["@pp/bridge-spec@workspace:packages/bridge-spec"],
 
     "@pp/e2e-kit": ["@pp/e2e-kit@workspace:packages/e2e-kit"],
+
+    "@pp/label-paths": ["@pp/label-paths@workspace:packages/label-paths"],
 
     "@pp/labelled-token": ["@pp/labelled-token@workspace:packages/labelled-token"],
 
