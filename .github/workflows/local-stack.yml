@@ -50,8 +50,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only. The stack boots bridge-core's harness and pp-env's pool, so both packages
-          # move it whole; its bridge step deploys the contracts and imports bridge-core's libraries.
-          # Pinned by scripts/ci-cd/behavior-gating.test.ts.
+          # move it whole; its bridge step deploys the contracts and imports bridge-core's libraries,
+          # and what their workspace dependencies export (among them @pp/pool-client, which pp-env's
+          # spends run on) moves it too. Derived and pinned by scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             stack:
               - 'packages/local-stack/**'
@@ -67,6 +68,8 @@ jobs:
               - 'packages/asp-bot/package.json'
               - 'packages/label-paths/src/**'
               - 'packages/label-paths/package.json'
+              - 'packages/run-isolation/src/**'
+              - 'packages/run-isolation/package.json'
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'

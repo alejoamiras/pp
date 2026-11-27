@@ -54,6 +54,10 @@ jobs:
               - 'packages/bridge-spec/vectors/**'
               - 'packages/pool-client/src/**'
               - 'packages/pool-client/package.json'
+              # bridge-core's stack suite loads @pp/pool-client/testing, whose support files import
+              # pp-env's sources by relative path.
+              - 'packages/pool-client/test/support/**'
+              - 'packages/pp-env/src/**'
               - 'packages/labelled-token/**'
               # labelled-token's dependency library, named as the graph pin requires.
               - 'packages/bridge-core/src/**'
