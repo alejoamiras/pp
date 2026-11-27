@@ -273,7 +273,7 @@ describe("connect", () => {
 		act(() => app.control.selectL1Account("sender"))
 		await clickSignIn(app.user)
 		await screen.findByText("No pool notes found for this account")
-		screen.getByText(/has not set up a pool account yet, or it set one up under another app version/)
+		screen.getByText(/it has made no deposit yet, or it deposited under another app version/)
 		screen.getByText(/Deposit through the pool app/)
 	})
 

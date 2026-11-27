@@ -33,6 +33,9 @@ export type AppCode =
 	| "OVER_NOTE_CAP"
 	| "OVER_PUBLIC_BALANCE"
 	| "LIST_STALE"
+	| "KEYSTORE_MISMATCH"
+	| "KEYS_REGISTERED_ELSEWHERE"
+	| "REGISTER_FROM_OWNER"
 	| "UNKNOWN"
 
 /**
@@ -106,6 +109,11 @@ const MESSAGES: Record<UiCode, string> = {
 		"This label's notes changed, and one transaction can no longer spend that amount, so nothing was sent. Check the amount and try again.",
 	LIST_STALE: "The allow list is out of date, so nothing was sent. Wait for its next post.",
 	OVER_PUBLIC_BALANCE: "Your public balance no longer covers that amount, so nothing was sent. Refresh, check the amount and try again.",
+	KEYSTORE_MISMATCH: "The pool on chain reads another keystore than this app's deployment, so nothing was sent. Reload the page.",
+	KEYS_REGISTERED_ELSEWHERE:
+		"The pool's keystore holds other keys for this account, so this app cannot register it or read its notes. Sign in with the account you use here.",
+	REGISTER_FROM_OWNER:
+		"Select your signed-in account in your Ethereum wallet: the keystore registers whichever account sends, so only that one can register.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",
 }
 

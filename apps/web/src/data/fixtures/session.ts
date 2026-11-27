@@ -6,8 +6,8 @@
  * `handoff` runs first, a journal record written before the send and restored on a refusal), and holds
  * the signature it was opened with in its closure only.
  */
-import { type Address, type Hex, isAddressEqual, type TypedDataDefinition } from "viem"
-import type { AztecAddress, BridgeRecordView, PoolNoteView } from "../stack-types"
+import { type Address, type Hash, type Hex, isAddressEqual, type TypedDataDefinition } from "viem"
+import type { AztecAddress, BridgeRecordView, PoolNoteView, RegistrationCall, RegistrationStep } from "../stack-types"
 import { BridgeFailure, ProviderError, providerCode, type UiCode } from "../errors"
 import { parseAztecAddress } from "../parse"
 import type { Attempt, ClaimHooks, Proved, Sent, Session, SessionPort, SubmitHooks } from "../ports"
@@ -215,6 +215,53 @@ function notes(c: Ctx): PoolNoteView[] {
 	return c.w.s.notes.map((n) => ({ ...n, asset: "0x00000000000000000000000000000000000a55e7" }))
 }
 
+/** The fixture pool's keystore; its calldata is opaque here, only the call's function moves the world. */
+export const FIXTURE_KEYSTORE: Address = "0x000000000000000000000000000000000000c0de"
+const REGISTERED = { authPolicy: true, viewingKey: true } as const
+const CALL_DATA: Record<RegistrationCall["function"], Hex> = { setAuthPolicy: "0x7a1e0001", setViewingKey: "0x7a1e0002" }
+
+function registration(c: Ctx, live: () => void): Pick<Session, "registrationStep" | "sendRegistration" | "registrationReceipt"> {
+	const { w } = c
+	const sent = new Map<Hash, { fn: RegistrationCall["function"]; fault: string | null }>()
+	return {
+		async registrationStep(): Promise<RegistrationStep> {
+			live()
+			const fault = w.takeFault("register")
+			if (fault !== null) fail(fault)
+			const k = w.s.keystore ?? REGISTERED
+			if (k.authPolicy && k.viewingKey) return { status: "registered" }
+			const fn = k.authPolicy ? "setViewingKey" : "setAuthPolicy"
+			return {
+				status: "send",
+				call: Object.freeze({ function: fn, from: c.owner, to: FIXTURE_KEYSTORE, data: CALL_DATA[fn], value: 0n }),
+			}
+		},
+		async sendRegistration(call, handoff) {
+			live()
+			if (!isAddressEqual(call.from, c.owner)) fail("REGISTER_FROM_OWNER")
+			const fault = w.takeFault("send")
+			const wallet = guardedProvider(sendingWallet(c.provider, fault, w.takeHang("send")), handoff)
+			const hash = (await wallet.request({
+				method: "eth_sendTransaction",
+				params: [{ from: call.from, to: call.to, data: call.data }],
+			})) as Hash
+			sent.set(hash, { fn: call.function, fault })
+			return hash
+		},
+		async registrationReceipt(hash) {
+			const s = sent.get(hash)
+			if (s === undefined || s.fault === "PENDING") return null
+			sent.delete(hash)
+			const key = s.fn === "setAuthPolicy" ? "authPolicy" : "viewingKey"
+			w.update((st) => {
+				st.l1Block++
+				if (s.fault !== "REVERTED") st.keystore = { ...(st.keystore ?? REGISTERED), [key]: true }
+			})
+			return { status: s.fault === "REVERTED" ? "reverted" : "success", blockNumber: BigInt(w.s.l1Block) }
+		},
+	}
+}
+
 function makeSession(c: Ctx, signature: Hex): Session {
 	const { w } = c
 	// The only copy of the signature; nothing reads it back out.
@@ -227,6 +274,7 @@ function makeSession(c: Ctx, signature: Hex): Session {
 	const proofs = new WeakMap<Proved, Attempt>()
 	return {
 		owner: c.owner,
+		...registration(c, live),
 		async notes() {
 			live()
 			return notes(c)

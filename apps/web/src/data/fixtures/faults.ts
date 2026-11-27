@@ -10,6 +10,8 @@
  * - `claim` and the token calls: `REJECTED` (the wallet says no), `REVERTED`, `DROPPED` or `UNCONFIRMED`
  *   (sent, with an outcome the page could not read).
  * - `open`, `settle`: throw the code.
+ * - `register`: the registration step throws the code; its calls take the `send` faults, `REVERTED`
+ *   and `PENDING` at the receipt.
  */
 export const FIXTURE_OPS = [
 	"open",
@@ -24,6 +26,7 @@ export const FIXTURE_OPS = [
 	"ragequit",
 	"exitPublic",
 	"settle",
+	"register",
 ] as const
 
 export type FixtureOp = (typeof FIXTURE_OPS)[number]

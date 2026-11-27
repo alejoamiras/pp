@@ -4,15 +4,23 @@ import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import type { BridgeClient, BridgeReceipt, BridgeSession, openBridgeSession, PreparedBridgeSpend } from "@pp/bridge-core"
 import { tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
-import { secretDerivationTypedData } from "@pp/pool-client"
+import { PoolClientError, secretDerivationTypedData } from "@pp/pool-client"
 import { createArtifacts } from "@pp/pool-client/circuits"
-import { type Address, type Hash, type Hex, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem"
+import {
+	type Address,
+	BaseError,
+	type Hash,
+	type Hex,
+	TransactionNotFoundError,
+	TransactionReceiptNotFoundError,
+	UserRejectedRequestError,
+} from "viem"
 import { describe, expect, test, vi } from "vitest"
 import type { StackManifestJson } from "../../build/target"
 import { virtualTimer } from "../../test-utils/timer"
 import { createBridgeDriver, createOutstanding, type LiveContext } from "../bridge-driver"
 import { stageManifest } from "../capabilities"
-import { isUserRejection } from "../errors"
+import { isUserRejection, isWalletRefusal } from "../errors"
 import type { Attempt, Proved, SubmitHooks } from "../ports"
 import type { AztecAddress, BridgeRecordView } from "../stack-types"
 import { readPool } from "../reconcile"
@@ -146,7 +154,7 @@ function memoryStorage(seed: Record<string, string> = {}): PageStorage & { data:
 }
 
 /** A stack session over fakes at the bridge client, the Ethereum client and the Aztec wallet. */
-function rig(o: Partial<Pick<SessionDeps, "open" | "reads">> = {}) {
+function rig(o: Partial<Pick<SessionDeps, "open" | "reads" | "l1">> = {}) {
 	const aztecWallet = freshWallet()
 	let held: HeldWallet | null = { epoch: 1, wallet: aztecWallet.asWallet, grant: GRANT }
 	const gate: { reached: () => void; open: Promise<void>; release: () => void } = {
@@ -468,4 +476,44 @@ describe("a claim's handoff", () => {
 			expect(c.events.at(-1)).toBe("failed")
 		},
 	)
+})
+
+describe("registration through the stack session", () => {
+	const KEYSTORE: Address = "0x00000000000000000000000000000000000000c3"
+	const call = (from: Address) => ({ function: "setAuthPolicy" as const, from, to: KEYSTORE, data: "0x01" as Hex, value: 0n as const })
+
+	function registering(pool: { registrationStep: () => Promise<unknown> }, send: () => Promise<Hash>) {
+		const sendTransaction = vi.fn(send)
+		const settleWallet = vi.fn(() => ({ chain: { id: 31337 }, sendTransaction }))
+		const open = (async () => ({ l1Address: OWNER, pool })) as unknown as typeof openBridgeSession
+		return { r: rig({ open, l1: { settleWallet } as unknown as SessionDeps["l1"] }), settleWallet, sendTransaction }
+	}
+
+	test("reads the pool client's keystore refusals in the page's codes", async () => {
+		for (const [poolCode, code] of [
+			["KEYSTORE_MISMATCH", "KEYSTORE_MISMATCH"],
+			["REGISTERED_TO_OTHER_KEYS", "KEYS_REGISTERED_ELSEWHERE"],
+		] as const) {
+			const { r } = registering(
+				{ registrationStep: async () => Promise.reject(new PoolClientError(poolCode, "x")) },
+				async () => `0x${"ab".repeat(32)}` as Hash,
+			)
+			await expect((await r.open()).registrationStep()).rejects.toMatchObject({ code })
+		}
+	})
+
+	test("sends only the owner's call, from the injected wallet pinned to the owner, and reads the wallet's no as a 4001", async () => {
+		const no = new BaseError("send failed", { cause: new UserRejectedRequestError(new Error("rejected")) })
+		const { r, settleWallet, sendTransaction } = registering({ registrationStep: async () => ({ status: "registered" }) }, async () => {
+			throw no
+		})
+		const s = await r.open()
+		const handoff = () => {}
+		await expect(s.sendRegistration(call(SENDER), handoff)).rejects.toMatchObject({ code: "REGISTER_FROM_OWNER" })
+		expect(settleWallet).not.toHaveBeenCalled()
+		const refused = await s.sendRegistration(call(OWNER), handoff).catch((e: unknown) => e)
+		expect(isWalletRefusal(refused)).toBe(true)
+		expect(settleWallet).toHaveBeenCalledWith({ sender: OWNER, demo: false }, handoff)
+		expect(sendTransaction).toHaveBeenCalledWith({ to: KEYSTORE, data: "0x01", value: 0n, chain: { id: 31337 } })
+	})
 })

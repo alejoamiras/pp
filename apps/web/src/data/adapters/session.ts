@@ -14,6 +14,7 @@ import {
 	type BridgeClient,
 	type BridgeReceipt,
 	type BridgeSession,
+	type ClientTiming,
 	type BridgeRecordView as CoreRecordView,
 	createBridgeClient,
 	type KeyValueStore,
@@ -24,11 +25,19 @@ import {
 	prepareBridgeSpend,
 	type SubmitOptions,
 } from "@pp/bridge-core"
-import { type ArtifactSource, secretDerivationTypedData, workerProver } from "@pp/pool-client"
+import { type ArtifactSource, PoolClientError, type PoolClientErrorCode, secretDerivationTypedData, workerProver } from "@pp/pool-client"
 import { createArtifacts } from "@pp/pool-client/circuits"
-import { type Hash, type PublicClient, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem"
+import {
+	BaseError,
+	type Hash,
+	isAddressEqual,
+	type PublicClient,
+	TransactionNotFoundError,
+	TransactionReceiptNotFoundError,
+	UserRejectedRequestError,
+} from "viem"
 import type { StackManifestJson } from "../../build/target"
-import { BridgeFailure } from "../errors"
+import { BridgeFailure, ProviderError, type UiCode } from "../errors"
 import { parseAztecAddress } from "../parse"
 import type { Attempt, L1TxState, Proved, Session, SessionPort, SubmitHooks, Timer } from "../ports"
 import type { AztecAddress, BridgeRecordView } from "../stack-types"
@@ -51,11 +60,11 @@ export type PageStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "
 export interface SessionDeps {
 	/** As the build inlined it; parsed again here with the schema the build parsed it with. */
 	manifest: StackManifestJson
-	reads: Pick<PublicClient, "getTransaction" | "getTransactionReceipt">
+	reads: Pick<PublicClient, "getTransaction" | "getTransactionReceipt" | "waitForTransactionReceipt">
 	prover: DelegatingProver
 	/** Where pool-client fetches the pinned proving files: the page's own server. */
 	artifacts: ArtifactSource
-	l1: Pick<StackL1, "spendWallet">
+	l1: Pick<StackL1, "spendWallet" | "settleWallet">
 	aztec: AztecDeps
 	storage: PageStorage
 	/** Tests pass their own three; otherwise bridge-core's, with one client over the manifest and the journal. */
@@ -134,6 +143,50 @@ interface Ctx {
 	portal: `0x${string}`
 	known: Map<string, Known>
 	proofs: WeakMap<Proved, { spend: PreparedBridgeSpend; attempt: Attempt }>
+	timing: ClientTiming
+}
+
+/** The pool client's refusals of a keystore this app cannot register in, in the page's codes. */
+const REGISTRATION_CODES: Partial<Record<PoolClientErrorCode, UiCode>> = {
+	KEYSTORE_MISMATCH: "KEYSTORE_MISMATCH",
+	REGISTERED_TO_OTHER_KEYS: "KEYS_REGISTERED_ELSEWHERE",
+}
+
+/** viem wraps the wallet's no in its own error; the page reads a refusal as a top-level 4001. */
+const walletNo = (err: unknown): unknown =>
+	err instanceof BaseError && err.walk((e) => e instanceof UserRejectedRequestError)
+		? new ProviderError(4001, "The wallet declined the request.")
+		: err
+
+/** Registration's calls go out from the owner through the injected wallet, never the demo sender. */
+function registration(c: Ctx, live: () => void): Pick<Session, "registrationStep" | "sendRegistration" | "registrationReceipt"> {
+	const { s, deps, timing } = c
+	return {
+		async registrationStep(after) {
+			live()
+			return s.pool.registrationStep(after).catch((err: unknown) => {
+				const code = err instanceof PoolClientError ? REGISTRATION_CODES[err.code] : undefined
+				throw code ? new BridgeFailure(code) : err
+			})
+		},
+		async sendRegistration(call, handoff) {
+			live()
+			if (!isAddressEqual(call.from, s.l1Address)) throw new BridgeFailure("REGISTER_FROM_OWNER")
+			const wallet = deps.l1.settleWallet({ sender: s.l1Address, demo: false }, handoff)
+			return wallet
+				.sendTransaction({ to: call.to, data: call.data, value: call.value, chain: wallet.chain })
+				.catch((err: unknown) => {
+					throw walletNo(err)
+				})
+		},
+		registrationReceipt: (hash) =>
+			deps.reads
+				.waitForTransactionReceipt({ hash, timeout: timing.receiptTimeoutMs, pollingInterval: timing.pollingIntervalMs })
+				.then(
+					(r) => ({ status: r.status, blockNumber: r.blockNumber }),
+					() => null,
+				),
+	}
 }
 
 async function records(c: Ctx): Promise<BridgeRecordView[]> {
@@ -193,6 +246,7 @@ function stackSession(c: Ctx): Session {
 	}
 	return {
 		owner: s.l1Address,
+		...registration(c, live),
 		notes: () => s.pool.notes(),
 		nullifierOf: (commitment) => s.pool.nullifierOf(commitment),
 		async preflight(recipient, epoch) {
@@ -253,12 +307,13 @@ export function stackSessions(deps: SessionDeps): SessionPort {
 	const manifest = parseStackManifest(deps.manifest)
 	const bridge = manifest.bridge
 	if (!bridge) throw new BridgeFailure("DEPLOYMENT_MISMATCH")
-	const client = deps.client ?? createBridgeClient({ manifest, journal: journalStore(deps.storage), timing: bridgeTiming(manifest) })
+	const timing = bridgeTiming(manifest)
+	const client = deps.client ?? createBridgeClient({ manifest, journal: journalStore(deps.storage), timing })
 	return {
 		async open({ owner, sign }) {
 			const signature = await sign(secretDerivationTypedData(owner))
 			const s = await open({ manifest, l1Address: owner, signature, artifacts: deps.artifacts, prover: deps.prover })
-			return stackSession({ s, deps, client, portal: bridge.portal, known: new Map(), proofs: new WeakMap() })
+			return stackSession({ s, deps, client, portal: bridge.portal, known: new Map(), proofs: new WeakMap(), timing })
 		},
 		// A mined bridge stays recoverable from the signature and the chain; an unmined record goes with the journal.
 		forget: async () => forgetJournal(deps.storage),

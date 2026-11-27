@@ -41,6 +41,8 @@ export interface FixtureControl {
 	setL1Chain(chainId: number): void
 	/** The next connect's grant leaves out the contract scope, as the kit's `declineNextGrant`. */
 	declineNextGrant(): void
+	/** Clears the owner's keys from the fixture keystore, as for an account that never registered. */
+	unregisterOwner(): void
 	/** The Aztec wallet disconnects on its own. */
 	disconnectAztec(): void
 	/** Back to the first state; also clears the stored copy. */
@@ -115,6 +117,10 @@ export function createControl(w: World, wallet: { remoteDisconnect(): void }): F
 		declineNextGrant: () =>
 			w.update((s) => {
 				s.declineNextGrant = true
+			}),
+		unregisterOwner: () =>
+			w.update((s) => {
+				s.keystore = { authPolicy: false, viewingKey: false }
 			}),
 		disconnectAztec: () => wallet.remoteDisconnect(),
 		reset: () => w.reset(),

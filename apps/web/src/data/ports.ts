@@ -12,6 +12,8 @@ import type {
 	ExitTicket,
 	Origin,
 	PoolNoteView,
+	RegistrationCall,
+	RegistrationStep,
 	RootRecord,
 	StaleRootCode,
 } from "./stack-types"
@@ -156,6 +158,19 @@ export interface Session {
 	recover(recipient: AztecAddress): Promise<BridgeRecordView[]>
 	/** What the Ethereum RPC knows of a journal record's hash. */
 	l1TxState(hash: Hash): Promise<L1TxState>
+	/**
+	 * `registered`, or the owner's next keystore call, read at the head or at block `after` if that is newer.
+	 * @throws BridgeFailure `KEYSTORE_MISMATCH`, `KEYS_REGISTERED_ELSEWHERE`
+	 */
+	registrationStep(after?: bigint): Promise<RegistrationStep>
+	/**
+	 * Sends `call` from the owner through the injected wallet, pinned to the owner and the deployment's chain
+	 * behind the guard, which runs `handoff` right before the wallet is asked. Resolves with the wallet's hash.
+	 * @throws BridgeFailure `REGISTER_FROM_OWNER` when `call` is not the owner's, before anything is asked
+	 */
+	sendRegistration(call: RegistrationCall, handoff: () => void): Promise<Hash>
+	/** The transaction's receipt within the deployment's receipt wait; `null` when none came in time. */
+	registrationReceipt(hash: Hash): Promise<{ status: "success" | "reverted"; blockNumber: bigint } | null>
 	close(): void
 }
 
