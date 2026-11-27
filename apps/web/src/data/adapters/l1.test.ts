@@ -54,6 +54,22 @@ describe("the stack's Ethereum port", () => {
 		expect(sent).toEqual([TX])
 	})
 
+	test("a spend from the demo sender's address goes through its provider and never reaches the wallet", async () => {
+		const DEMO: Address = "0x00000000000000000000000000000000000000Aa"
+		const own = wallet(TARGET.l1ChainId)
+		const demo = { address: DEMO, ready: async () => {}, provider: own.w }
+		const injected = wallet(TARGET.l1ChainId)
+		const l1 = stackL1(TARGET, injected.w, demo)
+		expect(l1.demo?.address).toBe(DEMO)
+		const client = l1.spendWallet({ sender: DEMO } as Attempt, () => {}, { sent: () => {} })
+		await expect(client.sendTransaction({ to: PORTAL, value: 0n })).resolves.toBe(TX)
+		expect(own.from).toEqual([DEMO])
+		expect(injected.methods).toEqual([])
+		await l1.spendWallet(attempt, () => {}, { sent: () => {} }).sendTransaction({ to: PORTAL, value: 0n })
+		expect(injected.from).toEqual([SENDER])
+		expect(stackL1(TARGET, injected.w).demo).toBeUndefined()
+	})
+
 	test("without an injected wallet the page lists no account and refuses anything that needs one", async () => {
 		const l1 = stackL1(TARGET, undefined)
 		await expect(l1.accounts()).resolves.toEqual([])

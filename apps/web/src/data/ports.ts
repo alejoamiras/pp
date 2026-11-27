@@ -47,6 +47,8 @@ export interface L1Port {
 	signTypedData(owner: Address, td: TypedDataDefinition): Promise<Hex>
 	onAccountsChanged(f: (accounts: Address[]) => void): () => void
 	onChainChanged(f: (chainId: number) => void): () => void
+	/** A local-stack build's dev account, which a bridge may send from with no wallet once `ready` resolves. */
+	readonly demo?: { readonly address: Address; ready(): Promise<void> }
 }
 
 export interface WalletPort {

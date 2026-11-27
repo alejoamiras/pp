@@ -15,6 +15,7 @@ import {
 	type Hash,
 	http,
 	isAddress,
+	isAddressEqual,
 	isHash,
 	type PublicClient,
 	type TypedDataDefinition,
@@ -60,13 +61,32 @@ export function reportSends(inner: Eip1193Provider, sent: (txHash: Hash) => void
 const addressesOf = (value: unknown): Address[] =>
 	Array.isArray(value) ? value.filter((a): a is string => typeof a === "string" && isAddress(a)).map((a) => getAddress(a)) : []
 
+/**
+ * The local demo's dev account, which anvil signs for: a bridge can send from a separate address with
+ * no second wallet. Its provider sits behind the same guard as a wallet's.
+ */
+export interface DemoSender {
+	readonly address: Address
+	/** Resolves once the node serves the target's chain and the portal has code; the provider sends nothing before. */
+	ready(): Promise<void>
+	readonly provider: Eip1193Provider
+}
+
 export interface StackL1 extends L1Port {
 	readonly reads: PublicClient
-	/** The client a bridge spend sends through; `assertCurrent` runs before every send or sign, and `hooks.sent` hears the hash. */
+	/**
+	 * The client a bridge spend sends through: the demo sender's provider when the attempt's sender is
+	 * its address, else the injected wallet. `assertCurrent` runs before every send or sign, and
+	 * `hooks.sent` hears the hash.
+	 */
 	spendWallet(a: Attempt, assertCurrent: () => void, hooks: Pick<SubmitHooks, "sent">): WalletClient<Transport, Chain, Account>
 }
 
-export function stackL1(t: Pick<PublicTarget, "l1ChainId" | "l1RpcUrl">, wallet: InjectedWallet | undefined): StackL1 {
+export function stackL1(
+	t: Pick<PublicTarget, "l1ChainId" | "l1RpcUrl">,
+	wallet: InjectedWallet | undefined,
+	demo: DemoSender | null = null,
+): StackL1 {
 	const chain = targetChain(t)
 	const reads = createPublicClient({ chain, transport: http(t.l1RpcUrl) })
 	const need = (): InjectedWallet => {
@@ -87,11 +107,14 @@ export function stackL1(t: Pick<PublicTarget, "l1ChainId" | "l1RpcUrl">, wallet:
 		},
 		onAccountsChanged: (f) => follow("accountsChanged", (v) => f(addressesOf(v))),
 		onChainChanged: (f) => follow("chainChanged", (v) => f(Number(v))),
-		spendWallet: (a, assertCurrent, hooks) =>
-			createWalletClient({
+		...(demo ? { demo: { address: demo.address, ready: () => demo.ready() } } : {}),
+		spendWallet(a, assertCurrent, hooks) {
+			const inner = demo && isAddressEqual(a.sender, demo.address) ? demo.provider : need()
+			return createWalletClient({
 				account: a.sender,
 				chain,
-				transport: custom(reportSends(guardedProvider(need(), assertCurrent), hooks.sent)),
-			}),
+				transport: custom(reportSends(guardedProvider(inner, assertCurrent), hooks.sent)),
+			})
+		},
 	}
 }
