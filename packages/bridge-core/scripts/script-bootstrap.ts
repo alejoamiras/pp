@@ -57,8 +57,11 @@ export function createL2Wallet(opts: {
 	proverEnabled: boolean
 	sandboxKeysOnly?: boolean
 	hooks?: PxeHooks
+	/** A store the caller owns and removes, such as a stack's run directory; only for sandbox keys. */
+	dataDirectory?: string
 }): Promise<EmbeddedWallet> {
-	const dataDirectory = ownedWalletStore("wallet", { allowDisk: opts.sandboxKeysOnly ?? false })
+	if (opts.dataDirectory && !opts.sandboxKeysOnly) throw new Error("a caller-owned wallet store may hold sandbox keys only")
+	const dataDirectory = opts.dataDirectory ?? ownedWalletStore("wallet", { allowDisk: opts.sandboxKeysOnly ?? false })
 	return EmbeddedWallet.create(opts.nodeUrl, { pxe: { proverEnabled: opts.proverEnabled, dataDirectory, hooks: opts.hooks } })
 }
 

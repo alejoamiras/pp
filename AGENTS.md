@@ -64,15 +64,17 @@ with warm package and toolchain caches.
 | Hub network suite | `bun run --cwd packages/bridge-core test:hub` | 1.5 min |
 | Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | 7.5 min |
 | Labelled token, two devices | `bun run --cwd packages/labelled-token test:net` | 3 min |
-| Local stack | `bun run demo` (`--keep` holds it up) | 44 s (ready in 40 s) |
-| Local stack integration | `bun run --cwd packages/local-stack test:integration` | — |
+| Local stack prerequisites | `bun run demo:prepare` (once per clone: pp-env's fetch, forge install and build) | 33 s with the pool fetched |
+| Local stack | `bun run demo` (`--keep` holds it up) | 1 min 45 s (ready in 97 s) |
+| Local stack integration | `bun run --cwd packages/local-stack test:integration` | imports 4 s · bridge 1.5 min · teardown 5 min · shared-anvil 6 min · heartbeat 7 min |
+| Bridge stack suite | `bun run --cwd packages/bridge-core test:integration:stack -- deploy` (boots its own stack unless `PP_STACK_MANIFEST` is set) | 2.5 min |
 | E2E kit build | `bun run --cwd packages/e2e-kit build:test-wallet` (see its README for inputs) | 15 s |
 | Pool client, unit | `bun run --cwd packages/pool-client test` and `test:node` | 10 s |
 | Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |
 
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row
 the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml`,
-`pool-client.yml` and `actionlint.yml`.
+`pool-client.yml`, `local-stack.yml` and `actionlint.yml`.
 
 ## Working in this repo
 

@@ -50,12 +50,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           # Positive-only. The stack boots bridge-core's harness and pp-env's pool, so both packages
-          # move it whole. Pinned by scripts/ci-cd/behavior-gating.test.ts.
+          # move it whole; its bridge step deploys the contracts and imports bridge-core's libraries.
+          # Pinned by scripts/ci-cd/behavior-gating.test.ts.
           filters: |
             stack:
               - 'packages/local-stack/**'
               - 'packages/bridge-core/**'
               - 'packages/pp-env/**'
+              - 'contracts/bridge/**'
+              - 'packages/bridge-spec/src/**'
+              - 'packages/bridge-spec/package.json'
+              - 'packages/pool-client/src/**'
+              - 'packages/pool-client/package.json'
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'
@@ -65,6 +71,7 @@ jobs:
               - '.github/actions/setup-aztec/**'
               - '.github/actions/setup-bun/**'
               - '.github/actions/ppv2-fetch/**'
+              - '.github/actions/bridge-evm-build/**'
       - name: Override for manual dispatch
         if: github.event_name == 'workflow_dispatch'
         id: override
@@ -95,6 +102,8 @@ jobs:
 
       - uses: ./.github/actions/ppv2-fetch
 
+      - uses: ./.github/actions/bridge-evm-build
+
       - name: Unit tests
         run: bun run --cwd packages/local-stack test
 
@@ -103,7 +112,7 @@ jobs:
         # runner stays green and a hang fails well inside the job's ceiling. Setup and the pool fetch,
         # cold on every run of a pull request that changes its pin, fall outside it.
         # behavior-gating.test.ts requires an entry per suite file.
-        timeout-minutes: ${{ fromJSON('{"heartbeat":11,"imports":2,"shared-anvil":11,"teardown":6}')[matrix.suite] || 20 }}
+        timeout-minutes: ${{ fromJSON('{"bridge":3,"heartbeat":14,"imports":2,"shared-anvil":12,"teardown":11}')[matrix.suite] || 20 }}
         # A skipped or todo case is a gate that never ran, and the heartbeat's liveness case must pass by name.
         run: |
           start=$(date +%s)
@@ -132,10 +141,58 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  bridge-stack:
+    # bridge-core's stack suite against one stack this job boots and stops (scripts/with-stack.ts).
+    name: bridge stack suite
+    needs: changes
+    if: needs.changes.outputs.stack == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: ./.github/actions/setup-aztec
+
+      - uses: ./.github/actions/ppv2-fetch
+
+      - uses: ./.github/actions/bridge-evm-build
+
+      - name: Stack suite
+        # Twice the measured step time (boot, cases, teardown), rounded up to whole minutes.
+        timeout-minutes: 6
+        working-directory: packages/bridge-core
+        # A required case that was skipped, filtered or renamed fails check-cases.
+        run: |
+          start=$(date +%s)
+          set +e
+          bun run test:integration:stack -- deploy \
+            --reporter=verbose --reporter=json --outputFile.json="$GITHUB_WORKSPACE/stack.json" 2>&1 | tee "$GITHUB_WORKSPACE/stack.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "bridge stack wall-clock: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$status" -eq 0 ] || exit "$status"
+          bun scripts/check-cases.ts deploy "$GITHUB_WORKSPACE/stack.json"
+
+      - name: Upload stack logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bridge-stack-logs
+          path: |
+            stack.log
+            stack.json
+            ~/.cache/pp/bridge-sandbox/logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   status:
     name: local-stack-status
     if: always()
-    needs: [changes, stack]
+    needs: [changes, stack, bridge-stack]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -145,4 +202,6 @@ jobs:
           sparse-checkout: scripts/ci-cd/aggregate-status.sh
           sparse-checkout-cone-mode: false
       - name: Aggregate results
-        run: bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.stack.result }}"
+        run: |
+          bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.stack.result }}"
+          bash scripts/ci-cd/aggregate-status.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.stack }}" "${{ needs.bridge-stack.result }}"

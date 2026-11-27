@@ -27,6 +27,7 @@ import { PORTAL_FACTORY_ABI } from "../src/factory-abi"
 import { type Registration, readRegistration } from "../src/factory-registry"
 import type { L1Ctx } from "../src/flows"
 import { assertGenerationBindings, type ExpectedBindings, rollupEndpointsOf } from "../src/generation-bindings"
+import { sendGasLimit } from "../src/l1-gas"
 import { hubTokenFor } from "../src/hub-l2"
 import { deriveHubTokenInstance } from "../src/hub-token"
 import { l1ToL2MessageReadiness } from "../src/l1-to-l2-readiness"
@@ -426,14 +427,7 @@ export interface PreCreateTokenOptions {
 	maxWholePerTx?: number
 }
 
-/** An Inbox message's gas depends on the bucket state it lands in (the first message of an L1 block
- *  opens a new bucket), which an earlier estimate cannot see; bare estimates have run out of gas. */
-const L1_GAS_HEADROOM_PERCENT = 125n
-
-/** An L1 gas limit for a transaction that sends an Inbox message. */
-export function sendGasLimit(estimate: bigint): bigint {
-	return (estimate * L1_GAS_HEADROOM_PERCENT + 99n) / 100n
-}
+export { sendGasLimit }
 
 /** The token's frozen registration, creating its portal first when the factory has none. A portal
  *  another account created reads back the same registration, so no event of this run is trusted. */

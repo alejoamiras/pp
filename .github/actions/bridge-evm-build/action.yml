@@ -1,0 +1,29 @@
+name: Build the bridge's EVM contracts
+description: >
+  Foundry 1.7.1, the pinned forge libraries and `forge build` of contracts/bridge/evm without its
+  tests and scripts: the artifacts a local stack's bridge step deploys from. Needs setup-bun first
+  (gen-remappings is a Bun script). The pins match the bridge-contracts integration job and
+  `bun run demo:prepare`.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+      with:
+        version: "1.7.1"
+
+    - name: Install forge libraries
+      shell: bash
+      working-directory: contracts/bridge/evm
+      run: |
+        forge install \
+          foundry-rs/forge-std@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b \
+          OpenZeppelin/openzeppelin-contracts@cab19933c33c2ad1d4c7a84864a3601dddfd16f3
+
+    # Skipping tests and scripts leaves the deployed bytecode unchanged and builds about 3x faster.
+    - name: Generate remappings + forge build
+      shell: bash
+      run: |
+        bun packages/bridge-core/scripts/gen-remappings.ts
+        forge build --root contracts/bridge/evm --skip test script

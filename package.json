@@ -15,6 +15,7 @@
 		"test:all": "bun run --filter '@pp/*' --if-present test",
 		"test:ci-gating": "bun test scripts/ci-cd/",
 		"demo": "bun packages/local-stack/src/cli.ts demo",
+		"demo:prepare": "bun packages/local-stack/src/prepare.ts",
 		"baseline:complexity": "bun scripts/complexity-baseline/generate.ts",
 		"baseline:rescore": "bun scripts/complexity-baseline/rescore.ts",
 		"check:imports": "biome check packages/",

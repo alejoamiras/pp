@@ -3,16 +3,27 @@
 One command brings up everything the bridge and the pool need on one machine:
 
 ```bash
-bun run demo          # boot, print how to reach it, tear down
+bun run demo:prepare  # once per clone (networked): the pool's checkout and the bridge contracts
+bun run demo          # boot (about 97 s), print how to reach it, tear down
 bun run demo --keep   # boot and hold until SIGINT, SIGTERM or SIGHUP
 ```
 
 It starts one anvil (chain 31337) and the Aztec 6.0.0 local network on it through bridge-core's
 sandbox harness. Then pp-env deploys the pool on that same anvil: the Poseidon libraries, the pool
-contracts, a 6-decimal test token and the mock ASP.
+contracts, a 6-decimal test token and the mock ASP. The `bridge` step deploys one bridge generation
+for that token with entries paused (bridge-core's `@pp/bridge-core/deploy`), reads every binding
+back, checks that the hub is the v1 class and only then opens entries. The `seed` step registers
+the demo's pool user and gives it two approved notes of 100.
 
-Besides the toolchain (Bun, Foundry 1.7.1, Aztec 6.0.0), a fresh clone needs the pool's checkout
-once: `bun run --cwd packages/pp-env fetch` (about 1.5 min on a CI runner). Every boot after that is offline.
+Besides the toolchain (Bun, Foundry 1.7.1, Aztec 6.0.0), a fresh clone needs one networked step:
+`bun run demo:prepare`. It fetches the pool's checkout (about 1.5 min on a CI runner) and installs
+and builds the bridge contracts the `bridge` step deploys. Every boot after that is offline, and a
+boot that finds either missing fails in under a second naming that command. Set `FORGE` to point
+it at CI's Foundry 1.7.1 when the one on your `PATH` is newer.
+
+A boot takes about 97 s on a 192-core host: network 37 s, pool 5 s, bridge 40 s, seed 12 s, then
+the manifest and the first beat. Every local-stack CI job installs Foundry and builds the bridge
+contracts (`.github/actions/bridge-evm-build`) before its suite.
 
 ## Output and exit codes
 
@@ -21,9 +32,12 @@ once: `bun run --cwd packages/pp-env fetch` (about 1.5 min on a CI runner). Ever
 [stack] network up in … s
 [stack] pool starting on http://127.0.0.1:…
 [stack] pool up in … s
+[stack] bridge up in … s
+[stack] seed up in … s
 [stack] manifest up in … s
 [stack] heartbeat up in … s
 [stack] ready in … s — PP_STACK_MANIFEST=~/.cache/pp/runs/<runId>/manifest.json
+[stack] pool user 0x… (two approved notes of 100); bridge sender 0x…
 SANDBOX_L1_RPC=http://127.0.0.1:… SANDBOX_NODE_URL=http://127.0.0.1:…
 ```
 
@@ -50,8 +64,8 @@ marks a crashed stack, a live one may be recycled.
 
 ## Teardown
 
-Teardown is exact and ordered: heartbeat, manifest, pool, network, run directory. Every step is
-attempted, and failures are reported together. Only the process groups, ports (from the shared
+Teardown is exact and ordered: heartbeat, manifest, the bridge deployer's PXE, pool, network, run
+directory. Every step is attempted, and failures are reported together. Only the process groups, ports (from the shared
 registry) and directories this run created are touched. A process that exits without teardown
 (an uncaught error) still runs the network harness's exit hook, which kills the network's groups
 and removes its directories; SIGKILL skips it, and those groups outlive the process.
@@ -111,7 +125,9 @@ depends on being re-posted.
 ## Accounts
 
 Anvil account 0 is the node's publisher; bridge actors start at 1; pp-env uses 13 (user) and 14
-(deployer); bridge-core's harness uses 15. The probe suite also uses 10 to 12.
+(deployer); bridge-core's harness uses 15, which owns the stack's bridge. The demo's pool user is
+13 (registered, two approved notes of 100) and its separate Ethereum sender is 12: a bridge sent
+from the note owner's own address is refused. The probe suite also uses 10 to 12.
 
 ## Tests
 
