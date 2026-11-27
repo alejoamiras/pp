@@ -1,9 +1,9 @@
 /**
  * A recording reverse proxy in front of the stack's Aztec node, given to the wallet as its network
- * URL. It forwards every request unchanged and records each JSON-RPC call (batches unwrapped): the
- * method, small params, whether a nullifier witness came back, and the hash of each `sendTx`, parsed
- * with stdlib's own `Tx` schema. Responses are relayed byte for byte. Calls are matched by `name`, the
- * method without its namespace (Aztec 6.0.0's node serves `aztec_*`).
+ * URL. It forwards every request unchanged, to the node only, and records each JSON-RPC call
+ * (batches unwrapped): the method, small params, whether a nullifier witness came back, and the hash
+ * of each `sendTx`, parsed with stdlib's own `Tx` schema. Responses are relayed byte for byte.
+ * Calls are matched by `name`, the method without its namespace (Aztec 6.0.0's node serves `aztec_*`).
  */
 import { createServer, type IncomingMessage, request } from "node:http"
 import type { Socket } from "node:net"
@@ -15,7 +15,7 @@ export interface NodeCall {
 	name: string
 	/** Kept when it serializes to at most 4 KiB. */
 	params?: unknown
-	/** `getNullifierMembershipWitness` only: whether the node returned a witness. */
+	/** `getNullifierMembershipWitness` only: whether the node returned a witness; unset without a result. */
 	found?: boolean
 	/** `sendTx` only. */
 	txHash?: string
@@ -27,7 +27,7 @@ export interface NodeRecorder {
 	port: number
 	calls(): NodeCall[]
 	sentTxHashes(): string[]
-	nullifierQueries(): { value: string; found: boolean; seq: number }[]
+	nullifierQueries(): { value: string; found: boolean | undefined; seq: number }[]
 	close(): Promise<void>
 }
 
@@ -91,19 +91,28 @@ interface RpcMsg {
 	error?: unknown
 }
 
-async function record(calls: NodeCall[], reqJson: unknown, resJson: unknown, txHashOf: TxHashOf): Promise<void> {
+/** Records each call before it is forwarded, so a send the node took is counted even if its answer is lost. */
+async function recordRequests(calls: NodeCall[], reqJson: unknown, txHashOf: TxHashOf): Promise<{ id: unknown; call: NodeCall }[]> {
 	const reqs = (Array.isArray(reqJson) ? reqJson : [reqJson]) as RpcMsg[]
-	const ress = (Array.isArray(resJson) ? resJson : [resJson]) as RpcMsg[]
+	const out: { id: unknown; call: NodeCall }[] = []
 	for (const r of reqs) {
 		if (typeof r?.method !== "string") continue
-		const res = ress.find((x) => x?.id === r.id)
 		const call: NodeCall = { seq: calls.length, method: r.method, name: r.method.slice(r.method.indexOf("_") + 1) }
 		calls.push(call)
 		const params = Array.isArray(r.params) ? r.params : []
 		if (JSON.stringify(params).length <= SMALL_PARAMS) call.params = params
-		if (res?.error !== undefined) call.error = JSON.stringify(res.error).slice(0, 500)
-		if (call.name === "getNullifierMembershipWitness") call.found = res?.result != null
 		if (call.name === "sendTx") call.txHash = await txHashOf(params[0]).catch((e: Error) => `unparsed: ${e.message.slice(0, 200)}`)
+		out.push({ id: r.id, call })
+	}
+	return out
+}
+
+function recordResponses(pending: { id: unknown; call: NodeCall }[], resJson: unknown): void {
+	const ress = (Array.isArray(resJson) ? resJson : [resJson]) as RpcMsg[]
+	for (const { id, call } of pending) {
+		const res = ress.find((x) => x?.id === id)
+		if (res?.error !== undefined) call.error = JSON.stringify(res.error).slice(0, 500)
+		else if (call.name === "getNullifierMembershipWitness" && res && "result" in res) call.found = res.result !== null
 	}
 }
 
@@ -114,9 +123,16 @@ export async function startNodeRecorder(target: string, txHashOf: TxHashOf = std
 	const sockets = new Set<Socket>()
 	const server = createServer((req, res) => {
 		void (async () => {
+			// Only an origin-form path, appended to the fixed upstream: an absolute or `//host` target would
+			// otherwise send this process, which the browser's fence does not cover, to any host.
+			const path = req.url ?? "/"
+			if (!path.startsWith("/")) throw new Error(`node recorder: refused request target ${path.slice(0, 100)}`)
+			const target = new URL(upstream.origin + path)
+			if (target.host !== upstream.host) throw new Error(`node recorder: refused request target ${path.slice(0, 100)}`)
 			const body = await readCapped(req)
-			const up = await forward(new URL(req.url ?? "/", upstream), req, body)
-			await record(calls, parse(body), parse(up.body), txHashOf)
+			const pending = await recordRequests(calls, parse(body), txHashOf)
+			const up = await forward(target, req, body)
+			recordResponses(pending, parse(up.body))
 			res.writeHead(up.status, { ...up.headers, "content-length": String(up.body.length) })
 			res.end(up.body)
 		})().catch((e: Error) => {
@@ -143,7 +159,7 @@ export async function startNodeRecorder(target: string, txHashOf: TxHashOf = std
 		nullifierQueries: () =>
 			calls
 				.filter((c) => c.name === "getNullifierMembershipWitness" && Array.isArray(c.params))
-				.map((c) => ({ value: String((c.params as unknown[])[1]), found: c.found === true, seq: c.seq })),
+				.map((c) => ({ value: String((c.params as unknown[])[1]), found: c.found, seq: c.seq })),
 		close: () =>
 			new Promise((resolve) => {
 				for (const s of sockets) s.destroy()

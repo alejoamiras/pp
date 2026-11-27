@@ -81,7 +81,7 @@ test("claims", async ({ realWallet: rw, run }, testInfo) => {
 	rw.log(`before the send: ${JSON.stringify({ methods, queried })}`)
 	expect(sent, "the wallet sent exactly one transaction").toHaveLength(1)
 	const tx = await rw.chain.sentTx(sent[0] ?? "")
-	const absent = new Set(queried.filter((q) => !q.found).map((q) => BigInt(q.value)))
+	const absent = new Set(queried.filter((q) => q.found === false).map((q) => BigInt(q.value)))
 	const initialized = tx.nullifiers.filter((n) => absent.has(BigInt(n)))
 	const sponsorship = await rw.chain.sponsorship(tx)
 	rw.log(`claim: ${JSON.stringify({ tx, initialized, sponsorship }, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`)

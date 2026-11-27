@@ -86,4 +86,48 @@ describe("node recorder", () => {
 		])
 		expect(rec.sentTxHashes()).toEqual(['hash-of-{"data":"x"}'])
 	})
+
+	async function serve(handler: Parameters<typeof createServer>[1]): Promise<number> {
+		const server = createServer(handler)
+		await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
+		const addr = server.address()
+		if (!addr || typeof addr === "string") throw new Error("no address")
+		open.push({ port: addr.port, close: () => new Promise((r) => server.close(() => r())) })
+		return addr.port
+	}
+
+	it("forwards only to its upstream, whatever the request target names", async () => {
+		let strangerHits = 0
+		const stranger = await serve((_req, res) => {
+			strangerHits++
+			res.end()
+		})
+		const upstream = await serve((_req, res) => res.end("{}"))
+		const rec = await startNodeRecorder(`http://127.0.0.1:${upstream}`)
+		open.push(rec)
+		for (const target of [`//127.0.0.1:${stranger}/x`, `http://127.0.0.1:${stranger}/x`])
+			await rawRequest(rec.port, `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`)
+		expect(strangerHits).toBe(0)
+	})
+
+	it("records a send the upstream took without answering, and no witness answer as unknown", async () => {
+		const upstream = await serve((req, res) => {
+			let body = ""
+			req.on("data", (d) => {
+				body += d
+			})
+			req.on("end", () => {
+				const msg = JSON.parse(body)
+				if (msg.method === "aztec_sendTx") return req.socket.destroy()
+				res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "busy" } }))
+			})
+		})
+		const rec = await startNodeRecorder(`http://127.0.0.1:${upstream}`, async () => "0xabc")
+		open.push(rec)
+		const post = (body: unknown) => fetch(rec.url, { method: "POST", body: JSON.stringify(body) }).then((r) => r.status)
+		expect(await post({ jsonrpc: "2.0", id: 1, method: "aztec_sendTx", params: [{}] })).toBe(502)
+		await post({ jsonrpc: "2.0", id: 2, method: "aztec_getNullifierMembershipWitness", params: ["latest", "0x02"] })
+		expect(rec.sentTxHashes()).toEqual(["0xabc"])
+		expect(rec.nullifierQueries()).toEqual([{ value: "0x02", found: undefined, seq: 2 }])
+	})
 })
