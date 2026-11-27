@@ -24,7 +24,11 @@ export class SnapshotBook {
 	 */
 	setCurrent(r: Pick<RootRecord, "sequence" | "poolRoot" | "birthRoot">): void {
 		const h = this.held.get(r.sequence)
-		this.current = h && h.poolRoot === r.poolRoot && h.birthRoot === r.birthRoot ? r.sequence : null
+		const same = h !== undefined && h.poolRoot === r.poolRoot && h.birthRoot === r.birthRoot
+		// A post under this sequence with other roots means the held body is a send that lost; a zero
+		// pool root is `set_poster`'s clear, after which the held body still serves older anchors.
+		if (h && !same && r.poolRoot !== 0n) this.held.delete(r.sequence)
+		this.current = same ? r.sequence : null
 	}
 
 	body(sequence: bigint | "latest"): string | undefined {

@@ -51,8 +51,12 @@ describe.skipIf(!RUN)("asp-bot births against the local stack", () => {
 	let bob: Holder
 	let born: bigint
 
-	const snapshot = async (at: "latest" | bigint): Promise<AspSnapshot> =>
-		parseAspSnapshot(await (await fetch(`${(bot as BotHandle).url}/v1/snapshots/${at}`)).json())
+	const snapshot = async (at: "latest" | bigint): Promise<AspSnapshot> => {
+		const res = await fetch(`${(bot as BotHandle).url}/v1/snapshots/${at}`)
+		// Bun decodes an empty 404 body as `null`, which the parser reports as Malformed.
+		if (!res.ok) throw new Error(`snapshot ${at}: HTTP ${res.status}`)
+		return parseAspSnapshot(await res.json())
+	}
 	const record = (at?: number): Promise<RootRecord> =>
 		readRootRecord({ aztecNode: manifest.aztecNode, registry, ...(at === undefined ? {} : { at }) })
 	const timeAt = async (n: number) => (await base.node.getBlockData(n as never))?.header.globalVariables.timestamp ?? 0n

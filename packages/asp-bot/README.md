@@ -55,6 +55,10 @@ because a sequence the bot no longer holds must never be served from a cache. An
 gets 405. `@pp/label-paths` recomputes both roots on parse, so the server cannot forge a path. It can
 still leave a label out (see that package's README).
 
+A post's sequence is served from the moment the bot sends it, because the record names it as soon as
+the post is in a proposed block. `/latest` moves at the checkpoint. A 404 means this process does not
+hold that sequence.
+
 ## Running it
 
 `startBot(config)` starts the bot in its own process group and resolves once `/latest` serves. The

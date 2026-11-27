@@ -83,8 +83,9 @@ export class Poster {
 			if (d.reason !== "unchanged") p.log(d.reason, { sequence: record.sequence, l1Block: e.number })
 			return d
 		}
-		const { inclusionTime } = await p.post(d.args)
+		// Held first: the record names the sequence once the post is proposed, before `post` resolves at the checkpoint.
 		this.book.hold({ sequence: d.args.sequence, poolRoot: root, birthRoot, poolLeaves: pool.leaves, birthLeaves })
+		const { inclusionTime } = await p.post(d.args)
 		this.book.setCurrent(d.args)
 		this.lastReadTime = tip.time
 		p.log("posted", { ...d.args, readTime: tip.time, inclusionTime, age: inclusionTime - d.args.rootTime })

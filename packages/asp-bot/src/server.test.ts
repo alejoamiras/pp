@@ -38,6 +38,7 @@ describe("snapshot routes", () => {
 		// After `set_poster`: the same sequence with cleared roots, which this process does not hold.
 		book.setCurrent({ sequence: 4n, poolRoot: 0n, birthRoot: 0n })
 		expect(respond("GET", "/v1/snapshots/latest", book).status).toBe(404)
+		expect(respond("GET", "/v1/snapshots/4", book).status).toBe(200)
 
 		const live = await serve(book)
 		try {
@@ -47,6 +48,9 @@ describe("snapshot routes", () => {
 		} finally {
 			await live.close()
 		}
+		// Another post landed under 3 with other roots: the held body lost its race.
+		book.setCurrent({ sequence: 3n, poolRoot: 7n, birthRoot: 0n })
+		expect(respond("GET", "/v1/snapshots/3", book).status).toBe(404)
 	})
 })
 
