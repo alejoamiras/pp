@@ -58,6 +58,12 @@ jobs:
           persist-credentials: false
           ref: ${{ steps.ref.outputs.ref }}
 
+      # GitHub lists the run under the workflow's own branch and commit, not the one it tested.
+      - name: Name the tested commit
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        run: echo "Tested \`$REF\` at \`$(git rev-parse HEAD)\`, with the workflow from \`$GITHUB_SHA\`." >> "$GITHUB_STEP_SUMMARY"
+
       # After the tested checkout, which would clean anything already in the workspace.
       - name: Check out this workflow's toolchain actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

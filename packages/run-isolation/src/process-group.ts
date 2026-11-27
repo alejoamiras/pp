@@ -121,10 +121,14 @@ export function groupAlive(pgid: number, proc: ProcFs = HOST): boolean {
 	return signalable(pgid) && (!PROC || hasRunningMember(pgid, proc))
 }
 
-const signalGroup = (pgid: number, s: NodeJS.Signals) => {
+/** Sends `s` to every member of `pgid`; false when the kernel refused it (no such group, or not ours to signal). */
+export function signalGroup(pgid: number, s: NodeJS.Signals): boolean {
 	try {
 		process.kill(-pgid, s)
-	} catch {}
+		return true
+	} catch {
+		return false
+	}
 }
 
 /** Resolves once no member of `pgid` is running, or after `ms`; whether the group is gone. */

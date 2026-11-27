@@ -24,11 +24,11 @@
 	},
 	"scripts": {
 		"fetch": "bun scripts/fetch.ts",
-		"typecheck": "tsc -p tsconfig.public.json && bun scripts/typecheck-consumer.ts",
+		"typecheck": "tsc -p tsconfig.public.json && bun scripts/typecheck-consumer.ts && bun scripts/check-exports.ts",
 		"typecheck:full": "tsc --noEmit",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
-		"test": "bun test src scripts test/types",
+		"test": "bun test src scripts",
 		"check": "bun run typecheck && bun run typecheck:full && bun run lint && bun run test",
 		"forge:fixtures": "bun scripts/forge-fixtures.ts",
 		"test:contracts": "bun scripts/forge-fixtures.ts test",
@@ -39,6 +39,7 @@
 	},
 	"dependencies": {
 		"@pp/pool-client": "workspace:*",
+		"@pp/run-isolation": "workspace:*",
 		"viem": "2.45.3"
 	},
 	"devDependencies": {

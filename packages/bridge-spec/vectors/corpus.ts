@@ -27,9 +27,13 @@ export const addr = (v: bigint): Hex => `0x${v.toString(16).padStart(40, "0")}`
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const PREFIX = utf8("pp.bridge.vectors.v1")
 
-/** Case `i` of `section`: `seed = sha256("pp.bridge.vectors.v1" ‖ section ‖ be32(i))`, then `sha256(seed ‖ be32(j))` per draw. */
-export function seeded(section: string, i: number) {
-	const seed = sha256(concat([PREFIX, utf8(section), word(BigInt(i))]))
+/**
+ * Case `i` of `section`: `seed = sha256("pp.bridge.vectors.v1" ‖ fresh ‖ section ‖ be32(i))`, then
+ * `sha256(seed ‖ be32(j))` per draw. `fresh` is empty for the committed corpus, else a decimal seed,
+ * which cannot run into a section name because those start with a letter.
+ */
+export function seeded(section: string, i: number, fresh = "") {
+	const seed = sha256(concat([PREFIX, utf8(fresh), utf8(section), word(BigInt(i))]))
 	let j = 0
 	const bytes = () => sha256(concat([seed, word(BigInt(j++))]))
 	const next = () => bytesToBigInt(bytes())
@@ -50,13 +54,13 @@ function tags() {
 	return (Object.keys(TAGS) as (keyof typeof TAGS)[]).map((name) => ({ name, ascii: TAG_STRINGS[name], value: TAGS[name] }))
 }
 
-function data() {
-	const inputs = [1n, P - 1n, ...range(SEEDED).map((i) => seeded("data", i).nonZeroField())]
+function data(fresh: string) {
+	const inputs = [1n, P - 1n, ...range(SEEDED).map((i) => seeded("data", i, fresh).nonZeroField())]
 	return inputs.map((s) => ({ secretHash: h32(s), data: bridgeDataV1(h32(s)) }))
 }
 
-function bridgeIn() {
-	const b = seeded("in.base", 0)
+function bridgeIn(fresh: string) {
+	const b = seeded("in.base", 0, fresh)
 	const base = { nullifier: b.field(), changeCommitment: b.field(), amount: b.amount() }
 	const edges = [
 		...[1n, 1n << 64n, U128_MAX].map((amount) => ({ ...base, amount })),
@@ -66,7 +70,7 @@ function bridgeIn() {
 	const cases = [
 		...edges,
 		...range(SEEDED).map((i) => {
-			const s = seeded("in", i)
+			const s = seeded("in", i, fresh)
 			return { nullifier: s.field(), changeCommitment: s.field(), amount: s.amount() }
 		}),
 	]
@@ -77,8 +81,8 @@ function bridgeIn() {
 	})
 }
 
-function exitCases(section: "out" | "ragequit") {
-	const b = seeded(`${section}.base`, 0)
+function exitCases(section: "out" | "ragequit", fresh: string) {
+	const b = seeded(`${section}.base`, 0, fresh)
 	const base = { payee: b.payee(), amount: b.amount(), label: b.nonZeroField() }
 	const edges = [
 		...[1n, 1n << 64n, U128_MAX].map((amount) => ({ ...base, amount })),
@@ -86,31 +90,31 @@ function exitCases(section: "out" | "ragequit") {
 		...(section === "ragequit" ? [1n, P - 1n].map((label) => ({ ...base, label })) : []),
 	]
 	const seededCases = range(SEEDED).map((i) => {
-		const s = seeded(section, i)
+		const s = seeded(section, i, fresh)
 		return { payee: s.payee(), amount: s.amount(), label: s.nonZeroField() }
 	})
 	return [...edges, ...seededCases]
 }
 
-function out() {
-	return exitCases("out").map(({ payee, amount }) => {
+function out(fresh: string) {
+	return exitCases("out", fresh).map(({ payee, amount }) => {
 		const preimage = exitContentPreimageV1({ payee: addr(payee), amount })
 		return { payee: addr(payee), amount: h32(amount), preimage: toHex(preimage), content: h32(sha256ToField(preimage)) }
 	})
 }
 
-function ragequit() {
-	return exitCases("ragequit").map(({ payee, amount, label }) => {
+function ragequit(fresh: string) {
+	return exitCases("ragequit", fresh).map(({ payee, amount, label }) => {
 		const preimage = ragequitContentPreimageV1({ payee: addr(payee), amount, label })
 		const fields = { payee: addr(payee), amount: h32(amount), label: h32(label) }
 		return { ...fields, preimage: toHex(preimage), content: h32(sha256ToField(preimage)) }
 	})
 }
 
-function poseidon() {
+function poseidon(fresh: string) {
 	const draws = (section: string, n: number) =>
 		range(16).map((i) => {
-			const s = seeded(section, i)
+			const s = seeded(section, i, fresh)
 			return range(n).map(() => s.field())
 		})
 	const hash1 = [...SPIKE.hash1.map((e) => [BigInt(e.x)]), ...draws("hash1", 1)].map(([x]) => ({
@@ -137,8 +141,8 @@ function poseidon() {
 
 type PathCase = { name: string; label: Hex; leaf: Hex; root: Hex; index: number; depth: number; siblings: Hex[] }
 
-function treeCases(size: number, leafIndices: readonly number[]): PathCase[] {
-	const labels = range(size).map((i) => seeded(`leanImt.${size}`, i).nonZeroField())
+function treeCases(size: number, leafIndices: readonly number[], fresh: string): PathCase[] {
+	const labels = range(size).map((i) => seeded(`leanImt.${size}`, i, fresh).nonZeroField())
 	const tree = buildLeanImt(labels.map(aspLeaf))
 	return leafIndices.map((i) => {
 		const path = tree.path(i)
@@ -148,20 +152,20 @@ function treeCases(size: number, leafIndices: readonly number[]): PathCase[] {
 	})
 }
 
-function leanImt(): PathCase[] {
+function leanImt(fresh: string): PathCase[] {
 	const spike = SPIKE.memberships.map((m) => {
 		const siblings = [...m.siblings.map((s) => BigInt(s)), ...Array<bigint>(MAX_DEPTH - m.siblings.length).fill(0n)]
 		const label = BigInt(m.label)
 		const fields = { label: h32(label), leaf: h32(aspLeaf(label)), root: h32(BigInt(m.root)) }
 		return { name: `spike_${m.name}`, ...fields, index: m.index, depth: m.depth, siblings: siblings.map(h32) }
 	})
-	const full = [1, 2, 3, 4, 5, 7].flatMap((size) => treeCases(size, range(size)))
-	return [...full, ...treeCases(11, [3, 10]), ...spike]
+	const full = [1, 2, 3, 4, 5, 7].flatMap((size) => treeCases(size, range(size), fresh))
+	return [...full, ...treeCases(11, [3, 10], fresh), ...spike]
 }
 
-async function claimKey() {
+async function claimKey(fresh: string) {
 	const sign = async (section: string, i: number) => {
-		const s = seeded(section, i)
+		const s = seeded(section, i, fresh)
 		const account = privateKeyToAccount(s.privateKey())
 		return { account, signature: await account.signMessage({ message: { raw: s.bytes() } }) }
 	}
@@ -179,23 +183,23 @@ async function claimKey() {
 	}))
 }
 
-function claimSalt() {
+function claimSalt(fresh: string) {
 	const cases = range(8).map((i) => {
-		const s = seeded("claimSalt", i)
+		const s = seeded("claimSalt", i, fresh)
 		const spent = i === 0 ? 0n : i === 1 ? P - 1n : s.field()
 		return { key: s.bytes(), spent }
 	})
 	return cases.map(({ key, spent }) => ({ key: toHex(key), spentCommitment: h32(spent), salt: h32(deriveClaimSalt(key, spent)) }))
 }
 
-async function claimSecretHash() {
+async function claimSecretHash(fresh: string) {
 	const keystone: [bigint, bigint][] = [
 		[0n, 0n],
 		[1n, 2n],
 		[0x1234567890abcdefn, 0xdeadbeefn],
 	]
 	const more = range(5).map((i): [bigint, bigint] => {
-		const s = seeded("claimSecretHash", i)
+		const s = seeded("claimSecretHash", i, fresh)
 		return [s.field(), s.field()]
 	})
 	return Promise.all(
@@ -208,8 +212,8 @@ async function claimSecretHash() {
 	)
 }
 
-async function birth() {
-	const b = seeded("birth.base", 0)
+async function birth(fresh: string) {
+	const b = seeded("birth.base", 0, fresh)
 	const base = { token: b.field(), owner: b.field(), amount: b.amount(), birthSecret: b.nonZeroField() }
 	const edges = [
 		{ ...base, amount: 1n },
@@ -218,7 +222,7 @@ async function birth() {
 		{ ...base, birthSecret: P - 1n },
 	]
 	const more = range(8).map((i) => {
-		const s = seeded("birth", i)
+		const s = seeded("birth", i, fresh)
 		return { token: s.field(), owner: s.field(), amount: s.amount(), birthSecret: s.nonZeroField() }
 	})
 	return Promise.all(
@@ -237,25 +241,36 @@ async function birth() {
 
 export type Corpus = Awaited<ReturnType<typeof buildSections>> & { counts: Record<string, number>; noirTests: string[] }
 
-async function buildSections() {
+async function buildSections(fresh: string) {
 	return {
 		tags: tags(),
-		data: data(),
-		in: bridgeIn(),
-		out: out(),
-		ragequit: ragequit(),
+		data: data(fresh),
+		in: bridgeIn(fresh),
+		out: out(fresh),
+		ragequit: ragequit(fresh),
 		rejections: REJECTIONS as readonly Rejection[],
-		...poseidon(),
-		leanImt: leanImt(),
-		claimKey: await claimKey(),
-		claimSalt: claimSalt(),
-		claimSecretHash: await claimSecretHash(),
-		birth: await birth(),
+		...poseidon(fresh),
+		leanImt: leanImt(fresh),
+		claimKey: await claimKey(fresh),
+		claimSalt: claimSalt(fresh),
+		claimSecretHash: await claimSecretHash(fresh),
+		birth: await birth(fresh),
 	}
 }
 
-export async function buildCorpus(noirTests: (sections: Awaited<ReturnType<typeof buildSections>>) => string[]): Promise<Corpus> {
-	const sections = await buildSections()
+/**
+ * The corpus `gen.ts` commits when `seed` is omitted. A seed (a non-negative safe integer) draws every
+ * seeded case afresh and keeps every section's size, so the suites' hand-written counts still hold.
+ *
+ * @throws Error when `seed` is not a non-negative safe integer
+ */
+export async function buildCorpus(
+	noirTests: (sections: Awaited<ReturnType<typeof buildSections>>) => string[],
+	seed?: number,
+): Promise<Corpus> {
+	if (seed !== undefined && !(Number.isSafeInteger(seed) && seed >= 0))
+		throw new Error(`corpus seed must be a non-negative integer, got ${seed}`)
+	const sections = await buildSections(seed === undefined ? "" : String(seed))
 	const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]))
 	return { ...sections, counts, noirTests: noirTests(sections) }
 }

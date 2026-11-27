@@ -43,7 +43,7 @@ Everything after `fetch` runs offline. Each start re-verifies the fetched tree a
 
 - `src/env/fetch/`: the pinned fetch. It checks the tarball's sha256, verifies git-LFS objects against `CEREMONY.md`, runs a frozen pnpm install, and writes a manifest of every file a later step consumes.
 - `src/env/`: anvil (started or attached), the deploy, the mock ASP, and `startPoolEnv`.
-- `src/env/harness/`: process groups, the shared port registry, file locks.
+- `src/env/harness/`: anvil and the JSON-RPC readiness helpers. Ports, locks and process groups come from `@pp/run-isolation`.
 - `src/client/`: user-side helpers. `types/` holds the hand-written public types, which need no checkout.
 - `contracts/`: the `StubProcessor` and `TestToken` fixtures. Run forge on them through `bun run forge:fixtures <build|test> …`.
 
