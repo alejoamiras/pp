@@ -76,6 +76,15 @@ export function boundedSuite(s: {
 /** Reads `vectors/fresh.ts`'s closing line. */
 const freshPassed = (output: string): number => Number(/^fresh vectors: (\d+) tests passed/m.exec(output)?.[1] ?? 0)
 
+/** Reads the fork runner's closing line, printed only once each named Forge case has passed. */
+export const sepoliaForkPassed = (output: string): number => Number(/^sepolia-fork: (\d+) fork cases passed/m.exec(output)?.[1] ?? 0)
+
+/**
+ * A public Sepolia gateway that needs no key and serves state at every age. Committed on purpose: it is
+ * the one endpoint the fork suite gets, and `nightly.test.ts` holds it to a shape no keyed URL fits.
+ */
+export const SEPOLIA_FORK_ENDPOINT = "https://sepolia.gateway.tenderly.co/"
+
 export const SUITES: Suite[] = [
 	// contracts/bridge/evm owns the script and the Foundry `nightly` profile it runs; the libraries and
 	// remappings it assumes are prepared here, as the pull-request job prepares them.
@@ -152,6 +161,22 @@ export const SUITES: Suite[] = [
 		expected: 21,
 		env: { FC_RUNS_SCALE: "10" },
 	}),
+	// packages/sepolia-fork owns the cases: the bridge's L1 side against the live Sepolia pool and Aztec
+	// testnet Inbox, on an anvil fork of a pinned block. Not bounded here: the runner starts its own process
+	// group and enforces its own deadline with teardown. The workflow has fetched the pool already.
+	{
+		name: "sepolia-fork",
+		prepare: [
+			["bash", "contracts/bridge/evm/scripts/install-libs.sh"],
+			["bun", "packages/bridge-core/scripts/gen-remappings.ts"],
+			["forge", "build", "--root", "contracts/bridge/evm"],
+		],
+		cwd: "packages/sepolia-fork",
+		command: ["bun", "run", "run", "--require-rpc"],
+		env: { SEPOLIA_RPC_URL: SEPOLIA_FORK_ENDPOINT },
+		passed: sepoliaForkPassed,
+		expected: 4,
+	},
 ]
 
 /** Why a finished suite failed, or undefined when it passed. */
