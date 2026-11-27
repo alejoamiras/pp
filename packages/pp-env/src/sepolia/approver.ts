@@ -36,19 +36,23 @@ export type ApproverOptions = {
 	client: PublicClient
 	wallet: WalletClient<Transport, Chain, Account>
 	labels: Labels
-	owner: Address
+	/** The depositors whose deposits are approved; never empty, since an empty topic filter matches every depositor. */
+	owners: readonly [Address, ...Address[]]
 	deployment: { aspRegistry: Address; pool: Address; entrypoint: Address; deployBlock: bigint }
 	log: (line: string) => void
 }
 
 /**
- * The association set, a pure function of the chain: the labels of `owner`'s deposits, in deposit
+ * The association set, a pure function of the chain: the labels of the owners' deposits, in deposit
  * order. Each tick reads the deposits since the last one and, if any are new, posts the root over the
  * whole set; the set and root served change only once that post has a successful receipt, so the
  * leaves served always rebuild the registry's latest root.
+ * @throws Error when `owners` is empty
  */
 export function createApprover(o: ApproverOptions) {
-	const { client, wallet, labels, owner, log } = o
+	const { client, wallet, labels, log } = o
+	if (o.owners.length === 0) throw new Error("the mock ASP needs at least one owner")
+	const owners = [...o.owners]
 	const { aspRegistry, pool, entrypoint, deployBlock } = o.deployment
 	let next = deployBlock
 	let settled = deployBlock - 1n
@@ -85,7 +89,7 @@ export function createApprover(o: ApproverOptions) {
 			const logs = await client.getLogs({
 				address: entrypoint,
 				event: ENTRYPOINT_DEPOSITED,
-				args: { _depositor: owner },
+				args: { _depositor: owners },
 				fromBlock: next,
 				toBlock,
 			})
@@ -132,7 +136,7 @@ export function createApprover(o: ApproverOptions) {
 		/** The served leaves: Poseidon of each approved label, in the same order. */
 		leaves: () => leaves,
 		root: () => root,
-		/** Through this block every owner deposit is in the posted set, not merely read. */
+		/** Through this block every owner's deposit is in the posted set, not merely read. */
 		scanned: () => settled,
 	}
 }

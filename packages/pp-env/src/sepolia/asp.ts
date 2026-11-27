@@ -10,12 +10,12 @@ import type { MockAsp, StartMockAspOptions } from "./types.ts"
 const SLOT_MS = 12_000
 
 /**
- * Starts a mock ASP for a pool this run deployed on Sepolia: it approves the deposits of `owner` alone,
+ * Starts a mock ASP for a pool this run deployed on Sepolia: it approves the deposits of `owners` alone,
  * posts each grown set's root with `postmanKey`, and serves the set on `port` through read routes only.
  * It binds the port only after its first full scan and root post, so its first answer already matches
  * the registry.
- * @throws Error when either chain id is not 11155111, the postman key lacks the postman role, or the
- * first scan or post fails; nothing is left running
+ * @throws Error when either chain id is not 11155111, `owners` is empty, the postman key lacks the
+ * postman role, or the first scan or post fails; nothing is left running
  */
 export async function startMockAsp(o: StartMockAspOptions): Promise<MockAsp> {
 	const log = o.log ?? (() => {})
@@ -26,7 +26,7 @@ export async function startMockAsp(o: StartMockAspOptions): Promise<MockAsp> {
 		throw new Error(`${account.address} does not hold the postman role on ${o.deployment.accessRouter}`)
 	const wallet = createWalletClient({ account, chain: sepolia, transport: http(o.rpcUrl) })
 	const labels = await createLabels(o.postmanKey)
-	const approver = createApprover({ client, wallet, labels, owner: o.owner, deployment: o.deployment, log })
+	const approver = createApprover({ client, wallet, labels, owners: o.owners, deployment: o.deployment, log })
 	await approver.tick()
 	const snapshots = new EvmDeploymentSnapshotSource({ chainId: SEPOLIA, deploymentBlock: o.deployment.deployBlock })
 	const front = startFront({
@@ -40,7 +40,7 @@ export async function startMockAsp(o: StartMockAspOptions): Promise<MockAsp> {
 			snapshot: () => snapshots.getEventSnapshot(),
 		},
 	})
-	log(`mock ASP on ${front.url}, approving deposits from ${o.owner}`)
+	log(`mock ASP on ${front.url}, approving deposits from ${o.owners.join(", ")}`)
 
 	let stopping = false
 	let timer: ReturnType<typeof setTimeout> | undefined

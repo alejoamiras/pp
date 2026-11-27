@@ -41,9 +41,9 @@ export declare function sepoliaPoolUser(o: SepoliaUserOptions): Promise<SepoliaP
 export declare function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPool>
 
 /**
- * Starts a mock ASP that approves only `owner`'s deposits, posts roots with `postmanKey` and serves the
- * set through `GET` read routes alone on the claimed `port`. Refuses any other chain and a key without
- * the postman role.
+ * Starts a mock ASP that approves only the deposits of `owners`, posts roots with `postmanKey` and serves
+ * the set through `GET` read routes alone on the claimed `port`. Refuses any other chain, an empty
+ * `owners` and a key without the postman role.
  */
 export declare function startMockAsp(o: StartMockAspOptions): Promise<MockAsp>
 

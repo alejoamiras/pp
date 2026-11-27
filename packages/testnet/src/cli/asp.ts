@@ -42,7 +42,7 @@ await main(async () => {
 			postmanKey,
 			deployment: { accessRouter, aspRegistry, pool: poolVault, entrypoint, deployBlock },
 			port,
-			owner: getAddress(owner),
+			owners: [getAddress(owner)],
 			log: logLine,
 		})
 		report("asp-ready", { url: asp.url, owner, postman, approved: asp.approved().length })
