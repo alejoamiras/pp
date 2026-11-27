@@ -2,9 +2,10 @@ import { spawnSync } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { describe, expect, test } from "vitest"
 
-const AGENT = new URL("./agent.sh", import.meta.url).pathname
+const AGENT = fileURLToPath(new URL("./agent.sh", import.meta.url))
 
 /** Stands in for `bun`: records each call, and touches only the state dir the test owns. */
 const FAKE_BUN = `#!/bin/sh
