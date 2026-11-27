@@ -37,6 +37,7 @@ import { type AztecDeps, boundTo, grantedPayload, sendThroughWallet } from "./az
 import { PROVED_CIRCUIT } from "./circuit"
 import type { StackL1 } from "./l1"
 import { asPageError } from "./page-error"
+import { bridgeTiming } from "./timing"
 import { type DelegatingProver, delegatingProver } from "./prover"
 
 // The exits run over the same bridge-core, whose SponsoredFPC artifact the build lets only this chunk carry.
@@ -252,7 +253,7 @@ export function stackSessions(deps: SessionDeps): SessionPort {
 	const manifest = parseStackManifest(deps.manifest)
 	const bridge = manifest.bridge
 	if (!bridge) throw new BridgeFailure("DEPLOYMENT_MISMATCH")
-	const client = deps.client ?? createBridgeClient({ manifest, journal: journalStore(deps.storage) })
+	const client = deps.client ?? createBridgeClient({ manifest, journal: journalStore(deps.storage), timing: bridgeTiming(manifest) })
 	return {
 		async open({ owner, sign }) {
 			const signature = await sign(secretDerivationTypedData(owner))

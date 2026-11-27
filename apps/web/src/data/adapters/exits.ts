@@ -19,6 +19,7 @@ import type { ExitTicket } from "../stack-types"
 import { type AztecDeps, sendThroughWallet } from "./aztec"
 import type { StackL1 } from "./l1"
 import { asPageError } from "./page-error"
+import { bridgeTiming } from "./timing"
 
 export interface ExitDeps {
 	/** As the build inlined it; parsed again here with the schema the build parsed it with. */
@@ -47,8 +48,13 @@ function appTicket(t: CoreExitTicket): ExitTicket {
 	return { ...t, token }
 }
 
+function exitClient(json: StackManifestJson) {
+	const manifest = parseStackManifest(json)
+	return createBridgeClient({ manifest, journal: NO_JOURNAL, timing: bridgeTiming(manifest) })
+}
+
 export function stackExits(d: ExitDeps): Pick<AztecPort, "ragequit"> & ExitPort {
-	const client = d.client ?? createBridgeClient({ manifest: parseStackManifest(d.manifest), journal: NO_JOURNAL })
+	const client = d.client ?? exitClient(d.manifest)
 	return {
 		async ragequit(from, { payee, label, amount }, on) {
 			// The burn takes the label's largest notes until the amount, so only a descending prefix of the
