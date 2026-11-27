@@ -1,4 +1,4 @@
-import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib"
+import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync } from "node:zlib"
 import { BN254_P } from "@pp/bridge-spec"
 import { type Hex, MAX_LEAVES } from "@pp/label-paths"
 import pkg from "../package.json" with { type: "json" }
@@ -32,12 +32,27 @@ const tooLarge = (path: string) => new AspError(`${path}: the answer exceeds ${M
 
 type Inflate = (b: Buffer, o: { maxOutputLength: number }) => Buffer
 
+const TOO_LARGE = "ERR_BUFFER_TOO_LARGE"
+const codeOf = (e: unknown) => (e as { code?: unknown } | null)?.code
+
+/** `deflate` is zlib-wrapped by the standard, but servers also send it raw. */
+const inflateEither: Inflate = (b, o) => {
+	try {
+		return inflateSync(b, o)
+	} catch (e) {
+		if (codeOf(e) === TOO_LARGE) throw e
+		return inflateRawSync(b, o)
+	}
+}
+
 const INFLATE = new Map<string, Inflate>([
 	["gzip", gunzipSync],
 	["x-gzip", gunzipSync],
-	["deflate", inflateSync],
+	["deflate", inflateEither],
 	["br", brotliDecompressSync],
 ])
+
+const decode = (b: Uint8Array) => new TextDecoder().decode(b)
 
 async function readCapped(body: ReadableStream<Uint8Array>, path: string): Promise<Buffer> {
 	const chunks: Uint8Array[] = []
@@ -55,7 +70,6 @@ async function readCapped(body: ReadableStream<Uint8Array>, path: string): Promi
 	}
 }
 
-/** How to read the body of `res`, or why it is refused unread. */
 function reading(res: Response, path: string): { inflate: Inflate | null } | AspError {
 	if (!res.ok) return new AspError(`${path}: HTTP ${res.status}`)
 	const encoding = (res.headers.get("content-encoding") ?? "identity").trim().toLowerCase()
@@ -92,11 +106,11 @@ async function request(aspApiUrl: string, path: string, scope: AspScope | undefi
 		throw how
 	}
 	const raw = res.body ? await readCapped(res.body, path) : Buffer.alloc(0)
-	if (!how.inflate) return raw.toString("utf8")
+	if (!how.inflate) return decode(raw)
 	try {
-		return how.inflate(raw, { maxOutputLength: MAX_BODY_BYTES }).toString("utf8")
-	} catch {
-		throw tooLarge(path)
+		return decode(how.inflate(raw, { maxOutputLength: MAX_BODY_BYTES }))
+	} catch (e) {
+		throw codeOf(e) === TOO_LARGE ? tooLarge(path) : new AspError(`${path}: the answer could not be inflated`)
 	}
 }
 
@@ -114,7 +128,32 @@ async function getText(aspApiUrl: string, path: string, scope: AspScope | undefi
 	}
 }
 
+/** The index of the quote closing a JSON string whose body starts at `i`, or the end of `text`. */
+function stringEnd(text: string, i: number): number {
+	for (; i < text.length; i++) {
+		const c = text.charCodeAt(i)
+		if (c === 92) i++
+		else if (c === 34) return i
+	}
+	return i
+}
+
+/** Whether `text` has, outside its strings, more commas than {@link MAX_LEAVES} entries or more than 16 containers. */
+function shapeExceeds(text: string): boolean {
+	let commas = 0
+	let opens = 0
+	for (let i = 0; i < text.length; i++) {
+		const c = text.charCodeAt(i)
+		if (c === 34) i = stringEnd(text, i + 1)
+		else if (c === 44 && ++commas > MAX_LEAVES + 16) return true
+		else if ((c === 91 || c === 123) && ++opens > 16) return true
+	}
+	return false
+}
+
+/** The parsed body, refused first when its shape would make JSON.parse allocate past what the answer needs. */
 function parse(text: string, path: string): unknown {
+	if (shapeExceeds(text)) throw new AspError(`${path}: more than ${MAX_LEAVES} entries, or more than 16 containers`)
 	try {
 		return JSON.parse(text)
 	} catch {
@@ -122,23 +161,8 @@ function parse(text: string, path: string): unknown {
 	}
 }
 
-/** Whether `text` has more commas or container openings than a flat list of decimal leaves can, which holds neither. */
-function shapeExceeds(text: string): boolean {
-	let commas = 0
-	let opens = 0
-	for (let i = 0; i < text.length; i++) {
-		const c = text.charCodeAt(i)
-		if (c === 44 && ++commas > MAX_LEAVES + 16) return true
-		if ((c === 91 || c === 123) && ++opens > 16) return true
-	}
-	return false
-}
-
 async function leavesAt(aspApiUrl: string, scope: AspScope | undefined, o: AspRequest): Promise<bigint[]> {
-	const text = await getText(aspApiUrl, LEAVES, scope, o)
-	// Before JSON.parse, which would allocate whatever the text describes.
-	if (shapeExceeds(text)) throw new AspError(`${LEAVES}: more than ${MAX_LEAVES} leaves, or not a flat list`)
-	const leaves = (parse(text, LEAVES) as { leaves?: unknown } | null)?.leaves
+	const leaves = (parse(await getText(aspApiUrl, LEAVES, scope, o), LEAVES) as { leaves?: unknown } | null)?.leaves
 	if (Array.isArray(leaves) && leaves.length > MAX_LEAVES) throw new AspError(`${LEAVES}: more than ${MAX_LEAVES} leaves`)
 	if (!Array.isArray(leaves) || !leaves.every((l) => typeof l === "string" && DECIMAL.test(l))) {
 		throw new AspError(`${LEAVES}: not a list of decimal strings`)

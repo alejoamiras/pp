@@ -87,9 +87,9 @@ The bot reads the pool's leaves from `GET /association-set/leaves`. The standalo
 - it asks for an unencoded answer and inflates gzip, deflate or br itself, refusing any other encoding;
 - the deadline is 10 s for the whole body;
 - the answer is capped at 24 MiB, before and after inflating;
-- before parsing, a leaves answer with more commas than 2^18 leaves (the registry's list limit) allow, or
-  with any nesting, is refused; after parsing, more than 2^18 leaves, or a leaf outside [1, p), is
-  refused;
+- before parsing, an answer with more commas outside its strings than 2^18 entries allow (the registry's
+  list limit), or with more than 16 containers, is refused; after parsing, more than 2^18 leaves, or a
+  leaf outside [1, p), is refused;
 - no error quotes the answer or the URL.
 
 The leaves are used only when they hash to the root the ASP registry holds on Ethereum.

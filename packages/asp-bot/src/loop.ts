@@ -84,9 +84,8 @@ export class Poster {
 		const p = this.ports
 		const tip = await p.tip()
 		const record = await p.record(tip.hash)
-		// A cleared record is the admin's reset, and `set_poster` keeps the sequence: a list cached before a
-		// reset is fetched again, once; one fetched since is kept, so the post the reset waits for needs no
-		// second request.
+		// `set_poster` keeps the sequence, so a cleared record's sequence names its reset: a list cached before
+		// the reset is fetched again once, and one fetched since is kept for the post the reset waits for.
 		const resetAt = record.poolRoot === 0n ? record.sequence : null
 		if (resetAt !== null && resetAt !== this.resetAt) this.pool = null
 		this.resetAt = resetAt

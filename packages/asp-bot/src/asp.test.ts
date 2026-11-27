@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
-import { gzipSync } from "node:zlib"
+import { deflateRawSync, gzipSync } from "node:zlib"
 import { BN254_P } from "@pp/bridge-spec"
 import { MAX_LEAVES } from "@pp/label-paths"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -94,6 +94,13 @@ describe("the ASP API client", () => {
 		const gz = await api(encoded(gzipSync(JSON.stringify({ leaves: ["7"] })), "gzip"))
 		expect(await fetchLeaves(gz.url)).toEqual([7n])
 		expect(gz.requests[0]?.headers["accept-encoding"]).toBe("identity")
+		const raw = await api(encoded(deflateRawSync(JSON.stringify({ leaves: ["8"] })), "deflate"))
+		expect(await fetchLeaves(raw.url)).toEqual([8n])
+		const corrupt = await api(encoded(Buffer.from("not gzip"), "gzip"))
+		expect(await failure(fetchLeaves(corrupt.url))).toBe("association-set/leaves: the answer could not be inflated")
+		// Brackets and commas inside strings are not structure, and a byte-order mark is not text.
+		const quoted = await api(json(`\uFEFF{"note":"${"[,".repeat(40)}","leaves":["9"]}`))
+		expect(await fetchLeaves(quoted.url)).toEqual([9n])
 		const odd = await api(encoded(Buffer.from("{}"), "compress"))
 		expect(await failure(fetchLeaves(odd.url))).toBe("association-set/leaves: unsupported content-encoding")
 	})
@@ -107,9 +114,11 @@ describe("the ASP API client", () => {
 					.join(",")}]}`,
 			),
 		)
-		await expect(fetchLeaves(commas.url)).rejects.toThrow(`more than ${MAX_LEAVES} leaves`)
+		await expect(fetchLeaves(commas.url)).rejects.toThrow(`more than ${MAX_LEAVES} entries`)
 		const nested = await api(json(`{"leaves":${"[".repeat(100_000)}`))
-		await expect(fetchLeaves(nested.url)).rejects.toThrow("not a flat list")
+		await expect(fetchLeaves(nested.url)).rejects.toThrow("more than 16 containers")
+		const deepRoot = await api(json(`{"root":"1","x":${"[".repeat(100_000)}`))
+		await expect(fetchScopedRoot(deepRoot.url, SCOPE)).rejects.toThrow("more than 16 containers")
 		expect(parse).not.toHaveBeenCalled()
 		const one = await api(json({ leaves: Array(MAX_LEAVES + 1).fill("1") }))
 		await expect(fetchLeaves(one.url)).rejects.toThrow(`more than ${MAX_LEAVES} leaves`)
