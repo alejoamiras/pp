@@ -164,8 +164,8 @@ export const reprovingMessage = (code: StaleRootCode): string => `A root changed
 
 /**
  * The contract assertions a transaction can revert on after it was sent, each with the page's own
- * sentence. The token's unshield finishes in a public step that re-reads the allow list; nothing
- * else the page sends has a public step that can fail.
+ * sentence: the token's unshield and the hub's private exit both re-check the allow list's roots in a
+ * public step.
  */
 const REVERTS = [
 	["roots changed", "The allow list changed before the transaction landed. Check the label again, then retry."],

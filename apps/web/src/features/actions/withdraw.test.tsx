@@ -37,13 +37,13 @@ async function review(app: ReturnType<typeof renderApp>, dialog: ReturnType<type
 describe("the label's withdrawal to Ethereum", () => {
 	test("the confirm shows the exact amount and what is public; the payee is on Exits once the wallet holds the send", async () => {
 		const asked: string[] = []
-		const calls: Parameters<AztecPort["unshieldAndExit"]>[1][] = []
+		const calls: Parameters<AztecPort["exitPrivate"]>[1][] = []
 		const app = renderApp({
 			patch: (s) => ({
 				...s,
 				aztec: {
 					...s.aztec,
-					unshieldAndExit: async (_from, a, on) => {
+					exitPrivate: async (_from, a, on) => {
 						calls.push(a)
 						on.handoff()
 						return { status: "unconfirmed" as const }
@@ -65,7 +65,7 @@ describe("the label's withdrawal to Ethereum", () => {
 		confirm.getByText(ACCOUNTS.sender)
 		confirm.getByText("1.005 USDC")
 		expect(confirm.getByTestId("exit-public").textContent).toBe(
-			"Public: your Aztec account, the payee and the amount. Not shown: the label.",
+			"Public: the payee and the amount. This transaction does not name your Aztec account, but the amount and the timing can still link it to you.",
 		)
 		await app.user.click(confirm.getByRole("button", { name: WITHDRAW }))
 		await dialog.findByText(messageOf("UNKNOWN"))
@@ -88,7 +88,7 @@ describe("the label's withdrawal to Ethereum", () => {
 					...s.aztec,
 					notesByLabel: async (owner, label) => (low && label === LABELS.active ? [usdc(1)] : s.aztec.notesByLabel(owner, label)),
 					publicBalance: async (owner) => (low ? usdc(1) : s.aztec.publicBalance(owner)),
-					unshieldAndExit: (_from, _a, on) => {
+					exitPrivate: (_from, _a, on) => {
 						on.handoff()
 						return new Promise(() => {})
 					},
@@ -118,7 +118,7 @@ describe("the label's withdrawal to Ethereum", () => {
 				aztec: {
 					...s.aztec,
 					notesByLabel: async (owner, label) => (label === LABELS.active ? nine : s.aztec.notesByLabel(owner, label)),
-					unshieldAndExit: async (_from, a) => {
+					exitPrivate: async (_from, a) => {
 						asked.push(a.amount)
 						return { status: "unconfirmed" as const }
 					},
@@ -147,8 +147,8 @@ describe("the label's withdrawal to Ethereum", () => {
 				...s,
 				aztec: {
 					...s.aztec,
-					unshieldAndExit: (...a: Parameters<typeof s.aztec.unshieldAndExit>) =>
-						hold ? new Promise((r) => held.push(() => r(s.aztec.unshieldAndExit(...a)))) : s.aztec.unshieldAndExit(...a),
+					exitPrivate: (...a: Parameters<typeof s.aztec.exitPrivate>) =>
+						hold ? new Promise((r) => held.push(() => r(s.aztec.exitPrivate(...a)))) : s.aztec.exitPrivate(...a),
 				},
 			}),
 		})
@@ -169,7 +169,7 @@ describe("the label's withdrawal to Ethereum", () => {
 	test("a revert says the fee was paid and holds change-making spends, the withdrawal included, until its block is final", async () => {
 		const app = renderApp()
 		await connectAztec(app.user)
-		app.control.failNext("unshieldAndExit", "REVERTED")
+		app.control.failNext("exitPrivate", "REVERTED")
 		const dialog = await openWithdraw(app)
 		const confirm = await review(app, dialog, "5")
 		await app.user.click(confirm.getByRole("button", { name: WITHDRAW }))
@@ -193,16 +193,23 @@ describe("the label's withdrawal to Ethereum", () => {
 		expect(app.control.state().exits).toEqual([])
 	})
 
-	test("the button says the label's reason before the stage's, which closes it where exit_public is not deployed", async () => {
-		const app = renderApp({ patch: (s) => ({ ...s, deployment: { ...s.deployment, stage: "2c" } }) })
+	test("the button is closed with Unshield's reason on a label that cannot unshield", async () => {
+		const app = renderApp()
+		await connectAztec(app.user)
+		await screen.findAllByTestId("label-row")
+		expect(disabled(labelRow(LABELS.active).getByRole("button", { name: WITHDRAW }))).toBe(false)
+		const revoked = labelRow(LABELS.revoked)
+		const unshield = reasonOf(revoked.getByRole("button", { name: "Unshield" }))
+		expect(unshield).not.toBeNull()
+		expect(reasonOf(revoked.getByRole("button", { name: WITHDRAW }))).toBe(unshield)
+	})
+
+	test("the button is closed where exit_private is not deployed, while Unshield stays open", async () => {
+		const app = renderApp({ patch: (s) => ({ ...s, deployment: { ...s.deployment, stage: "2d" } }) })
 		await connectAztec(app.user)
 		await screen.findAllByTestId("label-row")
 		const active = labelRow(LABELS.active)
 		expect(disabled(active.getByRole("button", { name: "Unshield" }))).toBe(false)
 		expect(reasonOf(active.getByRole("button", { name: WITHDRAW }))).toBe(messageOf("STAGE_UNSUPPORTED"))
-		const revoked = labelRow(LABELS.revoked)
-		const unshield = reasonOf(revoked.getByRole("button", { name: "Unshield" }))
-		expect(unshield).not.toBeNull()
-		expect(reasonOf(revoked.getByRole("button", { name: WITHDRAW }))).toBe(unshield)
 	})
 })
