@@ -1,9 +1,3 @@
-/**
- * Withdrawals to Ethereum for a stack build. The public row's withdraw is the hub's `exit_public`; the
- * label row's is the hub's `exit_private`, a checked spend whose public calls name no account. Both go
- * out like every other Aztec send, through `sendThroughWallet`, and only after the payload is checked
- * call by call against what was confirmed.
- */
 import { AztecAddress as SdkAddress, EthAddress } from "@aztec-labs/aztec.js/addresses"
 import {
 	type ContractArtifact,
@@ -59,7 +53,8 @@ async function expectCall(c: FunctionCall | undefined, e: Expected): Promise<voi
 
 /**
  * Checks `p` is the sponsor, then exactly `call`, paid by `fpc`, with no witnesses, capsules or hashed
- * arguments of its own: neither call takes any.
+ * arguments of its own: neither call takes any. A wallet grant scopes targets and function names only,
+ * so the confirmed arguments are compared here.
  * @throws BridgeFailure `SPEND_MISMATCH` on any other call, order, argument, flag, fee payer or extra input
  */
 async function expectPayload(p: ExecutionPayload, fpc: AztecAddress, call: Expected): Promise<void> {

@@ -30,8 +30,8 @@ export function thrownOutcome(err: unknown): TxOutcome {
 }
 
 /**
- * A reverted unshield leaves the account's notes in a state the wallet settles only once that block is
- * final, so a change-making spend before then could clash with it. Final means the node's proven block
+ * A reverted unshield or private exit leaves the account's notes in a state the wallet settles only once
+ * that block is final, so a change-making spend before then could clash with it. Final means the node's proven block
  * has reached it; an unread proven block is not final.
  */
 export const isFinal = (revertBlock: number, proven: number | undefined): boolean => proven !== undefined && proven >= revertBlock

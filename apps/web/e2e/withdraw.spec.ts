@@ -6,14 +6,17 @@
  * injected wallet's separate sender. Payer: anvil's dev accounts and the SponsoredFPC. Estimated 90–150 s,
  * measured 54 s alone on a 192-core host, the actor's setup not counted.
  */
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import { TxHash } from "@aztec-labs/aztec.js/tx"
+import { computeFeePayerBalanceLeafSlot } from "@aztec-labs/protocol-contracts/fee-juice"
 import { createBridgeClient, type KeyValueStore } from "@pp/bridge-core"
 import { anvilKey } from "@pp/bridge-core/sandbox"
 import type { Locator } from "@playwright/test"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
 import { createPublicClient, erc20Abi, http } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
+import { sponsoredFpcAddress } from "../src/build/sponsored-fpc"
 import { formatAmount, plainAmount } from "../src/ui/format"
 import { approvedNote, seededStack } from "./stack"
 import { bridgeAndClaim, stepLog, submitted, watchPage } from "./support"
@@ -34,9 +37,9 @@ function memoryJournal(): KeyValueStore {
 }
 
 // Fails if the page's private exit (the sponsor, then the hub's exit_private with the checked path) does
-// not go through the wallet SDK and the test wallet, if the landed transaction publishes any log but the
-// hub's ticket or names the Aztec account in one, or if the ticket does not settle on the real portal
-// through Exits. The unit suite checks the payload's shape against fakes only.
+// not go through the wallet SDK and the test wallet, if the landed transaction publishes any public log
+// but the hub's ticket, names the Aztec account in one or writes public data beyond the sponsor's fee
+// balance, or if the ticket does not settle on the real portal through Exits. The unit suite checks the payload's shape against fakes only.
 test("withdraws part of a checked label to a fresh payee through the private exit and collects it on Ethereum", async ({
 	page,
 	run,
@@ -84,6 +87,13 @@ test("withdraws part of a checked label to a fresh payee through the private exi
 			l.fields.map((f) => f.toBigInt()),
 			"no log names the account",
 		).not.toContain(BigInt(actor.address))
+	const feeLeaf = await computeFeePayerBalanceLeafSlot(AztecAddress.fromStringUnsafe(await sponsoredFpcAddress()))
+	const writes = effect.data.publicDataWrites
+	expect(writes.length, "the sponsor's fee is written").toBeGreaterThan(0)
+	expect(
+		writes.every((w) => w.leafSlot.equals(feeLeaf)),
+		"the sponsor's fee balance is the only public write",
+	).toBe(true)
 
 	const client = createBridgeClient({ manifest: s.manifest, journal: memoryJournal() })
 	const [ticket, ...none] = await client.exitTickets({ payee })

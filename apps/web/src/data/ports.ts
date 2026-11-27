@@ -309,7 +309,7 @@ export interface Timer {
 	sleep(ms: number, signal?: AbortSignal): Promise<boolean>
 }
 
-/** Which functions a deployment has: the labelled token's stages A to C, then the hub's public exit (2d). */
+/** Which functions a deployment has: the labelled token's stages A to C, then the hub's public exit (2d) and its private exit (2e). */
 export type Stage = "2a" | "2b" | "2c" | "2d" | "2e"
 
 export interface Deployment {

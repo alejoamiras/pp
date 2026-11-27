@@ -264,11 +264,6 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 	)
 }
 
-/**
- * Leaves part of a label's balance to Ethereum through the hub's private exit, so Ethereum is never
- * shown the label. The amount is capped at what the label's 8 largest notes hold, and the send stays
- * bound to the Aztec connection the confirm was made in.
- */
 export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 	const { aztec, live, addPayee } = useApp()
 	const spend = useSpendCap(account, balance)
@@ -280,7 +275,6 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 		const a = { payee: to, amount: value, label: balance.label, origin: balance.origin }
 		const on = bound(live, account, act)
 		if (!on) return
-		// The port reads the notes again after the allow-list check.
 		await act.send("exitPrivate", (guard) =>
 			aztec.exitPrivate(
 				account,

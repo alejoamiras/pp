@@ -33,6 +33,7 @@ type Exit = {
 	payee?: Address
 	amount?: bigint
 	label?: bigint
+	path?: LabelPath
 	fpc?: AztecAddress
 	extra?: boolean
 	/** Fields to change on the sponsor's call, or on the exit's. */
@@ -57,8 +58,9 @@ async function hubExit(
 	const hub = Contract.at(sdk(w.hub ?? HUB), tokenBridgeHubArtifact, wallet)
 	const fee = { paymentMethod: new SponsoredFeePaymentMethod(sdk(w.fpc ?? FPC)) }
 	const args: unknown[] = [sdk(w.token ?? TOKEN), EthAddress.fromString(w.payee ?? a.payee), w.amount ?? a.amount]
-	if (fn === "exit_private" && a.path)
-		args.push(new Fr(w.label ?? a.label ?? 0n), { index: a.path.index, depth: a.path.depth, siblings: [...a.path.siblings] })
+	const path = w.path ?? a.path
+	if (fn === "exit_private" && path)
+		args.push(new Fr(w.label ?? a.label ?? 0n), { index: path.index, depth: path.depth, siblings: [...path.siblings] })
 	const p = await hub.methods[fn](...args).request({ fee })
 	const [sponsor, exit] = p.calls as [FunctionCall, FunctionCall]
 	const calls = [changed(sponsor, w.sponsor ?? {}), changed(exit, w.exit ?? {}), ...(w.extra ? [exit] : [])]
@@ -132,11 +134,14 @@ describe("withdrawals to Ethereum", () => {
 			["a capsule no call takes", { capsule: true }],
 			["hashed arguments no call takes", { hashedArgs: true }],
 		]
-		const all: [string, Exit][] = [...wrongs, ["another label", { label: 78n }]]
-		for (const [what, wrong] of all)
+		// Only the private exit carries a label and a path.
+		const labelled: [string, Exit][] = [
+			["another label", { label: 78n }],
+			["a path with another sibling", { path: { ...ACTIVE.path, siblings: [8n, ...ACTIVE.path.siblings.slice(1)] } }],
+		]
+		for (const [what, wrong] of [...wrongs, ...labelled])
 			for (const send of ["exitPublic", "exitPrivate"] as const) {
-				// Only the private exit carries a label.
-				if (wrong.label !== undefined && send !== "exitPrivate") continue
+				if (labelled.some(([, w]) => w === wrong) && send !== "exitPrivate") continue
 				const r = rig(ACTIVE, wrong)
 				const hooks = on()
 				await expect(r.port[send](ME, confirmed, hooks), `${send}: ${what}`).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
