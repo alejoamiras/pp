@@ -16,9 +16,9 @@
  *                                                        name, the pins must be exactly what all crates reach
  */
 import { spawnSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
-import { join, posix } from "node:path"
+import { join, posix, resolve } from "node:path"
 
 export const ROOT = join(import.meta.dir, "..", "..")
 export const MANIFEST = "contracts/crates.json"
@@ -273,15 +273,43 @@ export function pinProblems(pins: Pin[], nargoHome: string): string[] {
 	})
 }
 
+/** A directory as the filesystem names it, so a symlink or a `..` detour compares equal to where it lands. */
+const canonical = (dir: string) => (existsSync(dir) ? realpathSync(dir) : resolve(dir))
+
+/** The directories `crate`'s Nargo.toml names as path dependencies, resolved as nargo does: against the
+ *  crate's own directory, so an absolute path, or one that leaves and re-enters the checkout, lands where nargo reads it. */
+function pathDeps(root: string, crate: Crate): string[] {
+	const deps = nargoToml(root, crate.path)?.dependencies
+	return Object.values(isRecord(deps) ? deps : {}).flatMap((d) =>
+		isRecord(d) && typeof d.path === "string" ? [canonical(resolve(root, crate.path, d.path))] : [],
+	)
+}
+
 /**
  * The crates to rebuild before `name`'s TXE suite: every parity crate whose committed artifact the
- * suite stages, then `name` itself. The server loads those artifacts, so a stale one tests old code.
+ * suite stages or that it names as a direct path dependency (a suite deploys such a crate's artifact
+ * from its own target/), then `name` itself. The server loads those artifacts, so a stale one tests
+ * old code. A transitive path dependency is not followed: a suite that deploys one in place names it
+ * directly or stages it.
+ *
+ * @throws when a path dependency is a contract crate with no parity entry, whose artifact nothing rebuilds.
  */
-export function txeBuild(m: Manifest, name: string): string[] {
+export function txeBuild(m: Manifest, name: string, root = ROOT): string[] {
 	const crate = crateNamed(m, name)
 	const stage = (crate.txe ?? fail(name, "has no txe gate")).stage
-	const deps = cratesWith(m, "parity").filter((c) => c !== crate && stage.some((s) => s.startsWith(`${c.path}/target/`)))
-	return [...deps.map((c) => c.name), name]
+	const linked = pathDeps(root, crate)
+	const parity = cratesWith(m, "parity").map((c) => ({ c, dir: canonical(join(root, c.path)) }))
+	for (const dir of linked) {
+		// nargo accepts `package_type` as an alias of `type`.
+		const pkg = nargoToml(dir, "")?.package as Raw | undefined
+		const contract = (pkg?.type ?? pkg?.package_type) === "contract"
+		if (contract && !parity.some((p) => p.dir === dir))
+			fail(name, `names ${dir} as a path dependency, a contract crate with no parity entry, so its artifact is never rebuilt`)
+	}
+	const deps = parity.filter(
+		({ c, dir }) => c !== crate && (linked.includes(dir) || stage.some((s) => s.startsWith(`${c.path}/target/`))),
+	)
+	return [...deps.map(({ c }) => c.name), name]
 }
 
 function field(m: Manifest, crate: Crate, key: string): string {
