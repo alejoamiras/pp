@@ -2,13 +2,9 @@ import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { endGroup, groupAlive, type ProcFs } from "@pp/run-isolation/process-group"
+import { endGroup, groupAlive, type ProcFs, startTime } from "@pp/run-isolation/process-group"
 import { describe, expect, test } from "vitest"
-import { recordGroup, startTime, stopRecorded } from "./stack-owner"
-
-/** A stat line whose fields after the command name run state, 4, 5, … with `start` as field 22. */
-const statLine = (comm: string, state: string, start: string) =>
-	`4242 (${comm}) ${[state, ...Array.from({ length: 18 }, (_, i) => String(i + 4)), start, "23", "24"].join(" ")}\n`
+import { recordGroup, stopRecorded } from "./stack-owner"
 
 const procWith = (files: Record<string, string>): ProcFs => ({
 	readdir: () => [],
@@ -17,13 +13,6 @@ const procWith = (files: Record<string, string>): ProcFs => ({
 		if (text === undefined) throw new Error(`ENOENT: ${path}`)
 		return text
 	},
-})
-
-test("the start time is field 22 as text, past a command name holding ') (' and spaces, a zombie's included", () => {
-	const at = (stat: string) => startTime(4242, procWith({ "/proc/4242/stat": stat }))
-	expect(at(statLine("a) (b c", "S", "0012345"))).toBe("0012345")
-	expect(at(statLine("cli.ts", "Z", "98765"))).toBe("98765")
-	expect(startTime(4242, procWith({}))).toBeUndefined()
 })
 
 test("recording a group on a machine without /proc fails naming the missing /proc, and writes no record", () => {

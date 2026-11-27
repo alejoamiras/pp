@@ -4,24 +4,9 @@
  * leader's start time, which a process that later gets the same pid cannot share.
  */
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { endGroup, groupAlive, type ProcFs } from "@pp/run-isolation/process-group"
+import { endGroup, groupAlive, type ProcFs, startTime } from "@pp/run-isolation/process-group"
 
 const HOST: ProcFs = { readdir: (path) => readdirSync(path), readFile: (path) => readFileSync(path, "utf8") }
-
-/**
- * `pid`'s start time (field 22 of `/proc/<pid>/stat`) as text to compare exactly, a zombie's included;
- * undefined once the process is gone. Replaced by `@pp/run-isolation/process-group`'s `startTime` once that export exists.
- */
-export function startTime(pid: number, proc: ProcFs = HOST): string | undefined {
-	let stat: string
-	try {
-		stat = proc.readFile(`/proc/${pid}/stat`)
-	} catch {
-		return undefined
-	}
-	// The command name may hold spaces and ")"; field 22 is the 20th after the name's last ")".
-	return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]
-}
 
 export interface GroupRecord {
 	pgid: number
