@@ -46,15 +46,14 @@ async function main(argv: string[]): Promise<number> {
 	try {
 		if (command === "pins") await pins(endpoint, rest[0])
 		else {
-			// Loaded only for a real run: the pool SDK takes seconds to import, and the skip line should not.
-			const [{ runFork }, { prepare }, { runForkCases }] = await Promise.all([
-				import("./run.ts"),
-				import("./prepare.ts"),
-				import("./forge.ts"),
-			])
+			// Loaded only for a real run, so the skip line stays instant.
+			const { runFork } = await import("./run.ts")
 			await runFork({
 				endpoint,
 				body: async (fork, run) => {
+					// Only past the preflight: pp-env's pool code resolves into the fetched pool checkout, which a run
+					// that fails earlier must not need.
+					const [{ prepare }, { runForkCases }] = await Promise.all([import("./prepare.ts"), import("./forge.ts")])
 					const { fixture, path } = await prepare(fork, run)
 					if (rest.includes("--prepare-only")) return
 					const { dataDir, cleanup } = run

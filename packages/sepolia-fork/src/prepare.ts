@@ -165,6 +165,7 @@ export async function verifierAccepts(fork: ForkAnvil, verifier: Address, spend:
 
 /** Makes the fork's state and one spend proof, checks the deployed verifier accepts it, and writes the fixture. */
 export async function prepare(fork: ForkAnvil, run: RunContext): Promise<{ fixture: Fixture; path: string }> {
+	run.signal.throwIfAborted()
 	const user = await poolSide(fork, run)
 	run.signal.throwIfAborted()
 	const { factory, portal } = await bridgeSide(fork, run)
