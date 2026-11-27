@@ -28,7 +28,7 @@ const PINS = [
 		// The token class every hub derives; the hub's keystone vectors and the manifest pin it too.
 		name: "LabelledToken",
 		path: join(CONTRACTS, "labelled_token", "target", "labelled_token-LabelledToken.json"),
-		classId: "0x04999e44146bf207240c03ba11b7ea3dbaac99aad3fa35c21fafd90e47b00f6c",
+		classId: "0x1433444ed316fe06e46c3dfb026089b3488dc8b76162d768384a906f6a0c0bbc",
 	},
 	{
 		name: "AspRootRegistry",
