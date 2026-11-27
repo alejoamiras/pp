@@ -14,8 +14,9 @@ contracts, a 6-decimal test token and the mock ASP. The `bridge` step deploys on
 for that token with entries paused (bridge-core's `@pp/bridge-core/deploy`), reads every binding
 back, checks that the hub is the v1 class and only then opens entries. The `seed` step registers
 the demo's pool user and gives it two approved notes of 100. The `bot` step starts `@pp/asp-bot` as
-`<runId>-bot` on the bridge's ASP registry, whose poster and intake it derives from the run id. It
-finishes only once the first post has landed, and the manifest's `bot` block names its snapshot URL.
+`<runId>-bot` on the bridge's ASP registry, whose poster and intake it derives from the run id, and
+approves the births of the bridge's labelled token. It finishes only once the first post has
+landed, and the manifest's `bot` block names its snapshot URL.
 
 Besides the toolchain (Bun, Foundry 1.7.1, Aztec 6.0.0), a fresh clone needs one networked step:
 `bun run demo:prepare`. It fetches the pool's checkout (about 1.5 min on a CI runner) and installs
