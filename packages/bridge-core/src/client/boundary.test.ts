@@ -79,13 +79,13 @@ describe("error boundary", () => {
 		expectClean(out)
 	})
 
-	it("reads a revert by shape from an error another copy of viem built, and ends on a cyclic chain", () => {
-		const reverted = foreignError(
-			["ContractFunctionExecutionError"],
-			["ContractFunctionRevertedError", { data: { errorName: "NotReady" } }],
-		)
-		expect(reverted).not.toBeInstanceOf(BaseError)
-		expect(translate(reverted)).toMatchObject({ code: "SIMULATION_REVERTED", revert: "NotReady" })
+	it("reads a revert by shape from an error another copy of viem built, names only the client's contract errors, and ends on a cyclic chain", () => {
+		const reverted = (errorName: string) =>
+			foreignError(["ContractFunctionExecutionError"], ["ContractFunctionRevertedError", { data: { errorName } }])
+		expect(reverted("CapExceeded")).not.toBeInstanceOf(BaseError)
+		expect(translate(reverted("CapExceeded"))).toMatchObject({ code: "SIMULATION_REVERTED", revert: "CapExceeded" })
+		const forged = translate(reverted("PrivateOpening_12345"))
+		expect([forged.code, forged.revert]).toEqual(["SIMULATION_REVERTED", undefined])
 		const cyclic = foreignError(["TransactionExecutionError"])
 		Object.assign(cyclic, { cause: cyclic })
 		expect([isUserRejection(cyclic), translate(cyclic).code]).toEqual([false, "RPC_FAILED"])

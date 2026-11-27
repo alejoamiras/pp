@@ -1,5 +1,7 @@
+import { OutboxAbi } from "@aztec-foundation/l1-artifacts/OutboxAbi"
 import { SpecRangeError } from "@pp/bridge-spec"
 import { PoolClientError } from "@pp/pool-client"
+import { PORTAL_FACTORY_ABI, PROCESSOR_PORTAL_ABI } from "../factory-abi"
 import { BridgeClientError, isSpendCheckName, rebuildError } from "./errors"
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
@@ -59,15 +61,22 @@ const field = (x: object, key: string): unknown => {
 	}
 }
 
-/** viem's revert error anywhere in an error chain, by name: a contract refused the call, as opposed to a transport failure. */
-export const contractRevert = (e: unknown): { data?: { errorName?: unknown } } | null =>
-	causeChain(e).find((x) => field(x, "name") === "ContractFunctionRevertedError") ?? null
+/** The error names a decoded revert may carry out: those of the contracts the client calls through viem. */
+const REVERT_NAMES: ReadonlySet<string> = new Set(
+	[...PROCESSOR_PORTAL_ABI, ...PORTAL_FACTORY_ABI, ...OutboxAbi].flatMap((i) => (i.type === "error" ? [i.name] : [])),
+)
 
-/** The decoded error name of a contract revert anywhere in a viem error chain, when it is an identifier. */
-export const revertName = (e: unknown): string | undefined => {
-	const revert = contractRevert(e)
-	const data = revert ? field(revert, "data") : undefined
-	return typeof data === "object" && data !== null ? identifier(field(data, "errorName")) : undefined
+/**
+ * A contract revert anywhere in an error chain, as opposed to a transport failure: viem's
+ * `ContractFunctionRevertedError`, found by name in one walk. `revert` is its decoded error name
+ * when that names an error of a contract the client calls.
+ */
+export function contractRevert(e: unknown): { revert?: string } | null {
+	const found = causeChain(e).find((x) => field(x, "name") === "ContractFunctionRevertedError")
+	if (!found) return null
+	const data = field(found, "data")
+	const name = typeof data === "object" && data !== null ? field(data, "errorName") : undefined
+	return typeof name === "string" && REVERT_NAMES.has(name) ? { revert: name } : {}
 }
 
 /** Whether the user refused the request: an EIP-1193 4001 anywhere in the error chain. */
@@ -92,10 +101,8 @@ function translateOrThrow(e: unknown): BridgeClientError {
 	if (e instanceof BridgeClientError) return rebuildError(e)
 	if (e instanceof PoolClientError) return fromPool(e)
 	if (e instanceof SpecRangeError) return new BridgeClientError("SPEND_MISMATCH", { source: identifier(e.code) ?? "SpecRangeError" })
-	if (contractRevert(e)) {
-		const revert = revertName(e)
-		return new BridgeClientError("SIMULATION_REVERTED", revert ? { revert } : {})
-	}
+	const reverted = contractRevert(e)
+	if (reverted) return new BridgeClientError("SIMULATION_REVERTED", reverted)
 	const name = e instanceof Error ? (identifier(e.constructor?.name) ?? identifier(e.name)) : undefined
 	return new BridgeClientError("RPC_FAILED", name ? { source: name } : {})
 }
