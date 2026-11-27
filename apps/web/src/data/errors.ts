@@ -25,7 +25,15 @@ export type AppCode =
 	| "WAIT_FINALITY"
 	| "TX_BUSY"
 	| "BRIDGE_UNAVAILABLE"
+	| AllowListCode
 	| "UNKNOWN"
+
+/**
+ * Why a label could not be checked. A list that timed out, did not match the chain, was larger than
+ * any list can be or whose check was stopped stays failed until a manual Check again; an unavailable
+ * one is read again on the next refresh.
+ */
+export type AllowListCode = "LIST_TIMEOUT" | "LIST_MISMATCH" | "LIST_OVERSIZED" | "LIST_CANCELLED" | "LIST_UNAVAILABLE"
 
 export type UiCode = BridgeClientErrorCode | AppCode
 
@@ -74,6 +82,11 @@ const MESSAGES: Record<UiCode, string> = {
 	WAIT_FINALITY: "Send and Unshield wait for finality: the reverted unshield's block must be proven first. Refresh to check.",
 	TX_BUSY: "Wait for your last Aztec transaction to finish.",
 	BRIDGE_UNAVAILABLE: "Bridging is not available in this version of the app yet. Your notes stay in the pool.",
+	LIST_TIMEOUT: "The allow list took too long to download, so no label was checked. Check again.",
+	LIST_MISMATCH: "The allow list the server sent does not match the one on chain, so no label was checked against it.",
+	LIST_OVERSIZED: "The allow list the server sent is larger than any allow list can be, so it was not read.",
+	LIST_CANCELLED: "You stopped the allow-list check. Check again when you are ready.",
+	LIST_UNAVAILABLE: "The allow list could not be read. The page reads it again on the next refresh.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",
 }
 
@@ -172,6 +185,17 @@ export class BridgeFailure extends Error {
 		this.name = "BridgeFailure"
 		if (extra.stale !== undefined) this.stale = extra.stale
 		if (extra.l1TxHash !== undefined) this.l1TxHash = extra.l1TxHash
+	}
+}
+
+/** Why a label could not be checked; `retryInMs` is how long a manual Check again must wait. */
+export class AllowListError extends Error {
+	constructor(
+		readonly code: AllowListCode,
+		readonly retryInMs = 0,
+	) {
+		super(code)
+		this.name = "AllowListError"
 	}
 }
 

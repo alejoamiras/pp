@@ -3,9 +3,10 @@
  * for whom, so a sign-out can drop the pool side alone.
  */
 import { useQuery } from "@tanstack/react-query"
+import { useCallback, useRef, useSyncExternalStore } from "react"
 import type { Address } from "viem"
-import type { AztecAddress } from "../data/stack-types"
-import type { AllowListView, AztecPort, ExitView, Session } from "../data/ports"
+import type { AztecAddress, Origin } from "../data/stack-types"
+import type { AllowListProgress, AllowListView, AztecPort, ExitView, Session } from "../data/ports"
 import { readPool } from "../data/reconcile"
 import type { DataSource } from "../data/source"
 
@@ -43,26 +44,53 @@ export function useLabelNotes(aztec: AztecPort, account: AztecAddress, label: bi
 	return useQuery({ queryKey: ["aztec", account, "notes", label.toString()], queryFn: () => aztec.notesByLabel(account, label) })
 }
 
-export interface AllowListAt {
-	view: AllowListView
-	/** The Aztec chain time the states are read at. */
-	nowSec: bigint
+export const ALLOW_LIST_KEY = "allow-list"
+
+/** The record and its time, read at one block. */
+export function useAllowList(source: DataSource, enabled: boolean) {
+	return useQuery({ queryKey: [ALLOW_LIST_KEY], queryFn: () => source.allowList.current(), enabled })
 }
 
-export function useAllowList(source: DataSource, enabled: boolean) {
+/**
+ * One label's state under `view`, keyed by what the state depends on: the roots and both times, never
+ * the sequence. Never retried: the adapter decides what a failed list costs.
+ */
+export function useLabelCheck(source: DataSource, view: AllowListView | undefined, label: bigint, origin: Origin) {
+	const r = view?.record
 	return useQuery({
-		queryKey: ["allow-list"],
-		queryFn: async (): Promise<AllowListAt> => {
-			const [view, nowSec] = await Promise.all([source.allowList.current(), source.clock.aztecNow()])
-			return { view, nowSec }
-		},
-		enabled,
+		queryKey: [
+			ALLOW_LIST_KEY,
+			"check",
+			r?.poolRoot.toString(),
+			r?.birthRoot.toString(),
+			r?.rootTime.toString(),
+			view?.nowSec.toString(),
+			label.toString(),
+			origin,
+		],
+		queryFn: () => source.allowList.check(view as AllowListView, label, origin),
+		enabled: view !== undefined,
+		retry: false,
 	})
 }
 
 /** A failed refetch keeps the last proven block read, which can only be lower than the node's. */
 export function useAztecProven(source: DataSource, enabled: boolean) {
 	return useQuery({ queryKey: ["clock", "aztec", "proven"], queryFn: () => source.clock.aztecProven(), enabled })
+}
+
+/** The running allow-list check's tree build, `null` while none hashes. */
+export function useAllowListProgress(source: DataSource): AllowListProgress | null {
+	const last = useRef<AllowListProgress | null>(null)
+	const subscribe = useCallback(
+		(notify: () => void) =>
+			source.allowList.onProgress((p) => {
+				last.current = p
+				notify()
+			}),
+		[source],
+	)
+	return useSyncExternalStore(subscribe, () => last.current)
 }
 
 /** `deployment:l2TxHash:messageIndexInTx`: identical exits differ only by their message index. */

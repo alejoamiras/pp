@@ -2,10 +2,11 @@
  * The stack behind `#data`: the deployment and endpoints from the build's stack target, the asset's
  * decimals and symbol from the factory's registration, Ethereum through the page's injected wallet, chain time from both chains, the owner's session over
  * pool-client and the bridge client, the token's views and the ragequit through the connected Aztec
- * wallet, and exit tickets over the bridge client. The allow-list port has no stack adapter yet and refuses.
+ * wallet, exit tickets over the bridge client, and the allow list from the registry's record and the
+ * bot's snapshots, checked in a worker.
  *
- * Everything that carries aztec.js, the contract artifacts or the bridge client loads on first use,
- * so the main chunk stays free of them.
+ * Everything that carries aztec.js, the contract artifacts, the bridge client or the allow list's
+ * reader loads on first use, so the main chunk stays free of them.
  */
 import { demoSender } from "#demo-sender"
 import { getAddress } from "viem"
@@ -108,11 +109,35 @@ const exits: ExitPort = {
 	tickets: async (payee) => (await loadExits()).tickets(payee),
 	settle: async (t, sender, on) => (await loadExits()).settle(t, sender, on),
 }
+/** The allow list loads on first use; its worker starts at the first check. */
+let allowLoad: Promise<AllowListPort> | undefined
+let allowPort: AllowListPort | null = null
+const progress = new Set<Parameters<AllowListPort["onProgress"]>[0]>()
+const loadAllowList = (): Promise<AllowListPort> =>
+	(allowLoad ??= import("./allow-list").then((m) => {
+		const port = m.stackAllowList({
+			nodeUrl: target.nodeUrl,
+			registry: aztecAddress(manifest.bridge.registry, "bridge.registry"),
+			botUrl: stack.botUrl,
+			timer: browserTimer,
+			worker: m.browserWorker,
+		})
+		port.onProgress((p) => {
+			for (const f of [...progress]) f(p)
+		})
+		allowPort = port
+		return port
+	}))
+
 const allowList: AllowListPort = {
-	current: unavailable("AllowListPort.current"),
-	state: () => {
-		throw new Error("AllowListPort.state has no stack adapter in this build")
+	current: async () => (await loadAllowList()).current(),
+	check: async (view, label, origin) => (await loadAllowList()).check(view, label, origin),
+	onProgress(f) {
+		progress.add(f)
+		return () => void progress.delete(f)
 	},
+	cancel: () => allowPort?.cancel(),
+	checkAgain: (view) => allowPort?.checkAgain(view) ?? true,
 }
 
 const ports: Omit<DataSource, "deployment"> = {

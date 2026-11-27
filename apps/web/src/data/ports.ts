@@ -5,12 +5,11 @@
  */
 import type { Address, Hash, Hex, TypedDataDefinition } from "viem"
 import type {
-	AspSnapshot,
+	LabelCheck,
 	AztecAddress,
 	BridgeRecordView,
 	ExitStatus,
 	ExitTicket,
-	LabelState,
 	Origin,
 	PoolNoteView,
 	RootRecord,
@@ -196,14 +195,36 @@ export interface ExitPort {
 	settle(t: ExitTicket, sender: Address, on: Pick<SubmitHooks, "handoff">): Promise<Hash>
 }
 
-/** One record and the snapshot it names, read at one anchor block. */
+/** The registry's record and the time of the Aztec block it was read at: one anchor. */
 export interface AllowListView {
 	record: RootRecord
-	snapshot: AspSnapshot
+	/** The anchor block's timestamp: chain time. */
+	nowSec: bigint
 }
+
+/** The running check's tree build: `hashed` of `total` hashes. */
+export interface AllowListProgress {
+	hashed: number
+	total: number
+}
+
 export interface AllowListPort {
+	/** The record and its time, both read at one block. */
 	current(): Promise<AllowListView>
-	state(view: AllowListView, label: bigint, origin: Origin, nowSec: bigint): LabelState
+	/**
+	 * `label`'s state in its origin's list under `view`'s record, with its path when `ACTIVE`, from the
+	 * snapshot of that record's roots. A label the list does not hold is `ABSENT` with no tree built.
+	 * Checks run one at a time, in call order. A list that failed (`LIST_TIMEOUT`, `LIST_MISMATCH`,
+	 * `LIST_OVERSIZED`, `LIST_CANCELLED`) keeps failing at once, with no work, until `checkAgain`.
+	 * @throws AllowListError
+	 */
+	check(view: AllowListView, label: bigint, origin: Origin): Promise<LabelCheck>
+	/** Called with the running check's progress whenever it moves, and `null` once nothing hashes. */
+	onProgress(f: (p: AllowListProgress | null) => void): () => void
+	/** Stops the running check and every queued one: each rejects with `LIST_CANCELLED`. */
+	cancel(): void
+	/** Lets the next check of `view`'s list try again, once the failure's backoff has passed; whether it did. */
+	checkAgain(view: AllowListView): boolean
 }
 
 /** Latest block timestamps in seconds: chain time, which on a local chain moves only with blocks. Never `Date.now()`. */

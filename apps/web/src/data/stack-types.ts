@@ -23,7 +23,7 @@ export type {
 	StackManifest,
 	StaleRootCode,
 } from "@pp/bridge-core"
-export type { AspSnapshot, LabelState, Origin, RootRecord } from "@pp/label-paths"
+export type { AspSnapshot, LabelCheck, LabelPath, LabelState, Origin, RootRecord } from "@pp/label-paths"
 export type { NoteStatus as PoolNoteStatus, PoolNoteView } from "@pp/pool-client"
 
 declare const brand: unique symbol
