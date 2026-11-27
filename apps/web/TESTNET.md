@@ -23,21 +23,39 @@ URLs.
 
 ## Start the app on the host
 
-1. Build the app. Stop `serve` first if it runs: it holds the headers it loaded at start.
+Run every command from the repository's root. `bun run --cwd apps/web` runs in `apps/web`, so each
+file path below is absolute (`$PWD/…`).
+
+1. Point `PP_CIRCUITS_DIR` at the fetched pool checkout's circuit builds:
 
    ```sh
-   PP_DEPLOYMENT=packages/testnet/deployments/testnet-own.json \
+   export PP_CIRCUITS_DIR=$(bun -e 'import { checkout } from "./packages/pp-env/src/env/checkout.ts"; console.log(checkout().circuits)')
+   ```
+
+2. Build the app. Stop `serve` first if it runs: it holds the headers it loaded at start.
+
+   ```sh
+   PP_DEPLOYMENT=$PWD/packages/testnet/deployments/testnet-own.json \
      bun run --cwd apps/web build --mode testnet --outDir dist-testnet
    ```
 
-2. Start the server on port 28600. Set `PP_CIRCUITS_DIR` to the fetched pool checkout's circuit
-   builds (`packages/pp-env/.ppv2`, then the circuits directory `packages/pp-env/src/env/pins.ts`
-   names).
+3. Check the build (20 s). The first command checks the server against fake services, the proving
+   files and the build's receipt. The second opens the build in a headless Chromium against the
+   real services, on a port of its own.
 
    ```sh
-   PP_CIRCUITS_DIR=<absolute circuits directory> bun run --cwd apps/web serve -- \
-     --outDir dist-testnet --deployment packages/testnet/deployments/testnet-own.json \
-     --host 127.0.0.1 --port 28600 --claim
+   bun run --cwd apps/web test:headers -- --target $PWD/packages/testnet/deployments/testnet-own.json
+   bun run --cwd apps/web test:testnet-smoke -- --target $PWD/packages/testnet/deployments/testnet-own.json
+   ```
+
+   Each ends with a `passed` line. A smoke failure on a `GET /bot/…` or `GET /asp/…` line means that
+   service is down on the host.
+
+4. Start the server on port 28600:
+
+   ```sh
+   bun run --cwd apps/web serve -- --outDir dist-testnet \
+     --deployment $PWD/packages/testnet/deployments/testnet-own.json --host 127.0.0.1 --port 28600 --claim
    ```
 
    It claims port 28600 in `~/.agents/ports.md` and prints the run id it claimed it under. It refuses
@@ -46,7 +64,7 @@ URLs.
    - the port is claimed or bound (pick another number, the same at both ends of the forward);
    - `PP_CIRCUITS_DIR` is not an absolute directory.
 
-3. Check the two services through the app's own server:
+5. Check the two services through the app's own server:
 
    ```sh
    curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: localhost:28600' http://127.0.0.1:28600/bot/v1/snapshots/latest
@@ -54,7 +72,8 @@ URLs.
      'http://127.0.0.1:28600/asp/association-set/root?chainId=11155111&entrypoint=<pool.entrypoint>'
    ```
 
-   Both must print `200`. A `502` means that service is down on the host.
+   `<pool.entrypoint>` is that value in the deployment file. Both must print `200`. A `502` means
+   that service is down on the host.
 
 ## Open it on your laptop
 
@@ -81,13 +100,13 @@ A balance needs two things:
 | You see | It means | Do this |
 |---|---|---|
 | The page does not load | The forward is down, or `serve` stopped | Restart the `ssh` line; check `serve` on the host |
-| "Connect your Ethereum wallet first." | MetaMask has not connected this site | Connect the site in MetaMask (step 3) |
+| "Connect your Ethereum wallet first." | MetaMask has not connected this site | Connect the site in MetaMask ("Open it on your laptop", step 3) |
 | "Your Ethereum wallet is on another network. …" | MetaMask is not on Sepolia | Switch MetaMask to Sepolia |
 | "Switch your Ethereum wallet to a separate account: …" | The owner is selected to pay for a bridge | Select the sender account in MetaMask |
 | "The Aztec node does not answer. …" | The public testnet node is unreachable | Wait, then try again |
 | "The Aztec node serves L1 chain …; this app is built for …" | The node is on another network or rollup | Report it: the deployment file is out of date |
 | "That wallet is no longer available. Search again." | Nulo is closed or locked | Open Nulo, unlock it, search again |
-| "A network request failed. Try again." | A request to the node, Sepolia or the services failed | Run the two `curl` checks on the host; a `502` names the service that is down |
+| "A network request failed. Try again." | A request to the node, Sepolia or the services failed | Run the two `curl` checks ("Start the app on the host", step 5); a `502` names the service that is down |
 | The prover stops with an error | `serve` could not verify the proving files (it logs `proving files unavailable`) | Check `PP_CIRCUITS_DIR`, and run `fetch` again |
 
 ## Stopping
