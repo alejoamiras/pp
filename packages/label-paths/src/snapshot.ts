@@ -3,12 +3,20 @@ import { aspLeaf, BN254_P, buildLeanImt, type LabelPath, MAX_DEPTH } from "@pp/b
 /** The leaf sets behind one registry record. Leaves are tree leaves, `hash_1(label)`, as the ASP serves them. */
 export type AspSnapshot = { sequence: bigint; poolRoot: bigint; birthRoot: bigint; poolLeaves: bigint[]; birthLeaves: bigint[] }
 
-/** The registry's `RootRecord`, field for field. */
-export type RootRecord = { sequence: bigint; poolRoot: bigint; birthRoot: bigint; l1Block: bigint; rootTime: bigint }
+/** The registry's `RootRecord`, field for field, then the list lengths posted with it (`get_sizes`). */
+export type RootRecord = {
+	sequence: bigint
+	poolRoot: bigint
+	birthRoot: bigint
+	l1Block: bigint
+	rootTime: bigint
+	poolSize: bigint
+	birthSize: bigint
+}
 
 /**
- * One snapshot cannot tell a never-approved label from a removed one, so both are `ABSENT`. The record
- * binds the roots, not the lists' lengths, so `ABSENT` is not proof that a label is unapproved.
+ * One snapshot cannot tell a never-approved label from a removed one, so both are `ABSENT`: not in the
+ * list the record commits to, by root and length. The length is the one the poster saw.
  */
 export type LabelState = "ACTIVE" | "ABSENT" | "STALE_ROOT"
 
@@ -21,7 +29,7 @@ export const MAX_ROOT_AGE = 3600n
 export const SPEND_WINDOW = 1800n
 export const MAX_LEAVES = 2 ** MAX_DEPTH
 
-export type SnapshotErrorCode = "Malformed" | "OutOfRange" | "TooManyLeaves" | "UnsortedBirthLeaves" | "RootMismatch"
+export type SnapshotErrorCode = "Malformed" | "OutOfRange" | "TooManyLeaves" | "UnsortedBirthLeaves" | "RootMismatch" | "SizeMismatch"
 
 export class SnapshotError extends Error {
 	constructor(
@@ -63,6 +71,16 @@ export function verifySnapshot(s: AspSnapshot): void {
 	if (buildLeanImt(s.birthLeaves).root !== s.birthRoot) throw new SnapshotError("RootMismatch", "birthRoot")
 }
 
+/**
+ * Throws `SnapshotError("SizeMismatch")` unless each list has the length posted with its root; hashes
+ * nothing. A root does not fix its list's length: one collapsed into inner nodes builds to the same root.
+ * Both lists are compared, as both roots are.
+ */
+export function assertSizes(r: RootRecord, s: AspSnapshot): void {
+	if (BigInt(s.poolLeaves.length) !== r.poolSize) throw new SnapshotError("SizeMismatch", "poolLeaves")
+	if (BigInt(s.birthLeaves.length) !== r.birthSize) throw new SnapshotError("SizeMismatch", "birthLeaves")
+}
+
 export function treeOf(s: AspSnapshot, origin: Origin): { leaves: readonly bigint[]; root: bigint; field: string } {
 	if (origin === 0) return { leaves: s.poolLeaves, root: s.poolRoot, field: "poolRoot" }
 	if (origin === 1) return { leaves: s.birthLeaves, root: s.birthRoot, field: "birthRoot" }
@@ -97,11 +115,13 @@ export function rootFresh(r: Pick<RootRecord, "rootTime">, nowSec: bigint): bool
  * that block's timestamp. Roots are compared, not `sequence`: a heartbeat keeps both roots and every path.
  * `ACTIVE` at the exact age limit fails a proof anchored one block later, so pass the anchor time plus
  * the proving budget. Pass a verified snapshot (`parseAspSnapshot`): on an unverified one, `ABSENT` comes
- * from a list never checked against its root. `LabelPathCache.check` takes an unverified one.
+ * from a list never checked against its root. `LabelPathCache.check` takes an unverified one. Throws
+ * `SnapshotError("SizeMismatch")` for a list whose length is not the record's.
  */
 export function labelState(r: RootRecord, s: AspSnapshot, label: bigint, origin: Origin, nowSec: bigint): LabelState {
 	if (s.poolRoot !== r.poolRoot || s.birthRoot !== r.birthRoot) return "STALE_ROOT"
 	if (!rootFresh(r, nowSec)) return "STALE_ROOT"
+	assertSizes(r, s)
 	if (treeOf(s, origin).root === 0n) return "ABSENT"
 	return pathFor(s, label, origin) === null ? "ABSENT" : "ACTIVE"
 }

@@ -49,7 +49,15 @@ describe("snapshots", () => {
 
 	it("answer labelState like check_label, at both time bounds", () => {
 		const T = 10_000n
-		const r: RootRecord = { sequence: 7n, poolRoot: snap.poolRoot, birthRoot: snap.birthRoot, l1Block: 5n, rootTime: T }
+		const r: RootRecord = {
+			sequence: 7n,
+			poolRoot: snap.poolRoot,
+			birthRoot: snap.birthRoot,
+			l1Block: 5n,
+			rootTime: T,
+			poolSize: BigInt(snap.poolLeaves.length),
+			birthSize: BigInt(snap.birthLeaves.length),
+		}
 		expect(labelState(r, snap, label(0), 0, T + 1800n)).toBe("ACTIVE")
 		expect(labelState(r, snap, label(0), 0, T + 1801n)).toBe("STALE_ROOT")
 		expect(labelState(r, snap, label(0), 0, T - 1n)).toBe("STALE_ROOT")
@@ -57,7 +65,7 @@ describe("snapshots", () => {
 		expect(labelState({ ...r, poolRoot: 1n }, snap, label(0), 0, T)).toBe("STALE_ROOT")
 		expect(labelState(r, snap, label(4), 0, T)).toBe("ABSENT")
 		const noBirths = { ...snap, birthLeaves: [], birthRoot: 0n }
-		expect(labelState({ ...r, birthRoot: 0n }, noBirths, birthLabels[0] as bigint, 1, T)).toBe("ABSENT")
+		expect(labelState({ ...r, birthRoot: 0n, birthSize: 0n }, noBirths, birthLabels[0] as bigint, 1, T)).toBe("ABSENT")
 	})
 
 	it("round-trip on the wire and refuse every malformed shape", () => {

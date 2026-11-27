@@ -1,9 +1,8 @@
 import { aspLeaf, buildLeanImt, type LabelPath, type LeanImt } from "@pp/bridge-spec"
-import { type AspSnapshot, MAX_ROOT_AGE, type Origin, type RootRecord, SnapshotError, SPEND_WINDOW, treeOf } from "./snapshot"
+import { type AspSnapshot, assertSizes, type Origin, type RootRecord, rootFresh, SnapshotError, treeOf } from "./snapshot"
 
 /**
- * `ABSENT`: the label is not in the origin's list, a list that builds to the record's root. The record
- * binds the roots, not the lists' lengths, so this is not proof that the label is unapproved.
+ * `ABSENT`: the label is not in the origin's list, a list of the record's length that builds to its root.
  * `STALE_ROOT` says what to do next. `snapshot`: its roots are not the record's, so fetch the record's
  * own sequence. `age`: the record is too old for a spend, so wait for the next post; a record newer
  * than `nowSec` instead means it was not read at the anchor block.
@@ -41,12 +40,14 @@ export class LabelPathCache {
 	 * proving budget. `ACTIVE` and `ABSENT` come only from an origin list that builds to the declared root:
 	 * it is built, or the tree kept for that root is reused while its list is the same. Throws
 	 * `SnapshotError("RootMismatch")` when the list does not build to the root, whether or not the label is
-	 * in it; that list is not kept, and a tree already verified for the root stays.
+	 * in it; that list is not kept, and a tree already verified for the root stays. Throws
+	 * `SnapshotError("SizeMismatch")`, before any hash, when either list's length is not the record's.
 	 */
 	check(r: RootRecord, s: AspSnapshot, label: bigint, origin: Origin, nowSec: bigint): LabelCheck {
 		for (const root of this.trees.keys()) if (root !== r.poolRoot && root !== r.birthRoot) this.trees.delete(root)
 		if (s.poolRoot !== r.poolRoot || s.birthRoot !== r.birthRoot) return { state: "STALE_ROOT", reason: "snapshot" }
-		if (r.rootTime > nowSec || r.rootTime + MAX_ROOT_AGE < nowSec + SPEND_WINDOW) return { state: "STALE_ROOT", reason: "age" }
+		if (!rootFresh(r, nowSec)) return { state: "STALE_ROOT", reason: "age" }
+		assertSizes(r, s)
 		const { leaves, root, field } = treeOf(s, origin)
 		if (root === 0n) {
 			if (leaves.length > 0) throw new SnapshotError("RootMismatch", field)
