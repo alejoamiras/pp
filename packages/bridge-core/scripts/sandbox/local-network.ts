@@ -122,6 +122,8 @@ const REGISTRY = join(homedir(), ".agents", "ports.md")
 const REGISTRY_LOCK = `${REGISTRY}.lock`
 /** A lock older than this belonged to a run that died holding it; the alternative is a deadlock. */
 const LOCK_STALE_MS = 15_000
+/** Longer than the stale window, so a dead holder's lock clears before a waiter gives up. */
+const LOCK_WAIT_MS = LOCK_STALE_MS + 5_000
 
 function tryAcquireLock(): boolean {
 	try {
@@ -146,7 +148,8 @@ const REGISTRY_HEADER = [
  *  because the claims are what keep a run's own ports apart from its next allocation. */
 async function withRegistry(mutate: (lines: string[]) => string[]): Promise<boolean> {
 	mkdirSync(dirname(REGISTRY), { recursive: true })
-	for (let i = 0; i < 60; i++) {
+	const deadline = Date.now() + LOCK_WAIT_MS
+	for (;;) {
 		if (tryAcquireLock()) {
 			try {
 				const current = existsSync(REGISTRY) ? readFileSync(REGISTRY, "utf8") : `${REGISTRY_HEADER.join("\n")}\n`
@@ -158,9 +161,9 @@ async function withRegistry(mutate: (lines: string[]) => string[]): Promise<bool
 			}
 			return true
 		}
+		if (Date.now() >= deadline) return false
 		await sleep(100)
 	}
-	return false
 }
 
 const ownerCell = (runId: string) => `| ${runId} |`
@@ -214,13 +217,11 @@ export async function registerHostPorts(runId: string, label: string, ports: Rec
 	if (conflicts.length > 0) throw new PortClaimConflict(conflicts)
 }
 
-/** Drop every row `runId` owns. A registry that stayed locked keeps them; the warning is what makes
- *  the leak recoverable by hand. Never throws — a registry hiccup must not fail an otherwise clean run. */
+/** Drop every row `runId` owns. Throws when the registry stayed locked past the stale window: the rows
+ *  then outlive the run, and the message names them for removal by hand. */
 export async function releaseHostPorts(runId: string, ports: Record<string, number>): Promise<void> {
 	if (await withRegistry((lines) => lines.filter((l) => !l.includes(ownerCell(runId))))) return
-	console.warn(
-		`[sandbox] ${REGISTRY} stayed locked — remove the rows owned by ${runId} (ports ${Object.values(ports).join(", ")}) by hand`,
-	)
+	throw new Error(`${REGISTRY} stayed locked — remove the rows owned by ${runId} (ports ${Object.values(ports).join(", ")}) by hand`)
 }
 
 const releasePorts = (runId: string, ports: SandboxPorts) => releaseHostPorts(runId, ports)
@@ -508,8 +509,8 @@ function spawnAnvil(tool: Toolchain, port: number): ChildProcess {
 		tool.anvilBin,
 		// Every key the handle advertises (`deploy.ts` funds none itself) must be one anvil pre-funds.
 		// The base fee starts at 7 wei, below which EIP-1559's per-block decrease rounds to zero. From anvil's
-		// default 1 gwei it falls 12.5 % a block, and on 6.0.0 the rollup's mana min fee follows it down in
-		// steps (about 40,000-fold in a run's first five minutes), breaking flows that size credit to a ceiling.
+		// default 1 gwei it falls 12.5 % a block (about 40,000-fold over 80 blocks), and on 6.0.0 the rollup's
+		// mana min fee follows it down in steps, breaking flows that size credit to a ceiling.
 		[
 			"--host",
 			"127.0.0.1",
@@ -530,15 +531,19 @@ function spawnAnvil(tool: Toolchain, port: number): ChildProcess {
 	return child
 }
 
-function nodeEnv(tool: Toolchain, anvilUrl: string, dirs: { data: string; tmp: string }): NodeJS.ProcessEnv {
+/**
+ * The node's whole environment. Nothing else passes from this process: the node reads hundreds of
+ * settings from the environment, and a developer's shell can hold testnet RPC URLs, keys, or the
+ * switches that disable or reset the admin key below. HOME locates the toolchain's caches; the three
+ * overridable settings are named.
+ */
+export function nodeEnv(tool: Toolchain, anvilUrl: string, dirs: { data: string; tmp: string }): NodeJS.ProcessEnv {
 	const forge = join(tool.internalBin, "forge")
 	const anvil = join(tool.internalBin, "anvil")
-	// A shell that disables or resets the admin key would override the hash below: the node reads
-	// those switches first. The child never inherits them.
-	const { AZTEC_DISABLE_ADMIN_API_KEY: _disable, AZTEC_RESET_ADMIN_API_KEY: _reset, ...inherited } = process.env
+	const inherited = process.env
 	return {
-		...inherited,
-		PATH: `${tool.internalBin}${delimiter}${process.env.PATH ?? ""}`,
+		...(inherited.HOME === undefined ? {} : { HOME: inherited.HOME }),
+		PATH: `${tool.internalBin}${delimiter}${inherited.PATH ?? ""}`,
 		// Drops the sequencer's per-block transaction floor so a single tx makes a block. It does NOT
 		// make the chain tick on its own — this network still builds a block only when a transaction
 		// arrives, which is why the L1→L2 waits carry a `forceBlock`.
@@ -606,10 +611,32 @@ export interface LocalNetwork {
 	leftovers(): string[]
 }
 
-/** Throws when a stopped network left anything behind. */
+/** Throws when a stopped network left anything behind, and marks the process as failed first:
+ *  vitest 4.1 only logs an error thrown from a global teardown and still exits 0. */
 export function assertNothingLeft(net: LocalNetwork): void {
 	const left = net.leftovers()
-	if (left.length) throw new Error(`[sandbox] the stopped network left behind: ${left.join("; ")}`)
+	if (!left.length) return
+	process.exitCode = 1
+	throw new Error(`[sandbox] the stopped network left behind: ${left.join("; ")}`)
+}
+
+/**
+ * A vitest global teardown for `net`: stops it, runs `cleanup` whether or not the stop threw, then
+ * requires that nothing was left behind. Any failure marks the process as failed before it is
+ * rethrown, for the same vitest reason as {@link assertNothingLeft}.
+ */
+export async function teardownNetwork(net: LocalNetwork, cleanup?: () => void): Promise<void> {
+	try {
+		try {
+			await net.stop()
+		} finally {
+			cleanup?.()
+		}
+		assertNothingLeft(net)
+	} catch (e) {
+		process.exitCode = 1
+		throw e
+	}
 }
 
 /** Both env vars together mean "use the network already running"; one alone would boot a fresh
@@ -668,6 +695,8 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 		return attached
 	}
 	if (!RUN_ID.test(opts.runId)) throw new Error(`run id ${JSON.stringify(opts.runId)} is not a single path segment`)
+	// Names other directories under SANDBOX_CACHE_DIR: the shared logs, or another run's artifacts.
+	if (/^logs$|-artifacts$/.test(opts.runId)) throw new Error(`run id ${JSON.stringify(opts.runId)} is reserved`)
 	if (runLeftovers({ runId: opts.runId, dirs: [], pgids: [] }).length > 0) {
 		throw new Error(`run id ${opts.runId} already owns registry rows; another run is using it`)
 	}
@@ -690,13 +719,16 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 	const stop = (): Promise<void> => {
 		stopping ??= (async () => {
 			for (const owned of [...spawned].reverse()) await killGroup(owned)
-			await releasePorts(opts.runId, ports)
-			// The store belongs to this network and nothing outlives it; removing it only after the
-			// holders are gone is what keeps the pages from staying pinned.
-			removeDirs()
-			// A stopped network's handlers would otherwise exit the host during a later network's teardown.
-			unregister()
-			process.off("exit", onExit)
+			try {
+				await releasePorts(opts.runId, ports)
+			} finally {
+				// The store belongs to this network and nothing outlives it; removing it only after the
+				// holders are gone is what keeps the pages from staying pinned.
+				removeDirs()
+				// A stopped network's handlers would otherwise exit the host during a later network's teardown.
+				unregister()
+				process.off("exit", onExit)
+			}
 		})()
 		return stopping
 	}
@@ -748,7 +780,8 @@ export async function startLocalNetwork(opts: StartLocalNetworkOptions): Promise
 			throw new Error(`the run listens outside its claimed ports: ${stray.map((l) => `${l.address} (pid ${l.pid})`).join(", ")}`)
 		}
 	} catch (e) {
-		await stop()
+		// The boot failure is the error to surface; a release that also failed is reported beside it.
+		await stop().catch((released: Error) => console.error(`[sandbox] ${released.message}`))
 		throw e
 	}
 	const pids = pidsOf(spawned)

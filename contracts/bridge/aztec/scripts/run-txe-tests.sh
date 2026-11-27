@@ -5,22 +5,28 @@
 #   - aztec-nargo's built-in test runner does NOT resolve TXE oracles; they must be served by
 #     @aztec-labs/txe over HTTP and passed via --oracle-resolver.
 #   - The TXE server resolves DEPENDENCY contract artifacts from the crate's target/, under
-#     "<dependency_package_name>-<ContractName>.json". Each crate declares its staged deps below.
+#     "<dependency_package_name>-<ContractName>.json". Each crate lists them as `txe.stage` in
+#     contracts/crates.json.
 #   - The Token artifact MUST be the transpiled one (@aztec-foundation/aztec-standards ships it);
 #     plain `nargo compile` output is rejected ("public bytecode has not been transpiled").
 #   - Long TXE calls die on nargo's default foreign-call timeout; upstream CI raises it.
 #   - The server's dependency set is the committed mini-project in ../txe-server (frozen lockfile),
 #     never an ad-hoc `bun add` — its transitives are part of the supply chain.
+#   - `env.deploy` loads the crate's OWN contract from target/ too, not from the source `nargo test`
+#     compiles, so the crate is rebuilt first: a stale artifact would test old code.
 #
-# Usage: scripts/run-txe-tests.sh [--crate token_bridge_hub|asp_registry|asp_registry_probe|labelled_token] [nargo flags...] [-- test names...]
+# Usage: scripts/run-txe-tests.sh [--crate <name>] [nargo flags...] [-- test names...]
+#   <name> is a contracts/crates.json crate with a `txe` gate; token_bridge_hub by default.
 #
-# Pass criteria are per crate: a committed `txe-manifest.txt` names every test that must pass, so a
-# dropped `mod test;` or a silently skipped file cannot read as green.
+# Pass criteria are per crate: a committed `txe-manifest.txt` names every test that must pass and
+# holds at least the manifest's `txe.floor` names, so a dropped `mod test;` or a silently skipped
+# file cannot read as green.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"          # contracts/bridge/aztec
 repo_root="$(cd "$here/../../.." && pwd)"
-AZTEC_HOME="${AZTEC_HOME:-$HOME/.aztec/versions/6.0.0}"
+crates() { (cd "$repo_root" && bun scripts/ci-cd/crates.ts "$@"); }
+AZTEC_HOME="${AZTEC_HOME:-$HOME/.aztec/versions/$(crates aztec-version)}"
 NARGO="$AZTEC_HOME/bin/aztec-nargo"
 [ -x "$NARGO" ] || { echo "aztec-nargo not found at $NARGO" >&2; exit 1; }
 
@@ -28,14 +34,8 @@ crate="token_bridge_hub"
 if [ "${1:-}" = "--crate" ]; then
   crate="${2:-}"; shift 2
 fi
-# The floor lives here, not in the manifest, so one diff cannot drop tests and lower it together.
-case "$crate" in
-  token_bridge_hub) floor=65 ;;
-  asp_registry) floor=49 ;;
-  asp_registry_probe) floor=21 ;;
-  labelled_token) floor=18 ;;
-  *) echo "usage: $0 [--crate token_bridge_hub|asp_registry|asp_registry_probe|labelled_token] [nargo flags...] [-- test names...]" >&2; exit 2 ;;
-esac
+floor="$(crates get "$crate" txe.floor)" || {
+  echo "usage: $0 [--crate <a contracts/crates.json crate with a txe gate>] [nargo flags...] [-- test names...]" >&2; exit 2; }
 # Everything before `--` is a nargo flag (with or without a value); only names after `--` filter.
 nargo_flags=()
 filters=()
@@ -46,7 +46,7 @@ for a in "$@"; do
   else nargo_flags+=("$a")
   fi
 done
-tb="$here/$crate"
+tb="$repo_root/$(crates get "$crate" path)"
 mkdir -p "$tb/target"
 
 # Port is per-run, not fixed: many agents share this host, and a hardcoded 8080 either collides
@@ -75,26 +75,19 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# ── 1. Stage dependency artifacts into <crate>/target/ ──────────────────────────────
-# Resolved through bridge-core's declared dependency, not $repo_root/node_modules: this repo
-# uses bun's isolated linker, so there is no hoisted root node_modules to look in.
-case "$crate" in
-  token_bridge_hub)
-    TOKEN_ARTIFACT="$repo_root/packages/bridge-core/node_modules/@aztec-foundation/aztec-standards/artifacts/target/token_contract-Token.json"
-    [ -f "$TOKEN_ARTIFACT" ] || { echo "Token artifact missing at $TOKEN_ARTIFACT — run bun install." >&2; exit 1; }
-    cp "$TOKEN_ARTIFACT" "$tb/target/token_contract-Token.json"
-    ;;
-  asp_registry_probe)
-    REGISTRY_ARTIFACT="$here/asp_registry/target/asp_registry-AspRootRegistry.json"
-    [ -f "$REGISTRY_ARTIFACT" ] || { echo "registry artifact missing at $REGISTRY_ARTIFACT — run scripts/compile.sh asp_registry." >&2; exit 1; }
-    cp "$REGISTRY_ARTIFACT" "$tb/target/asp_registry-AspRootRegistry.json"
-    ;;
-  labelled_token)
-    # The test-only stub is its own crate (committed artifact, parity-checked); the TXE finds it
-    # only beside the crate under test.
-    cp "$here/bridge_stub/target/bridge_stub-BridgeStub.json" "$tb/target/"
-    ;;
-esac
+# ── 1. Rebuild the crate, then stage dependency artifacts into <crate>/target/ ──────
+# The build is reproducible: an unchanged source leaves the committed artifact byte-identical.
+# A staged artifact of another crate is rebuilt first, for the same reason.
+build_list="$(crates get "$crate" txe.build)"
+mapfile -t builds <<< "$build_list"
+AZTEC_HOME="$AZTEC_HOME" bash "$here/scripts/compile.sh" "${builds[@]}"
+# A package's artifact resolves through a workspace's declared dependency, never a root
+# node_modules: this repo uses bun's isolated linker, so there is no hoisted one to look in.
+while IFS= read -r staged; do
+  [ -n "$staged" ] || continue
+  [ -f "$repo_root/$staged" ] || { echo "staged artifact missing at $staged — run bun install." >&2; exit 1; }
+  cp "$repo_root/$staged" "$tb/target/"
+done < <(crates get "$crate" txe.stage)
 
 # TXE speaks JSON-RPC and does not answer a bare GET, so `curl -sf` reports failure even once
 # it is serving. Probe the TCP socket instead — the original HTTP probe never succeeded, which

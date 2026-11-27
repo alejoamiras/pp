@@ -13,6 +13,8 @@
 # PP_E2E_ATTACH=<that state dir> reuses them (PP_E2E_REBUILD=1 to rebuild).
 # Every process this script starts is its own process group; the trap kills exactly those groups.
 set -euo pipefail
+# Every CI runner starts with a cold Bun transpiler cache, and a warm one can hide failures.
+export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 
 cd "$(dirname "$0")/../.."
 KIT_DIR=$(pwd)

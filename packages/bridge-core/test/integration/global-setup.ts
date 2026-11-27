@@ -6,7 +6,7 @@ import { join } from "node:path"
 import type { TestProject } from "vitest/node"
 import { deployEverything } from "../../scripts/sandbox/deploy"
 import type { SandboxHandle } from "../../scripts/sandbox/handle"
-import { assertNothingLeft, SANDBOX_CACHE_DIR, startLocalNetwork } from "../../scripts/sandbox/local-network"
+import { SANDBOX_CACHE_DIR, startLocalNetwork, teardownNetwork } from "../../scripts/sandbox/local-network"
 
 declare module "vitest" {
 	export interface ProvidedContext {
@@ -22,11 +22,10 @@ export default async function setup(project: TestProject): Promise<() => Promise
 	// A caller-named directory is the caller's to keep; one this run made goes with the network.
 	const named = process.env.PP_SANDBOX_ARTIFACTS
 	const artifactsDir = named ?? join(SANDBOX_CACHE_DIR, `${runId}-artifacts`)
-	const teardown = async () => {
-		await net.stop()
+	const removeArtifacts = () => {
 		if (!named) rmSync(artifactsDir, { recursive: true, force: true })
-		assertNothingLeft(net)
 	}
+	const teardown = () => teardownNetwork(net, removeArtifacts)
 	try {
 		mkdirSync(artifactsDir, { recursive: true })
 		const { handle } = await deployEverything(net, { artifactsDir })

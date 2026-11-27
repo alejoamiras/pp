@@ -14,8 +14,11 @@ Current line: **`6.0.0`**. Labs and foundation number their releases separately,
 package keeps a pin of its own:
 
 - **`@aztec-labs/*` at `6.0.0`**, the `@aztec-labs/aztec.js` pin. The Noir contract source follows
-  this number (the aztec-nr tags in every `Nargo.toml`, `contracts/bridge/aztec/scripts/compile.sh`,
-  the committed `target/*.json`), and so does the toolchain at `~/.aztec/versions/6.0.0`. The Nulo
+  this number (the aztec-nr tags in every `Nargo.toml`; under `pins` in `contracts/crates.json`,
+  the commit of every tag the crates reach, aztec-nr's own dependencies included, which
+  `bun scripts/ci-cd/crates.ts check-pins` lists after a build; the committed `target/*.json`), and
+  so does the toolchain at
+  `~/.aztec/versions/6.0.0`. The Nulo
   wallet's packages sit at `0.3.0`, whose Aztec peers are exact labs `6.0.0` pins.
 - **`@aztec-foundation/*` at `6.0.0`** (`bb.js`, `l1-artifacts`, `noir-acvm_js`,
   `noir-noirc_abi`): the version the locked `@aztec-labs/aztec.js` requires.
@@ -56,12 +59,13 @@ lockfile and in the TXE server's. The hub's class ids depend on these inputs.
   `bun install --frozen-lockfile --force`.
 - The wire-format package: `packages/bridge-spec/package.json` pins the labs packages too, and
   `contracts/bridge/aztec/pp_hash` pins `noir-lang/poseidon` by tag with its resolved commit in
-  `pp_hash/README.md` (CI compares the two). A bump that moves aztec-nr's poseidon pin, Aztec's
+  `contracts/crates.json` (`crates.ts check-pins` compares the two). A bump that moves aztec-nr's poseidon pin, Aztec's
   Poseidon2 or `sha256_to_field` shows up as a failure of `vectors:check`, the TS vector suite or
   `vectors:nargo`; fix the implementation, never regenerate v1 (`packages/bridge-spec/README.md`).
 - CI resolves two toolchains separately: `.github/actions/setup-aztec` installs the toolchain at the
   `@aztec-labs/aztec.js` pin read from `packages/bridge-core/package.json`, and
-  `_bridge-contracts.yml` installs the Noir toolchain from the crates' `Nargo.toml` tag.
+  `_bridge-contracts.yml` installs the Noir toolchain at the one aztec-nr tag the crates pin
+  (`bun scripts/ci-cd/crates.ts aztec-version`, which refuses two).
 
 ## Couplings
 
@@ -86,8 +90,8 @@ lockfile and in the TXE server's. The hub's class ids depend on these inputs.
   TXE cannot exercise it; the sandbox's first-time registration flows are the only canary.
 - **Two toolchain readers, one version.** `packages/bridge-core/scripts/sandbox/local-network.ts`
   boots `aztec start --local-network` from `~/.aztec/versions/<@aztec-labs/aztec.js pin>`, while
-  `compile.sh`, `nargo.sh` and `run-txe-tests.sh` default `AZTEC_HOME` to a literal version. Move
-  both together.
+  `compile.sh`, `nargo.sh` and `run-txe-tests.sh` default `AZTEC_HOME` to the crates' aztec-nr tag.
+  `scripts/ci-cd/crates.test.ts` fails while the two differ.
 - **Token `constructor_with_minter` arity**: five parameters since 5.0.1, the last `auth_contract`.
   The hub's `derive_token` and `src/hub-token.ts` both pin it.
 

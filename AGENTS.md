@@ -8,6 +8,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 |---|---|
 | [`contracts/bridge/evm`](contracts/bridge/evm/README.md) | L1 contracts (Foundry): `PortalFactory` and the per-token `TokenPortalImpl` clones. |
 | [`contracts/bridge/aztec`](contracts/bridge/aztec/README.md) | L2 contracts (Noir): `TokenBridgeHub`, the labelled token and its test minter, the hashing libraries and the TXE runner. |
+| [`contracts/crates.json`](contracts/crates.json) | Every Noir crate, the gates it runs (parity, nargo tests, TXE) and the commit each git dependency tag must resolve to; `scripts/ci-cd/crates.ts` reads it. |
 | [`packages/bridge-core`](packages/bridge-core/README.md) | `@pp/bridge-core`: claim, exit and readiness logic over viem and aztec.js, and the local-network harness (`scripts/sandbox/`). |
 | [`packages/bridge-spec`](packages/bridge-spec/README.md) | `@pp/bridge-spec`: the normative v1 wire format and hashes in TS, and the vectors that bind `BridgeMessageV1` (Solidity) and `bridge_message`/`pp_hash` (Noir) to it. |
 | [`packages/e2e-kit`](packages/e2e-kit/README.md) | `@pp/e2e-kit`: the Playwright kit a web app under `apps/` will use (test wallet, injected Ethereum wallet, egress fence, runner). |
@@ -52,10 +53,9 @@ with warm package and toolchain caches.
 | L1 symbolic proofs | `bash contracts/bridge/evm/scripts/check-halmos.sh` | 67 s |
 | L2 artifact parity | `bash contracts/bridge/aztec/scripts/compile.sh --check` | 76 s |
 | L2 TXE suite | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh` | 3.5 min |
-| Labelled token TXE | `bash contracts/bridge/aztec/scripts/compile.sh labelled_token && bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | 3 min |
+| L2 nargo tests + pinned commits | `bun scripts/ci-cd/crates.ts nargo-test && bun scripts/ci-cd/crates.ts check-pins` (keystone requires every v1 test by name) | 52 s |
+| Labelled token TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | 3 min |
 | Labelled token gates | `bun run --cwd packages/labelled-token gates:check` | 4 s |
-| L2 hash vectors | `bun run --cwd packages/bridge-spec vectors:nargo` (keystone, every v1 test by name) | 33 s |
-| L2 hash library | `bash contracts/bridge/aztec/scripts/nargo.sh contracts/bridge/aztec/pp_hash test --force` | 23 s |
 | Wire-format vectors | `bun run --cwd packages/bridge-spec vectors:check`, then `vectors:mutate -- --suite ts\|sol\|nr` | < 1 s, then 3 s · 5 s · 45 s |
 | Sole consumer | `bash contracts/bridge/aztec/scripts/check-sole-consumer.sh` | < 1 s |
 | Integration (local network) | `bun run --cwd packages/bridge-core test:integration` | 10 min |
@@ -71,6 +71,13 @@ After any change: lint, typecheck and the unit tests of the touched package. Bef
 the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contracts.yml`,
 `pool-client.yml` and `actionlint.yml`.
 
+Suites too slow for a pull request go in `SUITES` in [`scripts/nightly.ts`](scripts/nightly.ts)
+(`bun run nightly`). `nightly.yml` runs it every day from `bridge-v1` when that branch exists, else
+`main`, so a lane adds its deep suite in its own branch; dispatch the workflow with a `ref` to test
+another. A suite that passes no test fails. The L1 fuzz and invariant suites are
+`contracts/bridge/evm/scripts/nightly.sh` at that package's `nightly` Foundry profile; local-stack's
+32-minute idle case is its `test:integration:long`.
+
 ## Working in this repo
 
 - **The linker is `isolated`** (`bunfig.toml`). A workspace resolves only what its `package.json`
@@ -81,7 +88,10 @@ the change can reach. CI runs the same commands in `pr-quick.yml`, `bridge-contr
   is the executable guarantee.
 - **Unit tests run on Bun** (`bun --bun vitest run`). Every vitest config spreads `sharedTest` from
   [`vitest.base.ts`](vitest.base.ts); its `deps.interopDefault: false` is a stopgap for vitest 4
-  mistaking Bun's ES-module namespaces for CommonJS.
+  mistaking Bun's ES-module namespaces for CommonJS. `bun:test` is for files that load no
+  `@aztec-labs/*` package, directly or through a workspace: on a cold transpiler cache, which every CI
+  runner has, it breaks `@aztec-labs/foundation` at import. `test:all`, `test:ci-gating` and the kit's
+  runner set `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` so a local run starts cold too.
 - **Biome** lints and formats. `noExplicitAny` is an error: use `unknown` and narrow.
 - **Commits** are Conventional Commits with a lower-case subject, checked by the commit-msg hook and
   in CI. The pre-commit hook runs Biome on staged files, the absolute-path guard and the complexity

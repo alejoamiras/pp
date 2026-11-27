@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process"
+import { execFileSync, spawn, spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest"
 import {
 	assertSocketRoom,
 	killGroup,
+	nodeEnv,
 	own,
 	parseListeners,
 	runLeftovers,
@@ -34,6 +35,90 @@ describe("assertSocketRoom", () => {
 		// "/" + dir + "/cdb-ts-4194304-999-999.sock" is 29 bytes beyond the dir name.
 		expect(() => assertSocketRoom(`/${"d".repeat(78)}`)).not.toThrow()
 		expect(() => assertSocketRoom(`/${"d".repeat(79)}`)).toThrow(/no room for the node's IPC sockets \(108 > 107 bytes\)/)
+	})
+})
+
+describe("teardownNetwork", () => {
+	const teardownRun = (env: Record<string, string> = {}) => {
+		const config = join(import.meta.dirname, "fixtures/failing-teardown/vitest.config.ts")
+		const run = spawnSync("bun", ["--bun", "vitest", "run", "--config", config], {
+			cwd: join(import.meta.dirname, "../.."),
+			encoding: "utf8",
+			env: { ...process.env, ...env },
+		})
+		// Not the error's message: under Bun about one run in 25 prints the error without it.
+		expect(run.stdout + run.stderr).toContain("error during close")
+		expect(run.status).toBe(1)
+	}
+
+	it("fails a vitest run whose global teardown finds leftovers", () => teardownRun())
+
+	it("fails the run and still cleans up when the stop itself throws", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pp-teardown-"))
+		try {
+			teardownRun({ TEARDOWN_CASE: "stop-throws", TEARDOWN_MARKER: join(dir, "cleaned") })
+			expect(existsSync(join(dir, "cleaned"))).toBe(true)
+		} finally {
+			rmSync(dir, { recursive: true, force: true })
+		}
+	})
+})
+
+describe("the host port registry", () => {
+	// In a child whose HOME is a temp dir, so no test ever holds the host's own registry lock. The
+	// child's clock advances on every read: the lock's stale window and the wait's deadline both run on
+	// it, so the waits finish in a few seconds.
+	const inChild = (advanceMs: number, lockAgeMs: number, body: string) => {
+		const home = mkdtempSync(join(tmpdir(), "pp-registry-"))
+		try {
+			mkdirSync(join(home, ".agents"))
+			const lock = join(home, ".agents", "ports.md.lock")
+			const script = `const { utimesSync, writeFileSync } = await import("node:fs"); const m = await import(${JSON.stringify(module)});
+				writeFileSync(${JSON.stringify(lock)}, ""); const at = new Date(Date.now() - ${lockAgeMs}); utimesSync(${JSON.stringify(lock)}, at, at);
+				let now = Date.now(); Date.now = () => (now += ${advanceMs}); ${body}`
+			return spawnSync("bun", ["-e", script], { env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 60_000 })
+		} finally {
+			rmSync(home, { recursive: true, force: true })
+		}
+	}
+
+	it("waits out a dead holder's lock before giving up", () => {
+		const run = inChild(200, 0, `await m.registerHostPorts("lock-test", "t", { a: 1 }, process.pid); console.log("claimed")`)
+		expect(run.stderr).toBe("")
+		expect(run.stdout.trim()).toBe("claimed")
+	}, 30_000)
+
+	it("throws from a release whose lock never clears", () => {
+		const run = inChild(
+			1_000,
+			-3_600_000,
+			`await m.releaseHostPorts("lock-test", { a: 1 }).then(() => console.log("released"), (e) => console.log(e.message))`,
+		)
+		expect(run.stdout).toMatch(/stayed locked — remove the rows owned by lock-test \(ports 1\) by hand/)
+	}, 30_000)
+})
+
+describe("nodeEnv", () => {
+	it("passes the node only what the harness sets, HOME and the named overrides", () => {
+		const saved = { ...process.env }
+		Object.assign(process.env, { ETHEREUM_HOSTS: "https://rpc.example", AZTEC_DISABLE_ADMIN_API_KEY: "1", LOG_LEVEL: "debug" })
+		try {
+			const tool = { anvilBin: "", aztecBin: "", aztecEntry: "", internalBin: "/toolchain/internal-bin" }
+			const env = nodeEnv(tool, "http://127.0.0.1:1", { data: "/data", tmp: "/tmp-run" })
+			expect(env.ETHEREUM_HOSTS).toBe("http://127.0.0.1:1")
+			expect(env.AZTEC_DISABLE_ADMIN_API_KEY).toBeUndefined()
+			expect(env.LOG_LEVEL).toBe("debug")
+			expect(env.HOME).toBe(process.env.HOME)
+			expect(env.PATH?.startsWith("/toolchain/internal-bin")).toBe(true)
+			expect([env.DATA_DIRECTORY, env.TMPDIR]).toEqual(["/data", "/tmp-run"])
+			const extra = Object.keys(env).filter(
+				(k) => !/^(HOME|PATH|LOG_LEVEL|TEST_ACCOUNTS|DEPLOY_AZTEC_CONTRACTS_SALT|DATA_DIRECTORY|TMPDIR)$/.test(k),
+			)
+			for (const k of extra) expect(saved[k], `${k} came from the parent environment`).toBeUndefined()
+		} finally {
+			for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
+			Object.assign(process.env, saved)
+		}
 	})
 })
 
@@ -130,6 +215,12 @@ describe("startLocalNetwork", () => {
 
 	it("refuses a run id that is not one path segment", async () => {
 		await expect(startLocalNetwork({ runId: "../escape" })).rejects.toThrow(/not a single path segment/)
+	})
+
+	it("refuses a run id that names the shared logs or another run's artifacts", async () => {
+		for (const runId of ["logs", "bridge-integration-1-x-artifacts"]) {
+			await expect(startLocalNetwork({ runId, signals: false })).rejects.toThrow(/is reserved/)
+		}
 	})
 })
 

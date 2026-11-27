@@ -21,7 +21,7 @@ function forgeBin(): string {
 
 export function ensureForgeArtifacts(): void {
 	if (!existsSync(join(EVM_ROOT, "lib", "forge-std"))) {
-		throw new Error(`${EVM_ROOT}/lib is missing — run the pinned \`forge install\` from contracts/bridge/evm/README.md first`)
+		throw new Error(`${EVM_ROOT}/lib is missing — run contracts/bridge/evm/scripts/install-libs.sh first`)
 	}
 	console.log("[sandbox] forge build (incremental)")
 	execFileSync("bun", ["scripts/gen-remappings.ts"], { cwd: PACKAGE_ROOT, stdio: "inherit" })
