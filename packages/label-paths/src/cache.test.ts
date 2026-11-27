@@ -71,6 +71,8 @@ describe("LabelPathCache", () => {
 		expect(cache.check(record(), { ...snap, sequence: 8n }, 998n, 0, T)).toEqual({ state: "ABSENT" })
 		expect(cache.check(record({ birthRoot: 0n }), noBirths, birthLabels[0] as bigint, 1, T)).toEqual({ state: "ABSENT" })
 		expect(calls).toEqual({ builds: 2, leafHashes: 3 })
+		const zeroRootWithLeaves = { ...noBirths, birthLeaves: [aspLeaf(birthLabels[0] as bigint)] }
+		expect(() => cache.check(record({ birthRoot: 0n }), zeroRootWithLeaves, 99n, 1, T)).toThrow("RootMismatch: birthRoot")
 	})
 
 	it("does not answer ABSENT from a list that does not build to the declared root, and keeps the verified tree", () => {

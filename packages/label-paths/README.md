@@ -36,9 +36,9 @@ such as a browser, should use these instead:
    - The snapshot's roots are compared with the record's before anything is hashed. A mismatch is
      `{ state: "STALE_ROOT", reason: "snapshot" }`: fetch the record's own sequence. A record too old
      for a spend is `reason: "age"`: wait for the next post.
-   - Only the origin's tree is built, before any answer. The answer is `ACTIVE` with the path from that
-     tree or `ABSENT`, or `SnapshotError("RootMismatch")` if the list does not build to the declared
-     root, whether or not the label is in it.
+   - Otherwise only the origin's tree is built. The answer is `ACTIVE` with the path from that tree or
+     `ABSENT`, or `SnapshotError("RootMismatch")` if the list does not build to the declared root,
+     whether or not the label is in it.
    - Verified trees are kept by root. A later snapshot with the same root and the same list (a
      heartbeat) costs no rebuild; a different list is built on its own, because a root does not
      prove a list complete. A tree is dropped once the record's roots move on.

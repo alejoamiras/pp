@@ -38,17 +38,20 @@ export class LabelPathCache {
 
 	/**
 	 * Same rules as `labelState`; `r` is the record at the anchor block and `nowSec` its time plus the
-	 * proving budget. The origin's list is built and checked before any `ACTIVE` or `ABSENT`, once per
-	 * root and list. Throws `SnapshotError("RootMismatch")` when that list does not build to the declared
-	 * root, whether or not the label is in it; that list is not kept, and a tree already verified for the
-	 * root stays.
+	 * proving budget. `ACTIVE` and `ABSENT` come only from an origin list that builds to the declared root:
+	 * it is built, or the tree kept for that root is reused while its list is the same. Throws
+	 * `SnapshotError("RootMismatch")` when the list does not build to the root, whether or not the label is
+	 * in it; that list is not kept, and a tree already verified for the root stays.
 	 */
 	check(r: RootRecord, s: AspSnapshot, label: bigint, origin: Origin, nowSec: bigint): LabelCheck {
 		for (const root of this.trees.keys()) if (root !== r.poolRoot && root !== r.birthRoot) this.trees.delete(root)
 		if (s.poolRoot !== r.poolRoot || s.birthRoot !== r.birthRoot) return { state: "STALE_ROOT", reason: "snapshot" }
 		if (r.rootTime > nowSec || r.rootTime + MAX_ROOT_AGE < nowSec + SPEND_WINDOW) return { state: "STALE_ROOT", reason: "age" }
 		const { leaves, root, field } = treeOf(s, origin)
-		if (root === 0n) return { state: "ABSENT" }
+		if (root === 0n) {
+			if (leaves.length > 0) throw new SnapshotError("RootMismatch", field)
+			return { state: "ABSENT" }
+		}
 		const cached = this.trees.get(root)
 		const entry = cached && sameList(cached.leaves, leaves) ? cached : this.build(leaves, root, field)
 		const index = entry.leaves.indexOf(aspLeaf(label))
