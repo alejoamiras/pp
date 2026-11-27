@@ -61,7 +61,7 @@ export function fixtureLeaks(moduleIds: Iterable<string>, files: Iterable<Bundle
 }
 
 /** Every file under `dir`, named relative to it with `/` separators. */
-export function readOutput(dir: string): BundleFile[] {
+function readOutput(dir: string): BundleFile[] {
 	return readdirSync(dir, { recursive: true, withFileTypes: true })
 		.filter((e) => e.isFile())
 		.map((e) => {
