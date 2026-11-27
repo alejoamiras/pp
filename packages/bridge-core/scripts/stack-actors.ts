@@ -25,7 +25,6 @@ import { deployAccountIfAbsent, sponsoredFpcFee } from "./script-l2"
 /** A stack manifest that carries a bridge. */
 export type BridgeStack = ReturnType<typeof requireBlocks<"bridge">>
 
-const ARTIFACTS = { kind: "dir", path: circuitsDir() } as const
 let nextIndex = 1_000 + Math.floor(Math.random() * 1_000_000) * 64
 
 export const chainOf = (m: BridgeStack) => ({ ...foundry, rpcUrls: { default: { http: [m.l1Rpc] } } })
@@ -80,7 +79,8 @@ export async function owner(m: BridgeStack, seed: Seeder, values: readonly bigin
 }
 
 export const sessionOf = (m: BridgeStack, o: Pick<Owner, "address" | "signature">) =>
-	openBridgeSession({ manifest: m, l1Address: o.address, signature: o.signature, artifacts: ARTIFACTS })
+	// Resolved per session, not at import: a module that only imports this one needs no pool checkout.
+	openBridgeSession({ manifest: m, l1Address: o.address, signature: o.signature, artifacts: { kind: "dir", path: circuitsDir() } })
 
 /** An Ethereum sender that signs locally, over `transport` (plain HTTP by default). */
 export async function sender(m: BridgeStack, transport?: Transport): Promise<WalletClient> {
