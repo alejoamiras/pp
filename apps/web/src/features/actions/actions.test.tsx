@@ -455,6 +455,19 @@ describe("the shield dialog", () => {
 		expect(app.control.state().sent.aztec).toBe(0)
 	})
 
+	test("a shield the public balance no longer covers is refused before the wallet is asked", async () => {
+		const app = renderApp()
+		await connectAztec(app.user)
+		const dialog = await openShield(app)
+		await app.user.type(dialog.getByLabelText(/Amount/), "15")
+		// Elsewhere, 10 of the 15 the dialog opened with leaves the public balance.
+		await act(() => app.source.aztec.shield(ACCOUNTS.aztec, 10_000_000n, { epoch: 0, handoff: () => {} }))
+		const sent = app.control.state().sent.aztec
+		await app.user.click(dialog.getByRole("button", { name: "Shield" }))
+		await dialog.findByText(messageOf("OVER_PUBLIC_BALANCE"))
+		expect(app.control.state().sent.aztec).toBe(sent)
+	})
+
 	test("a new label reads Not enabled yet, then Funds enabled at the next refetch after approval, with no Refresh", async () => {
 		// Only intervals are faked, and they still advance with real time, so the wallet, the dialog and waitFor run as usual.
 		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"], shouldAdvanceTime: true })

@@ -8,8 +8,8 @@ import { StateKey } from "./StateKey"
 /** Both sides at once: each panel shows its own connect state, so this is also the Connect screen. */
 export function Home() {
 	const epoch = useApp().connection?.epoch
-	// An action carries amounts read under the connection that offered it; no later connection, even for
-	// the same account, inherits its dialog.
+	// An action belongs to the connection that offered it; no later connection, even for the same account,
+	// inherits its dialog.
 	const [opened, setOpened] = useState<{ action: HomeAction; epoch: number | undefined } | null>(null)
 	const action = opened !== null && opened.epoch === epoch ? opened.action : null
 	useEffect(() => {

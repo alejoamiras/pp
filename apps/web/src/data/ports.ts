@@ -189,7 +189,10 @@ export interface AztecPort {
 	): Promise<Sent>
 	/** A checked spend, as `transferPrivate`. */
 	unshield(from: AztecAddress, a: { amount: bigint; label: bigint; origin: Origin }, on: AztecSendHooks): Promise<Sent>
-	/** Public balance into a new birth note under a fresh label; it spends no label, so no path is read. */
+	/**
+	 * Public balance into a new birth note under a fresh label; it spends no label, so no path is read.
+	 * @throws `OVER_PUBLIC_BALANCE` before the handoff when the public balance, read again, is below `amount`
+	 */
 	shield(from: AztecAddress, amount: bigint, on: AztecSendHooks): Promise<Sent>
 	/**
 	 * Re-derives the one exact chunk (at most 8 largest notes) equal to `amount` from the notes as they

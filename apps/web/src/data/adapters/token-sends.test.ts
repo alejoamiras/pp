@@ -23,6 +23,8 @@ function grantAt(stage: Stage) {
 		granted: manifest.capabilities.map((c) => (c.type === "accounts" ? { ...c, accounts: [{ item: ME }] } : c)),
 	})
 }
+/** More public balance than any test shields. */
+const PUBLIC = async () => 1000n
 const ACTIVE: LabelCheck = { state: "ACTIVE", path: { index: 1, depth: 1, siblings: [7n, ...Array(17).fill(0n)] } }
 
 /** A connected wallet whose answers a test can change while the send waits on the allow list. */
@@ -57,7 +59,7 @@ function rig(stage: Stage = "2b") {
 		}),
 		check: () => checked,
 	}
-	const sends = stackTokenSends({ aztec, allowList, sponsoredFpc: FPC, notes: ENOUGH })
+	const sends = stackTokenSends({ aztec, allowList, sponsoredFpc: FPC, notes: ENOUGH, publicBalance: PUBLIC })
 	return {
 		wallet,
 		aztec,
@@ -116,7 +118,13 @@ describe("the token's checked spends", () => {
 		const later = { ...first, record: { ...first.record, sequence: 2n, poolRoot: 10n } }
 		const current = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(later)
 		const check = vi.fn().mockResolvedValueOnce(ACTIVE).mockResolvedValueOnce({ state: "ABSENT" })
-		const sends = stackTokenSends({ aztec: r.aztec, allowList: { current, check }, sponsoredFpc: FPC, notes: ENOUGH })
+		const sends = stackTokenSends({
+			aztec: r.aztec,
+			allowList: { current, check },
+			sponsoredFpc: FPC,
+			notes: ENOUGH,
+			publicBalance: PUBLIC,
+		})
 		await expect(sends.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())).rejects.toMatchObject({ code: "LABEL_ABSENT" })
 		expect(check.mock.calls.map(([view]) => view)).toEqual([first, later])
 		expect(r.wallet.sendTx).not.toHaveBeenCalled()
@@ -130,13 +138,25 @@ describe("the token's checked spends", () => {
 		})
 		const settled = vi.fn().mockResolvedValueOnce(view(1n, 9n)).mockResolvedValue(view(2n, 9n))
 		const check = vi.fn().mockResolvedValue(ACTIVE)
-		const sends = stackTokenSends({ aztec: r.aztec, allowList: { current: settled, check }, sponsoredFpc: FPC, notes: ENOUGH })
+		const sends = stackTokenSends({
+			aztec: r.aztec,
+			allowList: { current: settled, check },
+			sponsoredFpc: FPC,
+			notes: ENOUGH,
+			publicBalance: PUBLIC,
+		})
 		await sends.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())
 		expect([check.mock.calls.length, settled.mock.calls.length]).toEqual([1, 2])
 		let root = 20n
 		const moving = vi.fn(async () => view(root, root++))
 		check.mockClear()
-		const again = stackTokenSends({ aztec: r.aztec, allowList: { current: moving, check }, sponsoredFpc: FPC, notes: ENOUGH })
+		const again = stackTokenSends({
+			aztec: r.aztec,
+			allowList: { current: moving, check },
+			sponsoredFpc: FPC,
+			notes: ENOUGH,
+			publicBalance: PUBLIC,
+		})
 		await expect(again.unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())).rejects.toMatchObject({ code: "LIST_STALE" })
 		expect(check).toHaveBeenCalledTimes(3)
 		expect(r.wallet.sendTx).toHaveBeenCalledTimes(1)
@@ -156,6 +176,7 @@ describe("the token's checked spends", () => {
 				allowList: { current: vi.fn().mockResolvedValueOnce(read(2n)).mockResolvedValueOnce(read(later)), check },
 				sponsoredFpc: FPC,
 				notes: ENOUGH,
+				publicBalance: PUBLIC,
 			}).unshield(ME, { amount: 5n, label: 77n, origin: 0 }, on())
 		await through(1501n)
 		await expect(through(1502n)).rejects.toMatchObject({ code: "LIST_STALE" })
@@ -183,6 +204,7 @@ describe("the token's checked spends", () => {
 				order.push("notes")
 				return [5n, 5n]
 			},
+			publicBalance: PUBLIC,
 		})
 		await expect(sends.unshield(ME, { amount: 11n, label: 77n, origin: 0 }, on(handoff))).rejects.toMatchObject({
 			code: "OVER_NOTE_CAP",
@@ -220,8 +242,12 @@ describe("the token's checked spends", () => {
 describe("the shield", () => {
 	test("sends shield(amount) paid by the SponsoredFPC with no label path, handing off right before the wallet sends", async () => {
 		const unchecked = () => ({ current: vi.fn(), check: vi.fn() })
-		const shield = (r: ReturnType<typeof rig>, allowList: ReturnType<typeof unchecked>, hooks: AztecSendHooks) =>
-			stackTokenSends({ aztec: r.aztec, allowList, sponsoredFpc: FPC, notes: ENOUGH }).shield(ME, 5n, hooks)
+		const shield = (
+			r: ReturnType<typeof rig>,
+			allowList: ReturnType<typeof unchecked>,
+			hooks: AztecSendHooks,
+			publicBalance = PUBLIC,
+		) => stackTokenSends({ aztec: r.aztec, allowList, sponsoredFpc: FPC, notes: ENOUGH, publicBalance }).shield(ME, 5n, hooks)
 
 		const r = rig("2c")
 		const list = unchecked()
@@ -256,5 +282,14 @@ describe("the shield", () => {
 		const ungranted = rig("2b")
 		await expect(shield(ungranted, unchecked(), on())).rejects.toMatchObject({ code: "NOT_GRANTED" })
 		expect(ungranted.wallet.sendTx).not.toHaveBeenCalled()
+
+		// The balance is read again at the send, so one spent since the dialog opened is refused before the handoff.
+		const spent = rig("2c")
+		const neverHanded = vi.fn()
+		const balance = vi.fn(async () => 4n)
+		await expect(shield(spent, unchecked(), on(neverHanded), balance)).rejects.toMatchObject({ code: "OVER_PUBLIC_BALANCE" })
+		expect(balance).toHaveBeenCalledWith(ME)
+		expect(neverHanded).not.toHaveBeenCalled()
+		expect(spent.wallet.sendTx).not.toHaveBeenCalled()
 	})
 })

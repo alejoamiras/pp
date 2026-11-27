@@ -99,6 +99,7 @@ const loadSends = (): Promise<SendSide> =>
 			allowList,
 			sponsoredFpc: deployment.sponsoredFpc,
 			notes: (owner, label) => side.port.notesByLabel(owner, label),
+			publicBalance: (owner) => side.port.publicBalance(owner),
 		}),
 	))
 

@@ -28,6 +28,8 @@ export interface TokenSendDeps {
 	sponsoredFpc: AztecAddress
 	/** A label's note values as the connected wallet reports them when called. */
 	notes: AztecPort["notesByLabel"]
+	/** The account's public balance as the connected wallet reports it when called. */
+	publicBalance: AztecPort["publicBalance"]
 }
 
 const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
@@ -106,6 +108,10 @@ export function stackTokenSends(d: TokenSendDeps): Pick<AztecPort, "transferPriv
 	return {
 		transferPrivate: (from, a, on) => spend(from, a, on, (wallet, path) => payloads.transferPrivate(wallet, a, path)),
 		unshield: (from, a, on) => spend(from, a, on, (wallet, path) => payloads.unshield(wallet, a, path)),
-		shield: (from, amount, on) => send(from, on, (wallet) => payloads.shield(wallet, amount)),
+		shield: async (from, amount, on) => {
+			// A balance spent since the dialog opened fails the wallet's simulation past the handoff, which holds the account.
+			if ((await d.publicBalance(from)) < amount) throw new BridgeFailure("OVER_PUBLIC_BALANCE")
+			return send(from, on, (wallet) => payloads.shield(wallet, amount))
+		},
 	}
 }

@@ -160,8 +160,7 @@ export function fixtureAztec(w: World): AztecPort {
 			)
 		},
 		async shield(from, amount, on) {
-			// The token's u128 argument and its nonzero assert refuse these before anything is proved.
-			if (amount <= 0n || amount >= 2n ** 128n) throw new BridgeFailure("AMOUNT_INVALID")
+			if (publicOf(w, from) < amount) throw new BridgeFailure("OVER_PUBLIC_BALANCE")
 			on.handoff()
 			return send(w, "shield", () => {
 				if (publicOf(w, from) < amount) return "public balance too low"
