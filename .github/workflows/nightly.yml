@@ -77,6 +77,11 @@ jobs:
         with:
           cache-save: "false"
 
+      # The real-wallet tier loads the wallet's release build in Playwright's bundled Chromium.
+      - uses: ./.nightly-ci/.github/actions/setup-playwright
+        with:
+          cache-save: "false"
+
       - uses: ./.nightly-ci/.github/actions/setup-aztec
         with:
           cache-save: "false"
