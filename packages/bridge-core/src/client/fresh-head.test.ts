@@ -18,6 +18,12 @@ const TICKET: ExitTicket = {
 	messageIndexInTx: 0,
 }
 
+/** The block an `eth_call` names; a header's hash here is its number, so an EIP-1898 read records the same bound. */
+const callBound = (params: unknown): bigint => {
+	const at = (params as [unknown, Hex | { blockHash: Hex }])[1]
+	return BigInt(typeof at === "string" ? at : at.blockHash)
+}
+
 /**
  * A real viem client over a node that holds its first `eth_blockNumber` until released, so the bound
  * read meets viem's own cache and in-flight sharing. Records the block every log scan and call is bound to.
@@ -38,7 +44,7 @@ function heldNode() {
 					return []
 				}
 				if (method === "eth_call") {
-					n.bounds.push(BigInt((params as [unknown, Hex])[1]))
+					n.bounds.push(callBound(params))
 					return numberToHex(0n, { size: 32 })
 				}
 				if (method === "eth_getBlockByNumber") {

@@ -34,7 +34,7 @@ import { guarded, walletRefusal } from "./boundary"
 import type { ClientDeployment } from "./deployment"
 import { BridgeClientError } from "./errors"
 import { allPages, type ExitPin, type ExitReads, type ExitWitness, messageIndices, settledAt, settleWith } from "./exits"
-import { BlockNotServedError, retryLagging } from "./lagging"
+import { BlockNotServedError, isNotServed, retryLagging } from "./lagging"
 import { callPayload, sponsored } from "./payload"
 import { windowedLogs } from "./resolve"
 import type { ClientTiming } from "./timing"
@@ -196,7 +196,7 @@ async function headerAt(c: ExitContext, block: bigint | "latest"): Promise<ExitP
 
 /** The header at `block`, retried while the backend lags; `RPC_INCONSISTENT` unless its hash is `hash`. */
 async function assertCanonical(c: ExitContext, block: bigint, hash: Hash | null): Promise<void> {
-	const h = await retryLagging(c.timing.pollingIntervalMs, () => headerAt(c, block))
+	const h = await retryLagging(c.timing.pollingIntervalMs, () => headerAt(c, block), isNotServed)
 	if (!hash || h.hash.toLowerCase() !== hash.toLowerCase()) throw new BridgeClientError("RPC_INCONSISTENT")
 }
 
@@ -235,11 +235,15 @@ export function exitReads(c: ExitContext): ExitReads<ExitProof> {
 	const d = c.deployment
 	return {
 		pin: (floor = 0n) =>
-			retryLagging(c.timing.pollingIntervalMs, async () => {
-				const h = await headerAt(c, "latest")
-				if (h.number < floor) throw new BlockNotServedError(floor)
-				return h
-			}),
+			retryLagging(
+				c.timing.pollingIntervalMs,
+				async () => {
+					const h = await headerAt(c, "latest")
+					if (h.number < floor) throw new BlockNotServedError(floor)
+					return h
+				},
+				isNotServed,
+			),
 		holds: (at) => assertCanonical(c, at.number, at.hash),
 		witness: (t, at) => proofOf(c, t, at),
 		settledTx: async (t, w, at) => {
@@ -305,7 +309,9 @@ export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): P
 		// A failed read after the broadcast must not lose its hash; the caller re-reads the ticket later.
 		const settled = await settledAt(io, t, w, receipt?.blockNumber).catch(() => undefined)
 		if (settled) return settled
-		if (!receipt || settled === undefined) throw new BridgeClientError("UNCERTAIN", { l1TxHash: hash })
+		// A receipt for another hash is the wallet's replacement of this send: what mined is not ours to judge.
+		const own = receipt?.transactionHash.toLowerCase() === hash.toLowerCase()
+		if (!receipt || !own || settled === undefined) throw new BridgeClientError("UNCERTAIN", { l1TxHash: hash })
 		throw new BridgeClientError(receipt.status === "success" ? "RPC_INCONSISTENT" : "REVERTED", { l1TxHash: hash })
 	})
 }

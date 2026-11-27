@@ -2,12 +2,12 @@ import { rmSync } from "node:fs"
 import type { Fr } from "@aztec-labs/aztec.js/fields"
 import { ownedWalletStore } from "@pp/bridge-core/sandbox"
 import { type Hex, MAX_OBSERVATION_LAG } from "@pp/label-paths"
-import { claimRows, releaseRows } from "@pp/run-isolation/ports"
+import { claimRows, releaseNamed } from "@pp/run-isolation/ports"
 import { CleanupStack } from "@pp/run-isolation/process"
 import { createPublicClient, http } from "viem"
 import { type AspScope, fetchScopedLeaves } from "./asp"
 import type { L1Tag } from "./l1"
-import { type Live, type LivePost, liveFrom } from "./live"
+import { type LivePost, liveFrom } from "./live"
 import { Poster, type Ports } from "./loop"
 import { Runner } from "./runner"
 import { SnapshotBook, serve } from "./server"
@@ -68,13 +68,6 @@ export const scopedLeaves = (d: StandaloneBotConfig["deployment"]) => {
 	return () => fetchScopedLeaves(d.aspApiUrl, scope)
 }
 
-/** Refuses a start whose derived accounts are not the registry's roles: every tick would halt. */
-async function assertRoles(live: Live, tip: Hex, births: boolean): Promise<void> {
-	if ((await live.role("poster", tip)) !== live.self) throw new Error(`the registry's poster is not ${live.poster}`)
-	if (births && (await live.role("birth_intake", tip)) !== BigInt(live.birthIntake ?? 0))
-		throw new Error(`the registry's birth intake is not ${live.birthIntake}`)
-}
-
 /** A post's margin plus the lag of `tag` behind the head beyond the registry's bound skips every post; warn, never refuse. */
 async function warnMargin(c: StandaloneBotConfig, tag: L1Tag, log: Ports["log"]): Promise<void> {
 	const l1 = createPublicClient({ transport: http(c.deployment.l1Rpc) })
@@ -84,13 +77,31 @@ async function warnMargin(c: StandaloneBotConfig, tag: L1Tag, log: Ports["log"])
 		log("margin_warning", { inclusionMarginSec: c.inclusionMarginSec, tagLagSec: lag, bound: MAX_OBSERVATION_LAG })
 }
 
-/** Steps `runner` once a second until `signal` aborts; an abort leaves an in-flight step behind unawaited. */
-async function loop(runner: Runner, signal: AbortSignal): Promise<void> {
+/** How long an abort waits for the in-flight step once the wallet under it has stopped. */
+const DRAIN_MS = 10_000
+
+/**
+ * Steps `runner` once a second until `signal` aborts, keeping the step in flight in `inflight.step`
+ * so teardown can drain it once the wallet under it stops.
+ */
+async function loop(runner: Runner, signal: AbortSignal, inflight: { step?: Promise<unknown> }): Promise<void> {
+	let wake = () => {}
 	const aborted = new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }))
 	while (!signal.aborted) {
-		await Promise.race([runner.step(), aborted])
-		await Promise.race([new Promise((r) => setTimeout(r, 1_000)), aborted])
+		inflight.step = runner.step()
+		await Promise.race([inflight.step, aborted])
+		if (signal.aborted) return
+		const timer = setTimeout(() => wake(), 1_000)
+		await Promise.race([new Promise<void>((r) => (wake = r)), aborted])
+		clearTimeout(timer)
 	}
+}
+
+/** `step` settled, or `ms` passed. */
+async function drain(step: Promise<unknown> | undefined, ms: number): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined
+	await Promise.race([step?.catch(() => {}), new Promise<void>((r) => (timer = setTimeout(r, ms)))])
+	clearTimeout(timer)
 }
 
 /**
@@ -98,59 +109,78 @@ async function loop(runner: Runner, signal: AbortSignal): Promise<void> {
  * values: the L1 tag `c.tag`, proving on, the node's gas estimate. Claims exactly `c.port` in the host
  * registry before binding it on 127.0.0.1, and keeps the wallet store on a tmpfs it allocates. Reads
  * no stdin. Resolves once `o.signal` aborts and the server, the wallet, the store and the port row are
- * gone; a start that fails removes them too.
+ * gone, at any stage of the start; a start that fails removes them too. Nothing is called back after
+ * the abort.
  * @throws RangeError for a config out of range; PortClaimConflict when another run holds `c.port`;
- * Error when the registry's roles are not the derived accounts, or the host has no tmpfs `/dev/shm`
+ * Error when the registry's roles are not the derived accounts, the host has no tmpfs `/dev/shm`, or
+ * the port row could not be released
  */
 export async function runStandaloneBot(c: StandaloneBotConfig, s: BotSecrets, o: StandaloneOptions): Promise<void> {
 	o.signal.throwIfAborted()
 	checkStandaloneConfig(c, s)
-	const log = o.log ?? stderrLog
-	const tag = c.tag ?? "finalized"
-	const d = c.deployment
 	const cleanup = new CleanupStack({ signals: false })
 	try {
-		await claimRows(c.runId, { "asp-bot": c.port }, process.pid)
-		cleanup.push(async () => void (await releaseRows(c.runId)))
-		const store = ownedWalletStore("aspbot")
-		cleanup.push(async () => rmSync(store, { recursive: true, force: true }))
-		const book = new SnapshotBook()
-		const server = await serve(book, c.port)
-		cleanup.push(() => server.close())
-		let first: LivePost | undefined
-		const live = await liveFrom(
-			{
-				...d,
-				tag,
-				store,
-				proverEnabled: true,
-				gas: "node",
-				postTimeoutSec: c.postTimeoutSec,
-				secrets: { poster: s.poster.toString() as Hex, ...(s.intake ? { intake: s.intake.toString() as Hex } : {}) },
-				aspLeaves: scopedLeaves(d),
-				onPosted: (p) => {
-					first ??= p
-				},
-			},
-			log,
-		)
-		cleanup.push(() => live.stop())
-		await assertRoles(live, (await live.ports.tip()).hash, d.tokens.length > 0)
-		await warnMargin(c, tag, log)
-		const poster = new Poster(live.ports, book, { self: live.self, inclusionMarginSec: BigInt(c.inclusionMarginSec) })
-		const runner = new Runner({
-			// Until its own first post lands, every tick asks for one.
-			tick: (postNow) => poster.tick(postNow || first === undefined),
-			blockNumber: live.blockNumber,
-			readiness: () =>
-				first ? { url: server.url, port: server.port, poster: live.poster, birthIntake: live.birthIntake ?? "" } : null,
-			emit: (e) => {
-				if (e.event === "ready" && first) o.onReady?.({ url: server.url, post: first })
-			},
-			now: Date.now,
-		})
-		await loop(runner, o.signal)
+		await run(c, s, o, cleanup)
+	} catch (e) {
+		if (!o.signal.aborted) throw e
 	} finally {
 		await cleanup.run()
 	}
+}
+
+async function run(c: StandaloneBotConfig, s: BotSecrets, o: StandaloneOptions, cleanup: CleanupStack): Promise<void> {
+	const log = o.log ?? stderrLog
+	const tag = c.tag ?? "finalized"
+	const d = c.deployment
+	await claimRows(c.runId, { "asp-bot": c.port }, process.pid)
+	cleanup.push(async () => {
+		if (!(await releaseNamed([{ port: c.port, service: "asp-bot", owner: c.runId }])))
+			throw new Error(`the port registry stayed locked; ${c.port} is still listed for ${c.runId}`)
+	})
+	const store = ownedWalletStore("aspbot")
+	cleanup.push(async () => rmSync(store, { recursive: true, force: true }))
+	const book = new SnapshotBook()
+	const server = await serve(book, c.port)
+	cleanup.push(() => server.close())
+	// Runs after the wallet stops (the stack unwinds in reverse) and before the store and server go.
+	const inflight: { step?: Promise<unknown> } = {}
+	cleanup.push(() => drain(inflight.step, DRAIN_MS))
+	o.signal.throwIfAborted()
+	let first: LivePost | undefined
+	const live = await liveFrom(
+		{
+			...d,
+			tag,
+			store,
+			proverEnabled: true,
+			gas: "node",
+			postTimeoutSec: c.postTimeoutSec,
+			secrets: { poster: s.poster.toString() as Hex, ...(s.intake ? { intake: s.intake.toString() as Hex } : {}) },
+			aspLeaves: scopedLeaves(d),
+			onPosted: (p) => {
+				first ??= p
+			},
+			checkRoles: true,
+			signal: o.signal,
+		},
+		log,
+	)
+	cleanup.push(() => live.stop())
+	o.signal.throwIfAborted()
+	await warnMargin(c, tag, log)
+	const poster = new Poster(live.ports, book, { self: live.self, inclusionMarginSec: BigInt(c.inclusionMarginSec) })
+	// Ready once its own post is checkpointed and `/latest` serves: a failed read after the post leaves it unserved.
+	const ready = () => !o.signal.aborted && first !== undefined && book.body("latest") !== undefined
+	const runner = new Runner({
+		// Until its own first post lands, every tick asks for one.
+		tick: (postNow) => poster.tick(postNow || first === undefined),
+		blockNumber: live.blockNumber,
+		readiness: () =>
+			ready() ? { url: server.url, port: server.port, poster: live.poster, birthIntake: live.birthIntake ?? "" } : null,
+		emit: (e) => {
+			if (e.event === "ready" && first && ready()) o.onReady?.({ url: server.url, post: first })
+		},
+		now: Date.now,
+	})
+	await loop(runner, o.signal, inflight)
 }

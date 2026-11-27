@@ -14,24 +14,23 @@ export class BlockNotServedError extends Error {
  * answers these, so its behaviour does not change.
  */
 const LAGGING: readonly { code: number; text: RegExp }[] = [
-	// eth_call or eth_getBlock* at a block number or hash past this backend's head (EIP-1474 "resource not found").
-	{ code: -32001, text: /^block not found\b/ },
+	// eth_call at a block number or hash this backend does not have yet (EIP-1474 "resource not found").
+	{ code: -32001, text: /^block not found: (?:0x[0-9a-f]+|hash 0x[0-9a-f]{64})$/i },
 	// eth_getLogs whose toBlock is past this backend's head.
-	{ code: -32602, text: /^block range extends beyond current head block\b/ },
+	{ code: -32602, text: /^block range extends beyond current head block: requested \d+, head \d+$/ },
 ]
 
 /** Bounds the cause walk; a viem chain is three or four links deep. */
 const MAX_DEPTH = 8
 
 /**
- * Whether `e` is a lagging backend's answer: a {@link BlockNotServedError}, or one of the exact
- * provider codes and messages above anywhere along its cause chain. Matched by shape, never by
- * class: another copy of viem builds the same fields on its own classes.
+ * Whether `e` is a lagging backend's answer: one of the exact provider codes and messages above
+ * anywhere along its cause chain. Matched by shape, never by class: another copy of viem builds the
+ * same fields on its own classes.
  */
 export function isLagging(e: unknown): boolean {
 	let x: unknown = e
 	for (let depth = 0; typeof x === "object" && x !== null && depth < MAX_DEPTH; depth++) {
-		if (x instanceof BlockNotServedError) return true
 		const { code, details, message, cause } = x as { code?: unknown; details?: unknown; message?: unknown; cause?: unknown }
 		const text = typeof details === "string" ? details : typeof message === "string" ? message : ""
 		if (typeof code === "number" && LAGGING.some((l) => l.code === code && l.text.test(text))) return true
@@ -43,16 +42,25 @@ export function isLagging(e: unknown): boolean {
 /** A read that fails as a lagging backend's this many more times than once rejects. */
 export const LAGGING_RETRIES = 3
 
+/** Whether `e` is this package's own {@link BlockNotServedError}, which no transport raises. */
+export const isNotServed = (e: unknown): boolean => e instanceof BlockNotServedError
+
 /**
  * `read`, retried up to {@link LAGGING_RETRIES} times `intervalMs` apart while it fails as
- * {@link isLagging}. Any other error, and a fourth lagging failure, rejects as the read threw it.
+ * `retryable`. Any other error, and a fourth such failure, rejects as the read threw it. Each error
+ * kind has one owner: provider codes belong to {@link laggingTolerant}, so a caller over that
+ * transport passes {@link isNotServed} and the two budgets never multiply.
  */
-export async function retryLagging<T>(intervalMs: number, read: () => Promise<T>): Promise<T> {
+export async function retryLagging<T>(
+	intervalMs: number,
+	read: () => Promise<T>,
+	retryable: (e: unknown) => boolean = isLagging,
+): Promise<T> {
 	for (let retries = 0; ; retries++) {
 		try {
 			return await read()
 		} catch (e) {
-			if (retries === LAGGING_RETRIES || !isLagging(e)) throw e
+			if (retries === LAGGING_RETRIES || !retryable(e)) throw e
 			await new Promise((r) => setTimeout(r, intervalMs))
 		}
 	}

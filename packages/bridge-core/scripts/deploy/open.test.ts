@@ -3,7 +3,7 @@ import { EthAddress } from "@aztec-labs/foundation/eth-address"
 import { getContractClassFromArtifact } from "@aztec-labs/stdlib/contract"
 import { deriveStorageSlotInMap } from "@aztec-labs/stdlib/hash"
 import { type Address, getContractAddress, type Hex, keccak256, toHex } from "viem"
-import { beforeAll, describe, expect, it } from "vitest"
+import { beforeAll, describe, expect, it, vi } from "vitest"
 import { aspRootRegistryArtifact } from "../../src/asp-registry-artifact"
 import { hubTokenOfSlot } from "../../src/hub-l2"
 import { artifactClassIds, deriveHub } from "../generation"
@@ -38,6 +38,8 @@ type World = {
 	storage: Map<string, Hex>
 	classes: Map<string, string>
 	head: { hash: Hex }
+	/** The block every L1 contract read named. */
+	pins: { blockHash?: Hex; requireCanonical?: boolean }[]
 }
 let ids: { tokenClassId: string; hubClassId: string; registryClassId: string; hub: Hex }
 
@@ -83,6 +85,7 @@ async function world(): Promise<World> {
 		[REGISTRY, ids.registryClassId],
 	])
 	const head = { hash: HEAD.hash as Hex }
+	const pins: World["pins"] = []
 	const ctx: OpenContext = {
 		chainId: CHAIN,
 		l1: {
@@ -91,9 +94,10 @@ async function world(): Promise<World> {
 				if (q.blockTag && q.blockTag !== "latest") throw new Error(`the open check read ${q.blockTag}`)
 				return q.blockTag ? { number: HEAD.number, hash: HEAD.hash } : { number: q.blockNumber, hash: head.hash }
 			}) as never,
-			readContract: (async (q: { address: string; functionName: string }) => {
+			readContract: (async (q: { address: string; functionName: string; blockHash?: Hex; requireCanonical?: boolean }) => {
 				const key = `${q.address.toLowerCase()}.${q.functionName}`
 				if (!(key in l1Reads)) throw new Error(`unexpected read ${key}`)
+				pins.push({ blockHash: q.blockHash, requireCanonical: q.requireCanonical })
 				return l1Reads[key]
 			}) as never,
 		},
@@ -121,14 +125,17 @@ async function world(): Promise<World> {
 		registry: REGISTRY,
 		expected: { guardian: GUARDIAN, lifetimeCap: 10n ** 12n, pool: a(0x9001), rollup: ROLLUP, registryRoles: ROLES },
 	}
-	return { ctx, l1Reads, storage, classes, head }
+	return { ctx, l1Reads, storage, classes, head, pins }
 }
 
 const refusedAt = (check: RegExp) => expect.objectContaining({ name: "OpenRefusedError", check: expect.stringMatching(check) })
 
 describe("checkBeforeOpen", () => {
-	it("passes a generation that matches every expectation", async () => {
-		await expect(checkBeforeOpen((await world()).ctx)).resolves.toBeUndefined()
+	it("passes a generation that matches every expectation, reading all of L1 at one head's hash", async () => {
+		const { ctx, pins } = await world()
+		await expect(checkBeforeOpen(ctx)).resolves.toBeUndefined()
+		expect(pins.length).toBeGreaterThan(15)
+		expect(pins).toEqual(pins.map(() => ({ blockHash: HEAD.hash, requireCanonical: true })))
 	})
 
 	it("refuses a registry that moved to a new rollup, even with an older finalized head, and a node on the old one", async () => {
@@ -207,19 +214,44 @@ type Chain = {
 	block: bigint
 	sent: Tx[]
 	receipts: Map<Hex, { status: "success" | "reverted"; blockNumber: bigint; blockHash: Hex; transactionHash: Hex }>
+	/** `entriesPaused` after each mined block; a header's hash here is its number. */
+	history: { block: bigint; paused: boolean }[]
+	/** Receipt reads that miss before a mined receipt shows: a backend behind the one counting nonces. */
+	receiptMisses: number
+	/** The block each pinned read named, by its hash. */
+	pins: Hex[]
 	onSend?: (tx: Tx) => void
 	sendError?: string
 	tick?: () => void
 }
 
-function chainOf(init: Partial<Chain> = {}): { c: Chain; l1: GuardianL1; guardian: GuardianWallet } {
-	const c: Chain = { latest: 5, pending: 5, paused: false, finalized: 1000n, block: 10n, sent: [], receipts: new Map(), ...init }
+function chainOf(init: Partial<Chain> = {}): { c: Chain; l1: GuardianL1; guardian: GuardianWallet; mine: (tx: Tx) => void } {
+	const c: Chain = {
+		latest: 5,
+		pending: 5,
+		paused: false,
+		finalized: 1000n,
+		block: 10n,
+		sent: [],
+		receipts: new Map(),
+		history: [],
+		receiptMisses: 0,
+		pins: [],
+		...init,
+	}
+	const initial = c.paused
 	const mine = (tx: Tx) => {
 		c.block += 1n
 		c.receipts.set(tx.hash, { status: "success", blockNumber: c.block, blockHash: w(Number(c.block)), transactionHash: tx.hash })
 		c.paused = tx.paused
+		c.history.push({ block: c.block, paused: tx.paused })
 		c.latest = Math.max(c.latest, tx.nonce + 1)
 		c.pending = Math.max(c.pending, c.latest)
+	}
+	const pausedAt = (hash?: Hex) => {
+		if (!hash) return c.paused
+		c.pins.push(hash)
+		return c.history.findLast((s) => s.block <= BigInt(hash))?.paused ?? initial
 	}
 	const l1 = {
 		getChainId: async () => CHAIN,
@@ -230,8 +262,9 @@ function chainOf(init: Partial<Chain> = {}): { c: Chain; l1: GuardianL1; guardia
 		},
 		getTransactionReceipt: async ({ hash }: { hash: Hex }) => {
 			const r = c.receipts.get(hash)
-			if (!r) throw new Error(`Transaction receipt with hash "${hash}" could not be found.`)
-			return r
+			if (r && c.receiptMisses > 0) c.receiptMisses -= 1
+			else if (r) return r
+			throw new Error(`Transaction receipt with hash "${hash}" could not be found.`)
 		},
 		waitForTransactionReceipt: async ({ hash }: { hash: Hex }) => {
 			const r = c.receipts.get(hash)
@@ -242,7 +275,7 @@ function chainOf(init: Partial<Chain> = {}): { c: Chain; l1: GuardianL1; guardia
 			q.blockTag === "finalized"
 				? { number: c.finalized, hash: w(Number(c.finalized)) }
 				: { number: q.blockNumber ?? c.block, hash: w(Number(q.blockNumber ?? c.block)) },
-		readContract: async () => c.paused,
+		readContract: async (q: { blockHash?: Hex }) => pausedAt(q.blockHash),
 	} as unknown as GuardianL1
 	const guardian = {
 		account: { address: GUARDIAN, type: "local" },
@@ -270,7 +303,7 @@ function chainOf(init: Partial<Chain> = {}): { c: Chain; l1: GuardianL1; guardia
 			return tx.hash
 		},
 	} as unknown as GuardianWallet
-	return { c, l1, guardian }
+	return { c, l1, guardian, mine }
 }
 
 const FAST = { timing: { receiptTimeoutMs: 50, pollingIntervalMs: 1 }, waits: { stallMs: 20, finalityMs: 20 } }
@@ -293,24 +326,72 @@ describe("pauseEntries", () => {
 		expect(c.paused).toBe(true)
 	})
 
-	it("re-reads and resends when another transaction takes its nonce", async () => {
-		const { c, l1, guardian } = chainOf()
+	it("re-reads and resends when another transaction takes its nonce, and names the last nonce once three sends lost theirs", async () => {
+		const { c, l1, guardian, mine } = chainOf()
+		const takenBy = (tx: Tx) => {
+			c.latest = tx.nonce + 1 // a hidden open mined at this nonce instead
+			c.pending = c.latest
+		}
 		let first = true
 		c.onSend = (tx) => {
-			if (first) {
-				first = false
-				c.latest = tx.nonce + 1 // a hidden open mined at this nonce instead
-				c.pending = c.latest
-				return
-			}
-			c.block += 1n
-			c.receipts.set(tx.hash, { status: "success", blockNumber: c.block, blockHash: w(Number(c.block)), transactionHash: tx.hash })
-			c.paused = true
-			c.latest = tx.nonce + 1
+			if (!first) return mine(tx)
+			first = false
+			takenBy(tx)
 		}
 		const r = await pauseEntries(target(l1), guardian, FAST)
 		expect(c.sent.map((t) => t.nonce)).toEqual([5, 6])
 		expect(r.nonce).toBe(6)
+
+		const lost = chainOf()
+		lost.c.onSend = (tx) => {
+			lost.c.latest = tx.nonce + 1
+			lost.c.pending = lost.c.latest
+		}
+		await expect(pauseEntries(target(lost.l1), lost.guardian, FAST)).rejects.toMatchObject({ code: "PAUSE_UNCONFIRMED", nonce: 7 })
+		expect(lost.c.sent.map((t) => t.nonce)).toEqual([5, 6, 7])
+	})
+
+	it("takes its own receipt for a rejected duplicate before buying another pause, though the receipt shows late", async () => {
+		const { c, l1, guardian, mine } = chainOf({ receiptMisses: 2 })
+		c.onSend = (tx) => {
+			mine(tx)
+			c.sendError = "nonce too low" // the same signed pause, mined before this broadcast's answer
+		}
+		const send = guardian.sendRawTransaction
+		guardian.sendRawTransaction = (async (q: never) => {
+			await send(q)
+			throw new Error(c.sendError)
+		}) as never
+		const r = await pauseEntries(target(l1), guardian, FAST)
+		expect(c.sent.map((t) => t.nonce)).toEqual([5])
+		expect(r.nonce).toBe(5)
+	})
+
+	it("pauses again when an open queued behind the gap it filled mines after it, reading each state at a header's hash", async () => {
+		const { c, l1, guardian, mine } = chainOf()
+		let first = true
+		c.onSend = (tx) => {
+			mine(tx)
+			if (!first) return
+			first = false
+			mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, hash: w(0x0e), paused: false })
+		}
+		const r = await pauseEntries(target(l1), guardian, FAST)
+		expect(c.sent.map((t) => t.nonce)).toEqual([5, 7])
+		expect(r.nonce).toBe(7)
+		expect(c.paused).toBe(true)
+		expect(c.pins.length).toBeGreaterThan(0)
+
+		const reopening = chainOf()
+		reopening.c.onSend = (tx) => {
+			reopening.mine(tx)
+			reopening.mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, hash: w(0x0e + tx.nonce), paused: false })
+		}
+		await expect(pauseEntries(target(reopening.l1), reopening.guardian, FAST)).rejects.toMatchObject({
+			code: "PAUSE_UNCONFIRMED",
+			nonce: 9,
+			message: expect.stringMatching(/reopened/),
+		})
 	})
 
 	it("names a nonce gap, a stalled next nonce and an occupied nonce for the owner, and replaces at four times", async () => {
@@ -385,5 +466,20 @@ describe("openDeployedEntries", () => {
 		expect(order).toEqual(["signed", "broadcast"])
 		expect(hash).toBe(c.sent[0]?.hash)
 		expect(c.paused).toBe(false)
+	})
+
+	it("reads the canonical rollup again after signing and broadcasts nothing once the registry moved", async () => {
+		const w0 = await world()
+		const { c, l1, guardian } = chainOf({ paused: true })
+		const ctx = { ...w0.ctx, l1: { ...l1, ...w0.ctx.l1 } as GuardianL1 }
+		const sign = guardian.signTransaction
+		guardian.signTransaction = (async (q: never) => {
+			w0.l1Reads[`${ROLLUP.l1Registry}.getCanonicalRollup`] = a(0x20)
+			return sign(q)
+		}) as never
+		const signed = vi.fn()
+		await expect(openDeployedEntries(ctx, guardian, { ...FAST, onSigned: signed })).rejects.toEqual(refusedAt(/getCanonicalRollup/))
+		expect(signed).not.toHaveBeenCalled()
+		expect(c.sent).toEqual([])
 	})
 })

@@ -89,17 +89,30 @@ function same(check: string, actual: unknown, want: unknown): void {
 	if (String(actual).toLowerCase() !== String(want).toLowerCase()) throw new OpenRefusedError(check, `${actual}, expected ${want}`)
 }
 
-/** At one fresh head, never `finalized`: an upgrade already mined after the finalized block must fail here. */
-async function checkRollup(c: OpenContext): Promise<{ number: bigint; hash: Hash }> {
-	const head = await c.l1.getBlock({ blockTag: "latest" })
-	const at = { blockNumber: head.number } as const
+type Head = { number: bigint; hash: Hash }
+
+/** EIP-1898: a backend answers at this header's hash or not at all, never with another branch's state at its height. */
+const at = (head: Head) => ({ blockHash: head.hash, requireCanonical: true }) as const
+
+async function latestHead(l1: OpenL1): Promise<Head> {
+	const { number, hash } = await l1.getBlock({ blockTag: "latest" })
+	return { number, hash }
+}
+
+async function checkCanonicalRollup(c: OpenContext, head: Head): Promise<void> {
 	const r = c.expected.rollup
 	same(
 		"registry.getCanonicalRollup",
-		await c.l1.readContract({ address: r.l1Registry, abi: RegistryAbi, functionName: "getCanonicalRollup", ...at }),
+		await c.l1.readContract({ address: r.l1Registry, abi: RegistryAbi, functionName: "getCanonicalRollup", ...at(head) }),
 		r.rollup,
 	)
-	const rollup = { address: r.rollup, abi: RollupAbi, ...at } as const
+}
+
+/** At one fresh head, never `finalized`: an upgrade already mined after the finalized block must fail here. */
+async function checkRollup(c: OpenContext, head: Head): Promise<void> {
+	await checkCanonicalRollup(c, head)
+	const r = c.expected.rollup
+	const rollup = { address: r.rollup, abi: RollupAbi, ...at(head) } as const
 	same("rollup.getInbox", await c.l1.readContract({ ...rollup, functionName: "getInbox" }), r.inbox)
 	same("rollup.getOutbox", await c.l1.readContract({ ...rollup, functionName: "getOutbox" }), r.outbox)
 	same("rollup.getVersion", await c.l1.readContract({ ...rollup, functionName: "getVersion" }), r.rollupVersion)
@@ -111,7 +124,6 @@ async function checkRollup(c: OpenContext): Promise<{ number: bigint; hash: Hash
 	same("node.inbox", node.inbox, r.inbox)
 	same("node.outbox", node.outbox, r.outbox)
 	same("node.rollupVersion", node.rollupVersion, r.rollupVersion)
-	return { number: head.number, hash: head.hash }
 }
 
 /** The hub is salted with its factory and takes the registry and token class as constructor arguments. */
@@ -158,13 +170,14 @@ async function checkRegistry(c: OpenContext): Promise<void> {
  * and implementation binding (the implementation is the factory's nonce-1 CREATE) and every portal;
  * the hub address recomputed from its constructor arguments, and its v1 class; each given L2 token's
  * binding and published class; the registry's class and, when given, its roles; no pending owner; and
- * the head the rollup was read at still canonical.
+ * that head still canonical. Every L1 read is at one head's hash.
  * @throws OpenRefusedError, BindingMismatchError or LegacyHubError; a failed read rejects with its own error.
  */
 export async function checkBeforeOpen(c: OpenContext): Promise<void> {
 	if (c.portals.length === 0) throw new OpenRefusedError("portals", "none given")
 	same("l1.chainId", await c.l1.getChainId(), c.chainId)
-	const head = await checkRollup(c)
+	const head = await latestHead(c.l1)
+	await checkRollup(c, head)
 	const r = c.expected.rollup
 	await assertGenerationBindings(
 		c.l1,
@@ -181,6 +194,7 @@ export async function checkBeforeOpen(c: OpenContext): Promise<void> {
 			portals: c.portals.map((p) => ({ token: p.asset, portal: p.portal })),
 		},
 		"open",
+		at(head),
 	)
 	const { tokenClassId } = await artifactClassIds()
 	await checkHub(c, tokenClassId)
@@ -188,7 +202,7 @@ export async function checkBeforeOpen(c: OpenContext): Promise<void> {
 	await checkRegistry(c)
 	same(
 		"factory.pendingOwner",
-		await c.l1.readContract({ address: c.factory, abi: PORTAL_FACTORY_ABI, functionName: "pendingOwner" }),
+		await c.l1.readContract({ address: c.factory, abi: PORTAL_FACTORY_ABI, functionName: "pendingOwner", ...at(head) }),
 		ZERO_ADDRESS,
 	)
 	if ((await c.l1.getBlock({ blockNumber: head.number })).hash !== head.hash)
@@ -240,21 +254,22 @@ async function signEntriesPaused(
 	return { hash: keccak256(serialized), nonce: (request as { nonce: number }).nonce, serialized }
 }
 
-async function pausedAt(l1: OpenL1, factory: Address, blockNumber?: bigint): Promise<boolean> {
+/** `entriesPaused` at `blockHash`, or at the latest block when absent. */
+async function pausedAt(l1: OpenL1, factory: Address, blockHash?: Hash): Promise<boolean> {
 	return l1.readContract({
 		address: factory,
 		abi: PORTAL_FACTORY_ABI,
 		functionName: "entriesPaused",
-		...(blockNumber === undefined ? {} : { blockNumber }),
+		...(blockHash === undefined ? {} : { blockHash, requireCanonical: true }),
 	})
 }
 
 /**
  * The later-process open. Refuses before any write unless `expected.registryRoles` is set, every
  * portal names its L2 token, the reader's, the wallet's and the node's L1 chain ids all equal
- * `c.chainId`, the account is the expected guardian, and {@link checkBeforeOpen} passes. Signs first
- * and reports the hash and nonce, then broadcasts; requires a successful receipt and entries open at
- * the receipt's block.
+ * `c.chainId`, the account is the expected guardian, and {@link checkBeforeOpen} passes. Signs, reads
+ * the canonical rollup once more at a fresh head, reports the hash and nonce, then broadcasts;
+ * requires a successful receipt and entries open at the receipt's block.
  */
 export async function openDeployedEntries(
 	c: OpenContext & { l1: GuardianL1 },
@@ -268,6 +283,7 @@ export async function openDeployedEntries(
 	await assertGuardian(c.chainId, guardian, l1, c.expected.guardian)
 	await checkBeforeOpen(c)
 	const signed = await signEntriesPaused(l1, guardian, c.factory, false, {})
+	await checkCanonicalRollup(c, await latestHead(l1))
 	o.onSigned?.({ hash: signed.hash, nonce: signed.nonce })
 	await guardian.sendRawTransaction({ serializedTransaction: signed.serialized })
 	const receipt = await l1.waitForTransactionReceipt({
@@ -276,7 +292,7 @@ export async function openDeployedEntries(
 		pollingInterval: timing.pollingIntervalMs,
 	})
 	if (receipt.status !== "success") throw new Error(`setEntriesPaused(false) reverted (${signed.hash})`)
-	if (await pausedAt(l1, c.factory, receipt.blockNumber)) throw new Error(`entries still paused at block ${receipt.blockNumber}`)
+	if (await pausedAt(l1, c.factory, receipt.blockHash)) throw new Error(`entries still paused at block ${receipt.blockNumber}`)
 	return signed.hash
 }
 
@@ -359,6 +375,19 @@ async function receiptOf(l1: GuardianL1, hash: Hash): Promise<TransactionReceipt
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/** Receipt reads before a passed nonce counts as taken: the backend counting nonces can lead the one serving receipts. */
+const OWN_RECEIPT_READS = 4
+
+/** `hash`'s receipt, read up to {@link OWN_RECEIPT_READS} times, or "taken". */
+async function ownReceipt(l1: GuardianL1, hash: Hash, timing: ClientTiming): Promise<TransactionReceipt | "taken"> {
+	for (let read = 1; ; read++) {
+		const receipt = await receiptOf(l1, hash)
+		if (receipt) return receipt
+		if (read === OWN_RECEIPT_READS) return "taken"
+		await sleep(timing.pollingIntervalMs)
+	}
+}
+
 /** Its receipt, or "taken" once the guardian's mined nonce passes it without one. */
 async function awaitPause(
 	l1: GuardianL1,
@@ -372,7 +401,7 @@ async function awaitPause(
 		const receipt = await receiptOf(l1, sent.hash)
 		if (receipt) return receipt
 		const mined = await l1.getTransactionCount({ address, blockTag: "latest" })
-		if (mined > sent.nonce) return (await receiptOf(l1, sent.hash)) ?? "taken"
+		if (mined > sent.nonce) return ownReceipt(l1, sent.hash, timing)
 		if (Date.now() >= deadline) {
 			if (mined < sent.nonce)
 				throw new PauseError("PAUSE_BLOCKED", mined, `nonce ${mined} has not mined, and this pause waits behind it`)
@@ -382,6 +411,11 @@ async function awaitPause(
 	}
 }
 
+/**
+ * Once the pause's block is canonical under a finalized header: "paused" when entries are paused at
+ * that header's hash and at a fresh head's; else "reopened", as an open queued behind a nonce gap the
+ * pause filled leaves them once it mines.
+ */
 async function confirmFinal(
 	l1: GuardianL1,
 	factory: Address,
@@ -389,9 +423,9 @@ async function confirmFinal(
 	nonce: number,
 	timing: ClientTiming,
 	waits: PauseWaits,
-): Promise<void> {
+): Promise<"paused" | "reopened"> {
 	if (receipt.status !== "success") throw new Error(`setEntriesPaused(true) reverted (${receipt.transactionHash})`)
-	if (!(await pausedAt(l1, factory, receipt.blockNumber))) throw new Error(`entries open at the pause's block ${receipt.blockNumber}`)
+	if (!(await pausedAt(l1, factory, receipt.blockHash))) throw new Error(`entries open at the pause's block ${receipt.blockNumber}`)
 	const deadline = Date.now() + waits.finalityMs
 	let finalized = await l1.getBlock({ blockTag: "finalized" })
 	while (finalized.number < receipt.blockNumber) {
@@ -402,19 +436,23 @@ async function confirmFinal(
 	}
 	if ((await l1.getBlock({ blockNumber: receipt.blockNumber })).hash !== receipt.blockHash)
 		throw new PauseError("PAUSE_UNCONFIRMED", nonce, `the pause's block ${receipt.blockNumber} was reorged out`)
-	if (!(await pausedAt(l1, factory, finalized.number)))
-		throw new PauseError("PAUSE_UNCONFIRMED", nonce, `entries open at finalized block ${finalized.number}`)
+	const final = await pausedAt(l1, factory, finalized.hash)
+	return final && (await pausedAt(l1, factory, (await latestHead(l1)).hash)) ? "paused" : "reopened"
 }
+
+const PAUSE_SENDS = 3
 
 /**
  * Always writes `setEntriesPaused(true)` (idempotent on chain), at `o.nonce` if given, else at the
- * higher of the guardian's mined and pending nonce, so it mines after any open still in flight. When
- * another transaction takes its nonce it re-reads and sends again, at most 3 times. Done only when its
- * receipt succeeded and, at a finalized header at or above the receipt, the receipt's block is
- * canonical and entries are paused. Needs only L1; never runs {@link checkBeforeOpen}. No automatic
- * fee replacement: the owner's manual branches are `o.nonce` and `o.replace`.
+ * higher of the guardian's mined and pending nonce, so it mines after any open still in flight. Sends
+ * again at a fresh nonce, at most {@link PAUSE_SENDS} sends in all, when another transaction takes its
+ * nonce or entries are open again once its pause is final. Done only when its receipt succeeded, the
+ * receipt's block is canonical under a finalized header with entries paused at its hash, and a fresh
+ * head after that still has them paused. Needs only L1; never runs
+ * {@link checkBeforeOpen}. No automatic fee replacement: the owner's manual branches are `o.nonce`
+ * and `o.replace`.
  * @returns `wasPaused` is the read before sending, which an open still pending then does not show.
- * @throws PauseError naming what the owner acts on.
+ * @throws PauseError naming what the owner acts on; `PAUSE_UNCONFIRMED` after the last send names its nonce.
  */
 export async function pauseEntries(
 	f: { chainId: number; l1: GuardianL1; factory: Address },
@@ -426,14 +464,18 @@ export async function pauseEntries(
 	const waits = o.waits ?? PAUSE_WAITS
 	const wasPaused = await pausedAt(f.l1, f.factory)
 	let nonce = o.nonce
-	for (let attempt = 0; attempt < 3; attempt++) {
+	let last = { nonce: -1, outcome: "taken" }
+	for (let send = 0; send < PAUSE_SENDS; send++) {
+		if (send > 0) await sleep(timing.pollingIntervalMs)
 		const sent = await sendPause(f.l1, guardian, f.factory, o, nonce)
-		const landed = sent.taken ? "taken" : await awaitPause(f.l1, guardian.account.address, sent, timing, waits)
-		if (landed !== "taken") {
-			await confirmFinal(f.l1, f.factory, landed, sent.nonce, timing, waits)
-			return { hash: sent.hash, nonce: sent.nonce, wasPaused }
-		}
+		const landed = sent.taken
+			? await ownReceipt(f.l1, sent.hash, timing)
+			: await awaitPause(f.l1, guardian.account.address, sent, timing, waits)
+		const outcome = landed === "taken" ? landed : await confirmFinal(f.l1, f.factory, landed, sent.nonce, timing, waits)
+		if (outcome === "paused") return { hash: sent.hash, nonce: sent.nonce, wasPaused }
+		last = { nonce: sent.nonce, outcome }
 		nonce = undefined
 	}
-	throw new PauseError("PAUSE_UNCONFIRMED", nonce ?? -1, "three sends lost their nonce to other transactions")
+	const why = last.outcome === "taken" ? "another transaction took the last send's nonce" : "entries reopened after the last pause"
+	throw new PauseError("PAUSE_UNCONFIRMED", last.nonce, `${why}, after ${PAUSE_SENDS} sends`)
 }

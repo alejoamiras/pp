@@ -103,6 +103,27 @@ describe("the standalone bot", () => {
 			expect(readFileSync(join(dir, "ports.md"), "utf8")).not.toContain("second-bot")
 		})
 
+		it("resolves on an abort between stages, releasing its own row and no sibling's under the same run", async () => {
+			await claimRows("shared-run", { sibling: 43_212 }, process.pid)
+			// Aborts at the check after the server binds, before the wallet starts.
+			let checks = 0
+			const signal = {
+				get aborted() {
+					return checks >= 2
+				},
+				throwIfAborted() {
+					if (++checks >= 2) throw new DOMException("aborted", "AbortError")
+				},
+				addEventListener() {},
+			} as unknown as AbortSignal
+			await expect(
+				runStandaloneBot(config({ port: 43_213, runId: "shared-run" }), { poster: Fr.random() }, { signal }),
+			).resolves.toBeUndefined()
+			const rows = readFileSync(join(dir, "ports.md"), "utf8")
+			expect(rows).toContain("| 43212 | sibling | shared-run |")
+			expect(rows).not.toContain("43213")
+		})
+
 		it.each([
 			["an intake secret without tokens", {}, { intake: Fr.random() }],
 			["tokens without an intake secret", { tokens: [`0x${"02".repeat(32)}` as const] }, {}],

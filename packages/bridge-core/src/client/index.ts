@@ -9,6 +9,7 @@ export {
 	type StaleRootCode,
 } from "./errors"
 export type { KeyValueStore } from "./journal"
+export { laggingTolerant } from "./lagging"
 export { sponsoredFpcAddress } from "./payload"
 export type { PreflightWallet } from "./preflight"
 export { prepareBridgeSpend } from "./prepare"

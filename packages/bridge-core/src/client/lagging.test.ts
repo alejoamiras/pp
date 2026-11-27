@@ -1,10 +1,11 @@
 import { createPublicClient, custom } from "viem"
 import { describe, expect, it, vi } from "vitest"
 import { foreignError } from "../test/client-fakes"
-import { BlockNotServedError, isLagging, LAGGING_RETRIES, laggingTolerant, retryLagging } from "./lagging"
+import { BlockNotServedError, isLagging, isNotServed, LAGGING_RETRIES, laggingTolerant, retryLagging } from "./lagging"
 
 // publicnode's Sepolia answers, verbatim, for a read past the head of the backend it picked.
 const NOT_FOUND = { code: -32001, message: "block not found: 0xba826f" }
+const HASH_NOT_FOUND = { code: -32001, message: `block not found: hash 0x${"ab".repeat(32)}` }
 const BEYOND_HEAD = { code: -32602, message: "block range extends beyond current head block: requested 12223087, head 12223037" }
 
 /** A viem client whose node fails each call with the next of `answers` while any are left, then answers "0x". */
@@ -23,7 +24,7 @@ const call = (c: ReturnType<typeof clientFailing>["client"]) =>
 
 describe("lagging-backend retries", () => {
 	it("retries a lagging backend's exact answers three times, then rejects with the fourth failure as the read threw it", async () => {
-		const ok = clientFailing(NOT_FOUND, BEYOND_HEAD, NOT_FOUND)
+		const ok = clientFailing(NOT_FOUND, BEYOND_HEAD, HASH_NOT_FOUND)
 		expect(await call(ok.client)).toBe("0x")
 		expect(ok.request).toHaveBeenCalledTimes(LAGGING_RETRIES + 1)
 
@@ -35,11 +36,26 @@ describe("lagging-backend retries", () => {
 		const read = vi.fn(async () => {
 			throw thrown[read.mock.calls.length - 1]
 		})
-		await expect(retryLagging(1, read)).rejects.toBe(thrown[3])
+		await expect(retryLagging(1, read, isNotServed)).rejects.toBe(thrown[3])
+		expect(read).toHaveBeenCalledTimes(LAGGING_RETRIES + 1)
+	})
+
+	it("keeps each error kind with one owner: the typed error is not a provider answer, nor the reverse", async () => {
+		const typed = vi.fn(async () => {
+			throw new BlockNotServedError(7n)
+		})
+		await expect(retryLagging(1, typed)).rejects.toBeInstanceOf(BlockNotServedError)
+		const provider = vi.fn(async () => {
+			throw NOT_FOUND
+		})
+		await expect(retryLagging(1, provider, isNotServed)).rejects.toBe(NOT_FOUND)
+		expect([typed.mock.calls.length, provider.mock.calls.length]).toEqual([1, 1])
 	})
 
 	it.each([
 		["another resource-not-found message", { code: -32001, message: "resource not found" }],
+		["a message that only starts like a lagging one", { code: -32001, message: "block not found for an unrelated validation test" }],
+		["a head message without its numbers", { code: -32602, message: "block range extends beyond current head block" }],
 		["another invalid-params message", { code: -32602, message: "invalid argument 0: hex string has odd length" }],
 		["a lagging message under another code", { code: -32000, message: "block not found: 0xba826f" }],
 		["geth's own header error, not cited", { code: -32000, message: "header not found" }],

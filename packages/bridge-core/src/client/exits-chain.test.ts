@@ -1,3 +1,5 @@
+import { createServer } from "node:http"
+import type { AddressInfo } from "node:net"
 import { DomainSeparator } from "@aztec-labs/constants"
 import { Fr } from "@aztec-labs/foundation/curves/bn254"
 import { EthAddress } from "@aztec-labs/foundation/eth-address"
@@ -21,8 +23,9 @@ import {
 	toHex,
 	UserRejectedRequestError,
 } from "viem"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, onTestFinished, vi } from "vitest"
 import { DEPLOYMENT, HUB, PORTAL, SENDER } from "../test/client-fakes"
+import { l1Reader } from "./bridge-client"
 import type { ClientDeployment } from "./deployment"
 import { exitStatusOf, exitState } from "./exits"
 import { assertExitPayee, type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
@@ -219,6 +222,26 @@ const payeeOf = (word: string): Address => {
 
 const status = async (c: ExitContext, t: ExitTicket) => exitStatusOf(await exitState(exitReads(c), t))
 
+/** A loopback JSON-RPC endpoint that gives every request `answer(method)` and records each method. */
+async function endpoint(answer: (method: string) => object) {
+	const methods: string[] = []
+	const server = createServer((req, res) => {
+		let body = ""
+		req.on("data", (chunk) => {
+			body += chunk
+		})
+		req.on("end", () => {
+			const { id, method } = JSON.parse(body) as { id: number; method: string }
+			methods.push(method)
+			res.setHeader("content-type", "application/json")
+			res.end(JSON.stringify({ jsonrpc: "2.0", id, ...answer(method) }))
+		})
+	})
+	await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok))
+	onTestFinished(() => new Promise<void>((ok) => server.close(() => ok())))
+	return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, methods }
+}
+
 const witnessOf = async (c: ExitContext, t: ExitTicket) => {
 	const reads = exitReads(c)
 	return reads.witness(t, await reads.pin())
@@ -257,7 +280,10 @@ describe("exit tickets", () => {
 		const w = await witnessOf(c, ragequit!)
 		state.settled.push(settledFor(ragequit!, { ...w!, leafId: w!.leafId + 1n }, toHex(0xf1n, { size: 32 }), 250n))
 		expect(await status(c, ragequit!)).toBe("ready")
+		// The exact pair's event, but the pinned header's Outbox has not consumed the leaf: another branch's.
 		state.settled.push(settledFor(ragequit!, w!, toHex(0xf2n, { size: 32 }), 250n))
+		await expect(status(c, ragequit!)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
+		state.consumed.add(`${w!.epoch}:${w!.leafId}`)
 		expect(await status(c, ragequit!)).toBe("settled")
 	})
 
@@ -284,6 +310,7 @@ describe("exit tickets", () => {
 		state.posted = true
 		const [ragequit] = await exitTickets(c, {})
 		const w = await witnessOf(c, ragequit!)
+		state.consumed.add(`${w!.epoch}:${w!.leafId}`)
 		state.settled.push({ ...settledFor(ragequit!, w!, toHex(0xf2n, { size: 32 }), 250n), ...change })
 		await expect(status(c, ragequit!)).rejects.toMatchObject({ code: "RPC_INCONSISTENT" })
 	})
@@ -319,11 +346,10 @@ describe("settle", () => {
 		},
 	)
 
-	// Past the check's four reads, the race re-read after a failed send pins without a floor: a fifth
-	// lagging read makes it miss the event too.
+	// A broadcast settle's only re-read is the floored one: no unfloored read follows its UNCERTAIN.
 	it.each([
 		[2, "returns its own transaction once the backend catches up"],
-		[5, "keeps the hash as UNCERTAIN when the backend still lags after three retries"],
+		[4, "keeps the hash as UNCERTAIN when the backend still lags after three retries, with no read after"],
 	])("checks its settle at a header no lower than the receipt's block: lagging %i reads, it %s", async (lagging) => {
 		const { c, state, l1, writeContract } = await world()
 		state.posted = true
@@ -372,6 +398,31 @@ describe("settle", () => {
 			throw new UserRejectedRequestError(new Error("no"))
 		}) as never)
 		await expect(settle(c, t!, l1)).rejects.toMatchObject(refused)
+	})
+
+	it("keeps the hash as UNCERTAIN when the wallet replaced the send with a transaction that mined without settling", async () => {
+		const { c, state, reader, l1, writeContract } = await world()
+		state.posted = true
+		const [t] = await exitTickets(c, {})
+		const ours = toHex(0xd0n, { size: 32 })
+		writeContract.mockImplementationOnce(async () => ours)
+		reader.waitForTransactionReceipt.mockImplementationOnce(async () => {
+			state.head += 1n
+			return { status: "success", transactionHash: toHex(0xd1n, { size: 32 }), blockNumber: state.head }
+		})
+		await expect(settle(c, t!, l1)).rejects.toMatchObject({ code: "UNCERTAIN", l1TxHash: ours })
+	})
+
+	it.each([
+		["a provider's lagging answer, retried by the transport alone", { error: { code: -32001, message: "block not found: 0x12c" } }, 4],
+		["a null header, retried by the pin alone", { result: null }, 4],
+		["another -32001", { error: { code: -32001, message: "block not found for an unrelated validation test" } }, 1],
+	])("pins through the client's own reader with one retry owner per error: %s", async (_, answer, requests) => {
+		const { url, methods } = await endpoint(() => answer)
+		const timing = { receiptTimeoutMs: 1_000, pollingIntervalMs: 1 }
+		const c = { deployment: D, reader: l1Reader(url, timing), node: {}, timing } as unknown as ExitContext
+		await expect(exitReads(c).pin()).rejects.toBeDefined()
+		expect(methods).toEqual(Array.from({ length: requests }, () => "eth_getBlockByNumber"))
 	})
 
 	it("refuses a wallet on another chain, and a ticket no root covers yet, before any send", async () => {

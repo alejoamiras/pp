@@ -50,6 +50,10 @@ export type LiveSpec = {
 	secrets: { poster: Hex; intake?: Hex }
 	aspLeaves(): Promise<bigint[]>
 	onPosted?(p: LivePost): void
+	/** Refuse, before the poster's account deploys, unless the registry names the derived poster and intake. */
+	checkRoles?: true
+	/** Checked before the account deploy, the start's only write. */
+	signal?: AbortSignal
 }
 
 export type Live = {
@@ -164,16 +168,25 @@ async function aspRootAt(l1: ReturnType<typeof l1Source>, aspRegistry: Hex, e: L
 	}
 }
 
+/** Refuses a start whose derived accounts are not the registry's roles at the checkpointed tip: every tick would halt. */
+async function assertRoles(role: Live["role"], node: Node, poster: bigint, intake: Hex | undefined): Promise<void> {
+	const { hash } = await blockAt(node, Number(await node.getBlockNumber("checkpointed")))
+	if ((await role("poster", hash)) !== poster) throw new Error(`the registry's poster is not 0x${poster.toString(16)}`)
+	if (intake && (await role("birth_intake", hash)) !== BigInt(intake)) throw new Error(`the registry's birth intake is not ${intake}`)
+}
+
 /** The live adapters over `s`; a failed start stops the wallet it created. */
 export async function liveFrom(s: LiveSpec, log: Ports["log"]): Promise<Live> {
 	const node = createAztecNodeClient(s.aztecNode)
 	const { wallet, fee, registry } = await walletFor(s, node)
 	try {
-		const actor = await createActor(wallet, node as never, fee, s.secrets.poster, undefined, (l) => log("account", { line: l }))
 		const births = await birthLeavesFor(s, wallet, node, log)
 		const slots = aspRootRegistryArtifact.storageLayout
 		const role = async (name: "poster" | "birth_intake", at: Hex) =>
 			(await node.getPublicStorageAt({ hash: at } as never, registry.address, new Fr(slots[name]?.slot ?? Fr.ZERO))).toBigInt()
+		if (s.checkRoles) await assertRoles(role, node, (await actorAccount(wallet, s.secrets.poster)).address.toBigInt(), births.intake)
+		s.signal?.throwIfAborted()
+		const actor = await createActor(wallet, node as never, fee, s.secrets.poster, undefined, (l) => log("account", { line: l }))
 		const l1 = l1Source(s.l1Rpc)
 		const send = { from: actor.address, fee, wait: { waitForStatus: TxStatus.CHECKPOINTED, timeout: s.postTimeoutSec } }
 		const ports: Ports = {

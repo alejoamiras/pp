@@ -86,12 +86,12 @@ export function createBridgeClient(a: { manifest: StackManifest; journal: KeyVal
 
 /** The L1 reader polls at `timing`'s interval, and its block-naming reads outlast a lagging backend. */
 export function clientIo(manifest: StackManifest, store: KeyValueStore, timing: ClientTiming = LOCAL_TIMING): ClientIo {
-	const reader = createPublicClient({
-		transport: laggingTolerant(http(manifest.l1Rpc), timing.pollingIntervalMs),
-		pollingInterval: timing.pollingIntervalMs,
-	})
-	return { reader, node: createAztecNodeClient(manifest.aztecNode), store }
+	return { reader: l1Reader(manifest.l1Rpc, timing), node: createAztecNodeClient(manifest.aztecNode), store }
 }
+
+/** The client's L1 reader: a lagging backend's answers are retried at the transport, and only there. */
+export const l1Reader = (url: string, timing: ClientTiming) =>
+	createPublicClient({ transport: laggingTolerant(http(url), timing.pollingIntervalMs), pollingInterval: timing.pollingIntervalMs })
 
 /**
  * `createBridgeClient` over given IO. The manifest's fields are copied here; later changes to it are
