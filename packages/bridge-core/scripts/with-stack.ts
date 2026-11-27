@@ -3,13 +3,16 @@
  * `bun scripts/with-stack.ts <command>…`: boots one local stack (`bun run demo --keep`) in its own
  * process group, runs each command in turn through `sh -c` with only `PP_STACK_MANIFEST` added,
  * stops the stack and checks it left nothing behind. Exits with the first failing command's code,
- * 1 when the stack fails to boot or leaves residue, 2 without a command. A leading `--` is dropped:
- * Bun keeps one that follows another argument, not one right after the script path.
+ * 1 when the stack fails to boot or leaves residue, 2 without a command, and 128 + the signal when
+ * SIGINT, SIGTERM or SIGHUP stops it (the running command and the stack are stopped first). A
+ * leading `--` is dropped: Bun keeps one that follows another argument, not one right after the
+ * script path. A stack that ignores SIGINT is killed by group after two minutes; any group of its
+ * own that survives that shows up as residue (a port that still accepts, a registry row).
  */
-import { type ChildProcess, spawn, spawnSync } from "node:child_process"
+import { type ChildProcess, spawn } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { connect } from "node:net"
-import { homedir } from "node:os"
+import { constants, homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { createInterface } from "node:readline"
 import { setTimeout as sleep } from "node:timers/promises"
@@ -20,20 +23,27 @@ const CACHE = join(homedir(), ".cache", "pp")
 const REGISTRY = join(homedir(), ".agents", "ports.md")
 const READY_MS = 15 * 60_000
 const STOP_MS = 120_000
+const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
+/** Registry owners that belong to a stack run: its own rows and those of the services it starts. */
+const OWNER_SUFFIXES = ["", "-pool", "-bot"]
 
-type Booted = { manifest: string; runId: string }
+/** Test seam: a JSON argv standing in for `bun run demo --keep`. */
+const bootArgv = (): string[] =>
+	process.env.PP_WITH_STACK_BOOT ? JSON.parse(process.env.PP_WITH_STACK_BOOT) : ["bun", "run", "demo", "--keep"]
 
-function bootStack(child: ChildProcess): Promise<Booted> {
-	const { promise, resolve, reject } = Promise.withResolvers<Booted>()
-	let runId = ""
+type Run = { child: ChildProcess; pgid: number; runId: string; command?: ChildProcess; signal?: NodeJS.Signals }
+
+/** Resolves with the manifest path; the run id is kept as soon as it prints, so a failed boot is still checked. */
+function awaitReady(run: Run): Promise<string> {
+	const { promise, resolve, reject } = Promise.withResolvers<string>()
 	const timer = setTimeout(() => reject(new Error(`no PP_STACK_MANIFEST within ${READY_MS / 1000} s`)), READY_MS)
-	createInterface({ input: child.stdout! }).on("line", (line) => {
+	createInterface({ input: run.child.stdout! }).on("line", (line) => {
 		console.log(line)
-		runId ||= line.match(/^\[stack\] run (\S+) pid/)?.[1] ?? ""
+		run.runId ||= line.match(/^\[stack\] run (\S+) pid/)?.[1] ?? ""
 		const manifest = line.match(/PP_STACK_MANIFEST=(\S+)$/)?.[1]
-		if (manifest) resolve({ manifest, runId })
+		if (manifest) resolve(manifest)
 	})
-	child.once("exit", (code) => reject(new Error(`the stack exited with ${code} before it was ready`)))
+	run.child.once("exit", (code) => reject(new Error(`the stack exited with ${code} before it was ready`)))
 	return promise.finally(() => clearTimeout(timer))
 }
 
@@ -57,11 +67,12 @@ const portRefuses = (port: number) =>
 	})
 
 function portsOwnedBy(runId: string): number[] {
-	if (!existsSync(REGISTRY)) return []
+	if (!runId || !existsSync(REGISTRY)) return []
+	const owners = new Set(OWNER_SUFFIXES.map((s) => `${runId}${s}`))
 	return readFileSync(REGISTRY, "utf8")
 		.split("\n")
 		.map((l) => l.split("|").map((c) => c.trim()))
-		.filter((c) => /^\d+$/.test(c[1] ?? "") && (c[3] === runId || c[3] === `${runId}-pool`))
+		.filter((c) => /^\d+$/.test(c[1] ?? "") && owners.has(c[3] ?? ""))
 		.map((c) => Number(c[1]))
 }
 
@@ -75,30 +86,59 @@ async function residueOf(pgid: number, runId: string, ports: readonly number[]):
 	return left
 }
 
-async function stop(child: ChildProcess, pgid: number): Promise<void> {
-	if (child.exitCode !== null) return
-	const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()))
-	process.kill(-pgid, "SIGINT")
-	const timedOut = await Promise.race([exited.then(() => false), sleep(STOP_MS).then(() => true)])
-	if (timedOut) {
-		console.error(`[with-stack] the stack ignored SIGINT for ${STOP_MS / 1000} s; killing group ${pgid}`)
-		process.kill(-pgid, "SIGKILL")
+async function stop(run: Run): Promise<void> {
+	if (run.child.exitCode !== null || run.child.signalCode !== null) return
+	const exited = new Promise<void>((resolve) => run.child.once("exit", () => resolve()))
+	process.kill(-run.pgid, "SIGINT")
+	if (await Promise.race([exited.then(() => false), sleep(STOP_MS).then(() => true)])) {
+		console.error(`[with-stack] the stack ignored SIGINT for ${STOP_MS / 1000} s; killing group ${run.pgid}`)
+		process.kill(-run.pgid, "SIGKILL")
 		await exited
 	}
 }
 
-function runCommands(commands: readonly string[], manifest: string): number {
+const signalExit = (s: NodeJS.Signals) => 128 + constants.signals[s]
+
+function runCommand(run: Run, command: string, manifest: string): Promise<number> {
+	console.log(`[with-stack] ${command}`)
+	const child = spawn("sh", ["-c", command], {
+		cwd: process.cwd(),
+		stdio: "inherit",
+		env: { ...process.env, PP_STACK_MANIFEST: manifest },
+	})
+	run.command = child
+	return new Promise((resolve) =>
+		child.once("exit", (code, signal) => {
+			run.command = undefined
+			resolve(code ?? (signal ? signalExit(signal as NodeJS.Signals) : 1))
+		}),
+	)
+}
+
+async function runCommands(run: Run, commands: readonly string[], manifest: string): Promise<number> {
 	for (const command of commands) {
-		console.log(`[with-stack] ${command}`)
-		const r = spawnSync("sh", ["-c", command], {
-			cwd: process.cwd(),
-			stdio: "inherit",
-			env: { ...process.env, PP_STACK_MANIFEST: manifest },
-		})
-		const code = r.status ?? 1
+		const code = run.signal ? 0 : await runCommand(run, command, manifest)
+		if (run.signal) return signalExit(run.signal)
 		if (code !== 0) return code
 	}
 	return 0
+}
+
+/** The first SIGINT, SIGTERM or SIGHUP stops the running command and ends the wait for the stack. */
+function onSignals(run: Run): { interrupted: Promise<never>; dispose: () => void } {
+	const { promise, reject } = Promise.withResolvers<never>()
+	promise.catch(() => {})
+	const handler = (s: NodeJS.Signals) => {
+		if (run.signal) return
+		run.signal = s
+		run.command?.kill("SIGTERM")
+		reject(new Error(`received ${s}`))
+	}
+	for (const s of SIGNALS) process.on(s, handler)
+	const dispose = () => {
+		for (const s of SIGNALS) process.off(s, handler)
+	}
+	return { interrupted: promise, dispose }
 }
 
 async function main(argv: readonly string[]): Promise<number> {
@@ -109,23 +149,26 @@ async function main(argv: readonly string[]): Promise<number> {
 	}
 	// The stack under test is the one this run boots, never one an outer shell attached to.
 	const env = { ...process.env, PP_STACK_MANIFEST: undefined }
-	const child = spawn("bun", ["run", "demo", "--keep"], { cwd: ROOT, detached: true, stdio: ["ignore", "pipe", "inherit"], env })
-	const pgid = child.pid!
+	const [cmd, ...args] = bootArgv()
+	const child = spawn(cmd!, args, { cwd: ROOT, detached: true, stdio: ["ignore", "pipe", "inherit"], env })
+	const run: Run = { child, pgid: child.pid!, runId: "" }
+	const signals = onSignals(run)
 	let code = 1
-	let runId = ""
 	let ports: number[] = []
 	try {
-		const booted = await bootStack(child)
-		runId = booted.runId
-		ports = portsOwnedBy(runId)
-		code = runCommands(commands, booted.manifest)
+		const manifest = await Promise.race([awaitReady(run), signals.interrupted])
+		ports = portsOwnedBy(run.runId)
+		code = await runCommands(run, commands, manifest)
 	} catch (err) {
 		console.error(`[with-stack] ${err instanceof Error ? err.message : String(err)}`)
 	} finally {
-		await stop(child, pgid)
+		if (ports.length === 0) ports = portsOwnedBy(run.runId)
+		await stop(run)
+		signals.dispose()
 	}
-	const left = runId ? await residueOf(pgid, runId, ports) : []
+	const left = run.runId ? await residueOf(run.pgid, run.runId, ports) : []
 	if (left.length) console.error(`[with-stack] residue: ${left.join("; ")}`)
+	if (run.signal) return signalExit(run.signal)
 	return left.length && code === 0 ? 1 : code
 }
 
