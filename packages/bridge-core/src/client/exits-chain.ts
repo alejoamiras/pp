@@ -238,7 +238,8 @@ async function sendSettle(c: ExitContext, l1: WalletClient, account: Account, t:
  * Settles a ready ticket from `l1`, or returns the transaction that already settled it. The result is
  * always the transaction of the portal's `ExitSettled` for the ticket's exact `(epoch, leafId)`.
  * @throws BridgeClientError `CHAIN_MISMATCH`; `EXIT_NOT_READY` while no Outbox root covers it;
- * `TICKET_NOT_FOUND`; `UNCERTAIN` with `l1TxHash` when the send has no receipt in time; `REVERTED`
+ * `TICKET_NOT_FOUND`; `UNCERTAIN` with `l1TxHash` when the send has no receipt in time or the event
+ * read after it fails; `REVERTED`
  */
 export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): Promise<Hash> {
 	const { account, chain } = l1
@@ -249,9 +250,10 @@ export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): P
 	return settleWith(io, t, async (w) => {
 		const hash = await sendSettle(c, l1, account, t, w)
 		const receipt = await c.reader.waitForTransactionReceipt({ hash, timeout: c.receiptTimeoutMs }).catch(() => null)
-		const settled = await io.settledTx(w)
+		// A failed read after the broadcast must not lose its hash; the caller re-reads the ticket later.
+		const settled = await io.settledTx(w).catch(() => undefined)
 		if (settled) return settled
-		if (!receipt) throw new BridgeClientError("UNCERTAIN", { l1TxHash: hash })
+		if (!receipt || settled === undefined) throw new BridgeClientError("UNCERTAIN", { l1TxHash: hash })
 		throw new BridgeClientError(receipt.status === "success" ? "RPC_INCONSISTENT" : "REVERTED", { l1TxHash: hash })
 	})
 }

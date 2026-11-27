@@ -211,6 +211,20 @@ describe("settle", () => {
 		},
 	)
 
+	it("keeps a broadcast settle's hash as UNCERTAIN when the event lookup after it fails", async () => {
+		const { c, state, reader, l1, writeContract } = await world()
+		state.posted = true
+		const [t] = await exitTickets(c, {})
+		const send = writeContract.getMockImplementation()!
+		writeContract.mockImplementationOnce(async (call) => {
+			const tx = await send(call)
+			reader.getLogs.mockRejectedValue(new Error("connection refused"))
+			return tx
+		})
+		const e = await settle(c, t!, l1).catch((x: unknown) => x)
+		expect(e).toMatchObject({ code: "UNCERTAIN", l1TxHash: state.settled[0]?.tx })
+	})
+
 	it("refuses a wallet on another chain, and a ticket no root covers yet, before any send", async () => {
 		const { c, l1, writeContract } = await world()
 		const [ragequit] = await exitTickets(c, {})

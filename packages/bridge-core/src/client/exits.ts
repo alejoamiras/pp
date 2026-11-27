@@ -78,7 +78,8 @@ export async function settleWith<W extends ExitWitness>(io: ExitReads<W>, t: Exi
 	try {
 		return await send(s.witness)
 	} catch (e) {
-		const raced = await io.settledTx(s.witness)
+		// The send's own error (an UNCERTAIN carries its hash) outlives a failed re-read.
+		const raced = await io.settledTx(s.witness).catch(() => null)
 		if (raced) return raced
 		throw e
 	}
