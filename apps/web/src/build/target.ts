@@ -27,14 +27,31 @@ export interface TargetEnv {
 	PP_DATA?: string
 }
 
-/** A URL a page may connect to: http(s) only, and no userinfo, which is how a keyed endpoint leaks. */
+/** A CSP host-source host with no wildcard: dot-separated letters, digits and hyphens. */
+const SOURCE_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*$/
+
+/**
+ * A URL a page may connect to: http(s) only; no userinfo, which is how a keyed endpoint leaks; and a
+ * host its CSP source names exactly. URL parsing keeps `*` (and decodes `%2A` to it), which a source
+ * reads as any host; an IPv6 literal is refused too, since a source cannot name one.
+ */
 function isPublicHttpUrl(raw: string): boolean {
 	if (!URL.canParse(raw)) return false
 	const url = new URL(raw)
-	return (url.protocol === "http:" || url.protocol === "https:") && url.username === "" && url.password === ""
+	return (
+		(url.protocol === "http:" || url.protocol === "https:") &&
+		url.username === "" &&
+		url.password === "" &&
+		SOURCE_HOST.test(url.hostname)
+	)
 }
 
-const publicUrl = z.string().refine(isPublicHttpUrl, "must be an http(s) URL without credentials")
+/** `origin` is exactly the origin of a URL this target accepts, as the policy's source lists carry it. */
+export const isPublicOrigin = (origin: string): boolean => isPublicHttpUrl(origin) && new URL(origin).origin === origin
+
+const URL_RULE = "an http(s) URL without credentials whose host is a plain name or IPv4 address"
+
+const publicUrl = z.string().refine(isPublicHttpUrl, `must be ${URL_RULE}`)
 
 /** Unknown keys are dropped by the parse, and the target is still built by name from what is left. */
 const handleFields = z.object({
@@ -68,8 +85,7 @@ function parseWalletUrls(raw: string | undefined): string[] {
 		.map((u) => u.trim())
 		.filter((u) => u.length > 0)
 	if (urls.length === 0) fail("PP_WEB_WALLETS", "lists no wallet URL")
-	for (const url of urls)
-		if (!isPublicHttpUrl(url)) fail("PP_WEB_WALLETS", `entry ${JSON.stringify(url)} is not an http(s) URL without credentials`)
+	for (const url of urls) if (!isPublicHttpUrl(url)) fail("PP_WEB_WALLETS", `entry ${JSON.stringify(url)} is not ${URL_RULE}`)
 	if (new Set(urls.map((u) => new URL(u).origin)).size !== urls.length) fail("PP_WEB_WALLETS", "repeats an origin")
 	return urls
 }
