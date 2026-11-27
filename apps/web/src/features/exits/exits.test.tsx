@@ -60,22 +60,28 @@ describe("exits", () => {
 		expect(settle).toHaveBeenCalledTimes(2)
 	})
 
-	test("an uncertain collect says so in terms of the exit, not of a bridge note", async () => {
+	test.each([
+		["UNCERTAIN", "Not confirmed", /could not confirm whether your collect was sent/],
+		["RPC_FAILED", "Not confirmed", /the collect may have gone out\. Refresh before collecting again/],
+		["REVERTED", "Not collected", /reverted on Ethereum and paid nothing/],
+	] as const)("a collect that ends %s is titled %s and worded for the exit, not a bridge note", async (code, title, sentence) => {
 		const app = renderApp({
 			patch: (s) => ({
 				...s,
 				exits: {
 					tickets: async () => oneReady(s.deployment),
 					settle: async () => {
-						throw new BridgeFailure("UNCERTAIN")
+						throw new BridgeFailure(code)
 					},
 				},
 			}),
 		})
 		await app.user.click(screen.getByRole("button", { name: "Exits" }))
 		await app.user.click(await screen.findByRole("button", { name: "Collect on Ethereum" }))
-		await screen.findByText(/could not confirm whether your collect was sent/)
-		expect(screen.queryByText(messageOf("UNCERTAIN"))).toBeNull()
+		const alert = within(await screen.findByRole("alert"))
+		alert.getByText(title)
+		alert.getByText(sentence)
+		expect(alert.queryByText(messageOf(code))).toBeNull()
 	})
 
 	test("a collect still in flight when the Exits screen is left and reopened is not offered again", async () => {

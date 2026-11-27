@@ -47,11 +47,20 @@ function useCollect(view: ExitView) {
 	return { state, collect }
 }
 
+const REFRESH_FIRST = "Refresh before collecting again: an exit pays out once, so a second send fails and costs gas only."
+
 /** Where the page's sentence for a code speaks of a bridge note, a collect says what it means for an exit. */
 const COLLECT_MESSAGES: Partial<Record<UiCode, string>> = {
-	UNCERTAIN:
-		"This page could not confirm whether your collect was sent. Refresh before collecting again: an exit pays out once, so a second send fails and costs gas only.",
+	UNCERTAIN: `This page could not confirm whether your collect was sent. ${REFRESH_FIRST}`,
+	// A failure from the send itself may follow a broadcast that only lost its answer.
+	RPC_FAILED: `A network request failed while collecting, and the collect may have gone out. ${REFRESH_FIRST}`,
+	UNKNOWN: `Something went wrong while collecting, and the collect may have gone out. ${REFRESH_FIRST}`,
+	REVERTED:
+		"The collect reverted on Ethereum and paid nothing. Refresh: if another payer collected this exit first, it shows as Collected.",
 }
+
+/** Outcomes where the collect may be on Ethereum: never titled as not collected. */
+const COLLECT_UNCONFIRMED: ReadonlySet<UiCode> = new Set(["UNCERTAIN", "RPC_FAILED", "UNKNOWN"])
 
 const DEMO_COLLECT_NOTE = "Collecting sends one Ethereum transaction from the local demo's dev account, no wallet."
 
@@ -95,7 +104,7 @@ function ExitRow({ view }: { view: ExitView }) {
 				</ActionButton>
 			) : null}
 			{state.kind === "failed" ? (
-				<Callout tone="bad" title="Not collected" role="alert">
+				<Callout tone="bad" title={COLLECT_UNCONFIRMED.has(state.code) ? "Not confirmed" : "Not collected"} role="alert">
 					{COLLECT_MESSAGES[state.code] ?? messageOf(state.code)}
 				</Callout>
 			) : null}
