@@ -279,6 +279,29 @@ describe("each refusal sends nothing", () => {
 		expect(h.machine().failure?.code).toBe("CONTEXT_CHANGED")
 	})
 
+	test("a wallet change before viem's second send method reports the change, not a decline", async () => {
+		const h = harness()
+		h.session.submit = vi.fn(async (_p, a, on) => {
+			const wallet: Eip1193Provider = {
+				async request({ method }) {
+					if (method !== "eth_sendTransaction") return `0x${"ab".repeat(32)}`
+					Object.assign(h.ctx, { account: OTHER, selected: OTHER })
+					throw Object.assign(new Error("the method does not exist"), { code: -32601 })
+				},
+			}
+			// viem 2.57.1 retries a -32601 as wallet_sendTransaction, which runs the handoff again.
+			const guarded = guardedProvider(wallet, on.handoff)
+			const params = [{ from: a.sender }]
+			await guarded
+				.request({ method: "eth_sendTransaction", params })
+				.catch(() => guarded.request({ method: "wallet_sendTransaction", params }))
+			return MINED
+		})
+		await h.submit()
+		expect(h.machine().failure?.code).toBe("CONTEXT_CHANGED")
+		expect(h.machine().notices).not.toContainEqual({ kind: "declined" })
+	})
+
 	test("a second Submit for the note is ignored", async () => {
 		const h = harness()
 		h.hold("prove")

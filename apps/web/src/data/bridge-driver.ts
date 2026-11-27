@@ -385,6 +385,8 @@ async function submit(
 		// Aborting stops a wallet request only before it starts; one already issued still needs its
 		// outcome remembered, so the catch below runs `outcome` for an aborted run too.
 		handoff: () => {
+			// viem can call this twice for one send (a -32601 retried as wallet_sendTransaction): a refused second call hands nothing off.
+			handedOff = false
 			assertLive(st, a, signal)
 			handedOff = true
 			if (st.binding) st.binding.consumed = true
