@@ -177,7 +177,11 @@ export interface AztecPort {
 	/** Note values, largest first. */
 	notesByLabel(owner: AztecAddress, label: bigint): Promise<bigint[]>
 	publicBalance(owner: AztecAddress): Promise<bigint>
-	/** A checked spend: its label path comes from the allow list right before it is sent. */
+	/**
+	 * A checked spend: its label path comes from the allow list right before it is sent.
+	 * @throws `OVER_NOTE_CAP` before the handoff when one transaction cannot spend `amount` from the
+	 *   label's notes as read after that check (`spendCap`)
+	 */
 	transferPrivate(
 		from: AztecAddress,
 		a: { to: AztecAddress; amount: bigint; label: bigint; origin: Origin },

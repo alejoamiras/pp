@@ -3,10 +3,10 @@ import { type Address, type Hex, isAddressEqual } from "viem"
 import { useApp } from "../../app/context"
 import { useLive } from "../../app/live"
 import { useLabelNotes } from "../../app/queries"
-import { assertSpendable, spendCap } from "../../data/chunks"
+import { spendCap } from "../../data/chunks"
 import { BridgeFailure, codeOf, messageOf, PAYEE_MESSAGES, revertCopy, type UiCode } from "../../data/errors"
 import { parseAmount, parsePayee } from "../../data/parse"
-import type { AztecPort, AztecSendHooks, LabelBalance, Sent } from "../../data/ports"
+import type { AztecSendHooks, LabelBalance, Sent } from "../../data/ports"
 import type { AztecAddress } from "../../data/stack-types"
 import type { TxAction, TxOutcome } from "../../data/tx"
 import { ActionButton, Callout, Field, Modal, plainAmount, shortHex } from "../../ui"
@@ -94,23 +94,17 @@ export function useAmount(max: bigint) {
 }
 
 /**
- * The most one spend of `balance`'s label can move (`spendCap`), from the label's notes; `cap` is null
- * until they are read, and `blocked` says why the spend waits meanwhile.
+ * The most one spend of `balance`'s label can move (`spendCap`), from the label's notes: `max` for the
+ * form, never above the balance, which is read apart and can lag the notes; `cap` is null until they
+ * are read, and `blocked` says why the spend waits meanwhile. The port checks again before the handoff.
  */
 export function useSpendCap(account: AztecAddress, balance: LabelBalance) {
 	const { aztec } = useApp()
 	const notes = useLabelNotes(aztec, account, balance.label)
 	const cap = notes.data ? spendCap(notes.data) : null
+	const short = cap !== null && cap < balance.balance
 	const blocked = notes.isError ? "We could not read this label's notes." : cap === null ? "Reading this label's notes…" : null
-	return { cap, notes, blocked, short: cap !== null && cap < balance.balance }
-}
-
-/**
- * Run under the send lock, right before the send: reads the label's notes again, so a note set that
- * changed under the dialog sends nothing (`OVER_NOTE_CAP`).
- */
-export async function assertWithinSpendCap(aztec: AztecPort, account: AztecAddress, label: bigint, amount: bigint): Promise<void> {
-	assertSpendable(await aztec.notesByLabel(account, label), amount)
+	return { cap, max: short && cap !== null ? cap : balance.balance, notes, blocked, short }
 }
 
 /** Says why a spend's amount stops short of the label's balance, or that its notes could not be read. */

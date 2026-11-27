@@ -234,16 +234,15 @@ describe("the action dialogs", () => {
 	test.each([
 		["Send privately", "Send"],
 		["Unshield", "Unshield"],
-	])("%s takes at most the label's 8 largest notes, read again under the send lock", async (row, submit) => {
+	])("%s takes at most the label's 8 largest notes", async (row, submit) => {
 		const nine = [5, 5, 5, 5, 5, 5, 5, 4, 1].map((n) => BigInt(n) * 10n ** BigInt(6))
-		let notes = nine
 		const sent: string[] = []
 		const app = renderApp({
 			patch: (s) => ({
 				...s,
 				aztec: {
 					...s.aztec,
-					notesByLabel: async (owner, label) => (label === LABELS.active ? notes : s.aztec.notesByLabel(owner, label)),
+					notesByLabel: async (owner, label) => (label === LABELS.active ? nine : s.aztec.notesByLabel(owner, label)),
 					transferPrivate: (from, a, on) => {
 						sent.push("send")
 						return s.aztec.transferPrivate(from, a, on)
@@ -266,10 +265,8 @@ describe("the action dialogs", () => {
 		expect(disabled(dialog.getByRole("button", { name: submit }))).toBe(true)
 		await app.user.clear(amount)
 		await app.user.type(amount, "39")
-		notes = nine.slice(0, 3)
 		await app.user.click(dialog.getByRole("button", { name: submit }))
-		await dialog.findByText(messageOf("OVER_NOTE_CAP"))
-		expect(sent).toEqual([])
+		await waitFor(() => expect(sent).toHaveLength(1))
 	})
 
 	test("a ragequit whose outcome was not read still lists its payee's exits", async () => {
