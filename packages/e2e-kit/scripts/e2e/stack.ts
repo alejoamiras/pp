@@ -20,7 +20,7 @@ import { getAddress } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { type StackRun, stackRun, stackRunFile } from "../../env"
 
-const CLI = join(dirname(fileURLToPath(import.meta.resolve("@pp/local-stack"))), "cli.ts")
+const CLI = fileURLToPath(import.meta.resolve("@pp/local-stack/cli"))
 const READY_MS = 20 * 60_000
 /** Longer than the CLI's slowest teardown; its boot steps also finish before a signal takes effect. */
 const STOP_GRACE_MS = 180_000
