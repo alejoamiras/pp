@@ -85,7 +85,12 @@ async function up(stateDir: string): Promise<void> {
 		writeFileSync(f.walletHandle, JSON.stringify({ nodeUrl: manifest.aztecNode, l1ChainId: manifest.chainId, rollupVersion }))
 		writeFileSync(f.run, JSON.stringify(run, null, 2))
 	} catch (err) {
-		await abandonBoot(f.pid, pgid, { recorded, unreaped: code === null, cli: CLI, graceMs: STOP_GRACE_MS })
+		try {
+			await abandonBoot(f.pid, pgid, { recorded, unreaped: code === null, cli: CLI, graceMs: STOP_GRACE_MS })
+		} catch (teardown) {
+			// The boot failure explains the run; a teardown failure must not hide it.
+			throw new AggregateError([err, teardown], "stack: boot failed and its teardown failed")
+		}
 		throw err
 	}
 	child.unref()
