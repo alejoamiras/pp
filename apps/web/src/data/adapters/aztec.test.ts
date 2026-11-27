@@ -123,6 +123,12 @@ describe("the Aztec adapter", () => {
 		moved.node.getNodeInfo.mockResolvedValue({ l1ChainId: 1, rollupVersion: 5 })
 		moved.wallet.getChainInfo.mockResolvedValue({ chainId: new Fr(1n), version: new Fr(5n) })
 		await expect(send(moved)).rejects.toMatchObject({ code: "CONTEXT_CHANGED" })
+		for (const chain of [{}, { chainId: {}, version: new Fr(5n) }, { chainId: { toBigInt: () => 31337 }, version: new Fr(5n) }, null]) {
+			const garbled = rig()
+			garbled.wallet.getChainInfo.mockResolvedValue(chain as never)
+			await expect(send(garbled)).rejects.toMatchObject({ code: "CONTEXT_CHANGED" })
+			expect(garbled.wallet.sendTx).not.toHaveBeenCalled()
+		}
 		const hostile = {
 			toString() {
 				throw new Error("no text")

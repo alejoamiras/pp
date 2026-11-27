@@ -125,9 +125,17 @@ function assertWalletStill(
 	from: AztecAddress,
 ) {
 	if (!Array.isArray(accounts) || !accounts.some((a) => listedAccount(a) === from)) throw new BridgeFailure("RECIPIENT_NOT_IN_WALLET")
-	const l1 = BigInt(d.deployment.chainId)
-	if (BigInt(node.l1ChainId) !== l1 || chain.chainId.toBigInt() !== l1 || chain.version.toBigInt() !== BigInt(node.rollupVersion))
-		throw new BridgeFailure("CONTEXT_CHANGED")
+	if (!sameChain(chain, node, BigInt(d.deployment.chainId))) throw new BridgeFailure("CONTEXT_CHANGED")
+}
+
+/** Whether the wallet and the node sit on L1 chain `l1` and one rollup; a malformed answer names none. */
+function sameChain(chain: Chain, node: { l1ChainId: number; rollupVersion: number }, l1: bigint): boolean {
+	try {
+		const rollup = BigInt(node.rollupVersion)
+		return BigInt(node.l1ChainId) === l1 && chain.chainId.toBigInt() === l1 && chain.version.toBigInt() === rollup
+	} catch {
+		return false
+	}
 }
 
 /**
