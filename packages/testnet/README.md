@@ -54,9 +54,16 @@ hashes and allowlisted URLs only. A guard refusal exits 2 before any key is read
 | `verify-deployment [--pool-only] [--bot] [--label <l> --min-sequence <s>]` | none | code, bindings, the deploy block's history, the factory's creation, class ids, paused entries, the checks before opening, the bot's record |
 | `bot` | bot poster, bot intake | the ASP-root poster, snapshot server and birth intake, on the file's loopback port |
 | `open --factory <address>` | guardian | opens entries once every check before opening passes and the guardian holds gas for three pauses |
-| `pause --factory <address> [--nonce <n> [--replace]]` | guardian | pauses entries; done only when finalized |
+| `pause --factory <address> [--nonce <n> [--replace --pending <hash>]]` | guardian | pauses entries; done only when finalized |
 | `canary --min-sequence <s> --post <txHash>` | canary owner, canary sender | the end-to-end canary; exit 3 when the epoch proof is not seen in time |
 | `canary --settle <l2TxHash>…` | canary sender | settles burns an earlier canary left |
+
+`pause` prints a `pause-failed` line with a code and the nonce to act on. After PAUSE_BLOCKED, run
+`pause --nonce <n>`. After PAUSE_STALLED, run `pause --nonce <n> --replace --pending <hash>`, passing
+the hash on that line. After PAUSE_NONCE_OCCUPIED, wait for the pending transaction, or replace it the
+same way with its hash (an open's is in `open`'s log). A replacement reads that transaction from every
+pinned endpoint, refuses one that is not the guardian's at that nonce, and outbids each of its fee fields
+by a quarter, paying at least four times the estimate.
 
 Run order for the own target: `keys`, `addresses` (commit `expected`), `fund`, `verify-inputs`,
 `deploy-pool`, `verify-deployment --pool-only`, `asp`, `seed`, `deploy`, `verify-deployment`, `bot`,

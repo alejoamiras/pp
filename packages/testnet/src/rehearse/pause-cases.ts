@@ -86,8 +86,9 @@ export async function nonceGap(c: CaseCtx): Promise<string[]> {
 }
 
 /**
- * A pause whose send the node rejects as replacement-underpriced, behind an open signed at three times
- * today's fee estimate: PAUSE_NONCE_OCCUPIED, then each manual branch from a fresh occupied nonce.
+ * A pause whose send the node rejects as replacement-underpriced, behind an open signed at five times
+ * today's fee estimate, past what four times the estimate outbids: PAUSE_NONCE_OCCUPIED, then each
+ * manual branch from a fresh occupied nonce, the replacement priced from the open itself.
  */
 export async function occupiedNonce(c: CaseCtx): Promise<string[]> {
 	const s = await stage(c, { proxy: true })
@@ -95,7 +96,7 @@ export async function occupiedNonce(c: CaseCtx): Promise<string[]> {
 	proxy.rules.pendingAsLatest = true
 	const occupy = async () => {
 		await s.miner.pause()
-		const open = await sendOpen(s, { feeFactor: 3n })
+		const open = await sendOpen(s, { feeFactor: 5n })
 		const r = await pause(s, [])
 		expectFailed(r, "PAUSE_NONCE_OCCUPIED", open.nonce, "pause behind a higher-fee open")
 		check((await nonceOf(s)) === open.nonce && (await knows(s, open.hash)), "the open left the pool")
@@ -108,7 +109,7 @@ export async function occupiedNonce(c: CaseCtx): Promise<string[]> {
 	expectPaused(after, first.nonce + 1, "pause once the open landed")
 
 	const second = await occupy()
-	const run = startPause(s, ["--nonce", String(second.nonce), "--replace"])
+	const run = startPause(s, ["--nonce", String(second.nonce), "--replace", "--pending", second.hash])
 	const replacement = await signedEvent(run)
 	await until(() => knows(s, replacement.hash as `0x${string}`), "the anvil took the replacement")
 	s.miner.resume()
@@ -117,9 +118,9 @@ export async function occupiedNonce(c: CaseCtx): Promise<string[]> {
 	check((await receiptOf(s, second.hash)) === null, "the replaced open landed")
 	check(await pausedNow(s), "entries open after the replacement")
 	return [
-		`open pending at nonce ${first.nonce} at 3x the fee estimate; pause: PAUSE_NONCE_OCCUPIED at ${first.nonce}, exit 1`,
+		`open pending at nonce ${first.nonce} at 5x the fee estimate; pause: PAUSE_NONCE_OCCUPIED at ${first.nonce}, exit 1`,
 		`branch 1: the open landed; pause exited 0 at nonce ${first.nonce + 1} in ${secs(after.ms)}`,
-		`branch 2: open pending at ${second.nonce}; PAUSE_NONCE_OCCUPIED; pause --nonce ${second.nonce} --replace exited 0 in ${secs(replaced.ms)}, the open never landed`,
+		`branch 2: open pending at ${second.nonce}; PAUSE_NONCE_OCCUPIED; pause --nonce ${second.nonce} --replace --pending <the open> exited 0 in ${secs(replaced.ms)}, the open never landed`,
 	]
 }
 
@@ -152,7 +153,7 @@ export async function finalityTimeout(c: CaseCtx): Promise<string[]> {
 
 /**
  * A pause at the next nonce that cannot mine because the base fee rose past its fee cap and stays
- * there: PAUSE_STALLED once the stall budget runs out, then `pause --nonce --replace`.
+ * there: PAUSE_STALLED once the stall budget runs out, then `pause --nonce --replace --pending`.
  */
 export async function stalledPause(c: CaseCtx): Promise<string[]> {
 	const s = await stage(c)
@@ -171,13 +172,13 @@ export async function stalledPause(c: CaseCtx): Promise<string[]> {
 	expectFailed(stalled, "PAUSE_STALLED", nonce, "pause under a fee spike")
 	check(stalled.ms >= PAUSE_WAITS.stallMs, `PAUSE_STALLED came after ${secs(stalled.ms)}, inside its budget`)
 	check((await nonceOf(s)) === nonce, "the stalled nonce moved")
-	const replaced = await pause(s, ["--nonce", String(nonce), "--replace"])
+	const replaced = await pause(s, ["--nonce", String(nonce), "--replace", "--pending", sent.hash as string])
 	expectPaused(replaced, nonce, "pause --nonce --replace over the stalled pause")
 	check((await receiptOf(s, sent.hash as `0x${string}`)) === null, "the stalled pause mined")
 	check(await pausedNow(s), "entries open after the replacement")
 	return [
 		`pause at nonce ${nonce} capped at ${BigInt(tx.maxFeePerGas)} wei; the base fee then held at ${spike} wei`,
 		`pause: PAUSE_STALLED at nonce ${nonce}, exit 1, after ${secs(stalled.ms)}`,
-		`pause --nonce ${nonce} --replace: exit 0 in ${secs(replaced.ms)}; the stalled send never mined`,
+		`pause --nonce ${nonce} --replace --pending <the stalled pause>: exit 0 in ${secs(replaced.ms)}; the stalled send never mined`,
 	]
 }
