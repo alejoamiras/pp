@@ -15,6 +15,23 @@ import { parseGrant } from "../wallet/grant"
 import type { AztecDeps } from "./aztec"
 import { stackWithdraw } from "./withdraw"
 
+/** Set by a test to make the token's unshield carry another amount than the one confirmed. */
+const unshieldOff = vi.hoisted(() => ({ by: 0n }))
+vi.mock("./token-sends", async (actual) => {
+	const m = await actual<typeof import("./token-sends")>()
+	return {
+		...m,
+		spendPayloads(d: Parameters<typeof m.spendPayloads>[0]) {
+			const p = m.spendPayloads(d)
+			return {
+				...p,
+				unshield: (...[w, a, path]: Parameters<typeof p.unshield>) =>
+					p.unshield(w, { ...a, amount: a.amount + unshieldOff.by }, path),
+			}
+		},
+	}
+})
+
 const at = (n: string) => `0x${n.repeat(32)}` as AztecAddress
 const [HUB, TOKEN, FPC, ME, OTHER] = [at("08"), at("09"), at("0c"), at("1c"), at("2a")]
 const PAYEE = `0x${"ab".repeat(20)}` as Address
@@ -26,13 +43,15 @@ const GRANT = parseGrant(MANIFEST, {
 const ACTIVE: LabelCheck = { state: "ACTIVE", path: { index: 1, depth: 1, siblings: [7n, ...Array(17).fill(0n)] } }
 const sdk = (a: AztecAddress) => SdkAddress.fromStringUnsafe(a)
 
-type Exit = { hub?: AztecAddress; token?: AztecAddress; amount?: bigint; fpc?: AztecAddress; extra?: boolean }
+type Exit = { hub?: AztecAddress; token?: AztecAddress; payee?: Address; amount?: bigint; fpc?: AztecAddress; extra?: boolean }
 
 /** `exit_public` as bridge-core builds it, with any field a test wants wrong. */
 async function exitPayload(wallet: Wallet, a: { payee: Address; amount: bigint }, w: Exit = {}): Promise<ExecutionPayload> {
 	const hub = Contract.at(sdk(w.hub ?? HUB), tokenBridgeHubArtifact, wallet)
 	const fee = { paymentMethod: new SponsoredFeePaymentMethod(sdk(w.fpc ?? FPC)) }
-	const p = await hub.methods.exit_public(sdk(w.token ?? TOKEN), EthAddress.fromString(a.payee), w.amount ?? a.amount).request({ fee })
+	const p = await hub.methods
+		.exit_public(sdk(w.token ?? TOKEN), EthAddress.fromString(w.payee ?? a.payee), w.amount ?? a.amount)
+		.request({ fee })
 	if (!w.extra) return p
 	return new ExecutionPayload([...p.calls, p.calls[1] as never], p.authWitnesses, p.capsules, p.extraHashedArgs, p.feePayer)
 }
@@ -66,7 +85,9 @@ function rig(check: LabelCheck = ACTIVE, wrong?: Exit) {
 	}
 	const client = { exitPublicPayload: vi.fn((a: { payee: Address; amount: bigint }) => exitPayload(live.wallet, a, wrong)) }
 	const notes = vi.fn(async (_owner: AztecAddress, _label: bigint) => [5n])
-	return { wallet, allowList, client, notes, port: stackWithdraw({ aztec, allowList, sponsoredFpc: FPC, client, notes }) }
+	const publicBalance = vi.fn(async (_owner: AztecAddress) => 5n)
+	const port = stackWithdraw({ aztec, allowList, sponsoredFpc: FPC, client, notes, publicBalance })
+	return { wallet, allowList, client, notes, publicBalance, port }
 }
 
 const on = (handoff = vi.fn()): AztecSendHooks & { handoff: ReturnType<typeof vi.fn> } => ({ epoch: 3, handoff })
@@ -94,6 +115,7 @@ describe("withdrawals to Ethereum", () => {
 		const wrongs: [string, Exit][] = [
 			["another token", { token: OTHER }],
 			["another hub", { hub: OTHER }],
+			["another payee", { payee: `0x${"cd".repeat(20)}` }],
 			["another amount", { amount: 6n }],
 			["another fee payer", { fpc: OTHER }],
 			["an extra call", { extra: true }],
@@ -108,6 +130,17 @@ describe("withdrawals to Ethereum", () => {
 				expect(r.wallet.sendTx, `${send}: ${what}`).not.toHaveBeenCalled()
 				expect(r.allowList.check, `${send}: ${what}`).not.toHaveBeenCalled()
 			}
+		// An exit the client built right, merged with an unshield of another amount: only the merged check sees it.
+		unshieldOff.by = 1n
+		try {
+			const r = rig()
+			const hooks = on()
+			await expect(r.port.unshieldAndExit(ME, screened, hooks)).rejects.toMatchObject({ code: "SPEND_MISMATCH" })
+			expect(hooks.handoff).not.toHaveBeenCalled()
+			expect(r.wallet.sendTx).not.toHaveBeenCalled()
+		} finally {
+			unshieldOff.by = 0n
+		}
 	})
 
 	test("a refused payee reads no allow list; a label the list does not hold, notes that no longer cover it, or a refused handoff send nothing", async () => {
@@ -135,10 +168,17 @@ describe("withdrawals to Ethereum", () => {
 		for (const r of [refused, absent, spent, moved]) expect(r.wallet.sendTx).not.toHaveBeenCalled()
 	})
 
-	test("the public row's withdraw is exit_public alone, paid by the SponsoredFPC", async () => {
+	test("the public row's withdraw is exit_public alone, paid by the SponsoredFPC, and refuses a public balance spent since the form", async () => {
 		const r = rig()
 		await r.port.exitPublic(ME, { payee: PAYEE, amount: 5n }, on())
 		expect(sentPayload(r).calls.map((c) => c.name)).toEqual(["sponsor_unconditionally", "exit_public"])
 		expect(r.allowList.check).not.toHaveBeenCalled()
+		const spent = rig()
+		spent.publicBalance.mockResolvedValue(4n)
+		const hooks = on()
+		await expect(spent.port.exitPublic(ME, { payee: PAYEE, amount: 5n }, hooks)).rejects.toMatchObject({ code: "OVER_PUBLIC_BALANCE" })
+		expect(spent.publicBalance).toHaveBeenCalledWith(ME)
+		expect(hooks.handoff).not.toHaveBeenCalled()
+		expect(spent.wallet.sendTx).not.toHaveBeenCalled()
 	})
 })

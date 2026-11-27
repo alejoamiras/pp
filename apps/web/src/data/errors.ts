@@ -85,9 +85,9 @@ const MESSAGES: Record<UiCode, string> = {
 	NO_SENDER: "Connect your Ethereum wallet first.",
 	TX_REVERTED: "The transaction reverted on Aztec. Refresh your balances, then try again.",
 	UNSHIELD_REVERTED:
-		"The unshield reverted: the fee was paid; your notes are safe. Sending and unshielding wait until that transaction is final.",
+		"The unshield reverted: the fee was paid; your notes are safe. Sending, unshielding and withdrawing from a label wait until that transaction is final.",
 	WITHDRAW_REVERTED:
-		"The withdrawal reverted: the fee was paid; your notes are safe. Sending, unshielding and withdrawing wait until that transaction is final.",
+		"The withdrawal reverted: the fee was paid; your notes are safe. Sending, unshielding and withdrawing from a label wait until that transaction is final.",
 	TX_DROPPED:
 		"Aztec has not included the transaction yet, and it may still be. The page will not send it again, and sending from this account waits until Refresh reads it included.",
 	TX_UNCONFIRMED:
@@ -108,6 +108,7 @@ const MESSAGES: Record<UiCode, string> = {
 	LABEL_ABSENT: "This label is not in the latest allow list, so nothing was sent.",
 	OVER_NOTE_CAP:
 		"This label's notes changed, and one transaction can no longer spend that amount, so nothing was sent. Check the amount and try again.",
+	OVER_PUBLIC_BALANCE: "Your public balance no longer covers that amount, so nothing was sent. Refresh, check the amount and try again.",
 	LIST_STALE: "The allow list is out of date, so nothing was sent. Wait for its next post.",
 	OVER_PUBLIC_BALANCE: "Your public balance no longer covers that amount, so nothing was sent. Refresh, check the amount and try again.",
 	UNKNOWN: "Something went wrong, and we can't tell whether anything was sent. Reload to check.",

@@ -139,6 +139,11 @@ describe("the label's withdrawal to Ethereum", () => {
 		const confirm = await review(app, dialog, "5")
 		await app.user.click(confirm.getByRole("button", { name: WITHDRAW }))
 		await dialog.findByText(messageOf("WITHDRAW_REVERTED"))
+		// The failed dialog keeps its confirm, which goes through the send gate itself, not the row's reason.
+		const sent = app.control.state().sent.aztec
+		await app.user.click(confirm.getByRole("button", { name: WITHDRAW }))
+		await dialog.findByText(messageOf("WAIT_FINALITY"))
+		expect(app.control.state().sent.aztec).toBe(sent)
 		await app.user.click(dialog.getByRole("button", { name: "Cancel" }))
 		await waitFor(() => labelRow(LABELS.active).getByText(messageOf("WAIT_FINALITY")))
 		const row = labelRow(LABELS.active)

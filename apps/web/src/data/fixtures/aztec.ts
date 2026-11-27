@@ -188,6 +188,7 @@ export function fixtureAztec(w: World): AztecPort {
 		},
 		async exitPublic(from, { payee, amount }, on) {
 			checkPayee(w, payee)
+			if (publicOf(w, from) < amount) throw new BridgeFailure("OVER_PUBLIC_BALANCE")
 			on.handoff()
 			return send(w, "exitPublic", () => {
 				if (publicOf(w, from) < amount) return "public balance too low"

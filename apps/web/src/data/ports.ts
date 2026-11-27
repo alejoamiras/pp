@@ -199,6 +199,10 @@ export interface AztecPort {
 	 * are right before sending, else refuses with `NO_EXACT_CHUNKS`.
 	 */
 	ragequit(from: AztecAddress, a: { payee: Address; label: bigint; amount: bigint }, on: AztecSendHooks): Promise<Sent>
+	/**
+	 * The hub's `exit_public` of `amount` of the public balance to `payee`.
+	 * @throws `OVER_PUBLIC_BALANCE` before the handoff when the public balance, read again, is below `amount`
+	 */
 	exitPublic(from: AztecAddress, a: { payee: Address; amount: bigint }, on: AztecSendHooks): Promise<Sent>
 	/**
 	 * A checked spend that unshields `amount` of the label and exits it to `payee` in one transaction,

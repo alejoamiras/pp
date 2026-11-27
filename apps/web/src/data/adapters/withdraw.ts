@@ -25,6 +25,8 @@ export interface WithdrawDeps extends TokenSendDeps {
 	client: Pick<BridgeClient, "exitPublicPayload">
 	/** A label's note values as the connected wallet reports them when called. */
 	notes: AztecPort["notesByLabel"]
+	/** The account's public balance as the connected wallet reports it when called. */
+	publicBalance: AztecPort["publicBalance"]
 }
 
 /** What the user confirmed; every call in the payload must carry exactly these values. */
@@ -82,6 +84,8 @@ export function stackWithdraw(d: WithdrawDeps): Pick<AztecPort, "exitPublic" | "
 			const { payee, amount } = a
 			const payload = await d.client.exitPublicPayload({ payee, amount })
 			await expectPayload(payload, d.sponsoredFpc, [exitCall(payee, amount)])
+			// A balance spent since the form fails the wallet's simulation past the handoff, which holds the account.
+			if ((await d.publicBalance(from)) < amount) throw new BridgeFailure("OVER_PUBLIC_BALANCE")
 			return send(d.aztec, from, payload, on)
 		},
 		async unshieldAndExit(from, a, on) {
