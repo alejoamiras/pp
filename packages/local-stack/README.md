@@ -68,15 +68,15 @@ marks a crashed stack, a live one may be recycled.
 ## Teardown
 
 Teardown is exact and ordered: heartbeat, manifest, bot, the bridge deployer's PXE, pool, network,
-run directory. Every step is attempted, and failures are reported together. Only the process groups, ports (from the shared
-registry) and directories this run created are touched. A process that exits without teardown
+run directory. Every step is attempted, and failures are reported together. Only the process
+groups, ports (from the shared registry) and directories this run created are touched. A process that exits without teardown
 (an uncaught error) still runs the network harness's exit hook, which kills the network's groups
 and removes its directories; SIGKILL skips it, and those groups outlive the process.
 
 A run id owns its run directory, which is created exclusively, so a second stack with the same id
 is refused. No run id may end in `-pool` or `-bot`: every harness releases registry rows by owner
-id, and the pool and the bot run as `<runId>-pool` and `<runId>-bot`. A run id chosen by the caller must be unique on the host while its
-stack runs: the exclusive claim covers one `runsDir`, and a stack under another one with the same
+id, and the pool and the bot run as `<runId>-pool` and `<runId>-bot`. A run id chosen by the
+caller must be unique on the host while its stack runs: the exclusive claim covers one `runsDir`, and a stack under another one with the same
 id would share the harnesses' registry rows and data directory.
 
 ## Clocks: think in blocks, not minutes

@@ -110,6 +110,9 @@ export const portRefuses = (port: number) =>
 	})
 
 /** What a stopped run must not have left: live groups, open ports, registry rows, directories. */
+/** The stack's own rows and those of the pool and the bot it runs under derived ids. */
+const ownedBy = (row: RegistryRow, runId: string) => [runId, `${runId}-pool`, `${runId}-bot`].includes(row.owner)
+
 export async function residueOf(r: {
 	runId: string
 	pgids: Iterable<number>
@@ -119,8 +122,7 @@ export async function residueOf(r: {
 	const left: string[] = []
 	for (const g of r.pgids) if (groupAlive(g)) left.push(`process group ${g}\n${groupMembers(g)}`)
 	for (const p of r.ports) if (!(await portRefuses(p))) left.push(`port ${p} accepts`)
-	for (const row of registryRows())
-		if (row.owner === r.runId || row.owner === `${r.runId}-pool`) left.push(`registry row ${row.port} ${row.owner}`)
+	for (const row of registryRows()) if (ownedBy(row, r.runId)) left.push(`registry row ${row.port} ${row.owner}`)
 	const dirs = [
 		join(CACHE, "runs", r.runId),
 		join(CACHE, "pp-env", "runs", `${r.runId}-pool`),
@@ -133,5 +135,5 @@ export async function residueOf(r: {
 
 export const portsOwnedBy = (runId: string) =>
 	registryRows()
-		.filter((row) => row.owner === runId || row.owner === `${runId}-pool`)
+		.filter((row) => ownedBy(row, runId))
 		.map((row) => row.port)

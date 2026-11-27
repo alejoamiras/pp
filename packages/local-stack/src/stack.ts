@@ -59,7 +59,10 @@ export interface Stack {
 	pool: PoolEnv
 	/** The demo's pool user and its separate Ethereum sender. */
 	seeded: Seeded
-	/** Idempotent; stops the heartbeat, withdraws the manifest, stops the bot, then the bridge's PXE, the pool and the network. */
+	/**
+	 * Idempotent; stops the heartbeat, withdraws the manifest, stops the bot, then the bridge's PXE,
+	 * the pool and the network.
+	 */
 	stop(): Promise<void>
 }
 
@@ -234,8 +237,10 @@ async function bootChains(o: StartStackOptions, runId: string, teardown: Teardow
 }
 
 /**
- * Starts the ASP bot on the bridge's registry, as `<runId>-bot` so its port row is its own. It resolves
- * only once its first post has landed and `/latest` serves, so a stack never advertises a bot that cannot post.
+ * Starts the ASP bot on the bridge's registry, as `<runId>-bot` so its port row is its own. It
+ * resolves only once its first post has landed and `/latest` serves, so a stack never advertises a
+ * bot that cannot post. It runs before the heartbeat: the local network builds a block for each
+ * pending transaction, so the bot's account deploy and first post need no beat.
  */
 function botStep(b: Booted, bridge: StackBridgeBlock): Promise<BotHandle> {
 	return startBot(
@@ -323,8 +328,8 @@ export async function bootStack(o: StartStackOptions, faults: BootFaults): Promi
 /**
  * Boots one anvil carrying both the Aztec local network and the pool, opens the bridge, seeds the
  * demo user, starts the ASP bot on the bridge's registry, writes the manifest once the stack is
- * ready, and keeps blocks coming while work waits on them. Anything started is torn down again when a later step fails or `signal` aborts between
- * steps.
+ * ready, and keeps blocks coming while work waits on them. Anything started is torn down again
+ * when a later step fails or `signal` aborts between steps.
  * @throws Error naming `bun run demo:prepare`, before anything starts, when pp-env's checkout or
  *   the forge artifacts are missing
  * @throws AttachRefused when `SANDBOX_L1_RPC` or `SANDBOX_NODE_URL` is set.
