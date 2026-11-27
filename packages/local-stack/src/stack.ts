@@ -29,9 +29,9 @@ export const HEARTBEAT_MS = 2_000
 const LATE_BEAT_MS = 180_000
 const STOP_WAIT_MS = 60_000
 /** pp-env's default deployer; bridge-core's harness and actors sit at 15 and from 1 up. */
-const POOL_DEPLOYER_INDEX = 14
+export const POOL_DEPLOYER_INDEX = 14
 /** The bridge's owner and guardian: bridge-core's harness index, below pp-env's deployer and above the actors. */
-const BRIDGE_DEPLOYER_INDEX = HARNESS_INDEX
+export const BRIDGE_DEPLOYER_INDEX = HARNESS_INDEX
 /** Covers the post's inclusion after its read; a local post lands about 150 s of chain time later. */
 const BOT_INCLUSION_MARGIN_SEC = 300
 export type StepName = "network" | "pool" | "bridge" | "seed" | "bot" | "manifest" | "heartbeat"
