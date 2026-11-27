@@ -40,6 +40,7 @@ package re-derives it rather than trusting a file.
 | `bun run test:hub` | Boots a local network of its own and runs the hub on it, block by block: `register_token` and its publish, a claim from a pool withdrawal, a ragequit and a public exit after an unshield, each consumed on the real Outbox, and each refused ragequit and public exit. Two anvil accounts stand in for the factory and the portal, so it needs no vault and no factory deploy. |
 | `bun run sandbox:up --artifacts <dir>` | Boot and deploy, write `<dir>/{manifest,handle}.json`, then hold until SIGTERM. |
 | `bun run sandbox:smoke` | Boot, deploy, run every flow once with timings, tear down. `deploy:sandbox [--smoke] [--keep]` is the same entry; `--keep` leaves the network up and prints how to re-attach. |
+| `bun run ragequit` (root) | On the local stack `PP_STACK_MANIFEST` names: burns a label's balance in exact chunks (`--amount`, `--label`, `--payee`), each paid by the SponsoredFPC, waits for each ticket's Outbox root and settles it. `--settle-only --payee <a>` settles that payee's tickets from chain data with `PP_L1_KEY` alone. Refuses any chain but 31337 before reading `PP_AZTEC_SECRET` or `PP_L1_KEY`, and never prints them. |
 
 Every harness run reads the forge build (`contracts/bridge/evm/out/`, gitignored): in a fresh clone,
 install the libs and `forge build` first ([`contracts/bridge/evm/README.md`](../../contracts/bridge/evm/README.md)).
