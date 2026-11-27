@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs Foundry from its release archive, checked against the SHA-256 below, and prepends the
-# binaries' directory to GITHUB_PATH. It never runs foundryup, so no job depends on the attestation
-# endpoint foundryup calls. A second run in the same job re-checks the downloaded archive.
+# binaries' directory to GITHUB_PATH. It never runs foundryup, so it never reaches the attestation
+# endpoint foundryup calls. Each run stages in a fresh private directory, so nothing a previous
+# step left behind is reused.
 set -euo pipefail
 
 version=1.7.1
@@ -15,21 +16,18 @@ if [ "${RUNNER_OS:-}" != Linux ] || [ "${RUNNER_ARCH:-}" != X64 ]; then
 fi
 
 name="foundry_v${version}_linux_amd64.tar.gz"
-work="$RUNNER_TEMP/setup-foundry"
+work="$(mktemp -d "$RUNNER_TEMP/setup-foundry.XXXXXX")"
 archive="$work/$name"
 bin="$work/bin"
-mkdir -p "$work"
-if [ ! -f "$archive" ]; then
-	curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-		--retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 \
-		--output "$archive.part" "https://github.com/foundry-rs/foundry/releases/download/v${version}/${name}"
-	mv "$archive.part" "$archive"
-fi
+# -q first: a runner's curlrc must not change how the archive is fetched.
+curl -q --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+	--retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 \
+	--output "$archive" "https://github.com/foundry-rs/foundry/releases/download/v${version}/${name}"
 echo "$sha256  $archive" | sha256sum --check --strict --quiet -
 
-rm -rf "$bin"
-mkdir -p "$bin"
+mkdir "$bin"
 tar -xzf "$archive" -C "$bin" "${tools[@]}"
+rm -f "$archive"
 for tool in "${tools[@]}"; do
 	out="$("$bin/$tool" --version)"
 	line="${out%%$'\n'*}"

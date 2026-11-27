@@ -4,6 +4,7 @@ description: >-
   that install.sh commits, first on PATH; never foundryup. Linux X64 runners only. A composite
   action runs install.sh from its own directory instead of naming this action in `uses:`: a nested
   `./` action resolves against the workspace, which in the nightly holds another commit.
+  setup-aztec's cold install is separate: the Aztec installer fetches its own Foundry.
 
 runs:
   using: composite
