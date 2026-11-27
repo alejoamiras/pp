@@ -249,16 +249,17 @@ export async function labelBalance(h: Holder, label: bigint): Promise<bigint> {
 }
 
 /**
- * Posts both roots as the registry's poster, observed at the latest block. The post lands in a later
- * block, so its root time precedes every anchor that sees it. The suite posts once: sequence 1.
+ * Posts both roots as the registry's poster, observed at the latest block, and returns that root
+ * time. The post lands in a later block, so its root time precedes every anchor that sees it. Each
+ * post needs the next `sequence` and an `l1Block` above the last.
  */
-export async function postRoots(world: World, pool: bigint, birth: bigint): Promise<void> {
+export async function postRoots(world: World, post: { sequence: bigint; l1Block: bigint }, pool: bigint, birth: bigint): Promise<bigint> {
 	const head = await world.base.node.getBlockData("latest")
 	if (!head) throw new Error("the node has no latest block")
+	const time = head.header.globalVariables.timestamp
 	const registry = await Contract.at(world.registry, aspRootRegistryArtifact, world.base.wallet)
-	await registry.methods
-		.post_root(1n, new Fr(pool), new Fr(birth), 1n, head.header.globalVariables.timestamp)
-		.send(deployOpts(world.base) as never)
+	await registry.methods.post_root(post.sequence, new Fr(pool), new Fr(birth), post.l1Block, time).send(deployOpts(world.base) as never)
+	return time
 }
 
 /** Moves `amount` of one label's notes to the holder's public balance, checked against `path`. */
@@ -266,6 +267,15 @@ export function unshield(h: Holder, amount: bigint, label: bigint, path: LabelPa
 	const arg = { index: path.index, depth: path.depth, siblings: [...path.siblings] }
 	return h.token.methods.unshield(amount, new Fr(label), arg).send(h.opts as never)
 }
+
+/** The hub's private exit of `amount` of one label's notes to `payee`, checked against `path`. */
+export function exitPrivate(h: Holder, world: World, payee: unknown, amount: bigint, label: bigint, path: LabelPath) {
+	const arg = { index: path.index, depth: path.depth, siblings: [...path.siblings] }
+	return h.hub.methods.exit_private(world.token, payee, amount, new Fr(label), arg)
+}
+
+/** The holder as a prover: its wallet, account and the fee its sends pay. */
+export const proverOf = (h: Holder) => ({ wallet: h.wallet, from: h.address, fee: h.opts.fee as { gasSettings?: unknown } })
 
 /** The holder's public balance, read through its own wallet. */
 export async function publicBalance(h: Holder): Promise<bigint> {

@@ -5,8 +5,8 @@ mod test;
 use aztec::macros::aztec;
 
 /// A token whose every private note carries a deposit label and its origin. Value enters a note only
-/// through the bridge's mint (a pool label) or a shield (a new birth label), and the bridge's exit burn
-/// reads no registry, so a holder can always leave with the notes its wallet can find.
+/// through the bridge's mint (a pool label) or a shield (a new birth label), and the bridge's ragequit
+/// burn reads no registry, so a holder can always leave with the notes its wallet can find.
 #[aztec]
 pub contract LabelledToken {
     use crate::{
@@ -118,6 +118,24 @@ pub contract LabelledToken {
         let (taken, origin) = balance.try_sub(label, amount);
         assert(taken >= amount, "Balance too low");
         balance.add(label, origin, taken - amount);
+    }
+
+    /// Burns `amount` of `from`'s `label` notes for the bridge's screened exit, under `unshield`'s
+    /// check: `path` proves the label at the anchor, and the public step requires both anchored roots to
+    /// still be current. The change keeps label and origin; nothing public names `from`.
+    #[external("private")]
+    fn burn_checked_for_exit(from: AztecAddress, amount: u128, label: Field, path: LabelPath) {
+        assert(self.msg_sender() == self.storage.config.read().minter, "caller is not minter");
+        // The burn, its change and the caller's message must all revert with the public step.
+        assert(self.context.in_revertible_phase(), "setup phase");
+        let (_, roots) = self.internal._checked_debit(from, amount, label, path);
+        self.enqueue_self.finish_checked_burn(roots);
+    }
+
+    #[external("public")]
+    #[only_self]
+    fn finish_checked_burn(roots: AnchorRoots) {
+        assert_current(self.context, self.storage.config.read().registry, roots);
     }
 
     /// Pays `amount` of the caller's `label` notes to `to`. The notes' common origin picks the tree

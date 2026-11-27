@@ -20,7 +20,7 @@ package re-derives it rather than trusting a file.
 
 | File | Purpose |
 |---|---|
-| `client/` | The bridge client: the session and its keys, the sealed journal, the spend checks, `submit` and its resolver, claims, `records` and `recover`, and exits (`ragequitPayload`, `exitTickets`, `exitStatus`, `settle`). `createBridgeClient` wires them over the manifest's RPC and node and checks the deployment once. |
+| `client/` | The bridge client: the session and its keys, the sealed journal, the spend checks, `submit` and its resolver, claims, `records` and `recover`, and exits (`ragequitPayload`, `exitPublicPayload`, `exitPrivatePayload`, `exitTickets`, `exitStatus`, `settle`). `createBridgeClient` wires them over the manifest's RPC and node and checks the deployment once. |
 | `hub-l2.ts` | Reads of the L2 hub: `hubAt`, and an ERC-20's token binding through `token_for` or straight from public storage (`hubBindingAt`). |
 | `l1-receipt.ts` / `l1-to-l2-readiness.ts` | The resilient receipt wait, and when an L1→L2 message becomes consumable. |
 | `hub-token.ts` / `portal-address.ts` | The L2 token the hub derives for an ERC-20 (`LabelledToken`, `deployer = hub`, `salt = erc20`, the hub's ASP registry among its constructor arguments) and the portal clone the factory derives (salt = token). Both pinned against the on-chain derivations. |
@@ -36,7 +36,7 @@ package re-derives it rather than trusting a file.
 | `bun run test` | vitest on Bun: pure functions, mocked-L1 orchestrations, the deploy journal, the harness's units. |
 | `bun run typecheck` | `tsc --noEmit -p tsconfig.scripts.json` (src + scripts + test). |
 | `bun run test:integration` | Boots one anvil + `aztec start --local-network`, deploys a generation, and checks its bindings: vault, cap, paused entries, one portal per manifest token. `SANDBOX_L1_RPC` + `SANDBOX_NODE_URL` attach to a network kept up by `sandbox:up`; `PP_SANDBOX_ARTIFACTS` keeps the run's artifacts. |
-| `bun run test:hub` | Boots a local network of its own and runs the hub on it, block by block: `register_token` and its publish, a claim from a pool withdrawal, a ragequit and a public exit after an unshield, each consumed on the real Outbox, and each refused ragequit and public exit. Two anvil accounts stand in for the factory and the portal, so it needs no vault and no factory deploy. |
+| `bun run test:hub` | Boots a local network of its own and runs the hub on it, block by block: `register_token` and its publish, a claim from a pool withdrawal, a ragequit and a public exit after an unshield, each consumed on the real Outbox, each refused ragequit and public exit, and the private exit's setup-phase refusal and its whole revert when a root changes before inclusion. Two anvil accounts stand in for the factory and the portal, so it needs no vault and no factory deploy. |
 | `bun run test:integration:stack [vitest args]` | The stack suite (`test/integration/stack/`): deploy, bridge, submit, re-proof, journal, the first path, exits, births (a shielded note's birth label through the bot's approval to a checked transfer) and the ragequit CLI, against a stack with its bot: the one `PP_STACK_MANIFEST` names or one `scripts/with-stack.ts` boots and stops. CI runs it and the smoke under one stack and requires every id of `scripts/check-cases.ts`'s `bridge` group. |
 | `bun run demo:smoke` (root) | On the local stack `PP_STACK_MANIFEST` names: seeds a pool account, bridges 70, claims it with the account's deployment, ragequits it and settles to a fresh payee, printing each step's time. |
 | `bun run sandbox:up --artifacts <dir>` | Boot and deploy, write `<dir>/{manifest,handle}.json`, then hold until SIGTERM. |
@@ -56,7 +56,7 @@ are trusted beyond that.
 
 Fees: every L2 transaction the client builds pays through the SponsoredFPC: the claim, and with it
 the recipient's account deployment, which the wallet sends in the same transaction (`preflight`
-only simulates the sponsored path), each ragequit burn and each public exit. No option takes a fee
+only simulates the sponsored path), each ragequit burn and each public or private exit. No option takes a fee
 or a payment method, so the holder's own Fee Juice never pays: the fee payer is public, and paying
 from the account would link it to its bridge or to its exit ticket. This holds only where a
 sponsored FPC exists, which today means the local network and the testnet.
@@ -66,7 +66,14 @@ manifest's token and matches each to its own Outbox message, so identical exits 
 settle separately. `exitStatus` and `settle` key a ticket by its witness's `(epoch, leafId)`, never
 by content. `ragequitPayload` and `exitPublicPayload` build the hub's `ragequit` and `exit_public`
 for the holder's wallet to send, from the request as it was at the call, and refuse a payee whose
-checksum fails or whom the portal would never pay before building.
+checksum fails or whom the portal would never pay before building. `exitPrivatePayload` builds the
+hub's `exit_private`, which spends a label's notes under `unshield`'s registry check (the caller
+passes the label's path, for example from `@pp/label-paths`) and publishes a `PublicExitTicket`, so the
+three calls above serve it as a public exit (`kind: "public"` names the content, not an account). Paid
+through the SponsoredFPC, no public effect of its transaction names the holder; its amount, payee and
+timing stay public. It answers `STAGE_UNSUPPORTED`
+unless the deployment's hub and token are this commit's classes and the hub has a registry: one
+commit serves one generation.
 
 ## The local network
 

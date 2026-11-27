@@ -20,7 +20,8 @@ pub fn bridge_content_v1(nullifier: Field, change_commitment: Field, amount: u12
     sha256_to_field(words::<4, 128>([PP_BRIDGE_IN_V1, nullifier, change_commitment, amount as Field]))
 }
 
-/// `H(OUT_V1, payee, amount)`: the content of a screened public exit's Outbox message.
+/// `H(OUT_V1, payee, amount)`: the content of a screened exit's Outbox message (`exit_public` or
+/// `exit_private`).
 pub fn exit_content_v1(payee: EthAddress, amount: u128) -> Field {
     let payee = payee_word(payee);
     assert(amount != 0, "AmountOutOfRange");
@@ -28,7 +29,7 @@ pub fn exit_content_v1(payee: EthAddress, amount: u128) -> Field {
 }
 
 /// `H(RAGEQUIT_V1, payee, amount, label)`: the content of a ragequit's Outbox message. Label 0 is
-/// refused, so `ExitSettled`'s label 0 always means the public exit.
+/// refused, so `ExitSettled`'s label 0 always means an `OUT_V1` exit.
 pub fn ragequit_content_v1(payee: EthAddress, amount: u128, label: Field) -> Field {
     let payee = payee_word(payee);
     assert(amount != 0, "AmountOutOfRange");

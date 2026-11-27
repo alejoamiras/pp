@@ -8,6 +8,7 @@ export {
 	type SpendCheckName,
 	type StaleRootCode,
 } from "./errors"
+export type { ExitPrivateRequest } from "./exit-private"
 export type { KeyValueStore } from "./journal"
 export { laggingTolerant } from "./lagging"
 export { sponsoredFpcAddress } from "./payload"

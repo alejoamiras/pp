@@ -21,6 +21,10 @@ pub contract BridgeStub {
         comptime { FunctionSelector::from_signature("burn_for_exit((Field),u128,Field)") };
     global BURN_PUBLIC_FOR_EXIT: FunctionSelector =
         comptime { FunctionSelector::from_signature("burn_public_for_exit((Field),u128)") };
+    // `LabelPath` is `{ index: u32, depth: u8, siblings: [Field; 18] }`.
+    global BURN_CHECKED_FOR_EXIT: FunctionSelector = comptime {
+        FunctionSelector::from_signature("burn_checked_for_exit((Field),u128,Field,(u32,u8,[Field;18]))")
+    };
 
     #[event]
     struct HandshakeProbe {
@@ -44,6 +48,21 @@ pub contract BridgeStub {
             BURN_FOR_EXIT,
             [from.to_field(), amount as Field, label],
         );
+    }
+
+    #[external("private")]
+    fn exit_checked(token: AztecAddress, amount: u128, label: Field, index: u32, depth: u8, siblings: [Field; 18]) {
+        let from = self.msg_sender();
+        let mut args = [0; 23];
+        args[0] = from.to_field();
+        args[1] = amount as Field;
+        args[2] = label;
+        args[3] = index as Field;
+        args[4] = depth as Field;
+        for i in 0..18 {
+            args[5 + i] = siblings[i];
+        }
+        let _ = self.context.call_private_function(token, BURN_CHECKED_FOR_EXIT, args);
     }
 
     #[external("public")]
