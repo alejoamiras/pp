@@ -26,7 +26,7 @@ import {
 	type SubmitOptions,
 } from "@pp/bridge-core"
 import { type ArtifactSource, secretDerivationTypedData, workerProver } from "@pp/pool-client"
-import { createArtifacts, PINNED_CIRCUITS } from "@pp/pool-client/circuits"
+import { createArtifacts } from "@pp/pool-client/circuits"
 import { type Hash, type PublicClient, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem"
 import type { StackManifestJson } from "../../build/target"
 import { BridgeFailure, ProviderError } from "../errors"
@@ -35,6 +35,7 @@ import type { Attempt, L1TxState, Proved, Session, SessionPort, SubmitHooks, Tim
 import type { AztecAddress, BridgeRecordView } from "../stack-types"
 import type { HeldWallet } from "../wallet/connector"
 import { type AztecDeps, boundTo, grantedPayload, sendThroughWallet } from "./aztec"
+import { PROVED_CIRCUIT } from "./circuit"
 import type { StackL1 } from "./l1"
 import { type DelegatingProver, delegatingProver } from "./prover"
 
@@ -239,11 +240,10 @@ function stackSession(c: Ctx): Session {
 
 let warm: Promise<void> | undefined
 
-/** Fetches and checks the pinned proving files once per page, so the first proof does not wait on them. */
+/** Fetches and checks the proved circuit's files once per page, so the first proof does not wait on them. */
 function warmUp(artifacts: ArtifactSource): Promise<void> {
 	warm ??= (async () => {
-		const files = createArtifacts(artifacts)
-		for (const circuit of Object.keys(PINNED_CIRCUITS)) await files.ensure(circuit)
+		await createArtifacts(artifacts).ensure(PROVED_CIRCUIT)
 	})().catch((err: unknown) => {
 		warm = undefined
 		throw err

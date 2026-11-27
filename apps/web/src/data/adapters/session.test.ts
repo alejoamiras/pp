@@ -5,6 +5,7 @@ import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import type { BridgeClient, BridgeReceipt, BridgeSession, openBridgeSession, PreparedBridgeSpend } from "@pp/bridge-core"
 import { tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
 import { secretDerivationTypedData } from "@pp/pool-client"
+import { createArtifacts } from "@pp/pool-client/circuits"
 import { type Address, type Hash, type Hex, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem"
 import { describe, expect, test, vi } from "vitest"
 import type { StackManifestJson } from "../../build/target"
@@ -20,6 +21,11 @@ import { parseGrant } from "../wallet/grant"
 import type { AztecDeps } from "./aztec"
 import type { DelegatingProver } from "./prover"
 import { JOURNAL_PREFIX, journalStore, l1TxState, type PageStorage, type SessionDeps, stackSessions } from "./session"
+
+vi.mock("@pp/pool-client/circuits", async (actual) => {
+	const m = await actual<typeof import("@pp/pool-client/circuits")>()
+	return { ...m, createArtifacts: vi.fn(m.createArtifacts) }
+})
 
 const A20 = (n: string) => `0x${n.repeat(20)}`
 const A32 = (n: string) => `0x${n.repeat(32)}`
@@ -361,6 +367,13 @@ describe("the stack session", () => {
 		await session.waitClaimable("r1", signal)
 		expect(r.client.waitClaimable).toHaveBeenCalledWith(RECEIPT, { signal })
 		await expect(session.waitClaimable("unknown", signal)).rejects.toMatchObject({ code: "NOT_CLAIMABLE" })
+	})
+
+	test("warms up only the circuit the app proves", async () => {
+		const ensure = vi.fn(async () => {})
+		vi.mocked(createArtifacts).mockReturnValueOnce({ ensure } as never)
+		await (await rig().open()).warmUp()
+		expect(ensure.mock.calls).toEqual([["transact_1x1"]])
 	})
 
 	test("the journal keeps to the app's prefix, and forgetting deletes only it", async () => {

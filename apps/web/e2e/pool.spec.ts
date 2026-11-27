@@ -4,7 +4,7 @@
  * sync, one pool client in Node, and the three proving files over loopback.
  */
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
-import { PINNED_CIRCUITS } from "@pp/pool-client/circuits"
+import { PROVED_PINS as p } from "../src/data/adapters/circuit"
 import { formatAmount, labelHex } from "../src/ui/format"
 import { seededStack } from "./stack"
 import { signInToPool, watchPage } from "./support"
@@ -40,11 +40,11 @@ test("lists the seeded user's notes by label as pool-client reads them, every st
 
 	// Sign-in fetches no bot snapshot, and its proving-file prefetch shows the test no bytes, so the
 	// page fetches them itself: its own CSP applies, and the digests prove which bytes `serve` handed out.
-	const pins = Object.values(PINNED_CIRCUITS).flatMap((p) => [
+	const pins = [
 		[p.wasm, p.wasmSha256],
 		[p.provingKey, p.provingKeySha256],
 		[p.verificationKey, p.verificationKeySha256],
-	])
+	]
 	const fetched = await page.evaluate(
 		async ({ botUrl, cids }) => {
 			const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("")

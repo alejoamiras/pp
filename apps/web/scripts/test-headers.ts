@@ -2,24 +2,31 @@
  * The two servers the e2e kit runs, checked from outside: the preview by its exact command (no
  * `--config`, only `PP_SANDBOX_ARTIFACTS` in the environment) and the app's own `serve` (only
  * `PP_CIRCUITS_DIR`, an empty scratch directory). Over `dist/` each must answer `/`, an asset and an
- * unknown route (and `serve` each pinned proving file's route, 503 here without the files) with
+ * unknown route (and `serve` the proved circuit's three file routes, 503 here without the files) with
  * exactly the build's header set, `/` with `index.html` whatever the request accepts, and over a copy whose `security-headers.json` is missing,
  * malformed, incomplete or weakened it must refuse to start. `serve` must also refuse with
- * `PP_CIRCUITS_DIR` unset, empty, relative or naming a file. Run after `bun run build`.
+ * `PP_CIRCUITS_DIR` unset, empty, relative or naming a file, and answer 404 for any other pinned circuit's
+ * files. Run after `bun run build`.
  */
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
 import { resolvePackageAsset } from "@nulo-sh/resolve-asset"
-import { PINNED_CIRCUITS } from "@pp/pool-client/circuits"
+import { PINNED_CIRCUITS, type PinnedCircuit } from "@pp/pool-client/circuits"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build/headers.ts"
+import { PROVED_CIRCUIT, PROVED_PINS } from "../src/data/adapters/circuit.ts"
 import { claimPort } from "./ports"
 import { APP_ROOT, bunRun, envWithout, type Group, scratchDir } from "./proc"
 
 const DIST = join(APP_ROOT, "dist")
 const START_TIMEOUT_MS = 30_000
 const ARTIFACTS = dirname(resolvePackageAsset("@pp/e2e-kit", "fixtures/build-artifacts/handle.json", { from: import.meta.url }))
-const PINNED_PATHS = Object.values(PINNED_CIRCUITS).flatMap((p) => [p.wasm, p.provingKey, p.verificationKey].map((cid) => `/${cid}`))
+const cidPaths = (p: PinnedCircuit) => [p.wasm, p.provingKey, p.verificationKey].map((cid) => `/${cid}`)
+const PINNED_PATHS = cidPaths(PROVED_PINS)
+/** Pinned files of circuits the app never proves: `serve` must not hand them out. */
+const UNPROVED_PATHS = Object.entries(PINNED_CIRCUITS)
+	.filter(([circuit]) => circuit !== PROVED_CIRCUIT)
+	.flatMap(([, p]) => cidPaths(p))
 /** Holds no proving files, so their routes answer 503: the headers are what this checks. */
 const CIRCUITS = scratchDir("headers-circuits")
 
@@ -27,6 +34,8 @@ interface Server {
 	start(outDir: string, port: number): Group
 	/** Routes beyond the shared ones that must carry the headers. */
 	extraPaths: readonly string[]
+	/** Routes that must answer 404 to a request that does not accept text/html. */
+	absentPaths: readonly string[]
 }
 
 const host = (port: number) => ["--host", "127.0.0.1", "--port", String(port), "--strictPort"]
@@ -39,10 +48,12 @@ const SERVERS: Record<string, Server> = {
 				capture: true,
 			}),
 		extraPaths: [],
+		absentPaths: [],
 	},
 	serve: {
 		start: (outDir, port) => startServe(outDir, port, { PP_CIRCUITS_DIR: CIRCUITS }),
 		extraPaths: PINNED_PATHS,
+		absentPaths: UNPROVED_PATHS,
 	},
 }
 
@@ -93,6 +104,13 @@ async function assertRoot(name: string, port: number): Promise<void> {
 			throw new Error(`${name} ${method} / without text/html: HTTP ${res.status}, ${res.headers.get("content-type")}, not index.html`)
 		console.log(`ok   ${name} ${method} / without text/html serves index.html`)
 	}
+}
+
+async function assertAbsent(name: string, port: number, path: string): Promise<void> {
+	const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { accept: "*/*" } })
+	await res.arrayBuffer()
+	if (res.status !== 404) throw new Error(`${name} ${path}: HTTP ${res.status}, not 404`)
+	console.log(`ok   ${name} ${path} is not served (HTTP 404)`)
 }
 
 const BROKEN: Record<string, (file: string) => void> = {
@@ -146,6 +164,7 @@ async function assertServer(name: string, server: Server, port: number, expected
 		await untilUp(name, port, g)
 		for (const path of ["/", `/assets/${asset}`, "/no/such/route", ...server.extraPaths]) await assertServed(name, port, path, expected)
 		await assertRoot(name, port)
+		for (const path of server.absentPaths) await assertAbsent(name, port, path)
 	} finally {
 		await g.stop()
 	}

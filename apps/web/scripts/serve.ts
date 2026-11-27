@@ -1,7 +1,8 @@
 /**
  * The app's own server for a built `dist/`: every answer carries the build's `security-headers.json`
  * (a missing or invalid one stops it before it listens), unknown routes fall back to `index.html`, and
- * `/<cid>` serves the pinned proving files, so pool-client's artifact gateway is the page's own origin.
+ * `/<cid>` serves the three proving files of the one circuit the app proves, so pool-client's artifact
+ * gateway is the page's own origin; other pinned circuits' files answer as unknown routes.
  * Those files are read only from `PP_CIRCUITS_DIR` (the pool checkout's circuit builds, which the e2e
  * kit takes from the local stack's CLI) and checked against the pinned manifest before the first byte
  * leaves; they are GPL and never part of a build. It refuses to start unless that names an absolute
@@ -14,8 +15,9 @@ import { readFileSync, statSync } from "node:fs"
 import { createServer, type IncomingMessage } from "node:http"
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path"
 import { parseArgs } from "node:util"
-import { createArtifacts, PINNED_CIRCUITS } from "@pp/pool-client/circuits"
+import { createArtifacts } from "@pp/pool-client/circuits"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build/headers.ts"
+import { PROVED_CIRCUIT, PROVED_PINS } from "../src/data/adapters/circuit.ts"
 import { APP_ROOT } from "./proc"
 
 type Getter = "getWasm" | "getProvingKey" | "getVerificationKey"
@@ -25,9 +27,9 @@ const FILES = [
 	["verificationKey", "getVerificationKey"],
 ] as const
 
-/** Each pinned cid to the circuit and getter that yield its verified bytes. */
+/** Each of the proved circuit's cids to the getter that yields its verified bytes. */
 const PINNED: ReadonlyMap<string, { circuit: string; get: Getter }> = new Map(
-	Object.entries(PINNED_CIRCUITS).flatMap(([circuit, pin]) => FILES.map(([file, get]) => [pin[file], { circuit, get }] as const)),
+	FILES.map(([file, get]) => [PROVED_PINS[file], { circuit: PROVED_CIRCUIT, get }] as const),
 )
 
 const TYPES: Readonly<Record<string, string>> = {

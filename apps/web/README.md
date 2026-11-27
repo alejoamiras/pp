@@ -17,9 +17,9 @@ label through pool-client with one worker prover per page, the bridge and its cl
 bridge-core's client, and the Aztec balances by label through the connected wallet. Exits, the
 allow list and the token actions are not wired yet. On the local stack (chain 31337 over a loopback
 RPC) the build can also send a bridge from anvil's dev account, so the demo needs no second wallet
-account. It is served by `serve`, which also serves the pinned proving files from
-`PP_CIRCUITS_DIR`, the pool checkout's circuit builds that the stack's CLI prints; they are never
-part of a build. `serve` refuses to start unless that is an absolute directory.
+account. It is served by `serve`, which also serves the three proving files of `transact_1x1`, the
+one circuit the app proves, from `PP_CIRCUITS_DIR`, the pool checkout's circuit builds that the
+stack's CLI prints; they are never part of a build. `serve` refuses to start unless that is an absolute directory.
 
 ## Scripts
 
@@ -32,7 +32,7 @@ Run from the repository root with `bun run --cwd apps/web <script>`.
 | `build:local` | The build the e2e kit runs, with the real wallet connector: against a stack manifest (`PP_STACK_MANIFEST`), or fixtures from a sandbox run's artifacts (`PP_SANDBOX_ARTIFACTS`) |
 | `check:stack-build` | Builds against a synthetic local and remote stack manifest, and the fixture build; fails on any fixture or build-only module or bot account in a stack build, and unless the demo sender is in the local stack build alone, with no build holding its key |
 | `preview` | Serves a fixture build with its security headers |
-| `serve` | Serves a build with its security headers and the pinned proving files at `/<cid>`, read from `PP_CIRCUITS_DIR` |
+| `serve` | Serves a build with its security headers and the three `transact_1x1` proving files at `/<cid>`, read from `PP_CIRCUITS_DIR` |
 | `typecheck` | `tsc --noEmit` |
 | `test` | Unit and component tests (Vitest on Bun, jsdom for components) |
 | `test:headers` | Checks both servers' headers the way the e2e kit starts them |
