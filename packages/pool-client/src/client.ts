@@ -259,12 +259,13 @@ export async function openPoolClient(a: {
 }): Promise<PoolClient> {
 	const signature = normaliseSignature(a.signature)
 	const owner = getAddress(a.l1Address)
+	// Read once: the chain the bundle is allowed for must be the one the RPC is then held to.
+	const poolChain = a.pool.chainId
+	const artifacts = createArtifacts(a.artifacts, { chainId: poolChain })
 	await verifySigner(owner, signature)
 	const publicClient = createPublicClient({ transport: http(a.pool.l1Rpc) })
 	const chainId = await publicClient.getChainId()
-	if (chainId !== a.pool.chainId)
-		throw new PoolClientError("CHAIN_MISMATCH", `RPC serves chain ${chainId}, the pool is on ${a.pool.chainId}`)
-	const artifacts = createArtifacts(a.artifacts)
+	if (chainId !== poolChain) throw new PoolClientError("CHAIN_MISMATCH", `RPC serves chain ${chainId}, the pool is on ${poolChain}`)
 	const sdk = await createSession({ pool: a.pool, owner, keys: deriveKeys(owner, signature), artifacts, publicClient, prover: a.prover })
 	return client(a.pool, owner, signature, sdk, publicClient, artifacts)
 }
