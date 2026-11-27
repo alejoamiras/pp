@@ -22,7 +22,8 @@ import { AMOUNTS, deployBridge, type StackRun, stackFile, stackRun, startBot, st
 /** A rehearsal's exit 3: three or so 15 s polls of an Outbox that never shows a root. */
 const EXIT_3_BUDGET_MS = 40_000
 const CANARY_MS = 20 * 60_000
-const FINALITY_EVENT_MS = 10 * 60_000
+/** Each finality event follows a new root, which the bot fetches no sooner than its 5-minute leaves floor. */
+const FINALITY_EVENT_MS = 15 * 60_000
 
 export type CanaryFailuresResult = Record<"approvalFinality" | "refusedSelfTransfer" | "exit3ThenSettle" | "interruptedThenPause", number>
 
