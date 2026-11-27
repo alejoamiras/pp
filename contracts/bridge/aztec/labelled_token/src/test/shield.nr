@@ -8,7 +8,7 @@ use crate::{
         paths::{BIRTH_ROOT, POOL_PATHS, POOL_ROOT},
         utils::{
             assert_labels, balance, L, labels, mint, post, post_now, public_balance, ragequit, setup, Setup,
-            transfer, unshield,
+            setup_with_registry, transfer, unshield,
         },
     },
 };
@@ -137,6 +137,7 @@ unconstrained fn shield_failure_repeated_secret() {
     let s = funded();
     let b = born(s, 20);
     let repeat = birth_nullifier(s.user, b.secret);
+    // The hub's sole-consumer guard pins this test's name, attribute and next statement; change them with its exemption.
     s.env.private_context_at(s.token, |context| context.push_nullifier_unsafe(repeat));
 }
 
@@ -157,6 +158,12 @@ unconstrained fn shield_failure_paused_intake() {
 unconstrained fn shield_failure_invalid_intake() {
     let s = funded();
     set_intake(s, AztecAddress::from_field(3));
+    shield(s, 20);
+}
+
+#[test(should_fail_with = "registry unset")]
+unconstrained fn shield_failure_unset_registry() {
+    let s = setup_with_registry(AztecAddress::zero());
     shield(s, 20);
 }
 
@@ -189,7 +196,9 @@ unconstrained fn transfer_private_failure_birth_label_not_yet_approved() {
 unconstrained fn shielded_note_ragequits_while_pending() {
     let s = funded();
     let b = born(s, 20);
-    ragequit(s, s.user, 20, b.label);
+    ragequit(s, s.user, 15, b.label);
+    assert_labels(s, s.user, [(b.label, ORIGIN_BIRTH, 5)]);
+    ragequit(s, s.user, 5, b.label);
     assert_eq(balance(s, s.user), 0);
 }
 

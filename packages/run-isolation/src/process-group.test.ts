@@ -1,9 +1,9 @@
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, readlinkSync } from "node:fs"
 import { once } from "node:events"
 import { setTimeout as sleep } from "node:timers/promises"
 import { describe, expect, it } from "bun:test"
-import { endGroup, groupAlive, type ProcFs } from "./process-group"
+import { endGroup, groupAlive, pidNamespace, type ProcFs, type ProcLinks, startTime } from "./process-group"
 
 // Without /proc these semantics do not apply (macOS); CI is Linux, so there the suite always runs.
 const proc = existsSync("/proc/self/stat") || process.env.CI !== undefined
@@ -144,4 +144,58 @@ describe.skipIf(!proc)("groupAlive", () => {
 			kill()
 		}
 	})
+})
+
+describe.skipIf(!proc)("startTime and pidNamespace", () => {
+	it("names a process by its start while /proc lists it, a zombie included, and nothing once it is reaped", async () => {
+		// `sleep 30` replaces the shell and never reaps the short sleep, which stays a zombie.
+		const parent = spawn("sh", ["-c", "sleep 0.3 & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "inherit"] })
+		try {
+			const [chunk] = (await once(parent.stdout, "data")) as [Buffer]
+			const pid = Number(chunk.toString().trim())
+			const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+			const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]
+			expect(startTime(pid)).toBe(start)
+			expect(startTime(pid)).not.toBe(startTime(process.pid))
+			for (let i = 0; i < 100 && state(pid) !== "Z"; i++) await sleep(50)
+			expect(state(pid)).toBe("Z")
+			expect(startTime(pid)).toBe(start)
+		} finally {
+			parent.kill("SIGKILL")
+		}
+		const reaped = spawn("true")
+		await once(reaped, "exit")
+		expect(startTime(reaped.pid as number)).toBeUndefined()
+	})
+
+	it("gives no token where /proc numbers another pid namespace or hides pids", () => {
+		const mounted = (...options: string[]) => options.map((o) => `25 1 0:5 / /proc rw,nosuid - proc proc ${o}\n`).join("")
+		const scripted = (nspid: string, mountinfo: string): ProcLinks => ({
+			readdir: () => [],
+			readFile: (path) =>
+				path.endsWith("mountinfo") ? mountinfo : path.endsWith("status") ? `Pid:\t1\nNSpid:\t${nspid}\n` : "boot\n",
+			readlink: () => "pid:[1]",
+			exists: () => false,
+		})
+		const own = String(process.pid)
+		expect(pidNamespace(scripted(own, mounted("rw")))).toBe("boot/pid:[1]/")
+		expect(pidNamespace(scripted(own, mounted("rw,hidepid=0")))).toBe("boot/pid:[1]/")
+		expect(pidNamespace(scripted(`7\t${own}`, mounted("rw"))), "an ancestor namespace's /proc").toBeUndefined()
+		expect(pidNamespace(scripted(`${own}\t${own}`, mounted("rw"))), "equal pids at two levels").toBeUndefined()
+		expect(pidNamespace(scripted(own, mounted("rw,hidepid=invisible")))).toBeUndefined()
+		expect(pidNamespace(scripted(own, mounted("rw,hidepid=2,gid=1")))).toBeUndefined()
+		expect(pidNamespace(scripted(own, mounted("rw", "rw,hidepid=2"))), "a hidepid overmount").toBeUndefined()
+		expect(pidNamespace(scripted(own, mounted("rw,hidepid=2", "rw")))).toBe("boot/pid:[1]/")
+	})
+
+	// A host whose /proc the guard refuses (hidepid, an ancestor's /proc) gives no token; CI's runners must.
+	it.skipIf(pidNamespace() === undefined && process.env.CI === undefined)(
+		"names this boot, pid namespace and time namespace in its token",
+		() => {
+			const time = existsSync("/proc/self/ns/time") ? readlinkSync("/proc/self/ns/time") : ""
+			expect(pidNamespace()).toBe(
+				`${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}/${readlinkSync("/proc/self/ns/pid")}/${time}`,
+			)
+		},
+	)
 })
