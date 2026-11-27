@@ -28,9 +28,12 @@ await main(async () => {
 		fees.maxFeePerGas,
 	)
 	const short = plan.total > deployerBalance ? plan.total - deployerBalance : 0n
+	for (const s of plan.sends)
+		report("funding-need", { roles: s.roles.join(","), address: s.address, balance: s.balance, need: s.need, topUp: s.amount })
 	report("funding-quote", {
 		deployer,
 		deployerBalance,
+		deployerNeed: plan.deployerNeed,
 		total: plan.total,
 		transferGas: plan.transferGas,
 		short,

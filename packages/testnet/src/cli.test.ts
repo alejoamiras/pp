@@ -272,7 +272,12 @@ describe("every key-reading CLI on a fork", () => {
 		const home = scratchHome()
 		const r = await cli("fund", [deploymentFile(home, { pool: false }), "--quote", "--rehearse-fork", rpc], home)
 		expect(r.code).toBe(0)
-		expect(JSON.parse(r.out.trim())).toMatchObject({ event: "funding-quote", deployer: addr(2), short: "0" })
+		const events = r.out
+			.trim()
+			.split("\n")
+			.map((l) => JSON.parse(l) as Record<string, unknown>)
+		expect(events.at(-1)).toMatchObject({ event: "funding-quote", deployer: addr(2), short: "0" })
+		expect(events.filter((e) => e.event === "funding-need").map((e) => e.roles)).toContain("guardian")
 	}, 60_000)
 })
 
