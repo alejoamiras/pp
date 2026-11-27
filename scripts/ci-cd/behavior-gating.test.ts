@@ -643,3 +643,20 @@ test("the unit-test workflow runs this suite", () => {
 	const steps: { run?: string }[] = workflow("_unit-tests.yml").jobs["unit-tests"].steps
 	expect(steps.map((step) => step.run)).toContain("bun run test:ci-gating")
 })
+
+// Each pull request saved its own copy of the browsers, readable only by it, and those copies
+// pushed main's caches out under the repository's cache limit.
+test("setup-playwright saves the browser cache only outside pull requests", () => {
+	const action = readFileSync(join(ROOT, ".github/actions/setup-playwright/action.yml"), "utf8")
+	const steps: { if?: string; uses?: string }[] = Bun.YAML.parse(action).runs.steps
+	expect(
+		steps.some((s) => /^actions\/cache@/.test(s.uses ?? "")),
+		"actions/cache saves after every run",
+	).toBe(false)
+	const saves = steps.filter((s) => /^actions\/cache\/save@/.test(s.uses ?? ""))
+	expect(saves).toHaveLength(1)
+	// The whole expression: an added `||` clause would let a pull request save again.
+	expect(saves[0]?.if).toBe(
+		"steps.restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && inputs.cache-save != 'false'",
+	)
+})

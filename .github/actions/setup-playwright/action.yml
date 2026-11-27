@@ -7,25 +7,17 @@ inputs:
     default: packages/e2e-kit
   cache-save:
     description: >
-      "false" restores the browser cache without saving it, for a job that runs code from a branch
-      other than the one whose cache scope it writes to.
+      "false" never saves the browser cache, for a job that runs code from a branch other than the
+      one whose cache scope it writes to.
     required: false
     default: "true"
 
 runs:
   using: composite
   steps:
-    - if: inputs.cache-save != 'false'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      id: cache
-      with:
-        path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles(format('{0}/package.json', inputs.package-dir)) }}
-        restore-keys: |
-          ${{ runner.os }}-playwright-
-    - if: inputs.cache-save == 'false'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    - name: Restore the browser cache
       id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/ms-playwright
         key: ${{ runner.os }}-playwright-${{ hashFiles(format('{0}/package.json', inputs.package-dir)) }}
@@ -37,10 +29,21 @@ runs:
       shell: bash
       env:
         PLAYWRIGHT: ${{ inputs.package-dir }}/node_modules/.bin/playwright
-        CACHE_HIT: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit }}
+        CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
       run: |
         if [ "$CACHE_HIT" = "true" ]; then
           "$PLAYWRIGHT" install-deps chromium
         else
           "$PLAYWRIGHT" install --with-deps chromium
         fi
+    # Never from a pull request: each saved its own copy of the browsers, readable only by that pull
+    # request, and those copies pushed main's caches out under the repository's cache limit. Pull
+    # requests restore what a run in main's scope saved, or download.
+    - name: Save the browser cache
+      if: >-
+        steps.restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request' &&
+        inputs.cache-save != 'false'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ steps.restore.outputs.cache-primary-key }}
