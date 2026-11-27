@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process"
 import { readdirSync, readFileSync, readlinkSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { type OwnedChild, spawnOwned } from "@pp/run-isolation/process"
+import { killGroup, type OwnedChild, spawnOwned } from "@pp/run-isolation/process"
 import { groupMembers } from "@pp/run-isolation/process-group"
 
 const CLI = fileURLToPath(new URL("../cli/", import.meta.url))
@@ -50,6 +50,24 @@ export async function untilEvent(logFile: string, event: string, child: OwnedChi
 		if (Date.now() > deadline) throw new Error(`${event} did not come within ${timeoutMs} ms`)
 		await new Promise((r) => setTimeout(r, 500))
 	}
+}
+
+/**
+ * How a CLI from {@link startCli} ended, read from its log once it exits; past `timeoutMs` its group is
+ * killed and this rejects.
+ */
+export async function ended(child: OwnedChild, logFile: string, timeoutMs: number): Promise<CliRun> {
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const late = new Promise<"late">((r) => (timer = setTimeout(() => r("late"), timeoutMs)))
+	const outcome = await Promise.race([child.exited, late])
+	clearTimeout(timer)
+	if (outcome === "late") {
+		await killGroup(child)
+		throw new Error(`${logFile} did not end within ${timeoutMs} ms`)
+	}
+	const out = readFileSync(logFile, "utf8")
+	const code = /^exit code (\d+)$/.exec(child.exitReason() ?? "")?.[1]
+	return { code: code === undefined ? null : Number(code), out, events: eventsOf(out) }
 }
 
 const socketInodes = (pid: number): Set<string> => {

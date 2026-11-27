@@ -93,7 +93,7 @@ export function assertNoSeed(env: NodeJS.ProcessEnv): void {
 }
 
 /** Anvil's well-known accounts, the only L1 keys a local rehearsal accepts. */
-const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"
+export const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"
 const ANVIL_ACCOUNTS = 32
 
 let anvilAddresses: Set<string> | undefined

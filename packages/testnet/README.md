@@ -73,3 +73,4 @@ own home.
 |---|---|
 | `test` | unit tests, including every key-reading command spawned against a fake loopback L1 with sentinel keys |
 | `pins`, `pins:check` | rewrite or compare the pool creation codes and class ids (needs pp-env's fetch and the L2 artifacts) |
+| `rehearse pause` | the guardian's failure and recovery cases (a pending open with a lost send, a nonce gap, an occupied nonce and both manual branches, a finality time-out, a stalled pause) and `deploy`'s stale-build refusal, through the real CLIs with real sends, each on a bare local anvil; about 33 min, since the CLI's own 10- and 30-minute budgets run in full (needs `contracts/bridge/evm/out` at the committed build) |
