@@ -50,8 +50,9 @@ export function createNode(nodeUrl: string): ReturnType<typeof createAztecNodeCl
 export type PxeHooks = NonNullable<NonNullable<NonNullable<Parameters<typeof EmbeddedWallet.create>[1]>["pxe"]>["hooks"]>
 
 /** Embedded Aztec wallet. `proverEnabled` is REQUIRED — every call site states
- *  its choice visibly, so the sandbox's `false` is never a silent outlier. `sandboxKeysOnly` puts the store on real disk, as
- *  run data; a wallet holding real keys needs a tmpfs `/dev/shm` and refuses to run without one. */
+ *  its choice visibly, so the sandbox's `false` is never a silent outlier. `sandboxKeysOnly` (every key the wallet will hold
+ *  is worthless off a local network) puts the store on real disk, as run data; a wallet holding real keys needs a tmpfs
+ *  `/dev/shm` and refuses to run without one. */
 export function createL2Wallet(opts: {
 	nodeUrl: string
 	proverEnabled: boolean

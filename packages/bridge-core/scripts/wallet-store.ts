@@ -21,9 +21,11 @@ function isTmpfs(path: string): boolean {
 const diskRoot = () => join(homedir(), ".cache", "pp", "wallet-stores")
 
 /**
- * Where a store is created. Public sandbox keys go to real disk under `~/.cache/pp/wallet-stores`, like any run's
- * data, so a store a killed run leaves pins no RAM. Real keys go to the RAM-backed `shm`, for secrecy
- * (never written to disk), not for speed.
+ * Where a store is created. Sandbox keys (anvil's well-known ones, or fresh secrets of throwaway
+ * accounts on a local network, worthless off it) go to real disk under `~/.cache/pp/wallet-stores`, like any
+ * run's data: one token-net run holds 14 live stores (211 MiB), so a handful of concurrent runs would
+ * fill a 2 GB `/dev/shm` without a single leak. Real keys go to the RAM-backed `shm`, for secrecy (never
+ * written to disk), not for speed.
  * @throws for real keys when `shm` is not a tmpfs.
  */
 export function storeRoot(opts: { sandboxKeysOnly: boolean; shm?: string }): string {
@@ -89,11 +91,12 @@ function freshDir(label: string, sandboxKeysOnly: boolean): string {
 }
 
 /**
- * A fresh wallet store this process owns, removed when it exits. The store holds the account's secret
- * and signing keys, so it never sits in the SDK's default `./aztec-wallet-data`, which is in the tree
- * and shared between runs. Removal covers an exit and a signal. A SIGKILL or a crash skips it, so each
- * new store first removes the stores of owners that are gone; without `/proc` (macOS) it cannot tell
- * and removes none. The signal fallback is prepended so it counts a `once` handler before that handler
+ * A fresh wallet store this process owns. The store holds the account's secret and signing keys, so it
+ * never sits in the SDK's default `./aztec-wallet-data`, which is in the tree and shared between runs.
+ * Its owner removes it on exit and on a signal, but that is the exception: vitest SIGKILLs its fork
+ * workers 500 ms after asking them to stop, so their exit handlers never run (one passing token-net run
+ * left all 14 of its stores, 211 MiB). The primary removal is therefore each new store's sweep of
+ * stores whose owner is gone; without `/proc` (macOS) it cannot tell and removes none. The signal fallback is prepended so it counts a `once` handler before that handler
  * is dropped: it exits only when nothing else handles the signal, and a handler that does (the
  * sandbox's async reaper) exits through `process.exit`, which runs the removal.
  * @param label lower-case letters and digits, starting with a letter.

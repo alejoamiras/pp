@@ -11,7 +11,19 @@ export interface ProcFs {
 	readFile(path: string): string
 }
 
-const HOST: ProcFs = { readdir: (path) => readdirSync(path), readFile: (path) => readFileSync(path, "utf8") }
+/** The `/proc` reads `pidNamespace` makes: files and symbolic links. */
+export interface ProcLinks extends ProcFs {
+	/** A symbolic link's target; throws if it is missing. */
+	readlink(path: string): string
+	exists(path: string): boolean
+}
+
+const HOST: ProcLinks = {
+	readdir: (path) => readdirSync(path),
+	readFile: (path) => readFileSync(path, "utf8"),
+	readlink: (path) => readlinkSync(path),
+	exists: (path) => existsSync(path),
+}
 
 /** Passes over a zombie-only group before membership that never settles reads as a member still forking. */
 const SCANS = 8
@@ -65,8 +77,9 @@ export function startTime(pid: number, proc: ProcFs = HOST): string | undefined 
 }
 
 /** A `/proc` mounted with `hidepid` hides live processes, so a missing pid there proves nothing. */
-function procHidesPids(): boolean {
-	const mount = readFileSync("/proc/self/mountinfo", "utf8")
+function procHidesPids(proc: ProcLinks): boolean {
+	const mount = proc
+		.readFile("/proc/self/mountinfo")
 		.split("\n")
 		.find((line) => line.split(" ")[4] === "/proc")
 	const options = mount?.split(" - ")[1]?.split(" ")[2] ?? ""
@@ -79,13 +92,13 @@ function procHidesPids(): boolean {
  * does not list is gone: no `/proc`, a `/proc` that numbers another pid namespace than this process's,
  * or one mounted with `hidepid`. Another container sharing a directory has another token.
  */
-export function pidNamespace(): string | undefined {
+export function pidNamespace(proc: ProcLinks = HOST): string | undefined {
 	if (!PROC) return undefined
 	try {
-		if (readlinkSync("/proc/self") !== String(process.pid) || procHidesPids()) return undefined
-		const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()
-		const time = existsSync("/proc/self/ns/time") ? readlinkSync("/proc/self/ns/time") : ""
-		return `${boot}/${readlinkSync("/proc/self/ns/pid")}/${time}`
+		if (proc.readlink("/proc/self") !== String(process.pid) || procHidesPids(proc)) return undefined
+		const boot = proc.readFile("/proc/sys/kernel/random/boot_id").trim()
+		const time = proc.exists("/proc/self/ns/time") ? proc.readlink("/proc/self/ns/time") : ""
+		return `${boot}/${proc.readlink("/proc/self/ns/pid")}/${time}`
 	} catch {
 		return undefined
 	}
