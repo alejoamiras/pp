@@ -4,8 +4,9 @@ import type { Hex } from "viem"
 import { mnemonicToAccount } from "viem/accounts"
 import { anvilBin, cleanEnv } from "../tools.ts"
 import type { LocalChainId } from "../types.ts"
-import { claimPort } from "./ports.ts"
-import { type CleanupStack, killGroup, rpc, spawnOwned, waitFor } from "./process.ts"
+import { claimPort } from "@pp/run-isolation/ports"
+import { type CleanupStack, killGroup, spawnOwned } from "@pp/run-isolation/process"
+import { rpc, waitFor } from "./rpc.ts"
 
 export const CHAIN_ID: LocalChainId = 31337
 export const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"
@@ -43,7 +44,9 @@ export async function startAnvil(runId: string, cleanup: CleanupStack): Promise<
 		"--silent",
 	]
 	const anvil = spawnOwned(anvilBin(), args, join(LOG_DIR, `${runId}-anvil.log`), cleanEnv())
-	cleanup.push(() => killGroup(anvil))
+	cleanup.push(async () => {
+		if (!(await killGroup(anvil))) throw new Error(`process group ${anvil.child.pid} survived SIGKILL`)
+	})
 	const rpcUrl = `http://127.0.0.1:${port}`
 	await waitFor("anvil", async () => (await rpc<string>(rpcUrl, "eth_chainId")) !== "", 30_000, anvil.exitReason)
 	return rpcUrl

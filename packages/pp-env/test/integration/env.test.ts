@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { anvilKey, LOG_DIR, USER_INDEX } from "../../src/env/harness/anvil.ts"
-import { rowsOwnedBy } from "../../src/env/harness/ports.ts"
-import { rpc } from "../../src/env/harness/process.ts"
+import { rowsOwnedBy } from "@pp/run-isolation/ports"
+import { rpc } from "../../src/env/harness/rpc.ts"
 import { localClients, type PoolEnv, startPoolEnv } from "../../src/env/index.ts"
 
 const ASSETS_ABI = [
