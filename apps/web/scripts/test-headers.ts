@@ -10,7 +10,7 @@ import { cpSync, existsSync, readdirSync, readFileSync, rmSync, unlinkSync, writ
 import { dirname, join } from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
 import { resolvePackageAsset } from "@nulo-sh/resolve-asset"
-import { PINNED_CIRCUITS } from "../../../packages/pool-client/src/runtime/artifacts.ts"
+import { PINNED_CIRCUITS } from "@pp/pool-client/circuits"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build/headers.ts"
 import { claimPort } from "./ports"
 import { APP_ROOT, bunRun, envWithout, type Group, scratchDir } from "./proc"

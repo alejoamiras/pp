@@ -9,7 +9,7 @@ import { join } from "node:path"
 import { z } from "zod"
 // The config runs under Node, which cannot load `@pp/bridge-core`'s barrel (its imports carry no
 // extensions); this module is self-contained and isomorphic.
-import { parseStackManifest, requireBlocks } from "../../../../packages/bridge-core/src/stack-manifest.ts"
+import { parseStackManifest, requireBlocks } from "@pp/bridge-core/stack-manifest"
 
 export type DataMode = "fixtures" | "stack"
 export type ConnectorMode = "fixture" | "real"
