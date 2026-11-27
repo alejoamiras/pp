@@ -110,7 +110,7 @@ describe.skipIf(!RUN)("asp-bot births against the local stack", () => {
 		}
 	})
 
-	it("a shield's label is ABSENT until the bot posts its birth, then ACTIVE, and spends on the bot's path", async () => {
+	it("B1 a shield's label is ABSENT until the bot posts its birth, then ACTIVE, and spends on the bot's path", async () => {
 		const { receipt } = await shield(alice, base.node, 25n)
 		expect(receipt.executionResult).toBe(TxExecutionResult.SUCCESS)
 		const notes = await settled(
@@ -148,7 +148,7 @@ describe.skipIf(!RUN)("asp-bot births against the local stack", () => {
 		)
 	})
 
-	it("the bot's log, snapshots and ready fields carry no birth secret, owner or intake key", async () => {
+	it("B2 the bot's log, snapshots and ready fields carry no birth secret, owner or intake key", async () => {
 		// The intake's secret is public by design on a local network; reading with it gives the birth's secret.
 		const intakeSecret = botSecret("intake", stackRunId)
 		const desk = await connectPeer(manifest.aztecNode)
@@ -180,8 +180,13 @@ describe.skipIf(!RUN)("asp-bot births against the local stack", () => {
 			BigInt(keys.secretKey.toString()),
 			BigInt(keys.signingKey.toString()),
 		]
-		for (const s of secrets) {
-			for (const form of [s.toString(), s.toString(16), s.toString(16).padStart(64, "0")]) expect(text).not.toContain(form)
+		// A boolean, so a failure names the secret's slot and never prints the secret or the text.
+		for (const [i, s] of secrets.entries()) {
+			const forms = [s.toString(), s.toString(16), s.toString(16).padStart(64, "0")]
+			expect(
+				forms.some((form) => text.includes(form)),
+				`secret ${i} appears in the bot's outputs`,
+			).toBe(false)
 		}
 		expect(text).not.toContain("birth_refused")
 	})
