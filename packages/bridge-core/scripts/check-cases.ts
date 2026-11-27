@@ -35,6 +35,7 @@ export const CASE_GROUPS = {
 		"E2",
 		"E3",
 		"X1",
+		"X2",
 		"BT1",
 	],
 	"local-stack": ["L1"],
