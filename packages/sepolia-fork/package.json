@@ -5,6 +5,9 @@
 	"license": "Apache-2.0",
 	"description": "The bridge's Ethereum side against the real Sepolia pool and Aztec testnet Inbox, on an owned anvil fork.",
 	"type": "module",
+	"exports": {
+		"./pins": "./src/pins.ts"
+	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "bun test ./src/",

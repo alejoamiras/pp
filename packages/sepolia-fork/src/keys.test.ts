@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test"
 import type { Hex } from "viem"
 import { keyCoordinates, missingKeyPoints, type Vkey } from "./keys.ts"
-import { PINS } from "./pins.ts"
+import { TARGETS } from "./pins.ts"
 import { checkKeys, PreflightError } from "./preflight.ts"
 import type { Rpc } from "./rpc.ts"
+
+const PINS = TARGETS.pool1
 
 const VK: Vkey = {
 	vk_alpha_1: ["11", "12", "1"],
