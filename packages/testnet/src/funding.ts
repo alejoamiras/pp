@@ -1,4 +1,4 @@
-import type { Address } from "viem"
+import { type Address, type Hex, isAddressEqual } from "viem"
 import type { TestnetDeployment } from "./schema"
 
 /**
@@ -20,6 +20,8 @@ export type FundedRole = keyof typeof FUNDING_GAS
 export const FEE_MARGIN = 2n
 /** Sepolia's fee sits near zero for hours, so pricing at today's estimate alone would underfund every key after a spike. */
 export const FEE_FLOOR_WEI = 1_000_000_000n
+/** A plain ETH transfer's gas, which the deployer pays for each top-up. */
+export const TRANSFER_GAS = 21_000n
 
 export type Recipient = { role: Exclude<FundedRole, "l1Deployer">; address: Address }
 
@@ -39,14 +41,40 @@ export function recipientsOf(e: NonNullable<TestnetDeployment["expected"]>): Rec
 export const needOf = (role: FundedRole, maxFeePerGas: bigint): bigint =>
 	FUNDING_GAS[role] * (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN
 
-export type Plan = { sends: (Recipient & { balance: bigint; amount: bigint })[]; deployerNeed: bigint; total: bigint }
+/** One top-up per address: roles that share an address share its balance, so their needs add up. */
+export type Send = { roles: Recipient["role"][]; address: Address; balance: bigint; need: bigint; amount: bigint }
 
-/** What each recipient lacks of its need, and the total the deployer must hold to send it and keep its own. */
-export function fundingPlan(recipients: readonly (Recipient & { balance: bigint })[], maxFeePerGas: bigint): Plan {
-	const sends = recipients.map((r) => {
+export type Plan = { sends: Send[]; deployerNeed: bigint; transferGas: bigint; total: bigint }
+
+/**
+ * What each distinct address lacks of its roles' summed needs, and the total the deployer must hold: its
+ * own need, every top-up, and each top-up's gas at `maxFeePerGas`. A role at the deployer's own address
+ * adds to the deployer's need and gets no top-up.
+ */
+export function fundingPlan(deployer: Address, recipients: readonly (Recipient & { balance: bigint })[], maxFeePerGas: bigint): Plan {
+	let deployerNeed = needOf("l1Deployer", maxFeePerGas)
+	const byAddress = new Map<string, Send>()
+	for (const r of recipients) {
 		const need = needOf(r.role, maxFeePerGas)
-		return { ...r, amount: r.balance < need ? need - r.balance : 0n }
-	})
-	const deployerNeed = needOf("l1Deployer", maxFeePerGas)
-	return { sends, deployerNeed, total: deployerNeed + sends.reduce((s, r) => s + r.amount, 0n) }
+		const shared = byAddress.get(r.address.toLowerCase())
+		if (isAddressEqual(r.address, deployer)) deployerNeed += need
+		else if (shared) {
+			shared.roles.push(r.role)
+			shared.need += need
+		} else byAddress.set(r.address.toLowerCase(), { roles: [r.role], address: r.address, balance: r.balance, need, amount: 0n })
+	}
+	const sends = [...byAddress.values()].map((s) => ({ ...s, amount: s.balance < s.need ? s.need - s.balance : 0n }))
+	const transferGas = BigInt(sends.filter((s) => s.amount > 0n).length) * TRANSFER_GAS * maxFeePerGas
+	return { sends, deployerNeed, transferGas, total: deployerNeed + transferGas + sends.reduce((t, s) => t + s.amount, 0n) }
+}
+
+/**
+ * The mined top-up is the one sent, from the deployer, and succeeded. viem's receipt wait returns a
+ * replacement's receipt when one is mined in the sent transaction's place.
+ * @throws Error naming both hashes on a replacement, or the sent hash on a failure
+ */
+export function assertTopUp(receipt: { transactionHash: Hex; status: string; from: Address }, sent: Hex, deployer: Address): void {
+	if (receipt.transactionHash.toLowerCase() !== sent.toLowerCase())
+		throw new Error(`the top-up ${sent} was replaced: the mined receipt is for ${receipt.transactionHash}`)
+	if (receipt.status !== "success" || !isAddressEqual(receipt.from, deployer)) throw new Error(`the top-up ${sent} did not succeed`)
 }

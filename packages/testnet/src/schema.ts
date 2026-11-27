@@ -7,9 +7,11 @@ import type { Address, Hex } from "viem"
 import z from "zod"
 import { isPinned, LOCAL, loopback, SEPOLIA } from "./network"
 
+/** Every address field names an account or a contract, so none of them may be zero. */
 const evmAddress = z
 	.string()
 	.regex(/^0x[0-9a-fA-F]{40}$/, "expected a 20-byte 0x hex address")
+	.refine((a) => !/^0x0{40}$/.test(a), "the zero address names no account or contract")
 	.transform((a) => a as Address)
 const word = z
 	.string()
