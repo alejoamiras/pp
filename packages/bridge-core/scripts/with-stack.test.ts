@@ -4,6 +4,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterEach, describe, expect, it } from "vitest"
+import { groupGone, groupMembers } from "./process-group"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ids: string[] = []
@@ -34,26 +35,31 @@ function withStack(mode: string, commands: string[], onLine?: (line: string, pid
 	)
 }
 
-const alive = (pid: number) => {
-	try {
-		process.kill(pid, 0)
-		return true
-	} catch {
-		return false
-	}
-}
+/**
+ * Already true when with-stack exits, which waited for it; the bound only catches a regression. A
+ * killed child whose shell died first is a zombie until its adoptive reaper gets to it, which on a
+ * loaded host can be any time later, so `kill(pid, 0)` is no test of it: zombies count as gone.
+ */
+const GONE_MS = 10_000
 
-/** Runs `command` (which prints `child <pid>`), sending SIGTERM to the wrapper once the pid shows if `term`. */
+/**
+ * Runs `command` (which prints `group $$ child <pid>`), sending SIGTERM to the wrapper once the pid
+ * shows if `term`. `inGroup` says the child was alive in that group then, so a later "gone" is not
+ * about some other group.
+ */
 async function withChild(command: string, term: boolean) {
 	let child = 0
-	const started = Date.now()
+	let group = 0
+	let inGroup = false
 	const r = await withStack("ready", [command], (line, pid) => {
-		const m = line.match(/^child (\d+)$/)
+		const m = line.match(/^group (\d+) child (\d+)$/)
 		if (!m || child) return
-		child = Number(m[1])
+		group = Number(m[1])
+		child = Number(m[2])
+		inGroup = groupMembers(group).some((p) => p.pid === child)
 		if (term) process.kill(pid, "SIGTERM")
 	})
-	return { ...r, child, ms: Date.now() - started }
+	return { ...r, child, group, inGroup }
 }
 
 describe("with-stack", () => {
@@ -71,17 +77,17 @@ describe("with-stack", () => {
 	}, 30_000)
 
 	it.each([
-		["a child its shell started", "sleep 300 & echo child $!; wait"],
-		["a shell that ignores SIGTERM", "trap '' TERM; echo child $$; while :; do sleep 1; done"],
+		["a child its shell started", "sleep 300 & echo group $$ child $!; wait"],
+		["a shell that ignores SIGTERM", "trap '' TERM; echo group $$ child $$; while :; do sleep 1; done"],
 	])(
-		"on SIGTERM ends the command's whole group, %s included, within the grace period",
+		"on SIGTERM ends the command's whole group, %s included",
 		async (_, command) => {
+			// A shell that never dies would hold with-stack past the test's timeout.
 			const r = await withChild(command, true)
 			expect(r.code).toBe(143)
-			expect(r.child).toBeGreaterThan(0)
-			expect(alive(r.child)).toBe(false)
+			expect(r.inGroup).toBe(true)
+			expect(await groupGone(r.group, GONE_MS)).toBe(true)
 			expect(r.output).not.toContain("residue")
-			expect(r.ms).toBeLessThan(20_000)
 		},
 		30_000,
 	)
@@ -95,11 +101,12 @@ describe("with-stack", () => {
 	}, 30_000)
 
 	it("kills and reports a process a command leaves behind when it exits", async () => {
-		const r = await withChild("sleep 300 & echo child $!", false)
+		const r = await withChild("sleep 300 & echo group $$ child $!", false)
 		expect(r.code).toBe(1)
 		expect(r.output).toContain(`residue: command group`)
 		expect(r.output).toContain(`outlived its shell by 3 s: ${r.child} [S] sleep 300`)
-		expect(alive(r.child)).toBe(false)
+		expect(r.inGroup).toBe(true)
+		expect(await groupGone(r.group, GONE_MS)).toBe(true)
 	}, 30_000)
 
 	it("still checks residue when the stack fails before it is ready", async () => {
