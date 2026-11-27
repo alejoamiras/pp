@@ -4,10 +4,10 @@
  * `pool` and `bridge` are promoted from a keyed run's candidate.
  */
 import z from "zod"
-import { isPinned, LOCAL, loopback, SEPOLIA } from "./network"
+import { isPinned, LOCAL, loopback, SEPOLIA } from "./network.ts"
 
-export type { PinnedKind } from "./network"
-export { isPinned, PINNED_URLS } from "./network"
+export type { PinnedKind } from "./network.ts"
+export { isPinned, PINNED_URLS } from "./network.ts"
 
 // viem's shapes, declared here so the entry needs no viem, even for types.
 type Address = `0x${string}`

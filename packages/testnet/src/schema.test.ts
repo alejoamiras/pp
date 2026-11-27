@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { basename, delimiter, dirname, resolve } from "node:path"
 import { expect, it } from "vitest"
 import { parseDeployment } from "./schema"
 
@@ -22,6 +23,30 @@ it("the schema entry imports only zod at run time", () => {
 	const walked = new Set<string>()
 	expect(new Set(runtimeImports(resolve(__dirname, "schema.ts"), walked))).toEqual(new Set(["zod"]))
 	expect(walked).toEqual(new Set(["schema.ts", "network.ts"].map((f) => resolve(__dirname, f))))
+})
+
+// apps/web's Vite config loads the entry under native Node, which strips types only and needs each
+// relative specifier to name a real file; Bun and vitest forgive an extensionless one.
+it("native Node loads the entry by its package name", () => {
+	// `bun --bun` puts a `node` that runs Bun first on PATH, in a `bun-node-*` directory.
+	const PATH = (process.env.PATH ?? "")
+		.split(delimiter)
+		.filter((dir) => !basename(dir).startsWith("bun-node-"))
+		.join(delimiter)
+	const load = [
+		'if (process.versions.bun) throw new Error("the node on PATH runs Bun")',
+		'const m = await import("@pp/testnet/schema")',
+		'console.log(Object.keys(m).sort().join(","))',
+	].join("; ")
+	const node = spawnSync("node", ["--input-type=module", "-e", load], {
+		cwd: resolve(__dirname, ".."),
+		env: { ...process.env, PATH },
+		encoding: "utf8",
+		timeout: 30_000,
+	})
+	if (node.error) throw new Error(`could not run node, which this test requires on PATH: ${node.error.message}`)
+	expect(node.status, node.stderr).toBe(0)
+	expect(node.stdout.trim().split(",")).toEqual(expect.arrayContaining(["isPinned", "PINNED_URLS", "parseDeployment"]))
 })
 
 it("refuses the zero address in an address field", () => {
