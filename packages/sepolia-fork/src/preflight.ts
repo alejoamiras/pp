@@ -10,6 +10,7 @@ import {
 	slice,
 	toFunctionSelector,
 } from "viem"
+import { missingKeyPoints, type Vkey } from "./keys.ts"
 import { type Bindings, type Pins, SEPOLIA_CHAIN_ID } from "./pins.ts"
 import type { Rpc } from "./rpc.ts"
 
@@ -120,6 +121,25 @@ export async function checkFork(fork: Rpc, pins: Pins): Promise<void> {
 	const names = drifted(got, pins.bindings)
 	if (names.length > 0)
 		throw new PreflightError("pin", `pins drifted on the fork at block ${n}: ${explain(names, got, pins.bindings)}`, names)
+}
+
+/** The pinned verifier that checks each circuit's proofs. */
+export const VERIFIER_OF = { deposit: "depositVerifier", transact_1x1: "transact1x1Verifier" } as const
+export type BundleVkeys = Record<keyof typeof VERIFIER_OF, Vkey>
+
+/** The pinned verifiers on the fork embed the bundle's keys, so a proof from the bundle can verify there. */
+export async function checkKeys(fork: Rpc, pins: Pins, vkeys: BundleVkeys): Promise<void> {
+	const tag = numberToHex(pins.block.number)
+	const names: string[] = []
+	const reasons: string[] = []
+	for (const [circuit, binding] of Object.entries(VERIFIER_OF) as [keyof BundleVkeys, (typeof VERIFIER_OF)[keyof BundleVkeys]][]) {
+		const lacks = missingKeyPoints(await fork<Hex>("eth_getCode", [pins.bindings[binding], tag]), vkeys[circuit])
+		if (lacks.length === 0) continue
+		names.push(`${binding}.keys`)
+		reasons.push(`${binding} lacks the ${circuit} key's ${lacks.join(", ")}`)
+	}
+	if (names.length > 0)
+		throw new PreflightError("pin", `the pinned verifiers do not hold the bundle's keys: ${reasons.join("; ")}`, names)
 }
 
 /** The live deployment still matches the pins, read straight from the endpoint at its finalized block. */

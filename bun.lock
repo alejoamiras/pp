@@ -257,6 +257,7 @@
       "name": "@pp/sepolia-fork",
       "version": "0.0.0",
       "dependencies": {
+        "@pp/pool-client": "workspace:*",
         "@pp/run-isolation": "workspace:*",
         "viem": "2.45.3",
       },
