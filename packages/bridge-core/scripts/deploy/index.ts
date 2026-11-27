@@ -28,6 +28,7 @@ export {
 	type PauseOptions,
 	type PauseResult,
 	type PauseWaits,
+	type PendingTx,
 	pauseEntries,
 	type RegistryRoles,
 } from "./open"

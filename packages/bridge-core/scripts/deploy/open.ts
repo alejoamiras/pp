@@ -245,25 +245,36 @@ async function assertGuardian(chainId: number, guardian: GuardianWallet, l1: Ope
 }
 
 type Signed = { hash: Hash; nonce: number; serialized: Hex }
+type Fees = { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
+
+const atLeast = (a: bigint, b: bigint) => (a > b ? a : b)
+/** 1.25 times `x`, rounded up: above every client's replacement bump (geth's is 10%). */
+const outbid = (x: bigint) => (x * 5n + 3n) / 4n
+
+/** `factor` times the estimate, each field raised to outbid `pending` when given. */
+function feesOf(est: Fees, factor: bigint, pending?: Fees): Fees {
+	return {
+		maxFeePerGas: atLeast(est.maxFeePerGas * factor, pending ? outbid(pending.maxFeePerGas) : 0n),
+		maxPriorityFeePerGas: atLeast(est.maxPriorityFeePerGas * factor, pending ? outbid(pending.maxPriorityFeePerGas) : 0n),
+	}
+}
 
 async function signEntriesPaused(
 	l1: GuardianL1,
 	guardian: GuardianWallet,
 	factory: Address,
 	paused: boolean,
-	o: { nonce?: number; feeFactor?: bigint },
+	o: { nonce?: number; feeFactor?: bigint; outbid?: Fees },
 ): Promise<Signed> {
 	const data = encodeFunctionData({ abi: PORTAL_FACTORY_ABI, functionName: "setEntriesPaused", args: [paused] })
-	const fees = o.feeFactor ? await l1.estimateFeesPerGas() : undefined
+	const fees = o.feeFactor ? feesOf(await l1.estimateFeesPerGas(), o.feeFactor, o.outbid) : undefined
 	const request = await guardian.prepareTransactionRequest({
 		account: guardian.account,
 		chain: guardian.chain,
 		to: factory,
 		data,
 		...(o.nonce === undefined ? {} : { nonce: o.nonce }),
-		...(fees && o.feeFactor
-			? { maxFeePerGas: fees.maxFeePerGas * o.feeFactor, maxPriorityFeePerGas: fees.maxPriorityFeePerGas * o.feeFactor }
-			: {}),
+		...(fees ?? {}),
 	} as never)
 	const serialized = (await guardian.signTransaction(request as never)) as Hex
 	return { hash: keccak256(serialized), nonce: (request as { nonce: number }).nonce, serialized }
@@ -318,12 +329,17 @@ export async function openDeployedEntries(
 
 export type PauseCode = "PAUSE_BLOCKED" | "PAUSE_STALLED" | "PAUSE_NONCE_OCCUPIED" | "PAUSE_UNFINALIZED" | "PAUSE_UNCONFIRMED"
 
-/** A pause that did not complete. `nonce` is the one the owner acts on: the gap, the stalled or the occupied one. */
+/**
+ * A pause that did not complete. `nonce` is the one the owner acts on: the gap, the stalled or the
+ * occupied one. `hash` is this run's own pause at that nonce when it signed one, which is what a
+ * replacement outbids after PAUSE_STALLED.
+ */
 export class PauseError extends Error {
 	constructor(
 		readonly code: PauseCode,
 		readonly nonce: number,
 		detail: string,
+		readonly hash?: Hash,
 	) {
 		super(`${code} at nonce ${nonce}: ${detail}`)
 		this.name = "PauseError"
@@ -333,11 +349,18 @@ export class PauseError extends Error {
 export type PauseWaits = { stallMs: number; finalityMs: number }
 export const PAUSE_WAITS: PauseWaits = Object.freeze({ stallMs: 600_000, finalityMs: 1_800_000 })
 
+/** The pending transaction a replacement outbids, as an endpoint reported it. */
+export type PendingTx = Fees & { hash: Hash; from: Address; nonce: number }
+
 export type PauseOptions = {
 	/** The owner's manual branch after PAUSE_BLOCKED, PAUSE_STALLED or PAUSE_NONCE_OCCUPIED. */
 	nonce?: number
-	/** Same-nonce replacement: four times the fee estimate instead of twice. */
-	replace?: boolean
+	/**
+	 * Replaces the guardian's pending transaction at `nonce`: each fee field at least four times the
+	 * estimate and 1.25 times the pending transaction's own. Its fees are an endpoint's answer, so only
+	 * the guardian's balance bounds what the replacement pays.
+	 */
+	replace?: PendingTx
 	timing?: ClientTiming
 	waits?: PauseWaits
 	onSigned?: OnSigned
@@ -354,7 +377,18 @@ function errorText(e: unknown): string {
 
 type Sent = Omit<Signed, "serialized"> & { taken?: true }
 
-async function sendPause(l1: GuardianL1, guardian: GuardianWallet, factory: Address, o: PauseOptions, nonce?: number): Promise<Sent> {
+/** PAUSE_UNCONFIRMED naming `sent`, for a failure after it was signed: never a bare RPC error without its hash. */
+const unconfirmed = (sent: Sent, what: string, e: unknown) =>
+	new PauseError("PAUSE_UNCONFIRMED", sent.nonce, `${sent.hash} ${what}: ${e instanceof Error ? e.message : String(e)}`, sent.hash)
+
+async function sendPause(
+	l1: GuardianL1,
+	guardian: GuardianWallet,
+	factory: Address,
+	o: PauseOptions,
+	nonce: number | undefined,
+	replace: PendingTx | undefined,
+): Promise<Sent> {
 	const address = guardian.account.address
 	const chosen =
 		nonce ??
@@ -362,7 +396,15 @@ async function sendPause(l1: GuardianL1, guardian: GuardianWallet, factory: Addr
 			await l1.getTransactionCount({ address, blockTag: "latest" }),
 			await l1.getTransactionCount({ address, blockTag: "pending" }),
 		)
-	const signed = await signEntriesPaused(l1, guardian, factory, true, { nonce: chosen, feeFactor: o.replace ? 4n : 2n })
+	if (replace) {
+		same("replace.from", replace.from, address)
+		same("replace.nonce", replace.nonce, chosen)
+	}
+	const signed = await signEntriesPaused(l1, guardian, factory, true, {
+		nonce: chosen,
+		feeFactor: replace ? 4n : 2n,
+		...(replace ? { outbid: replace } : {}),
+	})
 	o.onSigned?.({ hash: signed.hash, nonce: signed.nonce })
 	const sent = { hash: signed.hash, nonce: signed.nonce }
 	try {
@@ -370,15 +412,16 @@ async function sendPause(l1: GuardianL1, guardian: GuardianWallet, factory: Addr
 		return sent
 	} catch (e) {
 		const text = errorText(e)
-		if (/already known/i.test(text)) return sent
+		// geth's and anvil's answers to a transaction they already hold.
+		if (/already known|transaction already imported/i.test(text)) return sent
 		if (/nonce too low/i.test(text)) return { ...sent, taken: true }
 		if (/replacement transaction underpriced|replacement fee too low/i.test(text))
 			throw new PauseError(
 				"PAUSE_NONCE_OCCUPIED",
 				signed.nonce,
-				"a pending transaction holds this nonce; the open's hash is in its log",
+				"a pending transaction holds this nonce: wait for it, or replace it by its hash (an open's is in its log)",
 			)
-		throw e
+		throw unconfirmed(sent, "was signed and its broadcast failed", e)
 	}
 }
 
@@ -423,7 +466,7 @@ async function awaitPause(
 		if (Date.now() >= deadline) {
 			if (mined < sent.nonce)
 				throw new PauseError("PAUSE_BLOCKED", mined, `nonce ${mined} has not mined, and this pause waits behind it`)
-			throw new PauseError("PAUSE_STALLED", sent.nonce, "the next nonce has not mined at twice the fee estimate")
+			throw new PauseError("PAUSE_STALLED", sent.nonce, "the next nonce has not mined at its fee", sent.hash)
 		}
 		await sleep(timing.pollingIntervalMs)
 	}
@@ -449,7 +492,12 @@ async function confirmFinal(
 	let finalized = await l1.getBlock({ blockTag: "finalized" })
 	while (finalized.number < receipt.blockNumber) {
 		if (Date.now() >= deadline)
-			throw new PauseError("PAUSE_UNFINALIZED", nonce, `block ${receipt.blockNumber} is past finalized ${finalized.number}`)
+			throw new PauseError(
+				"PAUSE_UNFINALIZED",
+				nonce,
+				`block ${receipt.blockNumber} is past finalized ${finalized.number}`,
+				receipt.transactionHash,
+			)
 		await sleep(timing.pollingIntervalMs)
 		finalized = await l1.getBlock({ blockTag: "finalized" })
 	}
@@ -478,6 +526,22 @@ async function headAtLeast(l1: OpenL1, floor: bigint, deadline: number, timing: 
 
 const PAUSE_SENDS = 3
 
+/** Its receipt or "taken", as {@link awaitPause} or {@link ownReceipt} read it; a failed read names the send. */
+async function landing(
+	l1: GuardianL1,
+	address: Address,
+	sent: Sent,
+	timing: ClientTiming,
+	waits: PauseWaits,
+): Promise<TransactionReceipt | "taken"> {
+	try {
+		return sent.taken ? await ownReceipt(l1, sent.hash, timing) : await awaitPause(l1, address, sent, timing, waits)
+	} catch (e) {
+		if (e instanceof PauseError) throw e
+		throw unconfirmed(sent, "was sent; reading its receipt failed", e)
+	}
+}
+
 /** {@link confirmFinal} after a broadcast: a failed read there is `PAUSE_UNCONFIRMED` naming the send, never a bare RPC error. */
 async function confirmed(
 	l1: GuardianL1,
@@ -491,11 +555,7 @@ async function confirmed(
 		return await confirmFinal(l1, factory, receipt, sent.nonce, timing, waits)
 	} catch (e) {
 		if (e instanceof PauseError) throw e
-		throw new PauseError(
-			"PAUSE_UNCONFIRMED",
-			sent.nonce,
-			`${sent.hash} mined; reading its state failed: ${e instanceof Error ? e.message : String(e)}`,
-		)
+		throw unconfirmed(sent, "mined; reading its state failed", e)
 	}
 }
 
@@ -507,7 +567,7 @@ async function confirmed(
  * receipt's block is canonical under a finalized header with entries paused at its hash, and a fresh
  * head after that still has them paused. Needs only L1; never runs
  * {@link checkBeforeOpen}. No automatic fee replacement: the owner's manual branches are `o.nonce`
- * and `o.replace`.
+ * and `o.replace`, which must name the guardian's transaction at `o.nonce`.
  * @returns `wasPaused` is the read before sending, which an open still pending then does not show.
  * @throws PauseError naming what the owner acts on; `PAUSE_UNCONFIRMED` after the last send names its nonce.
  */
@@ -524,10 +584,9 @@ export async function pauseEntries(
 	let last = { nonce: -1, outcome: "taken" }
 	for (let send = 0; send < PAUSE_SENDS; send++) {
 		if (send > 0) await sleep(timing.pollingIntervalMs)
-		const sent = await sendPause(f.l1, guardian, f.factory, o, nonce)
-		const landed = sent.taken
-			? await ownReceipt(f.l1, sent.hash, timing)
-			: await awaitPause(f.l1, guardian.account.address, sent, timing, waits)
+		// Only the first send replaces: a resend goes to a fresh nonce, where nothing of ours is pending.
+		const sent = await sendPause(f.l1, guardian, f.factory, o, nonce, send === 0 ? o.replace : undefined)
+		const landed = await landing(f.l1, guardian.account.address, sent, timing, waits)
 		const outcome = landed === "taken" ? landed : await confirmed(f.l1, f.factory, landed, sent, timing, waits)
 		if (outcome === "paused") return { hash: sent.hash, nonce: sent.nonce, wasPaused }
 		last = { nonce: sent.nonce, outcome }
