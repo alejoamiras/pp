@@ -97,9 +97,14 @@ export async function connectL2(nodeUrl: string): Promise<L2Base> {
 }
 
 /** A second device: its own PXE and store, no account and no genesis senders, paying through the
- *  sponsor. `hooks` reach its PXE (a test wallet that answers interactive-handshake requests). */
-export async function connectPeer(nodeUrl: string, hooks?: PxeHooks): Promise<{ wallet: Wallet; fee: Record<string, unknown> }> {
-	const wallet = await createL2Wallet({ nodeUrl, proverEnabled: false, sandboxKeysOnly: true, hooks })
+ *  sponsor. `hooks` reach its PXE (a test wallet that answers interactive-handshake requests);
+ *  `proverEnabled` makes it prove for real, which only a proving benchmark wants. */
+export async function connectPeer(
+	nodeUrl: string,
+	hooks?: PxeHooks,
+	proverEnabled = false,
+): Promise<{ wallet: Wallet; fee: Record<string, unknown> }> {
+	const wallet = await createL2Wallet({ nodeUrl, proverEnabled, sandboxKeysOnly: true, hooks })
 	const { fee } = await sponsoredFpcFee(wallet)
 	return { wallet: wallet as unknown as Wallet, fee: { ...fee, gasSettings: FEE_CEILING } }
 }

@@ -249,6 +249,10 @@ jobs:
           AZTEC_VERSION: ${{ needs.crates.outputs.aztec }}
         run: AZTEC_HOME="$HOME/.aztec/versions/$AZTEC_VERSION" bun run --cwd packages/labelled-token gates:check
 
+      # The TXE suite's trees are rendered from @pp/bridge-spec; a hand-edited or stale paths.nr fails here.
+      - name: fixtures:check
+        run: bun run --cwd packages/labelled-token fixtures:check
+
   integration:
     name: sandbox integration (anvil + local network)
     runs-on: ubuntu-latest

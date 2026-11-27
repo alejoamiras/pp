@@ -13,12 +13,28 @@ pub contract LabelledToken {
         balance_set::{LabelledBalanceSet, LABELS_PER_PAGE, VALUES_PER_PAGE},
         note::ORIGIN_POOL,
     };
+    use asp_registry::label_check::{AnchorRoots, assert_current, check_label, LabelPath};
     use aztec::{
-        macros::{functions::{external, initializer, view}, storage::storage},
-        protocol::{address::AztecAddress, traits::{Deserialize, Packable, Serialize}},
+        macros::{
+            events::event,
+            functions::{external, initializer, internal, only_self, view},
+            storage::storage,
+        },
+        protocol::{address::AztecAddress, traits::{Deserialize, FromField, Packable, Serialize}},
         state_vars::{Map, Owned, PublicImmutable, PublicMutable},
     };
     use compressed_string::FieldCompressedString;
+
+    /// The private side of a public balance change in `Transfer`, as in aztec-standards.
+    global PRIVATE_ADDRESS_MAGIC_VALUE: AztecAddress =
+        AztecAddress::from_field(0x1ea7e01501975545617c2e694d931cb576b691a4a867fed81ebd3264);
+
+    #[event]
+    struct Transfer {
+        from: AztecAddress,
+        to: AztecAddress,
+        amount: u128,
+    }
 
     /// Read together in private, so one immutable holds both. `registry` is zero in a generation that
     /// has no checked spends.
@@ -78,6 +94,96 @@ pub contract LabelledToken {
         let (taken, origin) = balance.try_sub(label, amount);
         assert(taken >= amount, "Balance too low");
         balance.add(label, origin, taken - amount);
+    }
+
+    /// Pays `amount` of the caller's `label` notes to `to`. The notes' common origin picks the tree
+    /// `path` must prove `label` in; the recipient's note and the change keep label and origin.
+    #[external("private")]
+    fn transfer_private(to: AztecAddress, amount: u128, label: Field, path: LabelPath) {
+        assert(!to.is_zero(), "zero recipient");
+        // As for a mint: an off-curve recipient's note is encrypted to a random key.
+        assert(to.is_valid(), "invalid recipient");
+        let (origin, _) = self.internal._checked_debit(self.msg_sender(), amount, label, path);
+        self.storage.private_balances.at(to).add(label, origin, amount);
+    }
+
+    /// Moves `amount` of the caller's `label` notes to its public balance. The public step checks at
+    /// inclusion that both registry roots are still the anchored ones; a change in either tree
+    /// reverts the credit and the spend together.
+    #[external("private")]
+    fn unshield(amount: u128, label: Field, path: LabelPath) {
+        // The spend, its change and the queued credit must all be revertible, or a failed public
+        // step could not undo them.
+        assert(self.context.in_revertible_phase(), "setup phase");
+        let owner = self.msg_sender();
+        // Nullify and write the change before the enqueue, so a revert of the public step drops all.
+        let (_, roots) = self.internal._checked_debit(owner, amount, label, path);
+        self.enqueue_self.finish_unshield(owner, amount, roots);
+    }
+
+    #[external("public")]
+    #[only_self]
+    fn finish_unshield(owner: AztecAddress, amount: u128, roots: AnchorRoots) {
+        assert_current(self.context, self.storage.config.read().registry, roots);
+        self.internal._credit_public(owner, amount);
+        self.emit(Transfer { from: PRIVATE_ADDRESS_MAGIC_VALUE, to: owner, amount });
+    }
+
+    /// Moves `amount` of the caller's public balance to `to`.
+    #[external("public")]
+    fn transfer_public(to: AztecAddress, amount: u128) {
+        assert(!to.is_zero(), "zero recipient");
+        // Only protocol contracts sit off the curve, and none calls this token: a credit there is stranded.
+        assert(to.is_valid(), "invalid recipient");
+        // `Transfer` to the sentinel would read as a move into private balances.
+        assert(to != PRIVATE_ADDRESS_MAGIC_VALUE, "private sentinel recipient");
+        assert(amount != 0, "zero amount");
+        let from = self.msg_sender();
+        self.internal._debit_public(from, amount);
+        self.internal._credit_public(to, amount);
+        self.emit(Transfer { from, to, amount });
+    }
+
+    /// Burns `amount` of `from`'s public balance for the bridge's exit.
+    #[external("public")]
+    fn burn_public_for_exit(from: AztecAddress, amount: u128) {
+        assert(self.msg_sender() == self.storage.config.read().minter, "caller is not minter");
+        assert(amount != 0, "zero amount");
+        self.internal._debit_public(from, amount);
+        self.emit(Transfer { from, to: AztecAddress::zero(), amount });
+    }
+
+    #[external("public")]
+    #[view]
+    fn balance_of_public(owner: AztecAddress) -> u128 {
+        self.storage.public_balances.at(owner).read()
+    }
+
+    /// Spends `amount` of `owner`'s `label` notes and returns the change, after proving `label` in
+    /// the tree of the notes' common origin at the anchor; returns that origin and both roots.
+    #[internal("private")]
+    fn _checked_debit(owner: AztecAddress, amount: u128, label: Field, path: LabelPath) -> (u8, AnchorRoots) {
+        assert(amount != 0, "zero amount");
+        let balance = self.storage.private_balances.at(owner);
+        let (taken, origin) = balance.try_sub(label, amount);
+        assert(taken >= amount, "Balance too low");
+        let roots = check_label(self.context, self.storage.config.read().registry, origin, label, path);
+        balance.add(label, origin, taken - amount);
+        (origin, roots)
+    }
+
+    #[internal("public")]
+    fn _credit_public(to: AztecAddress, amount: u128) {
+        let balance = self.storage.public_balances.at(to);
+        balance.write(balance.read() + amount);
+    }
+
+    #[internal("public")]
+    fn _debit_public(from: AztecAddress, amount: u128) {
+        let balance = self.storage.public_balances.at(from);
+        let current = balance.read();
+        assert(current >= amount, "Balance too low");
+        balance.write(current - amount);
     }
 
     #[external("public")]

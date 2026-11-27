@@ -58,12 +58,14 @@ with warm package and toolchain caches.
 | L2 nargo tests + pinned commits | `bun scripts/ci-cd/crates.ts nargo-test && bun scripts/ci-cd/crates.ts check-pins` (keystone requires every v1 test by name) | 52 s |
 | Labelled token TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | 3 min |
 | Labelled token gates | `bun run --cwd packages/labelled-token gates:check` | 4 s |
+| Labelled token fixtures | `bun run --cwd packages/labelled-token fixtures:check` | 27 s |
 | Wire-format vectors | `bun run --cwd packages/bridge-spec vectors:check`, then `vectors:mutate -- --suite ts\|sol\|nr` | < 1 s, then 3 s · 5 s · 45 s |
 | Sole consumer | `bash contracts/bridge/aztec/scripts/check-sole-consumer.sh` | < 1 s |
 | Integration (local network) | `bun run --cwd packages/bridge-core test:integration` | 10 min |
 | Hub network suite | `bun run --cwd packages/bridge-core test:hub` | 1.5 min |
 | Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | 7.5 min |
-| Labelled token, two devices | `bun run --cwd packages/labelled-token test:net` | 3 min |
+| Labelled token, two devices | `bun run --cwd packages/labelled-token test:net` | 6.5 min |
+| Labelled token proving bench | `bun run --cwd packages/labelled-token bench:prove` (real prover; run it alone on the host) | 5 min |
 | Local stack prerequisites | `bun run demo:prepare` (once per clone: pp-env's fetch, forge install and build) | 33 s with the pool fetched |
 | Local stack | `bun run demo` (`--keep` holds it up) | 1 min 45 s (ready in 97 s) |
 | Local stack integration | `bun run --cwd packages/local-stack test:integration` | imports 4 s · bridge 1.5 min · teardown 5 min · shared-anvil 6 min · heartbeat 7 min |
