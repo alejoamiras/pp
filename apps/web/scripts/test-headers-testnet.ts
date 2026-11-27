@@ -286,6 +286,7 @@ export async function checkTestnet(file: string, outDir: string): Promise<void> 
 		undo.push(() => f.close())
 		return f
 	}
+	let clean = false
 	try {
 		const [port, bot, asp] = [await claim("headers"), await claim("headers-bot"), await claim("headers-asp")]
 		const work = scratchDir("headers-testnet")
@@ -296,7 +297,8 @@ export async function checkTestnet(file: string, outDir: string): Promise<void> 
 		await assertServing(outDir, port, deployment, up, proxy)
 		await assertRefusesToStart(outDir, port, deployment)
 	} finally {
-		await releaseAll(undo)
+		clean = await releaseAll(undo)
 	}
+	if (!clean) throw new Error("test:headers --target: the checks passed, but a teardown step failed (above)")
 	console.log("test:headers --target passed")
 }

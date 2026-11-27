@@ -45,8 +45,8 @@ async function fence(context: BrowserContext, allowed: ReadonlySet<string>): Pro
 	return { refused, made }
 }
 
-/** A JSON-RPC call made by the page itself, so CORS, COEP and the CSP all apply. */
-function rpcFromPage(page: Page, url: string, method: string): Promise<unknown> {
+/** A JSON-RPC call made by the page itself, so CORS, COEP and the CSP all apply. A 429's body is never read. */
+function rpcFromPage(page: Page, url: string, method: string): Promise<{ status: number; text: string }> {
 	return page.evaluate(
 		async ([url, method]) => {
 			const res = await fetch(url, {
@@ -55,24 +55,24 @@ function rpcFromPage(page: Page, url: string, method: string): Promise<unknown> 
 				body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [] }),
 				redirect: "error",
 			})
-			if (!res.ok) throw new Error(`${method}: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`)
-			const body = (await res.json()) as { result?: unknown; error?: unknown }
-			if (body.error !== undefined) throw new Error(`${method}: ${JSON.stringify(body.error)}`)
-			return body.result
+			return { status: res.status, text: res.status === 429 ? "" : await res.text() }
 		},
 		[url, method] as const,
 	)
 }
 
-/** The public endpoints rate-limit; a 429 is retried twice, any other failure fails at once. */
+/** The public endpoints rate-limit: a 429 status is retried twice; any other failure fails at once. */
 async function rpc(page: Page, url: string, method: string): Promise<unknown> {
 	for (let attempt = 1; ; attempt++) {
-		try {
-			return await rpcFromPage(page, url, method)
-		} catch (err) {
-			if (attempt === 3 || !String(err).includes("HTTP 429")) throw err
+		const { status, text } = await rpcFromPage(page, url, method)
+		if (status === 429 && attempt < 3) {
 			await sleep(2_000 * attempt)
+			continue
 		}
+		if (status < 200 || status > 299) throw new Error(`${method}: HTTP ${status} ${text.slice(0, 200)}`)
+		const body = JSON.parse(text) as { result?: unknown; error?: unknown }
+		if (body.error !== undefined) throw new Error(`${method}: ${JSON.stringify(body.error)}`)
+		return body.result
 	}
 }
 
@@ -166,6 +166,7 @@ async function main(): Promise<void> {
 		undo.push(() => c.release())
 		return c.port
 	}
+	let clean = false
 	try {
 		const port = await claim("smoke")
 		const work = scratchDir("testnet-smoke")
@@ -198,8 +199,9 @@ async function main(): Promise<void> {
 			throw new Error(`${err instanceof Error ? err.message : String(err)}\nserve's log:\n${g.output()}`)
 		})
 	} finally {
-		await releaseAll(undo)
+		clean = await releaseAll(undo)
 	}
+	if (!clean) throw new Error("test:testnet-smoke: the checks passed, but a teardown step failed (above)")
 	console.log(`test:testnet-smoke passed${offline ? " (no upstreams)" : ""}`)
 }
 

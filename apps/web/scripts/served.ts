@@ -57,16 +57,20 @@ export async function assertRefusal(g: Group, port: number, what: string, reason
 }
 
 /**
- * Runs every step, last acquired first, even after one throws. A failed step is logged and fails the
- * run through `process.exitCode`, so it never replaces the error that started the teardown.
+ * Attempts every step, last acquired first, even after one throws. A failed step is logged and fails
+ * the run through `process.exitCode`, so it never replaces the error that started the teardown.
+ * Returns whether every step succeeded; a caller prints no success line otherwise.
  */
-export async function releaseAll(undo: readonly (() => unknown)[]): Promise<void> {
+export async function releaseAll(undo: readonly (() => unknown)[]): Promise<boolean> {
+	let clean = true
 	for (const step of [...undo].reverse()) {
 		try {
 			await step()
 		} catch (err) {
 			console.error(`teardown: ${err instanceof Error ? err.message : String(err)}`)
 			process.exitCode = 1
+			clean = false
 		}
 	}
+	return clean
 }

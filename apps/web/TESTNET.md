@@ -58,7 +58,8 @@ file path it is given is absolute.
 
    Each ends with a `passed` line. In the smoke, a `502` on a `GET /bot/…` or `GET /asp/…` line means
    that service gave no usable answer, and the error ends with `serve`'s log, which names why. A `404`
-   on `GET /bot/v1/snapshots/latest` means the bot has posted no snapshot yet: wait for its first post.
+   on `GET /bot/v1/snapshots/latest` means the bot holds no snapshot for the registry's current
+   record, before its first post or after the record changed: wait for its next post.
 
 4. Start the server on port 28600:
 
