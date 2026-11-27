@@ -1,6 +1,5 @@
 import { SpecRangeError } from "@pp/bridge-spec"
 import { PoolClientError } from "@pp/pool-client"
-import { BaseError, ContractFunctionRevertedError } from "viem"
 import { BridgeClientError, isSpendCheckName, rebuildError } from "./errors"
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
@@ -34,12 +33,45 @@ function fromPool(e: PoolClientError): BridgeClientError {
 	}
 }
 
-/** viem's revert error anywhere in an error chain: a contract refused the call, as opposed to a transport failure. */
-export const contractRevert = (e: unknown): ContractFunctionRevertedError | null =>
-	e instanceof BaseError ? (e.walk((x) => x instanceof ContractFunctionRevertedError) as ContractFunctionRevertedError | null) : null
+/**
+ * `e` and the errors in its cause chain, outermost first, for matching by shape: a caller's wallet
+ * client or pool-client can bring its own copy of viem, whose error classes `instanceof` misses.
+ * Stops at a cycle, at a throwing `cause`, and after 32 links.
+ */
+function causeChain(e: unknown): object[] {
+	const chain: object[] = []
+	for (let x = e; typeof x === "object" && x !== null && !chain.includes(x) && chain.length < 32; ) {
+		chain.push(x)
+		try {
+			x = (x as { cause?: unknown }).cause
+		} catch {
+			break
+		}
+	}
+	return chain
+}
+
+const field = (x: object, key: string): unknown => {
+	try {
+		return (x as Record<string, unknown>)[key]
+	} catch {
+		return undefined
+	}
+}
+
+/** viem's revert error anywhere in an error chain, by name: a contract refused the call, as opposed to a transport failure. */
+export const contractRevert = (e: unknown): { data?: { errorName?: unknown } } | null =>
+	causeChain(e).find((x) => field(x, "name") === "ContractFunctionRevertedError") ?? null
 
 /** The decoded error name of a contract revert anywhere in a viem error chain, when it is an identifier. */
-export const revertName = (e: unknown): string | undefined => identifier(contractRevert(e)?.data?.errorName)
+export const revertName = (e: unknown): string | undefined => {
+	const revert = contractRevert(e)
+	const data = revert ? field(revert, "data") : undefined
+	return typeof data === "object" && data !== null ? identifier(field(data, "errorName")) : undefined
+}
+
+/** Whether the user refused the request: an EIP-1193 4001 anywhere in the error chain. */
+export const isUserRejection = (e: unknown): boolean => causeChain(e).some((x) => field(x, "code") === 4001)
 
 /**
  * Maps any thrown value to a `BridgeClientError` built from allow-listed identifiers only. It never

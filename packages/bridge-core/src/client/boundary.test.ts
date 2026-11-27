@@ -4,8 +4,8 @@ import { PoolClientError, type PoolClientErrorCode } from "@pp/pool-client"
 import { BaseError, ContractFunctionExecutionError, ContractFunctionRevertedError, type Hex, toHex, UserRejectedRequestError } from "viem"
 import { describe, expect, it, vi } from "vitest"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
-import { CLAIM_KEY, SIGNATURE } from "../test/client-fakes"
-import { guarded, translate } from "./boundary"
+import { CLAIM_KEY, foreignError, SIGNATURE } from "../test/client-fakes"
+import { guarded, isUserRejection, translate } from "./boundary"
 import { BridgeClientError } from "./errors"
 
 const MAPPED: Record<PoolClientErrorCode, object> = {
@@ -77,6 +77,18 @@ describe("error boundary", () => {
 			expect(e).not.toHaveProperty("cause")
 		}
 		expectClean(out)
+	})
+
+	it("reads a revert by shape from an error another copy of viem built, and ends on a cyclic chain", () => {
+		const reverted = foreignError(
+			["ContractFunctionExecutionError"],
+			["ContractFunctionRevertedError", { data: { errorName: "NotReady" } }],
+		)
+		expect(reverted).not.toBeInstanceOf(BaseError)
+		expect(translate(reverted)).toMatchObject({ code: "SIMULATION_REVERTED", revert: "NotReady" })
+		const cyclic = foreignError(["TransactionExecutionError"])
+		Object.assign(cyclic, { cause: cyclic })
+		expect([isUserRejection(cyclic), translate(cyclic).code]).toEqual([false, "RPC_FAILED"])
 	})
 
 	it("refuses detail values outside each field's allowed set, and translate still never throws", () => {
