@@ -209,6 +209,21 @@ describe("the bridge screen", () => {
 		screen.getByText("Sent: waiting for the Ethereum transaction to be mined")
 	})
 
+	test("a send still waiting on the wallet across a sign-out and back stays in progress, and nothing more is sent", async () => {
+		const app = await openBridge()
+		app.control.hangNext("send")
+		await submit(app)
+		await screen.findByText("Sent: waiting for the Ethereum transaction to be mined")
+		await app.user.click(screen.getByRole("button", { name: "Back to balances" }))
+		await app.user.click(screen.getByRole("button", { name: "Sign out" }))
+		act(() => app.control.selectL1Account("owner"))
+		await signIn(app.user)
+		act(() => app.control.selectL1Account("sender"))
+		await waitFor(() => noteRow(NOTE).getByText("Bridge in progress"))
+		expect(noteRow(NOTE).queryAllByRole("button")).toEqual([])
+		expect(app.control.state().sent.l1).toBe(0)
+	})
+
 	test("a send pending at the RPC shows its hash on the bridge screen while it waits, with no send offered", async () => {
 		const app = await openBridge()
 		app.control.failNext("send", "PENDING")

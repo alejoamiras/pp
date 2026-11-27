@@ -32,11 +32,11 @@ function InFlightNote({ record }: { record: BridgeRecordView }) {
 	)
 }
 
-/** This page's own send, still waiting on the wallet: its bridge screen follows it, so nothing is offered here. */
+/** This page's own send, its wallet request still unanswered (perhaps from before a sign-out): nothing is offered. */
 function SendingNote() {
 	return (
 		<Callout tone="wait" title="Bridge in progress" role="status">
-			<p>This page is sending this note's bridge. Follow it on the bridge screen.</p>
+			<p>Your Ethereum wallet has not answered this bridge yet. Nothing more is sent for this note until it does.</p>
 		</Callout>
 	)
 }

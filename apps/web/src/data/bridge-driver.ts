@@ -88,7 +88,22 @@ const claimCurrent = (c: ClaimContext, ctx: LiveContext) =>
 	ctx.epoch === c.epoch &&
 	ctx.aztecAccounts.includes(c.recipient)
 
+/**
+ * The wallet requests a page still has out, shared by every driver it creates. Signing out closes a
+ * session but cannot recall a request its wallet already holds, so the next session's driver must
+ * still see it. Memory only: a reload starts empty, and the journal and the chain answer from there.
+ */
+export interface Outstanding {
+	/** Notes with a Submit under way; each leaves when its Submit settles. */
+	readonly sends: Set<bigint>
+	/** Records with a claim under way, or one the chain dropped or never answered, with its hash when known. */
+	readonly claims: Map<string, Hex | null>
+}
+
+export const createOutstanding = (): Outstanding => ({ sends: new Set(), claims: new Map() })
+
 export interface DriverDeps {
+	outstanding: Outstanding
 	session: Session
 	deployment: Pick<Deployment, "id" | "chainId">
 	timer: Timer
@@ -124,13 +139,13 @@ interface State {
 	deps: DriverDeps
 	seq: number
 	binding: Binding | null
-	/** Notes with a Submit under way. */
+	/** The page's `Outstanding.sends`. */
 	active: Set<bigint>
 	/** Notes with a transaction pending at the RPC, from the session's answer or the last reconciliation. */
 	inFlight: ReadonlySet<bigint>
 	/** Notes spent outside this bridge: they never send again from this page. */
 	closed: Map<bigint, UiCode>
-	/** Records with a claim under way, or one the chain dropped or never answered, with its hash when known. */
+	/** The page's `Outstanding.claims`. */
 	claims: Map<string, Hex | null>
 }
 
@@ -428,7 +443,8 @@ async function claim(st: State, record: BridgeRecordView, dispatch: Dispatch, si
  * waits for it to become claimable (also after a reload); `claim` sends it from its recipient.
  */
 export function createBridgeDriver(deps: DriverDeps) {
-	const st: State = { deps, seq: 0, binding: null, active: new Set(), inFlight: new Set(), closed: new Map(), claims: new Map() }
+	const { sends: active, claims } = deps.outstanding
+	const st: State = { deps, seq: 0, binding: null, active, inFlight: new Set(), closed: new Map(), claims }
 	return {
 		/** Preflight and warm-up for the connected recipient, ahead of Submit. */
 		preflight: (recipient: string, dispatch: Dispatch, signal: AbortSignal) => preflight(st, recipient, dispatch, signal),

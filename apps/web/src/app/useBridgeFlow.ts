@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import type { BridgeRecordView, PoolNoteView } from "../data/stack-types"
-import { createBridgeDriver } from "../data/bridge-driver"
+import { createBridgeDriver, createOutstanding } from "../data/bridge-driver"
 import { bridgeReducer, initialBridge } from "../data/bridge-machine"
 import type { Session } from "../data/ports"
 import type { DataSource } from "../data/source"
@@ -24,14 +24,19 @@ interface Deps {
 	settled(): void
 }
 
-/** One driver per open session; `canClaim` is read at each check, so a new grant applies at once. */
+/**
+ * One driver per open session, all sharing the page's outstanding wallet requests, which outlive the
+ * session that issued them. `canClaim` is read at each check, so a new grant applies at once.
+ */
 function useDriver({ source, live, session, canClaim, frame }: Omit<Deps, "settled">) {
 	const claimAllowed = useRef(canClaim)
 	claimAllowed.current = canClaim
+	const [outstanding] = useState(createOutstanding)
 	return useMemo(
 		() =>
 			session
 				? createBridgeDriver({
+						outstanding,
 						session,
 						deployment: source.deployment,
 						timer: source.timer,
@@ -40,7 +45,7 @@ function useDriver({ source, live, session, canClaim, frame }: Omit<Deps, "settl
 						canClaim: () => claimAllowed.current(),
 					})
 				: null,
-		[session, source, live, frame],
+		[outstanding, session, source, live, frame],
 	)
 }
 

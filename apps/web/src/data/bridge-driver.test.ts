@@ -1,7 +1,14 @@
 import type { Address, Hex, TypedDataDefinition } from "viem"
 import { describe, expect, test, vi } from "vitest"
 import type { AztecAddress, BridgeRecordView, PoolNoteView, StaleRootCode } from "./stack-types"
-import { createBridgeDriver, type LiveContext, PREFLIGHT_FRESH_MS, PROVE_DEADLINE_MS, type SubmitInput } from "./bridge-driver"
+import {
+	createBridgeDriver,
+	createOutstanding,
+	type LiveContext,
+	PREFLIGHT_FRESH_MS,
+	PROVE_DEADLINE_MS,
+	type SubmitInput,
+} from "./bridge-driver"
 import { type BridgeEvent, type BridgeMachine, bridgeReducer, initialBridge } from "./bridge-machine"
 import { openOwnerSession } from "./chain"
 import { BridgeFailure, ProviderError } from "./errors"
@@ -18,7 +25,7 @@ const MINED: BridgeRecordView = { id: "r1", nullifier: 9n, recipient: RECIPIENT,
 const CLAIMABLE: BridgeRecordView = { ...MINED, step: "claimable" }
 const INPUT: SubmitInput = { note: NOTE, amount: 70n, recipient: RECIPIENT }
 
-type Gate = "preflight" | "prove" | "reprove" | "claim"
+type Gate = "preflight" | "prove" | "reprove" | "claim" | "wallet"
 
 function virtualTimer(): Timer & { advance(ms: number): void } {
 	let t = 0
@@ -72,6 +79,11 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 	const wallet: Eip1193Provider = {
 		async request({ method }) {
 			sent.push(method)
+			const gate = gates.get("wallet")
+			if (gate) {
+				gate.reached()
+				await gate.open
+			}
 			return `0x${"ab".repeat(32)}`
 		},
 	}
@@ -110,14 +122,19 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 	}
 	const timer = virtualTimer()
 	let canClaim = true
-	const driver = createBridgeDriver({
-		session,
-		deployment: { id: ctx.deployment, chainId: 31337 },
-		timer,
-		frame: async () => {},
-		context: () => ({ ...ctx, aztecAccounts: [...ctx.aztecAccounts] }),
-		canClaim: () => canClaim,
-	})
+	// One per page, as `useBridgeFlow` keeps it: every driver the page creates shares it.
+	const outstanding = createOutstanding()
+	const make = () =>
+		createBridgeDriver({
+			session,
+			deployment: { id: ctx.deployment, chainId: 31337 },
+			timer,
+			frame: async () => {},
+			context: () => ({ ...ctx, aztecAccounts: [...ctx.aztecAccounts] }),
+			canClaim: () => canClaim,
+			outstanding,
+		})
+	let driver = make()
 	let m: BridgeMachine = initialBridge
 	const events: BridgeEvent[] = []
 	const dispatch = (e: BridgeEvent) => {
@@ -147,6 +164,14 @@ function harness(script: { reproves?: StaleRootCode[]; submitThrows?: unknown; a
 			run = new AbortController()
 			dispatch({ type: "reset" })
 		},
+		/** What signing out and back in does: the running flow is aborted and a new driver takes over. */
+		newSession: () => {
+			run.abort()
+			run = new AbortController()
+			dispatch({ type: "reset" })
+			driver = make()
+		},
+		follow: (r: BridgeRecordView) => driver.follow(r, dispatch, run.signal),
 		machine: () => m,
 		events,
 		/** Puts the machine where a claim starts. */
@@ -450,6 +475,33 @@ describe("the bridge driver", () => {
 		h.atClaimable()
 		await h.claim()
 		expect([h.machine().step, h.machine().phase, h.machine().claimTx]).toEqual(["claiming", "pending", txHash])
+		await h.claim()
+		expect(h.session.claim).toHaveBeenCalledTimes(1)
+	})
+
+	test("a send whose wallet request is still out when the session changes blocks its note under the next one until it settles", async () => {
+		const h = harness()
+		h.hold("wallet")
+		const first = h.submit()
+		await h.reached("wallet")
+		h.newSession()
+		const second = h.submit(INPUT, { acceptUncertain: true })
+		await new Promise((r) => setTimeout(r, 0))
+		expect(h.sent).toEqual(["eth_sendTransaction"])
+		h.open("wallet")
+		await Promise.all([first, second])
+		await h.submit(INPUT, { acceptUncertain: true })
+		expect(h.sent).toEqual(["eth_sendTransaction", "eth_sendTransaction"])
+	})
+
+	test("a claim left pending when the session changes reopens as pending and is never sent again", async () => {
+		const h = harness({ claim: async (): Promise<Sent> => ({ txHash: "0xdd", status: "dropped" }) })
+		h.atClaimable()
+		await h.claim()
+		h.newSession()
+		h.atClaimable()
+		await h.follow(CLAIMABLE)
+		expect([h.machine().phase, h.machine().claimTx]).toEqual(["pending", "0xdd"])
 		await h.claim()
 		expect(h.session.claim).toHaveBeenCalledTimes(1)
 	})

@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest"
 import type { BridgeRecordView } from "../stack-types"
-import { createBridgeDriver, type LiveContext } from "../bridge-driver"
+import { createBridgeDriver, createOutstanding, type LiveContext } from "../bridge-driver"
 import { type BridgeMachine, bridgeReducer, initialBridge } from "../bridge-machine"
 import { openOwnerSession } from "../chain"
 import type { Session } from "../ports"
@@ -38,6 +38,7 @@ async function page(store: KeyValue) {
 		aztecAccounts: [ACCOUNTS.aztec],
 	})
 	const driver = createBridgeDriver({
+		outstanding: createOutstanding(),
 		session: opened.session,
 		deployment: world.deployment,
 		timer: world.timer,
