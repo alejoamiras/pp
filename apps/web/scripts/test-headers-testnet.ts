@@ -1,16 +1,11 @@
 /**
- * `serve --deployment` over a testnet build, checked from outside. The build must be the one for the
- * file (its receipt, its header set and the canonical SponsoredFPC). Over a copy of the file whose bot
- * and ASP ports are claimed ones held by two counting fake upstreams, the server must answer with the
- * build's header set, refuse every raw request below with no upstream call, forward each proxied route
- * with its query rebuilt, report a dead upstream as 502, and serve the proved circuit's files with the
- * bundle's sizes and digests. It must refuse to start on any other host, with a stale receipt and with
- * a stale header file.
+ * `serve --deployment` over a testnet build, checked from outside: against two counting fake upstreams
+ * on claimed ports and a fake `HTTP_PROXY` that no forward may reach.
  */
 import { createHash } from "node:crypto"
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { createServer } from "node:http"
-import { connect } from "node:net"
+import { createServer, type IncomingHttpHeaders, type RequestListener } from "node:http"
+import { type AddressInfo, connect } from "node:net"
 import { join } from "node:path"
 import { CIRCUIT_BUNDLES } from "@pp/pool-client/circuits"
 import { HEADER_FILE, type SecurityHeaders, securityHeaders } from "../src/build/headers.ts"
@@ -25,24 +20,28 @@ import { assertRefusal, assertServed, untilUp } from "./served"
 import { loadTestnetServing } from "./testnet-serve"
 
 const NAME = "serve --deployment"
+const BODY = '{"fake":true}'
+/** Sent by the client on a proxied route; none may reach an upstream. */
+const CLIENT_HEADERS = { cookie: "s=1", authorization: "Bearer t", "x-forwarded-for": "203.0.113.1", origin: "http://evil.example" }
 
 interface Fake {
-	/** Every request target it received, in order. */
-	readonly seen: string[]
+	readonly port: number
+	/** Each request's target and headers, in order. */
+	readonly seen: { url: string; headers: IncomingHttpHeaders }[]
 	close(): Promise<void>
 }
 
-/** A loopback upstream that records each request and answers JSON: 501 on note-events, as the mock does. */
-function fakeUpstream(port: number, body: string): Promise<Fake> {
-	const seen: string[] = []
+function listen(port: number, answer: RequestListener): Promise<Fake> {
+	const seen: Fake["seen"] = []
 	const server = createServer((req, res) => {
-		seen.push(req.url ?? "")
-		res.writeHead(req.url?.includes("/public/note-events") ? 501 : 200, { "Content-Type": "application/json" }).end(body)
+		seen.push({ url: req.url ?? "", headers: req.headers })
+		answer(req, res)
 	})
 	return new Promise((resolve, reject) => {
 		server.once("error", reject)
 		server.listen(port, "127.0.0.1", () =>
 			resolve({
+				port: (server.address() as AddressInfo).port,
 				seen,
 				close: () =>
 					new Promise((done) => {
@@ -52,6 +51,12 @@ function fakeUpstream(port: number, body: string): Promise<Fake> {
 			}),
 		)
 	})
+}
+
+/** Answers JSON with headers that must not cross the proxy; 501 on note events, as the mock does. */
+const upstreamAnswer: RequestListener = (req, res) => {
+	const status = req.url?.includes("/public/note-events") ? 501 : 200
+	res.writeHead(status, { "Content-Type": "application/json", "Set-Cookie": "u=1", "X-Upstream": "1" }).end(BODY)
 }
 
 /** A copy of `file` whose upstreams are `bot` and `asp` on loopback. */
@@ -66,43 +71,48 @@ export function withUpstreams(file: string, dir: string, bot: number, asp: numbe
 }
 
 /**
- * Every status line the server writes for `request`, sent verbatim, until it closes the connection or
- * stays silent for a second: a smuggled second request would show as a second status.
+ * Every status line the server writes for `request`, sent verbatim, and whether the server closed the
+ * connection within a second. A smuggled second request would show as a second status.
  */
-function rawStatuses(port: number, request: string): Promise<number[]> {
+function rawStatuses(port: number, request: string): Promise<{ statuses: number[]; closed: boolean }> {
 	return new Promise((resolve, reject) => {
 		const socket = connect(port, "127.0.0.1")
 		let got = ""
-		const done = () => resolve([...got.matchAll(/HTTP\/1\.1 (\d{3}) /g)].map((m) => Number(m[1])))
-		socket.setTimeout(1_000, () => socket.destroy())
+		let closed = true
+		socket.setTimeout(1_000, () => {
+			closed = false
+			socket.destroy()
+		})
 		socket.on("data", (chunk: Buffer) => {
 			got += chunk.toString("latin1")
 		})
 		socket.once("error", reject)
-		socket.once("close", done)
+		socket.once("close", () => resolve({ statuses: [...got.matchAll(/HTTP\/1\.1 (\d{3}) /g)].map((m) => Number(m[1])), closed }))
 		socket.write(request)
 	})
 }
 
 type Raw = { method?: string; hosts?: string[]; extra?: string; close?: boolean }
+/** Each request accepts HTML, so a target that reached the app's fallback would answer 200. */
 function raw(target: string, host: string, o: Raw = {}): string {
 	const hosts = (o.hosts ?? [host]).map((h) => `Host: ${h}\r\n`).join("")
-	return `${o.method ?? "GET"} ${target} HTTP/1.1\r\n${hosts}${o.close === false ? "" : "Connection: close\r\n"}${o.extra ?? "\r\n"}`
+	const close = o.close === false ? "" : "Connection: close\r\n"
+	return `${o.method ?? "GET"} ${target} HTTP/1.1\r\n${hosts}Accept: text/html\r\n${close}${o.extra ?? "\r\n"}`
 }
 
-/** Requests that must never reach an upstream, each with the exact statuses the server writes. */
 function refusedRequests(port: number, asp: number, chain: number, entrypoint: string): [string, string, number[]][] {
 	const host = `127.0.0.1:${port}`
 	const q = `chainId=${chain}&entrypoint=${entrypoint}`
 	const smuggled = `0\r\n\r\nGET /asp/public-key HTTP/1.1\r\nHost: ${host}\r\n\r\n`
 	return [
-		["absolute-form to the ASP", raw(`http://127.0.0.1:${asp}/association-set/root?${q}`, host), [404]],
-		["absolute-form through the prefix", raw(`http://${host}/asp/association-set/root?${q}`, host), [404]],
-		["scheme-relative", raw(`//127.0.0.1:${asp}/public-key`, host), [404]],
+		["absolute-form to the ASP", raw(`http://127.0.0.1:${asp}/association-set/root?${q}`, host), [400]],
+		["absolute-form through the prefix", raw(`http://${host}/asp/association-set/root?${q}`, host), [400]],
+		["scheme-relative", raw(`//127.0.0.1:${asp}/public-key`, host), [400]],
 		["empty segment", raw("/asp//public-key", host), [404]],
 		["dot segments", raw("/bot/../asp/public-key", host), [404]],
 		["encoded dots", raw("/asp/%2e%2e/asp/public-key", host), [404]],
 		["encoded slash", raw(`/asp/association-set%2froot?${q}`, host), [404]],
+		["an empty query on a route without one", raw("/asp/public-key?", host), [404]],
 		["no Host", raw("/asp/public-key", host, { hosts: [] }), [400]],
 		["two Hosts", raw("/asp/public-key", host, { hosts: [host, host] }), [421]],
 		["another name", raw("/asp/public-key", host, { hosts: [`evil.example:${port}`] }), [421]],
@@ -128,39 +138,30 @@ function refusedRequests(port: number, asp: number, chain: number, entrypoint: s
 
 async function assertRefused(port: number, asp: number, chain: number, entrypoint: string, fakes: Fake[]): Promise<void> {
 	for (const [what, request, want] of refusedRequests(port, asp, chain, entrypoint)) {
-		const got = await rawStatuses(port, request)
-		if (got.join() !== want.join()) throw new Error(`${NAME}, ${what}: statuses [${got}], not [${want}]`)
-		const calls = fakes.reduce((n, f) => n + f.seen.length, 0)
-		if (calls > 0) throw new Error(`${NAME}, ${what}: reached an upstream (${fakes.flatMap((f) => f.seen).join(", ")})`)
-		console.log(`ok   ${NAME}, ${what}: HTTP ${got.join(", ")}, no upstream call`)
+		const { statuses, closed } = await rawStatuses(port, request)
+		if (statuses.join() !== want.join() || !closed)
+			throw new Error(
+				`${NAME}, ${what}: statuses [${statuses}]${closed ? "" : ", connection left open"}; want [${want}], then closed`,
+			)
+		const calls = fakes.flatMap((f) => f.seen.map((s) => s.url))
+		if (calls.length > 0) throw new Error(`${NAME}, ${what}: reached an upstream (${calls.join(", ")})`)
+		console.log(`ok   ${NAME}, ${what}: HTTP ${statuses.join(", ")}, closed, no upstream call`)
 	}
 	const named = await rawStatuses(port, raw("/", `localhost:${port}`))
-	if (named.join() !== "200") throw new Error(`${NAME}: Host localhost:${port} got [${named}], not [200]`)
+	if (named.statuses.join() !== "200") throw new Error(`${NAME}: Host localhost:${port} got [${named.statuses}], not [200]`)
 	console.log(`ok   ${NAME}: Host localhost:${port} is served`)
 }
 
-/** Each proxied route, forwarded once with its query rebuilt and its status and body passed through. */
-async function assertForwarded(
-	port: number,
-	h: SecurityHeaders,
-	upstreams: { bot: Fake; asp: Fake },
-	chain: number,
-	e: string,
-): Promise<void> {
+async function assertForwarded(port: number, h: SecurityHeaders, up: { bot: Fake; asp: Fake }, chain: number, e: string): Promise<void> {
 	const routes: [Fake, string, string, number][] = [
-		[upstreams.bot, "/bot/v1/snapshots/latest?ignored=1", "/v1/snapshots/latest", 200],
+		[up.bot, "/bot/v1/snapshots/latest?ignored=1", "/v1/snapshots/latest", 200],
 		[
-			upstreams.asp,
+			up.asp,
 			`/asp/association-set/root?chainId=${chain}&entrypoint=${e}`,
 			`/association-set/root?chainId=${chain}&entrypoint=${e}`,
 			200,
 		],
-		[
-			upstreams.asp,
-			`/asp/${chain}/public/note-events?since=5&entrypoint=${e}`,
-			`/${chain}/public/note-events?entrypoint=${e}&since=5`,
-			501,
-		],
+		[up.asp, `/asp/${chain}/public/note-events?since=5&entrypoint=${e}`, `/${chain}/public/note-events?entrypoint=${e}&since=5`, 501],
 	]
 	for (const [fake, path, upstreamPath, status] of routes) {
 		const before = fake.seen.length
@@ -169,11 +170,23 @@ async function assertForwarded(
 			"Cache-Control": "no-store",
 			"Content-Type": "application/json",
 		})
-		const seen = fake.seen.slice(before)
-		if (res.status !== status || new TextDecoder().decode(body) !== '{"fake":true}' || seen.join() !== upstreamPath)
+		const seen = fake.seen.slice(before).map((s) => s.url)
+		if (res.status !== status || new TextDecoder().decode(body) !== BODY || seen.join() !== upstreamPath)
 			throw new Error(`${NAME} ${path}: HTTP ${res.status}, upstream saw [${seen}]; want ${status} and [${upstreamPath}]`)
 		console.log(`ok   ${NAME} ${path} reaches ${upstreamPath} once (HTTP ${status})`)
 	}
+}
+
+/** No client header goes up and no upstream header comes back. */
+async function assertIsolated(port: number, asp: Fake): Promise<void> {
+	const res = await fetch(`http://127.0.0.1:${port}/asp/public-key`, { headers: CLIENT_HEADERS })
+	await res.arrayBuffer()
+	const up = asp.seen.at(-1)
+	const leaked = Object.keys(CLIENT_HEADERS).filter((name) => up?.headers[name] !== undefined)
+	const back = ["set-cookie", "x-upstream"].filter((name) => res.headers.has(name))
+	if (res.status !== 200 || up?.url !== "/public-key" || leaked.length > 0 || back.length > 0)
+		throw new Error(`${NAME}: HTTP ${res.status}; client headers upstream: [${leaked}]; upstream headers back: [${back}]`)
+	console.log(`ok   ${NAME}: no client header reaches the ASP and none of its headers comes back`)
 }
 
 async function assertUpstreamDown(port: number, bot: Fake): Promise<void> {
@@ -184,7 +197,6 @@ async function assertUpstreamDown(port: number, bot: Fake): Promise<void> {
 	console.log(`ok   ${NAME}: a dead bot is HTTP 502 with its fixed text`)
 }
 
-/** The proved circuit's three files, each with the size and sha256 its bundle pins. */
 async function assertCircuitFiles(port: number, bundle: keyof typeof CIRCUIT_BUNDLES): Promise<void> {
 	const pin = CIRCUIT_BUNDLES[bundle].circuits[PROVED_CIRCUIT]
 	for (const file of ["wasm", "provingKey", "verificationKey"] as const) {
@@ -197,9 +209,11 @@ async function assertCircuitFiles(port: number, bundle: keyof typeof CIRCUIT_BUN
 	}
 }
 
-function startServe(outDir: string, port: number, deployment: string, host = "127.0.0.1"): Group {
-	const args = ["serve", "--outDir", outDir, "--host", host, "--port", String(port), "--strictPort", "--deployment", deployment]
-	return bunRun(args, { env: { ...envWithout(), PP_CIRCUITS_DIR: process.env.PP_CIRCUITS_DIR }, capture: true })
+type Start = { deployment?: string; host?: string; env?: NodeJS.ProcessEnv }
+function startServe(outDir: string, port: number, o: Start): Group {
+	const args = ["serve", "--outDir", outDir, "--host", o.host ?? "127.0.0.1", "--port", String(port), "--strictPort"]
+	if (o.deployment !== undefined) args.push("--deployment", o.deployment)
+	return bunRun(args, { env: { ...envWithout(), PP_CIRCUITS_DIR: process.env.PP_CIRCUITS_DIR, ...o.env }, capture: true })
 }
 
 /** A copy of `outDir` with one file replaced must refuse to start, naming why. */
@@ -215,65 +229,68 @@ async function assertStale(
 	try {
 		cpSync(outDir, copy, { recursive: true })
 		writeFileSync(join(copy, file), JSON.stringify(content))
-		await assertRefusal(startServe(copy, port, deployment), port, `${NAME}, a stale ${file}`, reason)
+		await assertRefusal(startServe(copy, port, { deployment }), port, `${NAME}, a stale ${file}`, reason)
 	} finally {
 		rmSync(copy, { recursive: true, force: true })
 	}
 }
 
 async function assertRefusesToStart(outDir: string, port: number, deployment: string): Promise<void> {
-	await assertRefusal(startServe(outDir, port, deployment, "0.0.0.0"), port, `${NAME} --host 0.0.0.0`, "binds 127.0.0.1 only")
+	await assertRefusal(startServe(outDir, port, {}), port, "serve without --deployment over a testnet build", "is a testnet build")
+	await assertRefusal(startServe(outDir, port, { deployment, host: "0.0.0.0" }), port, `${NAME} --host 0.0.0.0`, "binds 127.0.0.1 only")
 	const target = testnetTarget(deployment, {}, await sponsoredFpcAddress())
-	await assertStale(
-		outDir,
-		port,
-		deployment,
-		TARGET_FILE,
-		{ ...target, rollupVersion: (target.rollupVersion ?? 0) + 1 },
-		"is not the testnet build",
-	)
-	const other = securityHeaders({ ...target, l1RpcUrl: "https://rpc.example" })
-	await assertStale(outDir, port, deployment, HEADER_FILE, other, "is not the header set")
+	const receipt = { ...target, rollupVersion: (target.rollupVersion ?? 0) + 1 }
+	await assertStale(outDir, port, deployment, TARGET_FILE, receipt, "is not the testnet build")
+	const headers = securityHeaders({ ...target, l1RpcUrl: "https://rpc.example" })
+	await assertStale(outDir, port, deployment, HEADER_FILE, headers, "is not the header set")
 }
 
-async function assertServing(outDir: string, port: number, deployment: string, upstreams: { bot: Fake; asp: Fake }): Promise<void> {
+async function assertServing(outDir: string, port: number, deployment: string, up: { bot: Fake; asp: Fake }, proxy: Fake): Promise<void> {
 	const d = readTestnetDeployment(deployment)
 	const headers = JSON.parse(readFileSync(join(outDir, HEADER_FILE), "utf8")) as SecurityHeaders
-	const g = startServe(outDir, port, deployment)
+	const g = startServe(outDir, port, { deployment, env: { HTTP_PROXY: `http://127.0.0.1:${proxy.port}` } })
 	try {
 		await untilUp(NAME, port, g)
 		for (const path of ["/", "/no/such/route", "/asp/no/such/route"]) await assertServed(NAME, port, path, headers)
-		await assertRefused(port, Number(new URL(d.pool.aspApiUrl).port), d.network.l1ChainId, d.pool.entrypoint, [
-			upstreams.bot,
-			upstreams.asp,
-		])
-		await assertForwarded(port, headers, upstreams, d.network.l1ChainId, d.pool.entrypoint)
+		const asp = Number(new URL(d.pool.aspApiUrl).port)
+		await assertRefused(port, asp, d.network.l1ChainId, d.pool.entrypoint, [up.bot, up.asp, proxy])
+		await assertForwarded(port, headers, up, d.network.l1ChainId, d.pool.entrypoint)
+		await assertIsolated(port, up.asp)
 		await assertCircuitFiles(port, d.bundle)
-		await assertUpstreamDown(port, upstreams.bot)
+		await assertUpstreamDown(port, up.bot)
+		if (proxy.seen.length > 0) throw new Error(`${NAME}: forwards went through HTTP_PROXY (${proxy.seen.map((s) => s.url).join(", ")})`)
+		console.log(`ok   ${NAME}: with HTTP_PROXY set, every forward went straight to its upstream`)
 	} finally {
 		await g.stop()
 	}
 }
 
-/** @throws on the first check that fails; every server and claim it started is gone either way. */
+/** @throws on the first check that fails; every server, claim and directory it took is released either way. */
 export async function checkTestnet(file: string, outDir: string): Promise<void> {
 	await loadTestnetServing(file, outDir)
 	console.log(`ok   ${outDir} is the testnet build for ${file}, with the canonical SponsoredFPC`)
-	const claims = await Promise.all(["headers", "headers-bot", "headers-asp"].map((s) => claimPort(s)))
-	const [port, bot, asp] = claims.map((c) => c.port) as [number, number, number]
-	const work = scratchDir("headers-testnet")
+	const undo: (() => unknown)[] = []
+	const claim = async (service: string) => {
+		const c = await claimPort(service)
+		undo.push(() => c.release())
+		return c.port
+	}
+	const held = async (fake: Promise<Fake>) => {
+		const f = await fake
+		undo.push(() => f.close())
+		return f
+	}
 	try {
+		const [port, bot, asp] = [await claim("headers"), await claim("headers-bot"), await claim("headers-asp")]
+		const work = scratchDir("headers-testnet")
+		undo.push(() => rmSync(work, { recursive: true, force: true }))
 		const deployment = withUpstreams(file, work, bot, asp)
-		const upstreams = { bot: await fakeUpstream(bot, '{"fake":true}'), asp: await fakeUpstream(asp, '{"fake":true}') }
-		try {
-			await assertServing(outDir, port, deployment, upstreams)
-		} finally {
-			await Promise.all([upstreams.bot.close(), upstreams.asp.close()])
-		}
+		const up = { bot: await held(listen(bot, upstreamAnswer)), asp: await held(listen(asp, upstreamAnswer)) }
+		const proxy = await held(listen(0, (_req, res) => res.writeHead(502).end()))
+		await assertServing(outDir, port, deployment, up, proxy)
 		await assertRefusesToStart(outDir, port, deployment)
 	} finally {
-		await Promise.all(claims.map((c) => c.release()))
-		rmSync(work, { recursive: true, force: true })
+		for (const step of undo.reverse()) await step()
 	}
 	console.log("test:headers --target passed")
 }

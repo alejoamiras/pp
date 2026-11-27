@@ -1,7 +1,8 @@
-import { createServer, type IncomingHttpHeaders, type Server } from "node:http"
+import { createServer, type IncomingHttpHeaders, type Server, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
 import { afterAll, beforeAll, describe, expect, test } from "vitest"
-import { forward, isProxyPath, type ProxyConfig, proxyRoute } from "./proxy"
+import { MAX_SNAPSHOT_BYTES } from "../src/data/adapters/snapshot-download"
+import { bypassProxyForLoopback, CAPS, forward, isProxyPath, type ProxyConfig, proxyRoute } from "./proxy"
 
 const EP = "0x1111111111111111111111111111111111111111"
 const C: ProxyConfig = { chainId: 11155111, entrypoint: EP, asp: "http://127.0.0.1:1", bot: "http://127.0.0.1:2" }
@@ -53,6 +54,7 @@ describe("proxyRoute", () => {
 			"/asp/admin/roots",
 			"/asp/labels/5/status",
 			"/asp/public-key?x=1",
+			"/asp/public-key?",
 			"/asp/public-key/",
 			"/asp/%70ublic-key",
 			"/asp/./public-key",
@@ -85,22 +87,32 @@ describe("forward", () => {
 	let base = ""
 	const seen: IncomingHttpHeaders[] = []
 	beforeAll(async () => {
+		const routes: Record<string, (res: ServerResponse) => void> = {
+			"/redirect": (res) => res.writeHead(302, { location: "http://evil.example/" }).end(),
+			"/big": (res) => res.writeHead(200).end(Buffer.alloc(2048)),
+			"/slow": (res) => setTimeout(() => res.writeHead(200).end("{}"), 2_000),
+			"/stall": (res) => res.writeHead(200).write("{"),
+			"/gzip": (res) => res.writeHead(200, { "content-encoding": "gzip" }).end(Buffer.alloc(16)),
+		}
 		server = createServer((req, res) => {
 			seen.push(req.headers)
 			const path = req.url ?? "/"
 			const status = Number(/^\/status\/(\d+)$/.exec(path)?.[1] ?? 0)
 			if (status) return res.writeHead(status, { "content-type": "application/json", "set-cookie": "a=b" }).end('{"s":1}')
-			if (path === "/redirect") return res.writeHead(302, { location: "http://evil.example/" }).end()
-			if (path === "/big") return res.writeHead(200).end(Buffer.alloc(2048))
-			if (path === "/slow") return void setTimeout(() => res.writeHead(200).end("{}"), 2_000)
-			res.writeHead(404).end()
+			;(routes[path] ?? ((r: ServerResponse) => r.writeHead(404).end()))(res)
 		})
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
 		base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 	})
-	afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())))
+	afterAll(
+		() =>
+			new Promise<void>((resolve) => {
+				server.closeAllConnections()
+				server.close(() => resolve())
+			}),
+	)
 
-	test("passes the statuses the page acts on with their bodies, and sends no header of the client's", async () => {
+	test("passes the statuses the page acts on with their bodies, asking for JSON in no encoding and nothing else", async () => {
 		for (const status of [200, 400, 404, 501]) {
 			const r = await forward(`${base}/status/${status}`)
 			expect(r).toEqual({ ok: true, status, body: expect.any(Uint8Array) })
@@ -108,18 +120,32 @@ describe("forward", () => {
 		}
 		for (const h of seen) {
 			expect(h.accept).toBe("application/json")
+			expect(h["accept-encoding"]).toBe("identity")
 			for (const name of ["cookie", "authorization", "origin", "referer", "x-forwarded-for"]) expect(h[name], name).toBeUndefined()
 		}
 	})
 
-	test("fails every other status, a redirect, an overflow and a deadline", async () => {
+	test("fails every other status, a redirect, an encoded body, an overflow and a deadline, a stalled body included", async () => {
 		expect(await forward(`${base}/status/500`)).toEqual({ ok: false, reason: "status 500" })
 		expect(await forward(`${base}/status/401`)).toEqual({ ok: false, reason: "status 401" })
 		expect(await forward(`${base}/redirect`)).toEqual({ ok: false, reason: "status 302" })
+		expect(await forward(`${base}/gzip`)).toEqual({ ok: false, reason: "content-encoding gzip" })
 		expect(await forward(`${base}/big`, { capBytes: 1024 })).toEqual({ ok: false, reason: "body over 1024 bytes" })
-		const started = Date.now()
-		expect(await forward(`${base}/slow`, { deadlineMs: 200 })).toEqual({ ok: false, reason: "timeout" })
-		expect(Date.now() - started).toBeLessThan(1_500)
+		expect(CAPS.bot).toBe(MAX_SNAPSHOT_BYTES)
+		for (const path of ["/slow", "/stall"]) {
+			const started = Date.now()
+			expect(await forward(`${base}${path}`, { deadlineMs: 200 }), path).toEqual({ ok: false, reason: "timeout" })
+			expect(Date.now() - started).toBeLessThan(1_500)
+		}
 		expect(await forward("http://127.0.0.1:1/")).toMatchObject({ ok: false, reason: expect.stringMatching(/^unreachable/) })
+	})
+})
+
+describe("bypassProxyForLoopback", () => {
+	test("adds 127.0.0.1 to both spellings of NO_PROXY, keeping what they named", () => {
+		const env: NodeJS.ProcessEnv = { NO_PROXY: "example.com" }
+		bypassProxyForLoopback(env)
+		bypassProxyForLoopback(env)
+		expect(env).toEqual({ NO_PROXY: "example.com,127.0.0.1", no_proxy: "127.0.0.1" })
 	})
 })

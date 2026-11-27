@@ -25,15 +25,19 @@ export function readTestnetDeployment(file: string) {
 }
 
 /**
- * The public target for the deployment at `file`, built field by field. `fpc` is the canonical
- * SponsoredFPC, derived at build time; the file must name the same one.
+ * The public target for the deployment at `file`. `fpc` is the canonical SponsoredFPC, derived at
+ * build time; the file must name the same one.
  *
- * @throws when another mode's input is set, the file fails `readTestnetDeployment`, or its FPC differs.
+ * @throws when another mode's input is set (even empty), the file fails `readTestnetDeployment`, or its FPC differs.
  */
 export function testnetTarget(file: string | undefined, env: TargetEnv, fpc: string): PublicTarget {
 	if (!file) fail("PP_DEPLOYMENT", "is not set; a testnet build reads its deployment file")
-	for (const name of OTHER_INPUTS) if (env[name]) fail(name, "is set; a testnet build reads PP_DEPLOYMENT alone")
-	const d = readTestnetDeployment(file)
+	for (const name of OTHER_INPUTS) if (env[name] !== undefined) fail(name, "is set; a testnet build reads PP_DEPLOYMENT alone")
+	return testnetTargetOf(file, readTestnetDeployment(file), fpc)
+}
+
+/** `testnetTarget` over a deployment already read from `file`, built field by field. */
+export function testnetTargetOf(file: string, d: ReturnType<typeof readTestnetDeployment>, fpc: string): PublicTarget {
 	const { network: n, pool: p, bridge: b } = d
 	if (n.fpc.toLowerCase() !== fpc.toLowerCase()) fail(file, `network.fpc ${n.fpc} is not the canonical SponsoredFPC ${fpc}`)
 	return {

@@ -18,6 +18,9 @@ type Draft = {
 	expected: Record<string, unknown>
 }
 const base = (): Draft => JSON.parse(readFileSync(FIXTURE, "utf8"))
+/** Every string under `v`, hex without its prefix: each is a value the fixture makes distinct. */
+const leaves = (v: unknown): string[] =>
+	typeof v === "string" ? [v.replace(/^0x/, "")] : typeof v === "object" && v !== null ? Object.values(v).flatMap(leaves) : []
 
 const dir = scratchDir("testnet-target")
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -78,9 +81,7 @@ describe("testnetTarget", () => {
 
 	test("carries nothing from the expected section or the description", () => {
 		const text = JSON.stringify(testnetTarget(FIXTURE, {}, FPC)).toLowerCase()
-		for (const [field, value] of Object.entries(base().expected))
-			if (typeof value === "string" && value.startsWith("0x")) expect(text, field).not.toContain(value.slice(2).toLowerCase())
-		expect(text).not.toContain("never deploy")
+		for (const leaf of leaves([base().expected, base().description])) expect(text, leaf).not.toContain(leaf.toLowerCase())
 		// The loopback ports stay with the server: the page reaches them through its own origin.
 		expect(text).not.toContain("4860")
 	})
@@ -104,7 +105,8 @@ describe("testnetTarget", () => {
 	test("reads PP_DEPLOYMENT alone", () => {
 		expect(() => testnetTarget(undefined, {}, FPC)).toThrow(/PP_DEPLOYMENT is not set/)
 		for (const name of ["PP_STACK_MANIFEST", "PP_SANDBOX_ARTIFACTS", "PP_DATA", "PP_WEB_WALLETS"])
-			expect(() => testnetTarget(FIXTURE, { [name]: "x" }, FPC), name).toThrow(new RegExp(`${name} is set`))
+			for (const value of ["x", ""])
+				expect(() => testnetTarget(FIXTURE, { [name]: value }, FPC), name).toThrow(new RegExp(`${name} is set`))
 	})
 })
 

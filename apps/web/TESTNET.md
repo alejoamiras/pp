@@ -9,7 +9,9 @@ URLs.
 ## What you need
 
 - **On the host:** this repository with `bun install` done. Fetch the pool checkout with
-  `bun run --cwd packages/pp-env fetch`.
+  `bun run --cwd packages/pp-env fetch`. The browser check (step 3) needs Playwright's Chromium:
+  `apps/web/node_modules/.bin/playwright install chromium` (add `--with-deps` once on a fresh
+  machine; it installs system packages and needs root).
 - **The deployment file:** `packages/testnet/deployments/testnet-own.json`, with its `pool` and
   `bridge` sections. Use it only after `verify-deployment` passed on it before `open`.
 - **The testnet services:** the testnet lane runs `bot` and `asp --owner <canary owner>` on the host
@@ -49,7 +51,7 @@ file path below is absolute (`$PWD/…`).
    ```
 
    Each ends with a `passed` line. A smoke failure on a `GET /bot/…` or `GET /asp/…` line means that
-   service is down on the host.
+   service gave no usable answer: it is down, or sent what the proxy refuses (the error ends with `serve`'s log, which says what).
 
 4. Start the server on port 28600:
 
@@ -73,7 +75,7 @@ file path below is absolute (`$PWD/…`).
    ```
 
    `<pool.entrypoint>` is that value in the deployment file. Both must print `200`. A `502` means
-   that service is down on the host.
+   that service gave no usable answer: it is down, or `serve`'s log names what it sent instead.
 
 ## Open it on your laptop
 
@@ -92,8 +94,10 @@ file path below is absolute (`$PWD/…`).
 
 A balance needs two things:
 - **The owner registered in the pool's keystore.** Registration in this app arrives with web's arc 2e.
-- **A pool note deposited for the owner.** Ask the testnet lane to run
-  `seed --recipient <owner address>`. The mock ASP then approves it.
+- **A pool note deposited for the owner.** If your owner account is the canary owner, the testnet
+  lane's canary deposit (`seed`, without `--recipient`) is that note. For any other owner, once it is
+  registered, ask the lane to run `seed --recipient <owner address>`; `--recipient` refuses the
+  canary owner. The mock ASP then approves the note.
 
 ## When something fails
 
@@ -106,7 +110,7 @@ A balance needs two things:
 | "The Aztec node does not answer. …" | The public testnet node is unreachable | Wait, then try again |
 | "The Aztec node serves L1 chain …; this app is built for …" | The node is on another network or rollup | Report it: the deployment file is out of date |
 | "That wallet is no longer available. Search again." | Nulo is closed or locked | Open Nulo, unlock it, search again |
-| "A network request failed. Try again." | A request to the node, Sepolia or the services failed | Run the two `curl` checks ("Start the app on the host", step 5); a `502` names the service that is down |
+| "A network request failed. Try again." | A request to the node, Sepolia or the services failed | Run the two `curl` checks ("Start the app on the host", step 5); a `502` names the service, and `serve`'s log says why. The public node and RPC also rate-limit: wait a minute |
 | The prover stops with an error | `serve` could not verify the proving files (it logs `proving files unavailable`) | Check `PP_CIRCUITS_DIR`, and run `fetch` again |
 
 ## Stopping

@@ -1,16 +1,14 @@
 /**
  * A testnet build in Chromium behind `serve --deployment`, opened at `http://localhost:<port>/` as the
- * owner opens it. The page must be cross-origin isolated with no CSP violation and no page error, and
- * request nothing but its own origin, the node and the L1 RPC (anything else is refused and reported).
- * From the page, the node must report the file's chain and rollup version and the L1 RPC Sepolia, and
- * each proxied read the app makes must answer 200 (its size is logged) or, under `--no-upstreams`,
- * 502 with its fixed text. There the file's upstream ports are claimed ones nothing serves and
- * `PP_CIRCUITS_DIR` is an empty scratch directory; live, both come from the host.
+ * owner opens it, reading the node, the L1 RPC and the proxied services from the page. Under
+ * `--no-upstreams` the file's upstream ports are claimed ones nothing serves and `PP_CIRCUITS_DIR` is
+ * an empty scratch directory; live, both come from the host.
  *
  * Usage: [PP_CIRCUITS_DIR=<dir>] bun scripts/testnet-smoke.ts --target <file> [--outDir dist-testnet] [--no-upstreams]
  */
 import { mkdirSync, rmSync } from "node:fs"
 import { join, resolve } from "node:path"
+import { setTimeout as sleep } from "node:timers/promises"
 import { parseArgs } from "node:util"
 import { type BrowserContext, chromium, type Page } from "@playwright/test"
 import { readTestnetDeployment } from "../src/build/testnet.ts"
@@ -22,24 +20,24 @@ import { withUpstreams } from "./test-headers-testnet"
 
 const SEPOLIA = "0xaa36a7"
 const SETTLE_MS = 15_000
+const RENDER_MS = 60_000
+type Deployment = ReturnType<typeof readTestnetDeployment>
 
 /**
- * Every request the context makes off `allowed` is refused and recorded; `data:` and `blob:` never
- * leave the page. `made` counts the rest by origin.
+ * Refuses any request off `allowed` (`data:` and `blob:` never leave the page) and records it in
+ * `refused`; `made` counts the rest by origin. `route` sees only a request's first hop, so blocking
+ * happens there and recording on `request`, which every redirect hop raises.
  */
 async function fence(context: BrowserContext, allowed: ReadonlySet<string>): Promise<{ refused: string[]; made: Map<string, number> }> {
 	const refused: string[] = []
 	const made = new Map<string, number>()
 	const permitted = (url: URL) => url.protocol === "data:" || url.protocol === "blob:" || allowed.has(url.origin)
-	await context.route("**/*", (route) => {
-		const url = new URL(route.request().url())
-		if (permitted(url)) {
-			if (/^https?:$/.test(url.protocol)) made.set(url.origin, (made.get(url.origin) ?? 0) + 1)
-			return route.continue()
-		}
-		refused.push(url.href)
-		return route.abort("blockedbyclient")
+	context.on("request", (request) => {
+		const url = new URL(request.url())
+		if (!permitted(url)) refused.push(url.href)
+		else if (/^https?:$/.test(url.protocol)) made.set(url.origin, (made.get(url.origin) ?? 0) + 1)
 	})
+	await context.route("**/*", (route) => (permitted(new URL(route.request().url())) ? route.continue() : route.abort("blockedbyclient")))
 	await context.routeWebSocket(/.*/, (ws) => {
 		refused.push(ws.url())
 		return ws.close({ code: 1008, reason: "not an allowed origin" })
@@ -55,6 +53,7 @@ function rpcFromPage(page: Page, url: string, method: string): Promise<unknown> 
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [] }),
+				redirect: "error",
 			})
 			const body = (await res.json()) as { result?: unknown; error?: unknown }
 			if (!res.ok || body.error !== undefined) throw new Error(`${method}: HTTP ${res.status} ${JSON.stringify(body.error)}`)
@@ -64,26 +63,49 @@ function rpcFromPage(page: Page, url: string, method: string): Promise<unknown> 
 	)
 }
 
+/** The public endpoints rate-limit; a 429 is retried twice, any other failure fails at once. */
+async function rpc(page: Page, url: string, method: string): Promise<unknown> {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await rpcFromPage(page, url, method)
+		} catch (err) {
+			if (attempt === 3 || !String(err).includes("HTTP 429")) throw err
+			await sleep(2_000 * attempt)
+		}
+	}
+}
+
 function getFromPage(page: Page, path: string): Promise<{ status: number; text: string }> {
 	return page.evaluate(async (path) => {
-		const res = await fetch(path)
+		const res = await fetch(path, { redirect: "error" })
 		return { status: res.status, text: await res.text() }
 	}, path)
 }
 
-async function assertChains(page: Page, d: ReturnType<typeof readTestnetDeployment>): Promise<void> {
-	const info = (await rpcFromPage(page, d.network.aztecNode, "node_getNodeInfo")) as { l1ChainId?: unknown; rollupVersion?: unknown }
+/**
+ * The app itself ran: live, its header; offline, where the fixture's made-up contracts cannot be read,
+ * its header or its deployment alert. A page whose script never ran shows neither.
+ */
+async function assertRendered(page: Page, offline: boolean): Promise<void> {
+	const heading = page.getByRole("heading", { name: "Label bridge" })
+	const alert = page.getByRole("alert").filter({ hasText: "could not read the deployment" })
+	await (offline ? heading.or(alert) : heading).first().waitFor({ timeout: RENDER_MS })
+	console.log(`ok   the app rendered ${(await heading.isVisible()) ? "its header" : "its deployment alert"}`)
+}
+
+async function assertChains(page: Page, d: Deployment): Promise<void> {
+	const info = (await rpc(page, d.network.aztecNode, "node_getNodeInfo")) as { l1ChainId?: unknown; rollupVersion?: unknown }
 	if (Number(info.l1ChainId) !== d.network.l1ChainId || Number(info.rollupVersion) !== d.network.rollupVersion)
 		throw new Error(
 			`the node reports chain ${info.l1ChainId}, rollup ${info.rollupVersion}; the file pins ${d.network.l1ChainId}, ${d.network.rollupVersion}`,
 		)
 	console.log(`ok   node_getNodeInfo from the page: chain ${d.network.l1ChainId}, rollup version ${d.network.rollupVersion}`)
-	const chain = await rpcFromPage(page, d.network.l1Rpc, "eth_chainId")
+	const chain = await rpc(page, d.network.l1Rpc, "eth_chainId")
 	if (chain !== SEPOLIA) throw new Error(`eth_chainId from the page is ${String(chain)}, not ${SEPOLIA}`)
 	console.log(`ok   eth_chainId from the page: ${SEPOLIA}`)
 }
 
-async function assertReads(page: Page, d: ReturnType<typeof readTestnetDeployment>, offline: boolean): Promise<void> {
+async function assertReads(page: Page, d: Deployment, offline: boolean): Promise<void> {
 	const q = `chainId=${d.network.l1ChainId}&entrypoint=${d.pool.entrypoint}`
 	const reads: [Upstream, string][] = [
 		["bot", "/bot/v1/snapshots/latest"],
@@ -99,12 +121,11 @@ async function assertReads(page: Page, d: ReturnType<typeof readTestnetDeploymen
 	}
 }
 
-async function smoke(port: number, deployment: string, offline: boolean): Promise<void> {
-	const d = readTestnetDeployment(deployment)
+async function smoke(port: number, d: Deployment, offline: boolean): Promise<void> {
 	const origin = `http://localhost:${port}`
 	const browser = await chromium.launch({ headless: true })
 	try {
-		const context = await browser.newContext()
+		const context = await browser.newContext({ serviceWorkers: "block" })
 		const { refused, made } = await fence(
 			context,
 			new Set([origin, new URL(d.network.aztecNode).origin, new URL(d.network.l1Rpc).origin]),
@@ -115,7 +136,9 @@ async function smoke(port: number, deployment: string, offline: boolean): Promis
 		page.on("console", (m) => {
 			if (/Content Security Policy/i.test(m.text())) problems.push(`CSP: ${m.text()}`)
 		})
-		await page.goto(`${origin}/`, { waitUntil: "load" })
+		const nav = await page.goto(`${origin}/`, { waitUntil: "load" })
+		if (!nav?.ok()) throw new Error(`${origin}/ answered HTTP ${nav?.status()}`)
+		await assertRendered(page, offline)
 		await page.waitForLoadState("networkidle", { timeout: SETTLE_MS }).catch(() => {})
 		if (!(await page.evaluate(() => crossOriginIsolated))) throw new Error(`${origin}/ is not cross-origin isolated`)
 		console.log(`ok   ${origin}/ is cross-origin isolated`)
@@ -136,13 +159,23 @@ async function main(): Promise<void> {
 	})
 	if (values.target === undefined) throw new Error("testnet-smoke: --target <deployment file> is required")
 	const offline = values["no-upstreams"] === true
-	const claims = await Promise.all((offline ? ["smoke", "smoke-bot", "smoke-asp"] : ["smoke"]).map((s) => claimPort(s)))
-	const [port, bot, asp] = claims.map((c) => c.port) as [number, number?, number?]
-	const work = scratchDir("testnet-smoke")
+	const undo: (() => unknown)[] = []
+	const claim = async (service: string) => {
+		const c = await claimPort(service)
+		undo.push(() => c.release())
+		return c.port
+	}
 	try {
-		const deployment = bot && asp ? withUpstreams(resolve(values.target), work, bot, asp) : resolve(values.target)
-		const circuits = offline ? join(work, "circuits") : process.env.PP_CIRCUITS_DIR
-		if (offline) mkdirSync(circuits as string)
+		const port = await claim("smoke")
+		const work = scratchDir("testnet-smoke")
+		undo.push(() => rmSync(work, { recursive: true, force: true }))
+		let deployment = resolve(values.target)
+		let circuits = process.env.PP_CIRCUITS_DIR
+		if (offline) {
+			deployment = withUpstreams(deployment, work, await claim("smoke-bot"), await claim("smoke-asp"))
+			circuits = join(work, "circuits")
+			mkdirSync(circuits)
+		}
 		const outDir = resolve(APP_ROOT, values.outDir ?? "dist-testnet")
 		const args = [
 			"serve",
@@ -157,15 +190,14 @@ async function main(): Promise<void> {
 			deployment,
 		]
 		const g = bunRun(args, { env: { ...envWithout(), PP_CIRCUITS_DIR: circuits }, capture: true })
-		try {
-			await untilUp("serve --deployment", port, g)
-			await smoke(port, deployment, offline)
-		} finally {
-			await g.stop()
-		}
+		undo.push(() => g.stop())
+		await untilUp("serve --deployment", port, g)
+		await smoke(port, readTestnetDeployment(deployment), offline).catch((err: unknown) => {
+			// A 502's cause is in the server's log alone.
+			throw new Error(`${err instanceof Error ? err.message : String(err)}\nserve's log:\n${g.output()}`)
+		})
 	} finally {
-		await Promise.all(claims.map((c) => c.release()))
-		rmSync(work, { recursive: true, force: true })
+		for (const step of undo.reverse()) await step()
 	}
 	console.log(`test:testnet-smoke passed${offline ? " (no upstreams)" : ""}`)
 }

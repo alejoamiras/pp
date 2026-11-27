@@ -18,7 +18,7 @@
  *   [--deployment <file> [--claim]]
  * (the port is always strict: a taken port is an error, never another port).
  */
-import { readFileSync, statSync } from "node:fs"
+import { existsSync, readFileSync, statSync } from "node:fs"
 import { createServer, type IncomingMessage } from "node:http"
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path"
 import { parseArgs } from "node:util"
@@ -27,7 +27,8 @@ import { claimRows, releaseRows } from "@pp/run-isolation/ports"
 import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build/headers.ts"
 import { PROVED_CIRCUIT, PROVED_PINS } from "../src/data/adapters/circuit.ts"
 import { APP_ROOT } from "./proc"
-import { forward, isProxyPath, type ProxyConfig, proxyRoute, UPSTREAM_DOWN } from "./proxy"
+import { TARGET_FILE } from "../src/build/plugins.ts"
+import { bypassProxyForLoopback, CAPS, forward, isProxyPath, type ProxyConfig, proxyRoute, UPSTREAM_DOWN } from "./proxy"
 import { loadTestnetServing } from "./testnet-serve"
 
 type Getter = "getWasm" | "getProvingKey" | "getVerificationKey"
@@ -142,7 +143,7 @@ async function proxied(method: string | undefined, rawTarget: string, config: Pr
 	if (method !== "GET") return text(405, "method not allowed")
 	const route = proxyRoute(rawTarget, config)
 	if (route === null) return text(404, "not found")
-	const r = await forward(route.url)
+	const r = await forward(route.url, { capBytes: CAPS[route.upstream] })
 	if (r.ok) return { status: r.status, type: TYPES[".json"] as string, body: r.body, headers: { "Cache-Control": "no-store" } }
 	console.error(`serve: ${route.upstream}: ${r.reason}`)
 	return text(502, UPSTREAM_DOWN[route.upstream])
@@ -150,11 +151,13 @@ async function proxied(method: string | undefined, rawTarget: string, config: Pr
 
 interface Testnet {
 	readonly proxy: ProxyConfig
+	/** The header set checked against the deployment file, so what is served is what was checked. */
+	readonly headers: SecurityHeaders
 	/** The exact Host values this server answers. */
 	readonly hosts: ReadonlySet<string>
 }
 
-/** The request's one Host value, or `null` when it sends none or several. */
+/** `req.headers.host` keeps the first of several Host headers; `rawHeaders` shows them all, so a second one is refused, never ignored. */
 function hostOf(req: IncomingMessage): string | null {
 	const values: string[] = []
 	for (let i = 0; i < req.rawHeaders.length; i += 2)
@@ -162,12 +165,19 @@ function hostOf(req: IncomingMessage): string | null {
 	return values.length === 1 ? (values[0] as string) : null
 }
 
+/** The reply a testnet server gives before the static routes, or `null` to go on to them. */
+function testnetReply(req: IncomingMessage, testnet: Testnet): Promise<Reply> | Reply | null {
+	const host = hostOf(req)
+	if (host === null || !testnet.hosts.has(host)) return text(421, "misdirected request")
+	const target = req.url ?? "/"
+	if (!target.startsWith("/") || target.startsWith("//")) return text(400, "bad request target")
+	// Before any URL parsing: `new URL` resolves `..` and `%2e`, which would turn a refused target into a route.
+	return isProxyPath(target) ? proxied(req.method, target, testnet.proxy) : null
+}
+
 async function reply(req: IncomingMessage, outDir: string, circuits: string, testnet: Testnet | null): Promise<Reply> {
-	if (testnet) {
-		const host = hostOf(req)
-		if (host === null || !testnet.hosts.has(host)) return text(421, "misdirected request")
-		if (isProxyPath(req.url ?? "/")) return proxied(req.method, req.url ?? "/", testnet.proxy)
-	}
+	const early = testnet ? testnetReply(req, testnet) : null
+	if (early !== null) return early
 	if (req.method !== "GET" && req.method !== "HEAD") return text(405, "method not allowed")
 	const pathname = new URL(req.url ?? "/", "http://serve.invalid").pathname
 	const pinned = PINNED.get(pathname.slice(1))
@@ -178,12 +188,15 @@ async function reply(req: IncomingMessage, outDir: string, circuits: string, tes
 	return text(404, "not found")
 }
 
-/** The testnet state for `--deployment`, or `null` without one. */
 async function testnetFor(file: string | undefined, outDir: string, host: string, port: number): Promise<Testnet | null> {
-	if (file === undefined) return null
+	if (file === undefined) {
+		if (existsSync(join(outDir, TARGET_FILE))) throw new Error(`serve: ${outDir} is a testnet build; serve it with --deployment <file>`)
+		return null
+	}
 	if (host !== "127.0.0.1") throw new Error(`serve: --deployment binds 127.0.0.1 only, got --host ${host}`)
-	const { proxy } = await loadTestnetServing(resolve(file), outDir)
-	return { proxy, hosts: new Set([`localhost:${port}`, `127.0.0.1:${port}`]) }
+	const { proxy, headers } = await loadTestnetServing(resolve(file), outDir)
+	bypassProxyForLoopback()
+	return { proxy, headers, hosts: new Set([`localhost:${port}`, `127.0.0.1:${port}`]) }
 }
 
 /**
@@ -194,7 +207,9 @@ async function claim(port: number): Promise<() => Promise<void>> {
 	const runId = `web-testnet-${process.pid}-${Date.now().toString(36)}`
 	await claimRows(runId, { "web-testnet": port }, process.pid)
 	console.log(`serve: claimed port ${port} as ${runId}`)
-	return async () => void (await releaseRows(runId))
+	return async () => {
+		if (!(await releaseRows(runId))) throw new Error(`serve: the port registry stayed locked; release ${runId} as TESTNET.md shows`)
+	}
 }
 
 async function main(): Promise<void> {
@@ -214,10 +229,17 @@ async function main(): Promise<void> {
 	if (!Number.isInteger(port) || port <= 0 || port > 65_535) throw new Error("serve: --port takes a port number")
 	if (values.claim && values.deployment === undefined) throw new Error("serve: --claim goes with --deployment")
 	const circuits = circuitsDir(process.env.PP_CIRCUITS_DIR)
-	const headers = loadHeaders(outDir)
 	const testnet = await testnetFor(values.deployment, outDir, host, port)
+	const headers = testnet?.headers ?? loadHeaders(outDir)
 	const release = values.claim ? await claim(port) : async () => {}
-	const stop = (code: number) => void release().finally(() => process.exit(code))
+	const stop = (code: number) =>
+		void release().then(
+			() => process.exit(code),
+			(err: unknown) => {
+				console.error(err instanceof Error ? err.message : String(err))
+				process.exit(1)
+			},
+		)
 	if (values.claim) for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => stop(0))
 	const server = createServer((req, res) => {
 		void reply(req, outDir, circuits, testnet)

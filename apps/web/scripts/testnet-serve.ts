@@ -6,10 +6,10 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { isDeepStrictEqual } from "node:util"
-import { HEADER_FILE, securityHeaders } from "../src/build/headers.ts"
+import { HEADER_FILE, type SecurityHeaders, securityHeaders } from "../src/build/headers.ts"
 import { TARGET_FILE } from "../src/build/plugins.ts"
 import { sponsoredFpcAddress } from "../src/build/sponsored-fpc.ts"
-import { readTestnetDeployment, testnetTarget } from "../src/build/testnet.ts"
+import { readTestnetDeployment, testnetTargetOf } from "../src/build/testnet.ts"
 import type { ProxyConfig } from "./proxy"
 
 function readBuilt(outDir: string, file: string): unknown {
@@ -28,15 +28,21 @@ function loopbackOrigin(url: string, field: string): string {
 	return u.origin
 }
 
-/** @throws when the build in `outDir` is not the one `file` yields, or an upstream is not on loopback. */
-export async function loadTestnetServing(file: string, outDir: string): Promise<{ proxy: ProxyConfig }> {
-	const target = testnetTarget(file, {}, await sponsoredFpcAddress())
+/**
+ * Each input is read once, so the proxy and the headers come from the same reads as the checks.
+ *
+ * @throws when the build in `outDir` is not the one `file` yields, or an upstream is not on loopback.
+ */
+export async function loadTestnetServing(file: string, outDir: string): Promise<{ proxy: ProxyConfig; headers: SecurityHeaders }> {
+	const d = readTestnetDeployment(file)
+	const target = testnetTargetOf(file, d, await sponsoredFpcAddress())
 	if (!isDeepStrictEqual(readBuilt(outDir, TARGET_FILE), JSON.parse(JSON.stringify(target))))
 		throw new Error(`serve: ${outDir} is not the testnet build for ${file}; rebuild it`)
-	if (!isDeepStrictEqual(readBuilt(outDir, HEADER_FILE), securityHeaders(target)))
+	const headers = securityHeaders(target)
+	if (!isDeepStrictEqual(readBuilt(outDir, HEADER_FILE), headers))
 		throw new Error(`serve: ${join(outDir, HEADER_FILE)} is not the header set for ${file}; rebuild it`)
-	const d = readTestnetDeployment(file)
 	return {
+		headers,
 		proxy: {
 			chainId: d.network.l1ChainId,
 			entrypoint: d.pool.entrypoint,

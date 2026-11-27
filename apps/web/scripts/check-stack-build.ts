@@ -11,9 +11,13 @@
  */
 import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { isDeepStrictEqual } from "node:util"
 import { ANVIL_MNEMONIC, anvilKey } from "@pp/bridge-core/sandbox"
 import { DEMO_SENDER_ADDRESS, DEMO_SENDER_INDEX } from "@pp/local-stack/accounts"
-import { GUARD_PASSED } from "../src/build/plugins.ts"
+import { securityHeaders } from "../src/build/headers.ts"
+import { GUARD_PASSED, TARGET_FILE } from "../src/build/plugins.ts"
+import { sponsoredFpcAddress } from "../src/build/sponsored-fpc.ts"
+import { testnetTarget } from "../src/build/testnet.ts"
 import { DEMO_SENDER_SENTINEL } from "../src/data/adapters/demo-sender.ts"
 import { APP_ROOT, bunRun, envWithout, scratchDir } from "./proc"
 
@@ -96,20 +100,29 @@ function checkDemoSender(kind: Kind, files: Output[]): void {
 	}
 }
 
-/** No value of the deployment's `expected` section in any output file, and connect-src exactly its node and L1 RPC. */
-function checkTestnetOutput(dist: string, files: Output[]): void {
-	const d = JSON.parse(readFileSync(TESTNET_FILE, "utf8")) as {
-		network: { aztecNode: string; l1Rpc: string }
-		expected: Record<string, unknown>
-	}
-	for (const [field, value] of Object.entries(d.expected)) {
-		const found = typeof value === "string" && value.startsWith("0x") ? holding(files, value.slice(2)) : []
-		if (found.length > 0) throw new Error(`expected.${field} leaked into ${found.join(", ")}`)
-	}
-	const csp = (JSON.parse(readFileSync(join(dist, "security-headers.json"), "utf8")) as Record<string, string>)["Content-Security-Policy"]
-	const connect = csp?.split("; ").find((directive) => directive.startsWith("connect-src "))
-	const want = `connect-src 'self' data: ${new URL(d.network.aztecNode).origin} ${new URL(d.network.l1Rpc).origin}`
+/** Every string under `v`, hex without its prefix. */
+const leaves = (v: unknown): string[] =>
+	typeof v === "string" ? [v.replace(/^0x/, "")] : typeof v === "object" && v !== null ? Object.values(v).flatMap(leaves) : []
+
+/**
+ * The receipt and the header set are exactly what the file yields, connect-src names its node and L1
+ * RPC alone, and no output file holds the description or any value of `expected`.
+ */
+async function checkTestnetOutput(dist: string, files: Output[]): Promise<void> {
+	const d = JSON.parse(readFileSync(TESTNET_FILE, "utf8")) as { description: string; expected: unknown }
+	const target = testnetTarget(TESTNET_FILE, {}, await sponsoredFpcAddress())
+	const built = (file: string): unknown => JSON.parse(readFileSync(join(dist, file), "utf8"))
+	if (!isDeepStrictEqual(built(TARGET_FILE), JSON.parse(JSON.stringify(target))))
+		throw new Error(`the testnet build's ${TARGET_FILE} is not its target`)
+	const headers = securityHeaders(target)
+	if (!isDeepStrictEqual(built("security-headers.json"), headers)) throw new Error("the testnet build's header set is not its target's")
+	const connect = headers["Content-Security-Policy"].split("; ").find((directive) => directive.startsWith("connect-src "))
+	const want = `connect-src 'self' data: ${new URL(target.nodeUrl).origin} ${new URL(target.l1RpcUrl).origin}`
 	if (connect !== want) throw new Error(`the testnet build's ${connect} is not ${want}`)
+	for (const leaf of leaves([d.description, d.expected])) {
+		const found = holding(files, leaf)
+		if (found.length > 0) throw new Error(`the deployment's ${leaf} leaked into ${found.join(", ")}`)
+	}
 }
 
 function command(kind: Kind, work: string, dist: string): { args: string[]; env: NodeJS.ProcessEnv } {
@@ -138,7 +151,7 @@ async function build(kind: Kind, work: string): Promise<string | null> {
 	if (kind === "fixture") return null
 	const line = out.split("\n").find((l) => l.includes(GUARD_PASSED))
 	if (!line) throw new Error(`the ${kind} stack build passed but the fixture guard never reported:\n${out}`)
-	if (kind === "testnet") checkTestnetOutput(dist, files)
+	if (kind === "testnet") await checkTestnetOutput(dist, files)
 	else checkStackOutput(dist, files, kind === "local" ? LOCAL_MANIFEST : REMOTE_MANIFEST)
 	return `${kind}: ${line.trim()}`
 }
@@ -146,10 +159,15 @@ async function build(kind: Kind, work: string): Promise<string | null> {
 async function main(): Promise<void> {
 	const work = scratchDir("stack-build")
 	try {
-		const lines = await Promise.all((["local", "remote", "testnet", "fixture"] as const).map((k) => build(k, work)))
-		for (const line of lines) if (line) console.log(line)
+		// Every build settles before the scratch directory goes, failed ones included.
+		const results = await Promise.allSettled((["local", "remote", "testnet", "fixture"] as const).map((k) => build(k, work)))
+		const failed = results.find((r) => r.status === "rejected")
+		if (failed) throw failed.reason
+		for (const r of results) if (r.status === "fulfilled" && r.value) console.log(r.value)
 		console.log("stack-build sentinels: no bot account in the output; connect-src names the ASP API and the bot")
-		console.log("testnet build: no expected value in the output; connect-src names the node and the L1 RPC alone")
+		console.log(
+			"testnet build: its receipt and header set are its target's; connect-src names the node and the L1 RPC alone; no expected value or description in the output",
+		)
 		console.log("demo sender: sentinel and address in the local stack build only; no build holds its key or the anvil mnemonic")
 	} finally {
 		rmSync(work, { recursive: true, force: true })

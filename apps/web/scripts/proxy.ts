@@ -15,6 +15,8 @@ export interface ProxyConfig {
 	readonly bot: string
 }
 
+import { MAX_SNAPSHOT_BYTES } from "../src/data/adapters/snapshot-download.ts"
+
 export type Upstream = "asp" | "bot"
 
 /** The body of the 502 that stands in for an upstream's unusable answer; the cause goes to the server log. */
@@ -63,7 +65,6 @@ const ASP_ROUTES: ReadonlyArray<{ path: string; query: ReadonlyArray<readonly [s
 	},
 ]
 
-/** `key=value` pairs of plain characters, each key once; `null` for anything else (`%`, `+`, empty pairs). */
 function pairs(query: string): Map<string, string> | null {
 	const out = new Map<string, string>()
 	if (query === "") return out
@@ -75,7 +76,6 @@ function pairs(query: string): Map<string, string> | null {
 	return out
 }
 
-/** The rebuilt query, or `null` when `query` names a key the route lacks, misses a required one, or fails a check. */
 function rebuild(query: string, rules: ReadonlyArray<readonly [string, Rule]>, c: ProxyConfig): string | null {
 	const got = pairs(query)
 	if (got === null || [...got.keys()].some((k) => !rules.some(([name]) => name === k))) return null
@@ -108,13 +108,12 @@ export function proxyRoute(rawTarget: string, c: ProxyConfig): { upstream: Upstr
 	for (const route of ASP_ROUTES) {
 		const upstreamPath = route.path.replace("{c}", String(c.chainId))
 		if (rest !== upstreamPath) continue
-		const rebuilt = rebuild(query, route.query, c)
+		const rebuilt = route.query.length === 0 && q !== -1 ? null : rebuild(query, route.query, c)
 		return rebuilt === null ? null : { upstream: "asp", url: `${c.asp}${upstreamPath}${rebuilt}` }
 	}
 	return null
 }
 
-/** Whether a raw request target falls under the proxy's prefixes, matched or not. */
 export const isProxyPath = (rawTarget: string): boolean => /^\/(asp|bot)(\/|\?|$)/.test(rawTarget)
 
 /**
@@ -125,11 +124,11 @@ export const isProxyPath = (rawTarget: string): boolean => /^\/(asp|bot)(\/|\?|$
 const PASSED = new Set([200, 400, 404, 501])
 
 export const DEADLINE_MS = 15_000
-export const CAP_BYTES = 16 * 1024 * 1024
+/** The bot's cap is the largest snapshot the page accepts, so the proxy never refuses one the page would take. */
+export const CAPS: Readonly<Record<Upstream, number>> = { asp: 16 * 1024 * 1024, bot: MAX_SNAPSHOT_BYTES }
 
 export type Forwarded = { ok: true; status: number; body: Uint8Array } | { ok: false; reason: string }
 
-/** The body, or `null` once it passes `cap` bytes (the rest is never read). */
 async function readCapped(body: ReadableStream<Uint8Array> | null, cap: number): Promise<Uint8Array | null> {
 	if (body === null) return new Uint8Array()
 	const reader = body.getReader()
@@ -146,27 +145,52 @@ async function readCapped(body: ReadableStream<Uint8Array> | null, cap: number):
 	return Buffer.concat(chunks)
 }
 
+function refusal(res: Response): string | null {
+	if (!PASSED.has(res.status)) return `status ${res.status}`
+	const encoding = res.headers.get("content-encoding")
+	return encoding === null || encoding === "identity" ? null : `content-encoding ${encoding}`
+}
+
 /**
  * GETs `url` with no header of the client's, following no redirect, within `deadlineMs` for the whole
- * body and `capBytes` of it. Any status outside the passed set is a failure, as is a timeout or overflow.
+ * body and `capBytes` of it. Any status outside the passed set is a failure, as is an encoded body, a
+ * timeout or an overflow.
  */
 export async function forward(url: string, o: { deadlineMs?: number; capBytes?: number } = {}): Promise<Forwarded> {
-	const cap = o.capBytes ?? CAP_BYTES
+	const cap = o.capBytes ?? CAPS.asp
 	try {
-		const res = await fetch(url, {
+		// Bun decodes a compressed body as it arrives, before the cap counts it, unless `decompress` is off.
+		const init: RequestInit & { decompress: boolean } = {
 			method: "GET",
-			headers: { accept: "application/json" },
+			headers: { accept: "application/json", "accept-encoding": "identity" },
 			redirect: "manual",
 			signal: AbortSignal.timeout(o.deadlineMs ?? DEADLINE_MS),
-		})
-		if (!PASSED.has(res.status)) {
+			decompress: false,
+		}
+		const res = await fetch(url, init)
+		const refused = refusal(res)
+		if (refused !== null) {
 			await res.body?.cancel()
-			return { ok: false, reason: `status ${res.status}` }
+			return { ok: false, reason: refused }
 		}
 		const body = await readCapped(res.body, cap)
 		return body === null ? { ok: false, reason: `body over ${cap} bytes` } : { ok: true, status: res.status, body }
 	} catch (err) {
 		const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")
 		return { ok: false, reason: timedOut ? "timeout" : `unreachable: ${err instanceof Error ? err.message : String(err)}` }
+	}
+}
+
+/**
+ * Bun's fetch sends even a loopback request through `HTTP_PROXY` unless `NO_PROXY` names the host,
+ * which would make the fixed upstreams whatever that proxy answers. It reads both on every request.
+ */
+export function bypassProxyForLoopback(env: NodeJS.ProcessEnv = process.env): void {
+	for (const name of ["NO_PROXY", "no_proxy"]) {
+		const hosts = (env[name] ?? "")
+			.split(",")
+			.map((h) => h.trim())
+			.filter((h) => h !== "")
+		if (!hosts.includes("127.0.0.1")) env[name] = [...hosts, "127.0.0.1"].join(",")
 	}
 }
