@@ -6,7 +6,7 @@ import { hubBindingAt } from "../hub-l2"
 import type { StackManifest } from "../stack-manifest"
 import { guarded } from "./boundary"
 import { BridgeClientError } from "./errors"
-import { windowedLogs } from "./resolve"
+import { freshHead, windowedLogs } from "./resolve"
 import { bridgeOf } from "./session"
 import { type BridgeDeployment, deploymentId } from "./types"
 
@@ -18,7 +18,7 @@ export type NamedDeployment = Omit<BridgeDeployment, "rollupVersion"> & { factor
 /** A checked deployment; `outbox` is the Outbox the portal and the node both name. */
 export type ClientDeployment = BridgeDeployment & { id: string; outbox: Address }
 
-export type DeploymentReader = BindingsClient & Pick<PublicClient, "getChainId" | "getBlockNumber" | "getLogs">
+export type DeploymentReader = BindingsClient & Pick<PublicClient, "getChainId" | "request" | "getLogs">
 
 export type DeploymentNode = Pick<AztecNode, "getNodeInfo" | "getPublicStorageAt">
 
@@ -55,8 +55,7 @@ export function verifyDeployment(reader: DeploymentReader, node: DeploymentNode,
 		})
 		const token = await hubBindingAt(node, d.hub, d.asset)
 		if (token === undefined || BigInt(token) !== BigInt(d.token)) throw new BridgeClientError("DEPLOYMENT_MISMATCH")
-		// Uncached: a portal created within viem's cache window must be inside the scan.
-		const head = await reader.getBlockNumber({ cacheTime: 0 })
+		const head = await freshHead(reader)
 		const created = await windowedLogs(d.deployBlock, head, true, (fromBlock, toBlock) =>
 			reader.getLogs({ address: d.factory, event: PORTAL_CREATED, args: { token: d.asset, portal: d.portal }, fromBlock, toBlock }),
 		)

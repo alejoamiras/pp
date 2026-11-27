@@ -10,7 +10,7 @@ import { TxHash, TxStatus } from "@aztec-labs/stdlib/tx"
 import vectors from "@pp/bridge-spec/vectors/v1.json" with { type: "json" }
 import { type Address, type Hash, type Hex, getAddress, toHex } from "viem"
 import { describe, expect, it, vi } from "vitest"
-import { DEPLOYMENT, HUB, PORTAL, SENDER } from "../test/client-fakes"
+import { DEPLOYMENT, HUB, headRequest, PORTAL, SENDER } from "../test/client-fakes"
 import type { ClientDeployment } from "./deployment"
 import { exitStatusOf, exitState } from "./exits"
 import { assertExitPayee, type ExitContext, exitReads, exitTickets, ragequitPayload, settle } from "./exits-chain"
@@ -75,6 +75,8 @@ async function world() {
 		posted: false,
 		head: 300n,
 		cachedHead: undefined as bigint | undefined,
+		/** How far the reader's node trails the one that serves receipts. */
+		lag: 0n,
 		consumed: new Set<string>(),
 		settled: [] as { epoch: bigint; leafId: bigint; tx: Hash; block: bigint }[],
 	}
@@ -101,12 +103,13 @@ async function world() {
 	}
 	const zero = toHex(0n, { size: 32 })
 	const reader = {
-		// viem serves a cached head for `cacheTime` (its polling interval) unless told 0; here the cache never expires.
-		getBlockNumber: async (o?: { cacheTime?: number }) => {
-			if (o?.cacheTime === 0) return state.head
+		// viem's `getBlockNumber` can serve an older head at any `cacheTime` (its cache, or another
+		// caller's request in flight); here the first head it saw never moves.
+		getBlockNumber: async () => {
 			state.cachedHead ??= state.head
 			return state.cachedHead
 		},
+		request: headRequest(() => state.head - state.lag),
 		readContract: vi.fn(async (q: { functionName: string; args: bigint[] }) => {
 			if (q.functionName === "getRoots")
 				return Array.from({ length: 32 }, (_, i) => (i === 0 && state.posted ? root.toString() : zero))
@@ -118,7 +121,11 @@ async function world() {
 				.map((s) => ({ args: { epoch: s.epoch, leafId: s.leafId }, transactionHash: s.tx, blockNumber: s.block, removed: false })),
 		),
 		simulateContract: vi.fn(async (_call: unknown) => ({})),
-		waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: Hash }) => ({ status: "success", transactionHash: hash })),
+		waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: Hash }) => ({
+			status: "success",
+			transactionHash: hash,
+			blockNumber: state.settled.find((s) => s.tx === hash)?.block,
+		})),
 	}
 	// The portal settles a leaf once: consume at (epoch, 2^|path| + leafIndex), then ExitSettled.
 	const writeContract = vi.fn(async (call: { args: readonly unknown[] }) => {
@@ -194,7 +201,7 @@ describe("settle", () => {
 		["a ragequit", 0, "settleRagequit", (t: ExitTicket) => [t.payee, t.amount, t.kind === "ragequit" && t.label]],
 		["a public exit", 3, "settlePublicExit", (t: ExitTicket) => [t.payee, t.amount]],
 	] as const)(
-		"settles %s with its witness and returns the transaction of its ExitSettled, read past a cached head",
+		"settles %s with its witness and returns the transaction of its ExitSettled, read past the older head viem shares",
 		async (_, i, fn, head) => {
 			const { c, state, reader, l1, writeContract } = await world()
 			state.posted = true
@@ -210,6 +217,14 @@ describe("settle", () => {
 			expect(writeContract).toHaveBeenCalledOnce()
 		},
 	)
+
+	it("returns its own settle's transaction when the reader's node lags the receipt", async () => {
+		const { c, state, l1 } = await world()
+		state.posted = true
+		const [t] = await exitTickets(c, {})
+		state.lag = 1n
+		expect(await settle(c, t!, l1)).toBe(state.settled[0]?.tx)
+	})
 
 	it("keeps a broadcast settle's hash as UNCERTAIN when the event lookup after it fails", async () => {
 		const { c, state, reader, l1, writeContract } = await world()

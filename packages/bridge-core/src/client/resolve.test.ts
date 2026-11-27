@@ -11,6 +11,7 @@ import {
 } from "viem"
 import { describe, expect, it, vi } from "vitest"
 import { PROCESSOR_PORTAL_ABI } from "../factory-abi"
+import { headRequest } from "../test/client-fakes"
 import { bridgeMessageKey } from "./messages"
 import { type ResolverClient, type ResolverDeployment, resolveNullifier, revertCause } from "./resolve"
 
@@ -47,7 +48,7 @@ function client(o: { head: bigint; log?: Awaited<ReturnType<typeof bridgedLog>>;
 		o.log && o.log.blockNumber >= q.fromBlock && o.log.blockNumber <= q.toBlock ? [o.log] : [],
 	)
 	const readContract = vi.fn(async (_q: { functionName: string; blockNumber: bigint }) => o.spentAt ?? 0n)
-	return { c: { getBlockNumber: async () => o.head, getLogs, readContract } as unknown as ResolverClient, getLogs, readContract }
+	return { c: { request: headRequest(() => o.head), getLogs, readContract } as unknown as ResolverClient, getLogs, readContract }
 }
 
 describe("resolveNullifier", () => {

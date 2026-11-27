@@ -39,8 +39,11 @@ export type ExitWitness = { epoch: bigint; leafId: bigint }
 
 export type ExitReads<W extends ExitWitness = ExitWitness> = {
 	witness(t: ExitTicket): Promise<W | undefined>
-	/** The transaction of the portal's `ExitSettled` with exactly this pair, if any. */
-	settledTx(w: ExitWitness): Promise<Hash | null>
+	/**
+	 * The transaction of the portal's `ExitSettled` with exactly this pair, if any. The scan reaches at
+	 * least `floor`, such as a receipt's block: a node can lag the one that served the receipt.
+	 */
+	settledTx(w: ExitWitness, floor?: bigint): Promise<Hash | null>
 	consumed(w: ExitWitness): Promise<boolean>
 }
 

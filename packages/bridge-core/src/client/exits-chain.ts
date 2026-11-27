@@ -29,7 +29,7 @@ import type { ClientDeployment } from "./deployment"
 import { BridgeClientError } from "./errors"
 import { allPages, type ExitReads, type ExitWitness, messageIndices, settleWith } from "./exits"
 import { callPayload, sponsored } from "./payload"
-import { windowedLogs } from "./resolve"
+import { freshHead, windowedLogs } from "./resolve"
 import type { ExitTicket } from "./types"
 
 const EXIT_SETTLED = getAbiItem({ abi: PROCESSOR_PORTAL_ABI, name: "ExitSettled" })
@@ -42,10 +42,7 @@ export type ExitProof = ExitWitness & { numCheckpointsInEpoch: bigint; leafIndex
 
 export type ExitNode = Pick<AztecNode, "getPublicLogsByTags" | "getTxReceipt" | "getL2ToL1Messages" | "getBlock" | "getCheckpointsData">
 
-export type ExitReader = Pick<
-	PublicClient,
-	"readContract" | "getLogs" | "getBlockNumber" | "simulateContract" | "waitForTransactionReceipt"
->
+export type ExitReader = Pick<PublicClient, "readContract" | "getLogs" | "request" | "simulateContract" | "waitForTransactionReceipt">
 
 export type ExitContext = { deployment: ClientDeployment; reader: ExitReader; node: ExitNode; receiptTimeoutMs: number }
 
@@ -206,9 +203,9 @@ export function exitReads(c: ExitContext): ExitReads<ExitProof> {
 	const d = c.deployment
 	return {
 		witness: (t) => proofOf(c, t),
-		settledTx: async (w) => {
-			// Uncached: a settle mined within viem's cache window must be inside the scan.
-			const head = await c.reader.getBlockNumber({ cacheTime: 0 })
+		settledTx: async (w, floor = 0n) => {
+			const latest = await freshHead(c.reader)
+			const head = latest > floor ? latest : floor
 			const logs = await windowedLogs(d.deployBlock, head, true, async (fromBlock, toBlock) => {
 				const window = await c.reader.getLogs({
 					address: d.portal,
@@ -262,7 +259,7 @@ export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): P
 		const hash = await sendSettle(c, l1, account, t, w)
 		const receipt = await c.reader.waitForTransactionReceipt({ hash, timeout: c.receiptTimeoutMs }).catch(() => null)
 		// A failed read after the broadcast must not lose its hash; the caller re-reads the ticket later.
-		const settled = await io.settledTx(w).catch(() => undefined)
+		const settled = await io.settledTx(w, receipt?.blockNumber).catch(() => undefined)
 		if (settled) return settled
 		if (!receipt || settled === undefined) throw new BridgeClientError("UNCERTAIN", { l1TxHash: hash })
 		throw new BridgeClientError(receipt.status === "success" ? "RPC_INCONSISTENT" : "REVERTED", { l1TxHash: hash })
