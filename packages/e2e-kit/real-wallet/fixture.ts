@@ -20,7 +20,7 @@ import { type WalletDriver, walletDriver } from "./driver"
 import { type EgressRecorder, type Listener, startEgressRecorder, startOwnedProbe, startTripwire } from "./egress-recorder"
 import { fetchWallet, readWalletPin } from "./fetch-wallet"
 import { snapshotOwned } from "./inventory"
-import { launchWallet, type WalletLaunch } from "./launch"
+import { declaredRefusals, launchWallet, type WalletLaunch } from "./launch"
 import { type NodeRecorder, startNodeRecorder } from "./node-recorder"
 import { cacheHashes, pinnedCache, seedCache, startSeedServer } from "./seed"
 
@@ -91,6 +91,7 @@ async function runCanaries(
 	probe: Listener & { connections(): number },
 ) {
 	const before = probe.connections()
+	const earlier = egress.hits().length
 	const wire = `127.0.0.1:${tripwire.port}`
 	const page = await context.newPage()
 	await page.evaluate(
@@ -100,7 +101,12 @@ async function runCanaries(
 		[`http://${CANARY_HOST.replace(":80", "")}/`, `http://${wire}/`, `http://127.0.0.1:${probe.port}/`],
 	)
 	await page.close()
-	const seen = new Set(egress.hits().map((h) => h.target))
+	const seen = new Set(
+		egress
+			.hits()
+			.slice(earlier)
+			.map((h) => h.target),
+	)
 	const broken = [
 		!seen.has(CANARY_HOST) && "the remote canary never reached the recorder",
 		!seen.has(wire) && "the unowned loopback canary never reached the recorder",
@@ -195,11 +201,15 @@ export const test = base.extend<{ fences: undefined; digested: undefined }, { ru
 				created = dir
 				const p = await prepare(run, dir, log)
 				const egress = await startEgressRecorder()
+				closers.push(egress.close)
 				const tripwire = await startTripwire()
+				closers.push(tripwire.close)
 				const probe = await startOwnedProbe()
+				closers.push(probe.close)
 				const node = await startNodeRecorder(p.stack.nodeUrl)
+				closers.push(node.close)
 				const seedServer = await startSeedServer(p.seed)
-				closers.push(egress.close, tripwire.close, probe.close, node.close, seedServer.close)
+				closers.push(seedServer.close)
 				const plan = { profileDir: p.profileDir, extensionDir: p.extensionDir, recorderPort: egress.port }
 
 				const seeding = await launchFenced({ ...plan, ownedPorts: [seedServer.port, probe.port] }, true)
@@ -264,7 +274,7 @@ export const test = base.extend<{ fences: undefined; digested: undefined }, { ru
 	fences: [
 		async ({ realWallet }, use) => {
 			await use(undefined)
-			const declared = new Set((readDeclared().hosts ?? []).map((h) => h.host))
+			const declared = new Set(declaredRefusals())
 			const refused = refusals(realWallet).filter((r) => !declared.has(r.target))
 			expect(refused, "every refused host is one the director approved").toEqual([])
 			expect(
@@ -275,10 +285,6 @@ export const test = base.extend<{ fences: undefined; digested: undefined }, { ru
 		{ auto: true },
 	],
 })
-
-function readDeclared(): { hosts?: { host: string }[] } {
-	return JSON.parse(readFileSync(new URL("./declared-refusals.json", import.meta.url), "utf8"))
-}
 
 /** Each refused target once, with every context that tried it; recorder-only targets came from no page or worker. */
 export function refusals(rw: Pick<RealWallet, "egress" | "requests" | "canaryTargets">): { target: string; from: string[] }[] {

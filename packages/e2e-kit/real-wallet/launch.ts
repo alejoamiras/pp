@@ -6,6 +6,7 @@
  * that disables it) decides what loopback reaches; `<-loopback>` here removes Chromium's own
  * implicit loopback bypass, and each owned port is added back one by one.
  */
+import { readFileSync } from "node:fs"
 import { type BrowserContext, chromium, type Worker } from "@playwright/test"
 
 export interface LaunchPlan {
@@ -24,7 +25,16 @@ export interface WalletLaunch {
 	worker: Worker
 }
 
-export function fenceArgs(p: Pick<LaunchPlan, "recorderPort" | "ownedPorts">): string[] {
+/** The `host:port` targets the fence must keep refusing, each approved in `declared-refusals.json`. */
+export function declaredRefusals(): string[] {
+	const file = JSON.parse(readFileSync(new URL("./declared-refusals.json", import.meta.url), "utf8")) as { hosts?: { host: string }[] }
+	return (file.hosts ?? []).map((h) => h.host)
+}
+
+/** @throws Error when an owned port is a declared refusal: a port-0 listener can land on one, and owning it would bypass the recorder. */
+export function fenceArgs(p: Pick<LaunchPlan, "recorderPort" | "ownedPorts">, refused: string[] = declaredRefusals()): string[] {
+	const clash = p.ownedPorts.filter((port) => refused.includes(`127.0.0.1:${port}`))
+	if (clash.length > 0) throw new Error(`fence: owned port ${clash.join(", ")} is one the fence must refuse`)
 	const bypass = ["<-loopback>", ...p.ownedPorts.map((port) => `127.0.0.1:${port}`)].join(";")
 	return [
 		`--proxy-server=http://127.0.0.1:${p.recorderPort}`,
