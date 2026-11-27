@@ -91,7 +91,6 @@ describe("snapshots", () => {
 			const err = errorOf(() => parseAspSnapshot(mutate(wire)))
 			expect(err, name).toBeInstanceOf(SnapshotError)
 			expect((err as SnapshotError).code, name).toBe(code)
-			// The unverified parse builds no tree, so it takes a root as declared and refuses everything else the same way.
 			const shallow = errorOf(() => parseAspSnapshotUnverified(mutate(wire)))
 			expect((shallow as SnapshotError | undefined)?.code, name).toBe(code === "RootMismatch" ? undefined : code)
 		}

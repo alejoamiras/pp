@@ -38,10 +38,11 @@ such as a browser, should use these instead:
    - A label not in its origin's list is `ABSENT` after one leaf hash, with no tree built.
    - A found label builds only its origin's tree, once. The answer is `ACTIVE` with the path from that
      tree, or `SnapshotError("RootMismatch")` if the list does not build to the declared root.
-   - Verified trees are kept by root, so a later record with the same root (a heartbeat) costs no
-     rebuild. A tree is dropped once the record's roots move on.
+   - Verified trees are kept by root. A later snapshot with the same root and the same list (a
+     heartbeat) costs no rebuild; a different list is built on its own, because a root does not
+     prove a list complete. A tree is dropped once the record's roots move on.
 3. `onProgress(hashed, total)` reports each build's hashes against its exact total; a Web Worker can
-   forward it.
+   forward it. It runs inside the build, so it must not call `check`.
 
 The answers and their trust limits are those of `labelState` and `pathFor`.
 
