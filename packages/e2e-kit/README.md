@@ -1,10 +1,10 @@
 # @pp/e2e-kit
 
-The Playwright kit a web app under `apps/web` will be driven with: a real Chromium against a real
-local network, with a wallet that is not a product wallet. It holds an `@aztec-labs/wallets`
-embedded wallet behind `@aztec-labs/wallet-sdk`'s iframe handler (`test-wallet/`) and an injected
-EIP-1193 L1 wallet answered from Node (`fixtures/l1-wallet.ts`). No app exists yet, so a run stops
-after the sandbox boots and the wallet bundles against it.
+The Playwright kit the web app in `apps/web` is driven with: a real Chromium against a real local
+network, with a wallet that is not a product wallet. It holds an `@aztec-labs/wallets` embedded
+wallet behind `@aztec-labs/wallet-sdk`'s iframe handler (`test-wallet/`) and an injected EIP-1193 L1
+wallet answered from Node (`fixtures/l1-wallet.ts`). The specs live in `apps/web/e2e`;
+`bun run --cwd apps/web e2e` runs this kit.
 
 ```bash
 bun run --cwd packages/e2e-kit test:browser                    # everything, one sandbox
@@ -18,12 +18,12 @@ bun run --cwd packages/e2e-kit test:browser reap               # stop sandboxes 
 2. `sandbox:up` from `packages/bridge-core` (anvil, `aztec start --local-network`, a bridge
    generation).
 3. `build:test-wallet` with the run's node and app origin baked in.
-4. Once `apps/web` exists: its `build:local` with the node and wallet URLs, then a check that both
-   bundles name the node, then Playwright with one `vite preview` per build.
+4. The app's `build:local` with the node and wallet URLs, then a check that both bundles name the
+   node, then Playwright with one `vite preview` per build.
 5. Reap.
 
-State lives under `.e2e-state/<run>/` (gitignored): ports, the sandbox artifacts, both builds, logs,
-traces. `PP_E2E_KEEP=1` keeps the sandbox and prints the line that reattaches to it
+State lives under `.e2e-state/<run>/` (gitignored), or `PP_E2E_STATE_DIR` when set: ports, the
+sandbox artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the sandbox and prints the line that reattaches to it
 (`PP_E2E_ATTACH=<state dir>`, with `PP_E2E_REBUILD=1` to rebuild).
 
 ## Layout
@@ -41,7 +41,7 @@ traces. `PP_E2E_KEEP=1` keeps the sandbox and prints the line that reattaches to
 | `fixtures/build-artifacts/handle.json` | placeholder handle for the build-only CI job; names no live network and holds no key |
 | `test-wallet/` | the wallet page: `profile.ts`, `wallet.ts` (embedded wallet, grant, wallet-specific RPCs), `main.ts` (the handler and the control hook `window.__ppTestWallet`), its own `vite.config.mts` |
 | `shard-reporter.ts`, `scripts/e2e/shard-plan.ts` | under `--shard`, deal whole spec files by recorded duration instead of test count |
-| `shard-durations.json` | the record `shard-plan.ts` reads; empty until the app has specs |
+| `shard-durations.json` | the record `shard-plan.ts` reads; empty until the suite is sharded |
 | `scripts/e2e/resolve-ports.ts` | claims and releases the run's ports in the host registry |
 
 ## Accounts
@@ -79,7 +79,8 @@ network.
 ## CI
 
 `pr-quick.yml` builds the test wallet against `fixtures/build-artifacts` on every change the kit can
-see. The browser suite itself does not run in CI until `apps/web` has specs.
+see. `web.yml` runs the whole browser suite, sandbox included, on every change the app or the kit
+can see.
 
 ## Rules
 
