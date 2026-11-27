@@ -209,9 +209,11 @@ async function readBack(h: Internals, block: StackBridgeBlock): Promise<void> {
  * a message nothing can claim). Any mismatch throws with entries still paused.
  * @throws BindingMismatchError, LegacyHubError, or Error naming the read that disagreed
  */
-export async function openBridgeEntries(u: UnopenedBridge, expected: ExpectedBindings): Promise<StackBridgeBlock> {
+export async function openBridgeEntries(u: UnopenedBridge, given: ExpectedBindings): Promise<StackBridgeBlock> {
 	const h = internals.get(u)
 	if (!h) throw new Error("openBridgeEntries takes the value deployBridgeGeneration returned")
+	// Copied before any await: what is checked against the chain must be what was checked as this generation's.
+	const expected = structuredClone(given)
 	assertOwnGeneration(h, u.block, expected)
 	await readBack(h, u.block)
 	await assertGenerationBindings(h.l1.pub as never, expected, "stack bridge")
