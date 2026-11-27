@@ -75,6 +75,8 @@ async function world() {
 		posted: false,
 		head: 300n,
 		cachedHead: undefined as bigint | undefined,
+		/** How far the reader's node trails the one that serves receipts. */
+		lag: 0n,
 		consumed: new Set<string>(),
 		settled: [] as { epoch: bigint; leafId: bigint; tx: Hash; block: bigint }[],
 	}
@@ -107,7 +109,7 @@ async function world() {
 			state.cachedHead ??= state.head
 			return state.cachedHead
 		},
-		request: headRequest(() => state.head),
+		request: headRequest(() => state.head - state.lag),
 		readContract: vi.fn(async (q: { functionName: string; args: bigint[] }) => {
 			if (q.functionName === "getRoots")
 				return Array.from({ length: 32 }, (_, i) => (i === 0 && state.posted ? root.toString() : zero))
@@ -119,7 +121,11 @@ async function world() {
 				.map((s) => ({ args: { epoch: s.epoch, leafId: s.leafId }, transactionHash: s.tx, blockNumber: s.block, removed: false })),
 		),
 		simulateContract: vi.fn(async (_call: unknown) => ({})),
-		waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: Hash }) => ({ status: "success", transactionHash: hash })),
+		waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: Hash }) => ({
+			status: "success",
+			transactionHash: hash,
+			blockNumber: state.settled.find((s) => s.tx === hash)?.block,
+		})),
 	}
 	// The portal settles a leaf once: consume at (epoch, 2^|path| + leafIndex), then ExitSettled.
 	const writeContract = vi.fn(async (call: { args: readonly unknown[] }) => {
@@ -211,6 +217,14 @@ describe("settle", () => {
 			expect(writeContract).toHaveBeenCalledOnce()
 		},
 	)
+
+	it("returns its own settle's transaction when the reader's node lags the receipt", async () => {
+		const { c, state, l1 } = await world()
+		state.posted = true
+		const [t] = await exitTickets(c, {})
+		state.lag = 1n
+		expect(await settle(c, t!, l1)).toBe(state.settled[0]?.tx)
+	})
 
 	it("keeps a broadcast settle's hash as UNCERTAIN when the event lookup after it fails", async () => {
 		const { c, state, reader, l1, writeContract } = await world()

@@ -203,8 +203,9 @@ export function exitReads(c: ExitContext): ExitReads<ExitProof> {
 	const d = c.deployment
 	return {
 		witness: (t) => proofOf(c, t),
-		settledTx: async (w) => {
-			const head = await freshHead(c.reader)
+		settledTx: async (w, floor = 0n) => {
+			const latest = await freshHead(c.reader)
+			const head = latest > floor ? latest : floor
 			const logs = await windowedLogs(d.deployBlock, head, true, async (fromBlock, toBlock) => {
 				const window = await c.reader.getLogs({
 					address: d.portal,
@@ -258,7 +259,7 @@ export async function settle(c: ExitContext, t: ExitTicket, l1: WalletClient): P
 		const hash = await sendSettle(c, l1, account, t, w)
 		const receipt = await c.reader.waitForTransactionReceipt({ hash, timeout: c.receiptTimeoutMs }).catch(() => null)
 		// A failed read after the broadcast must not lose its hash; the caller re-reads the ticket later.
-		const settled = await io.settledTx(w).catch(() => undefined)
+		const settled = await io.settledTx(w, receipt?.blockNumber).catch(() => undefined)
 		if (settled) return settled
 		if (!receipt || settled === undefined) throw new BridgeClientError("UNCERTAIN", { l1TxHash: hash })
 		throw new BridgeClientError(receipt.status === "success" ? "RPC_INCONSISTENT" : "REVERTED", { l1TxHash: hash })
