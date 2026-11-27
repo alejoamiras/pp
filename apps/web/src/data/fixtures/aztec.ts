@@ -186,14 +186,24 @@ export function fixtureAztec(w: World): AztecPort {
 				return null
 			})
 		},
-		async exitPublic(from, { payee, amount }) {
+		async exitPublic(from, { payee, amount }, on) {
 			checkPayee(w, payee)
+			on.handoff()
 			return send(w, "exitPublic", () => {
 				if (publicOf(w, from) < amount) return "public balance too low"
 				addPublic(w, from, -amount)
 				addExit(w, { kind: "public", payee, amount, label: 0n })
 				return null
 			})
+		},
+		async unshieldAndExit(from, { payee, amount, label, origin }, on) {
+			checkPayee(w, payee)
+			on.handoff()
+			return send(
+				w,
+				"unshieldAndExit",
+				checkedSpend(w, from, label, origin, amount, () => addExit(w, { kind: "public", payee, amount, label: 0n })),
+			)
 		},
 	}
 }

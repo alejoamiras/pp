@@ -21,6 +21,7 @@ export type AppCode =
 	| "NO_SENDER"
 	| "TX_REVERTED"
 	| "UNSHIELD_REVERTED"
+	| "WITHDRAW_REVERTED"
 	| "TX_DROPPED"
 	| "TX_UNCONFIRMED"
 	| "TX_UNSETTLED"
@@ -85,6 +86,8 @@ const MESSAGES: Record<UiCode, string> = {
 	TX_REVERTED: "The transaction reverted on Aztec. Refresh your balances, then try again.",
 	UNSHIELD_REVERTED:
 		"The unshield reverted: the fee was paid; your notes are safe. Sending and unshielding wait until that transaction is final.",
+	WITHDRAW_REVERTED:
+		"The withdrawal reverted: the fee was paid; your notes are safe. Sending, unshielding and withdrawing wait until that transaction is final.",
 	TX_DROPPED:
 		"Aztec has not included the transaction yet, and it may still be. The page will not send it again, and sending from this account waits until Refresh reads it included.",
 	TX_UNCONFIRMED:
@@ -93,7 +96,8 @@ const MESSAGES: Record<UiCode, string> = {
 		"Your last send from this account may still land on Aztec. Sending waits until Refresh reads that transaction included or reverted, so the same funds cannot go out twice.",
 	TX_UNSETTLED_NO_HASH:
 		"Your last send from this account may have gone out, and the page has no transaction to check. Sending stays closed until you reload; check your wallet's activity first, or the same funds can go out twice.",
-	WAIT_FINALITY: "Send and Unshield wait for finality: the reverted unshield's block must be proven first. Refresh to check.",
+	WAIT_FINALITY:
+		"Send, Unshield and Withdraw wait for finality: the reverted transaction's block must be proven first. Refresh to check.",
 	TX_BUSY: "Wait for your last Aztec transaction to finish.",
 	BRIDGE_UNAVAILABLE: "Bridging is not available in this version of the app yet. Your notes stay in the pool.",
 	LIST_TIMEOUT: "The allow list took too long to download, so no label was checked. Check again.",

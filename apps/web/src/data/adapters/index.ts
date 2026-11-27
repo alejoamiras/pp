@@ -83,12 +83,21 @@ const loadSessions = (): Promise<SessionPort> =>
 		}),
 	))
 
-type ExitSide = Pick<AztecPort, "ragequit"> & ExitPort
+type ExitSide = {
+	exits: Pick<AztecPort, "ragequit"> & ExitPort
+	withdraw: Pick<AztecPort, "exitPublic" | "unshieldAndExit">
+}
 let exitsLoad: Promise<ExitSide> | undefined
+/** The exits and the withdrawals share one bridge client, in the chunk the build lets carry it. */
 const loadExits = (): Promise<ExitSide> =>
-	(exitsLoad ??= Promise.all([import("./session"), loadAztec()]).then(([m, side]) =>
-		m.stackExits({ manifest, deployment, aztec: side.deps, notes: (owner, label) => side.port.notesByLabel(owner, label), l1 }),
-	))
+	(exitsLoad ??= Promise.all([import("./session"), loadAztec()]).then(([m, side]) => {
+		const client = m.exitClient(manifest)
+		const notes: AztecPort["notesByLabel"] = (owner, label) => side.port.notesByLabel(owner, label)
+		return {
+			exits: m.stackExits({ manifest, deployment, aztec: side.deps, notes, l1, client }),
+			withdraw: m.stackWithdraw({ aztec: side.deps, allowList, sponsoredFpc: deployment.sponsoredFpc, client }),
+		}
+	}))
 
 type SendSide = Pick<AztecPort, "transferPrivate" | "unshield" | "shield">
 let sendsLoad: Promise<SendSide> | undefined
@@ -115,12 +124,13 @@ const aztec: AztecPort = {
 	transferPrivate: async (from, a, on) => (await loadSends()).transferPrivate(from, a, on),
 	unshield: async (from, a, on) => (await loadSends()).unshield(from, a, on),
 	shield: async (from, amount, on) => (await loadSends()).shield(from, amount, on),
-	ragequit: async (from, a, on) => (await loadExits()).ragequit(from, a, on),
-	exitPublic: unavailable("AztecPort.exitPublic"),
+	ragequit: async (from, a, on) => (await loadExits()).exits.ragequit(from, a, on),
+	exitPublic: async (from, a, on) => (await loadExits()).withdraw.exitPublic(from, a, on),
+	unshieldAndExit: async (from, a, on) => (await loadExits()).withdraw.unshieldAndExit(from, a, on),
 }
 const exits: ExitPort = {
-	tickets: async (payee) => (await loadExits()).tickets(payee),
-	settle: async (t, from, on) => (await loadExits()).settle(t, from, on),
+	tickets: async (payee) => (await loadExits()).exits.tickets(payee),
+	settle: async (t, from, on) => (await loadExits()).exits.settle(t, from, on),
 }
 /** The allow list loads on first use; its worker starts at the first check. */
 let allowLoad: Promise<AllowListPort> | undefined

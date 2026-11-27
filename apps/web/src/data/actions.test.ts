@@ -76,5 +76,15 @@ describe("dispatch", () => {
 			),
 		).rejects.toBeInstanceOf(NotGrantedError)
 		expect(ragequit).not.toHaveBeenCalled()
+		// A screened exit sends the unshield and the public exit in one transaction, so it needs both.
+		const unshieldAndExit = vi.fn(async () => ({ txHash: "0x01" as const, status: "success" as const }))
+		const screened = { payee: "0x0000000000000000000000000000000000000001", amount: 1n, label: 1n, origin: 0 } as const
+		for (const withheld of ["unshield", "exitPublic"] as const) {
+			const both = guardAztec({ unshieldAndExit } as unknown as AztecPort, (a) => a !== withheld)
+			await expect(both.unshieldAndExit(ACCOUNT, screened, { epoch: 1, handoff: () => {} })).rejects.toMatchObject({
+				action: withheld,
+			})
+		}
+		expect(unshieldAndExit).not.toHaveBeenCalled()
 	})
 })

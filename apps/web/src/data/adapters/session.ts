@@ -41,7 +41,8 @@ import { bridgeTiming } from "./timing"
 import { type DelegatingProver, delegatingProver } from "./prover"
 
 // The exits run over the same bridge-core, whose SponsoredFPC artifact the build lets only this chunk carry.
-export { stackExits } from "./exits"
+export { exitClient, stackExits } from "./exits"
+export { stackWithdraw } from "./withdraw"
 
 /** Every journal key this app writes starts with this; nothing else in the page's storage does. */
 export const JOURNAL_PREFIX = "pp.web.bridge."

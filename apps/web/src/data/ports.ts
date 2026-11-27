@@ -199,7 +199,17 @@ export interface AztecPort {
 	 * are right before sending, else refuses with `NO_EXACT_CHUNKS`.
 	 */
 	ragequit(from: AztecAddress, a: { payee: Address; label: bigint; amount: bigint }, on: AztecSendHooks): Promise<Sent>
-	exitPublic(from: AztecAddress, a: { payee: Address; amount: bigint }): Promise<Sent>
+	exitPublic(from: AztecAddress, a: { payee: Address; amount: bigint }, on: AztecSendHooks): Promise<Sent>
+	/**
+	 * A checked spend that unshields `amount` of the label and exits it to `payee` in one transaction,
+	 * so the label never reaches Ethereum; the account is public on Aztec. Reverts whole if the label's
+	 * roots changed before its public step.
+	 */
+	unshieldAndExit(
+		from: AztecAddress,
+		a: { payee: Address; amount: bigint; label: bigint; origin: Origin },
+		on: AztecSendHooks,
+	): Promise<Sent>
 }
 
 /** Identical exits in one transaction differ only by their message index. */

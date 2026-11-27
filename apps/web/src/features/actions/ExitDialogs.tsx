@@ -8,7 +8,7 @@ import { BridgeFailure, codeOf, messageOf } from "../../data/errors"
 import type { AztecSendHooks, LabelBalance } from "../../data/ports"
 import { bindAztecSend } from "../../data/sends"
 import { ActionButton, Amount, Callout, Choices, Facts, formatAmount, LabelChip } from "../../ui"
-import { ActionShell, AmountField, OwnerWarning, PayeeField, useAction, useAmount, usePayee } from "./shared"
+import { ActionShell, AmountField, type Guard, OwnerWarning, PayeeField, useAction, useAmount, usePayee } from "./shared"
 
 const PUBLIC_LABEL = "Leaving to Ethereum is public: it shows this label on Ethereum, next to the payee."
 const COLLECT = "The exit is on Aztec. Collect it on Ethereum from Exits once its epoch is proven."
@@ -56,6 +56,18 @@ function ExitReview({ payee, amount, label, confirm, busy, onBack, onConfirm }: 
 	)
 }
 
+/** `on` behind the attempt's guard, with the payee joining Exits at the handoff: an exit whose outcome is never read must still be listed. */
+function listedAt(guard: Guard, on: AztecSendHooks, list: () => void): AztecSendHooks {
+	const g = guard(on)
+	return {
+		...g,
+		handoff() {
+			g.handoff()
+			list()
+		},
+	}
+}
+
 /** The sums of the label's 1 to 8 largest notes, as choices. */
 function useChunkChoices(account: AztecAddress, label: bigint) {
 	const { source, aztec } = useApp()
@@ -98,19 +110,14 @@ export function RagequitDialog({ account, balance, onClose }: RagequitProps) {
 			return act.fail(codeOf(err) ?? "CONTEXT_CHANGED")
 		}
 		// The note read runs under the send lock, so a second click or a Back meanwhile sends nothing more.
-		// The payee joins Exits at the handoff: an exit whose outcome is never read must still be listed.
 		await act.send("ragequit", async (guard) => {
 			if (ragequitChunks(await aztec.notesByLabel(account, balance.label), amount).length !== 1)
 				throw new BridgeFailure("NO_EXACT_CHUNKS")
-			const g = guard(on)
-			const listed = {
-				...g,
-				handoff() {
-					g.handoff()
-					addPayee(to)
-				},
-			}
-			return aztec.ragequit(account, { payee: to, label: balance.label, amount }, listed)
+			return aztec.ragequit(
+				account,
+				{ payee: to, label: balance.label, amount },
+				listedAt(guard, on, () => addPayee(to)),
+			)
 		})
 	}
 	const missing = amount === null ? "Pick an amount first." : !payee.payee ? "Enter a valid payee first." : undefined
@@ -162,17 +169,30 @@ export function RagequitDialog({ account, balance, onClose }: RagequitProps) {
 	)
 }
 
-/** Leaves the public balance to Ethereum; no label is shown there. */
+/** Leaves the public balance to Ethereum; no label is shown there. The send stays bound to the Aztec connection the confirm was made in. */
 export function WithdrawDialog({ account, amount: available, onClose }: { account: AztecAddress; amount: bigint; onClose(): void }) {
-	const { aztec, addPayee } = useApp()
+	const { aztec, live, addPayee } = useApp()
 	const amount = useAmount(available)
 	const payee = usePayee()
 	const [review, setReview] = useState(false)
 	const act = useAction(account)
 	const confirm = async () => {
-		if (amount.amount === null || !payee.payee) return
-		const a = { payee: payee.payee, amount: amount.amount }
-		if (await act.send("exitPublic", () => aztec.exitPublic(account, a))) addPayee(a.payee)
+		const to = payee.payee
+		if (amount.amount === null || !to) return
+		const a = { payee: to, amount: amount.amount }
+		let on: AztecSendHooks
+		try {
+			on = bindAztecSend(live.get, account)
+		} catch (err) {
+			return act.fail(codeOf(err) ?? "CONTEXT_CHANGED")
+		}
+		await act.send("exitPublic", (guard) =>
+			aztec.exitPublic(
+				account,
+				a,
+				listedAt(guard, on, () => addPayee(to)),
+			),
+		)
 	}
 	const missing = amount.amount === null ? "Enter an amount first." : !payee.payee ? "Enter a valid payee first." : undefined
 	return (

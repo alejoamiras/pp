@@ -48,7 +48,8 @@ function appTicket(t: CoreExitTicket): ExitTicket {
 	return { ...t, token }
 }
 
-function exitClient(json: StackManifestJson) {
+/** One bridge client over the manifest that keeps no journal: reads, tickets and payload builders only. */
+export function exitClient(json: StackManifestJson): BridgeClient {
 	const manifest = parseStackManifest(json)
 	return createBridgeClient({ manifest, journal: NO_JOURNAL, timing: bridgeTiming(manifest) })
 }
