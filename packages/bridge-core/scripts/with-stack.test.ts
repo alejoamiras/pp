@@ -34,6 +34,28 @@ function withStack(mode: string, commands: string[], onLine?: (line: string, pid
 	)
 }
 
+const alive = (pid: number) => {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch {
+		return false
+	}
+}
+
+/** Runs `command` (which prints `child <pid>`), sending SIGTERM to the wrapper once the pid shows if `term`. */
+async function withChild(command: string, term: boolean) {
+	let child = 0
+	const started = Date.now()
+	const r = await withStack("ready", [command], (line, pid) => {
+		const m = line.match(/^child (\d+)$/)
+		if (!m || child) return
+		child = Number(m[1])
+		if (term) process.kill(pid, "SIGTERM")
+	})
+	return { ...r, child, ms: Date.now() - started }
+}
+
 describe("with-stack", () => {
 	it("stops the command and the stack on SIGTERM to the wrapper, exiting 143 with nothing left", async () => {
 		let sent = false
@@ -46,6 +68,29 @@ describe("with-stack", () => {
 		expect(r.code).toBe(143)
 		expect(r.output).not.toContain("residue")
 		expect(existsSync(runDir(r.id))).toBe(false)
+	}, 30_000)
+
+	it.each([
+		["a child its shell started", "sleep 300 & echo child $!; wait"],
+		["a shell that ignores SIGTERM", "trap '' TERM; echo child $$; while :; do sleep 1; done"],
+	])(
+		"on SIGTERM ends the command's whole group, %s included, within the grace period",
+		async (_, command) => {
+			const r = await withChild(command, true)
+			expect(r.code).toBe(143)
+			expect(r.child).toBeGreaterThan(0)
+			expect(alive(r.child)).toBe(false)
+			expect(r.output).not.toContain("residue")
+			expect(r.ms).toBeLessThan(20_000)
+		},
+		30_000,
+	)
+
+	it("kills and reports a process a command leaves behind when it exits", async () => {
+		const r = await withChild("sleep 300 & echo child $!", false)
+		expect(r.code).toBe(1)
+		expect(r.output).toContain(`residue: command group`)
+		expect(alive(r.child)).toBe(false)
 	}, 30_000)
 
 	it("still checks residue when the stack fails before it is ready", async () => {

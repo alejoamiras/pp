@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 /**
  * `bun scripts/with-stack.ts <command>…`: boots one local stack (`bun run demo --keep`) in its own
- * process group, runs each command in turn through `sh -c` with only `PP_STACK_MANIFEST` added,
- * stops the stack and checks it left nothing behind. Exits with the first failing command's code,
- * 1 when the stack fails to boot or leaves residue, 2 without a command, and 128 + the signal when
- * SIGINT, SIGTERM or SIGHUP stops it (the running command and the stack are stopped first). A
+ * process group, runs each command in turn through `sh -c` in a group of its own with only
+ * `PP_STACK_MANIFEST` added, stops the stack and checks it left nothing behind. Exits with the
+ * first failing command's code, 1 when the stack fails to boot or anything leaves residue, 2
+ * without a command, and 128 + the signal when SIGINT, SIGTERM or SIGHUP stops it (the running
+ * command's group and the stack are stopped first). A command's group gets SIGTERM, then SIGKILL
+ * after five seconds; processes a command leaves behind when it exits are killed and reported. A
  * leading `--` is dropped: Bun keeps one that follows another argument, not one right after the
  * script path. A stack that ignores SIGINT is killed by group after two minutes; any group of its
  * own that survives that shows up as residue (a port that still accepts, a registry row).
@@ -23,6 +25,7 @@ const CACHE = join(homedir(), ".cache", "pp")
 const REGISTRY = join(homedir(), ".agents", "ports.md")
 const READY_MS = 15 * 60_000
 const STOP_MS = 120_000
+const GRACE_MS = 5_000
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 /** Registry owners that belong to a stack run: its own rows and those of the services it starts. */
 const OWNER_SUFFIXES = ["", "-pool", "-bot"]
@@ -31,7 +34,16 @@ const OWNER_SUFFIXES = ["", "-pool", "-bot"]
 const bootArgv = (): string[] =>
 	process.env.PP_WITH_STACK_BOOT ? JSON.parse(process.env.PP_WITH_STACK_BOOT) : ["bun", "run", "demo", "--keep"]
 
-type Run = { child: ChildProcess; pgid: number; runId: string; command?: ChildProcess; signal?: NodeJS.Signals }
+type Run = {
+	child: ChildProcess
+	pgid: number
+	runId: string
+	/** The running command's process group. */
+	command?: number
+	signal?: NodeJS.Signals
+	/** Command groups that outlived their shell, or survived SIGKILL. */
+	leaks: string[]
+}
 
 /** Resolves with the manifest path; the run id is kept as soon as it prints, so a failed boot is still checked. */
 function awaitReady(run: Run): Promise<string> {
@@ -76,6 +88,27 @@ function portsOwnedBy(runId: string): number[] {
 		.map((c) => Number(c[1]))
 }
 
+/** Resolves once `pgid` has no member left or `ms` passed; whether it is gone. */
+async function groupGone(pgid: number, ms: number): Promise<boolean> {
+	for (const end = Date.now() + ms; groupAlive(pgid) && Date.now() < end; ) await sleep(50)
+	return !groupAlive(pgid)
+}
+
+const signalGroup = (pgid: number, s: NodeJS.Signals) => {
+	try {
+		process.kill(-pgid, s)
+	} catch {}
+}
+
+/** SIGTERM to the group, SIGKILL to whatever is left after the grace period; whether it is gone. */
+async function endGroup(pgid: number): Promise<boolean> {
+	if (!groupAlive(pgid)) return true
+	signalGroup(pgid, "SIGTERM")
+	if (await groupGone(pgid, GRACE_MS)) return true
+	signalGroup(pgid, "SIGKILL")
+	return groupGone(pgid, GRACE_MS)
+}
+
 /** What a stopped stack must not have left: its group, its ports and registry rows, its directories. */
 async function residueOf(pgid: number, runId: string, ports: readonly number[]): Promise<string[]> {
 	const left = groupAlive(pgid) ? [`process group ${pgid}`] : []
@@ -99,20 +132,25 @@ async function stop(run: Run): Promise<void> {
 
 const signalExit = (s: NodeJS.Signals) => 128 + constants.signals[s]
 
-function runCommand(run: Run, command: string, manifest: string): Promise<number> {
+/** Runs one command in its own group; once its shell exits, nothing of that group stays alive. */
+async function runCommand(run: Run, command: string, manifest: string): Promise<number> {
 	console.log(`[with-stack] ${command}`)
+	// stdin is closed: a background group that read the terminal would stop on SIGTTIN.
 	const child = spawn("sh", ["-c", command], {
 		cwd: process.cwd(),
-		stdio: "inherit",
+		detached: true,
+		stdio: ["ignore", "inherit", "inherit"],
 		env: { ...process.env, PP_STACK_MANIFEST: manifest },
 	})
-	run.command = child
-	return new Promise((resolve) =>
-		child.once("exit", (code, signal) => {
-			run.command = undefined
-			resolve(code ?? (signal ? signalExit(signal as NodeJS.Signals) : 1))
-		}),
+	const pgid = child.pid!
+	run.command = pgid
+	const code = await new Promise<number>((resolve) =>
+		child.once("exit", (c, signal) => resolve(c ?? (signal ? signalExit(signal as NodeJS.Signals) : 1))),
 	)
+	run.command = undefined
+	if (groupAlive(pgid) && !run.signal) run.leaks.push(`command group ${pgid} outlived its shell`)
+	if (!(await endGroup(pgid))) run.leaks.push(`command group ${pgid} survived SIGKILL`)
+	return code
 }
 
 async function runCommands(run: Run, commands: readonly string[], manifest: string): Promise<number> {
@@ -131,7 +169,7 @@ function onSignals(run: Run): { interrupted: Promise<never>; dispose: () => void
 	const handler = (s: NodeJS.Signals) => {
 		if (run.signal) return
 		run.signal = s
-		run.command?.kill("SIGTERM")
+		if (run.command) void endGroup(run.command)
 		reject(new Error(`received ${s}`))
 	}
 	for (const s of SIGNALS) process.on(s, handler)
@@ -151,7 +189,7 @@ async function main(argv: readonly string[]): Promise<number> {
 	const env = { ...process.env, PP_STACK_MANIFEST: undefined }
 	const [cmd, ...args] = bootArgv()
 	const child = spawn(cmd!, args, { cwd: ROOT, detached: true, stdio: ["ignore", "pipe", "inherit"], env })
-	const run: Run = { child, pgid: child.pid!, runId: "" }
+	const run: Run = { child, pgid: child.pid!, runId: "", leaks: [] }
 	const signals = onSignals(run)
 	let code = 1
 	let ports: number[] = []
@@ -166,7 +204,7 @@ async function main(argv: readonly string[]): Promise<number> {
 		await stop(run)
 		signals.dispose()
 	}
-	const left = run.runId ? await residueOf(run.pgid, run.runId, ports) : []
+	const left = [...run.leaks, ...(run.runId ? await residueOf(run.pgid, run.runId, ports) : [])]
 	if (left.length) console.error(`[with-stack] residue: ${left.join("; ")}`)
 	if (run.signal) return signalExit(run.signal)
 	return left.length && code === 0 ? 1 : code
