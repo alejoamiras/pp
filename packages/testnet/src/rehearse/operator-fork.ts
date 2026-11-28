@@ -12,21 +12,11 @@ import { fileURLToPath } from "node:url"
 import { scopedLeaves } from "@pp/asp-bot/standalone"
 import { startStandInAsp } from "@pp/pp-env/sepolia"
 import { claimPort } from "@pp/run-isolation/ports"
-import {
-	type Address,
-	createPublicClient,
-	createWalletClient,
-	erc20Abi,
-	http,
-	keccak256,
-	numberToHex,
-	parseAbi,
-	parseEther,
-	zeroAddress,
-} from "viem"
+import { type Address, createWalletClient, erc20Abi, http, keccak256, numberToHex, parseAbi, parseEther, zeroAddress } from "viem"
 import { sepolia } from "viem/chains"
 import { parseDeployment, type TestnetDeployment } from "../schema"
 import { assertNoKeyLeft, onFork } from "./fork"
+import { forkReads } from "./fork-client"
 import { budgetCheck, gasBySender } from "./gas"
 import { OPERATOR_FORK_STEPS, type OperatorForkStep } from "./operator-steps"
 import { type Recorded, type Recorder, startRecorder } from "./recorder"
@@ -61,12 +51,12 @@ function operatorExpected(addresses: Record<string, string>): NonNullable<Testne
 
 /** `amount` of the asset for `to`, minted by the token's master minter acting as its own minter. */
 async function mintAsset(fork: Fork, asset: Address, to: Address, amount: bigint): Promise<void> {
-	const client = createPublicClient({ transport: http(fork.url) })
+	const client = forkReads(fork.url)
 	const master = await client.readContract({ address: asset, abi: FIAT_TOKEN_ABI, functionName: "masterMinter" })
 	await fork.rpc("anvil_impersonateAccount", [master])
 	await fork.rpc("anvil_setBalance", [master, numberToHex(parseEther("1"))])
 	const chain = { ...sepolia, rpcUrls: { default: { http: [fork.url] } } }
-	const boss = createWalletClient({ account: master, chain, transport: http(fork.url) })
+	const boss = createWalletClient({ account: master, chain, transport: http(fork.url), ccipRead: false })
 	for (const [functionName, args] of [
 		["configureMinter", [master, amount]],
 		["mint", [to, amount]],
@@ -86,7 +76,7 @@ type Owner = { fork: Fork; owner: Address; asset: Address }
  * the run stopped before or after its key read.
  */
 async function seedStops(s: Scratch, o: Owner, args: readonly string[], code: 1 | 2, why: RegExp, env = s.env): Promise<void> {
-	const client = createPublicClient({ transport: http(o.fork.url) })
+	const client = forkReads(o.fork.url)
 	const state = () =>
 		Promise.all([
 			client.getTransactionCount({ address: o.owner }),
@@ -159,7 +149,7 @@ function aspSteps(front: Recorder, tag: string, log: (line: string) => void) {
 
 /** The stand-in, the recording front before it, and the scratch file pointing at the front. */
 async function aspFronts(runId: string, forkUrl: string, pool: Pool, push: (stop: () => Promise<void>) => void) {
-	const client = createPublicClient({ transport: http(forkUrl) })
+	const client = forkReads(forkUrl)
 	const root = await client.readContract({ address: pool.aspRegistry, abi: ASP_ROOT_ABI, functionName: "latestASPRoot" })
 	const standIn = await startStandInAsp({
 		port: await claimPort(runId, "rehearse-asp-stand-in"),
@@ -180,12 +170,7 @@ export const operatorForkRehearsal = (target: string, log: (line: string) => voi
 		)
 		if (committed.target === "own" || !committed.pool || !committed.operator || !committed.expected)
 			throw new Error(`target ${target} is not an operator target with its expected, pool and operator sections`)
-		await checkDepositDebit(
-			createPublicClient({ transport: http(fork.url) }),
-			committed.pool.entrypoint,
-			committed.pool.asset,
-			committed.expected.amounts,
-		)
+		await checkDepositDebit(forkReads(fork.url), committed.pool.entrypoint, committed.pool.asset, committed.expected.amounts)
 		log(
 			`[${target}] the committed note of ${committed.expected.amounts.note} debits ${committed.expected.amounts.debit} at the fork's block`,
 		)

@@ -48,8 +48,10 @@ async function live(fork: ForkAnvil): Promise<void> {
 	await assertFork(fork.rpc)
 }
 
+// CCIP-read is off on every client here: the fork holds copies of the operator's contracts, and an
+// `OffchainLookup` revert from one would otherwise send the client to a URL of the operator's choosing.
 export function forkReader(fork: ForkAnvil): PublicClient {
-	return createPublicClient({ chain: forkChain(fork.url), transport: http(fork.url) })
+	return createPublicClient({ chain: forkChain(fork.url), transport: http(fork.url), ccipRead: false })
 }
 
 /** A wallet on a fresh random key, funded on the fork. */
@@ -57,7 +59,7 @@ export async function freshWriter(fork: ForkAnvil, balance = 10n ** 20n): Promis
 	await live(fork)
 	const account = privateKeyToAccount(generatePrivateKey())
 	await fork.rpc("anvil_setBalance", [account.address, numberToHex(balance)])
-	return createWalletClient({ account, chain: forkChain(fork.url), transport: http(fork.url) })
+	return createWalletClient({ account, chain: forkChain(fork.url), transport: http(fork.url), ccipRead: false })
 }
 
 /** A wallet that sends as `address` through anvil's impersonation, which only a fork honours. */
@@ -65,5 +67,5 @@ export async function impersonatedWriter(fork: ForkAnvil, address: Address, bala
 	await live(fork)
 	await fork.rpc("anvil_impersonateAccount", [address])
 	await fork.rpc("anvil_setBalance", [address, numberToHex(balance)])
-	return createWalletClient({ account: address, chain: forkChain(fork.url), transport: http(fork.url) })
+	return createWalletClient({ account: address, chain: forkChain(fork.url), transport: http(fork.url), ccipRead: false })
 }

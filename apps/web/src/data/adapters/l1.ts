@@ -90,7 +90,9 @@ export function stackL1(
 	demo: DemoSender | null = null,
 ): StackL1 {
 	const chain = targetChain(t)
-	const reads = createPublicClient({ chain, transport: http(t.l1RpcUrl) })
+	// It reads the operator's live contracts, whose `OffchainLookup` revert must not send the page elsewhere
+	// whatever the CSP allows.
+	const reads = createPublicClient({ chain, transport: http(t.l1RpcUrl), ccipRead: false })
 	const need = (): InjectedWallet => {
 		if (!wallet) throw new BridgeFailure("NO_SENDER")
 		return wallet

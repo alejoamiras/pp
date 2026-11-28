@@ -19,6 +19,7 @@ import type { FundedRole } from "../funding"
 import { generateKey, KEY_NAMES, keyFilePath, loadKeys } from "../keyfile"
 import { SEPOLIA } from "../network"
 import { configuredTarget, parseDeployment, type TestnetDeployment } from "../schema"
+import { forkReads } from "./fork-client"
 import { budgetCheck, gasBySender } from "./gas"
 import { listeningPorts, runCli, startCli, untilEvent } from "./runner"
 import { assertNoKeyIn, expectedOf, filesUnder, loadScratch, must, promote, type Scratch, writeScratch } from "./scratch"
@@ -82,11 +83,11 @@ async function stranger(c: Ctx) {
 	const d = loadScratch(c)
 	const pool = d.pool as NonNullable<TestnetDeployment["pool"]>
 	const note = (d.expected as NonNullable<TestnetDeployment["expected"]>).amounts.note
-	const client = createPublicClient({ transport: http(c.forkUrl) })
+	const client = forkReads(c.forkUrl)
 	const account = privateKeyToAccount(key)
 	await client.request({ method: "anvil_setBalance", params: [account.address, numberToHex(parseEther("1"))] } as never)
 	const chain = { ...sepolia, rpcUrls: { default: { http: [c.forkUrl] } } }
-	const wallet = createWalletClient({ account, chain, transport: http(c.forkUrl) })
+	const wallet = createWalletClient({ account, chain, transport: http(c.forkUrl), ccipRead: false })
 	const hash = await wallet.writeContract({
 		address: pool.asset,
 		abi: MINT_ABI,
@@ -174,7 +175,7 @@ export async function onFork<T>(runId: string, tag: string, log: (line: string) 
 	mkdirSync(join(dir, "home"), { recursive: true, mode: 0o700 })
 	try {
 		const own = parseDeployment(JSON.parse(readFileSync(OWN, "utf8")))
-		const live = createPublicClient({ transport: http(own.network.l1Rpc) })
+		const live = createPublicClient({ transport: http(own.network.l1Rpc), ccipRead: false })
 		const block = (await live.getBlock({ blockTag: "finalized" })).number
 		const fork = await startForkAnvil({ endpoint: own.network.l1Rpc, block, runId, dataDir: dir, cleanup })
 		const env = {

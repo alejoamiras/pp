@@ -20,6 +20,7 @@ import type { FundedRole } from "../funding"
 import { generateKey, KEY_NAMES } from "../keyfile"
 import { LOCAL } from "../network"
 import { parseDeployment, type TestnetDeployment } from "../schema"
+import { aspLines, type Mark } from "./asp-log"
 import { budgetCheck, gasBySender } from "./gas"
 import { type Recorded, type Recorder, startRecorder } from "./recorder"
 import { type Event, startCli, untilEvent } from "./runner"
@@ -124,23 +125,15 @@ async function recordAsp(s: Scratch, runId: string, cleanup: CleanupStack): Prom
 	return front
 }
 
-type Mark = readonly [step: string, from: number]
+type AspRecord = { front: Recorder; marks: Mark[]; named: Record<string, string>; logged?: true }
 
-/**
- * Logs each request through the front under the step it arrived in, with its User-Agent and the named
- * accounts its path, query or headers carry.
- */
-function logAsp(s: Scratch, requests: readonly Recorded[], marks: readonly Mark[], named: Record<string, string>): void {
-	const accounts = Object.entries(named).filter(([, v]) => /^0x[0-9a-f]{40}([0-9a-f]{24})?$/i.test(v))
-	requests.forEach((r, i) => {
-		const step = marks.filter(([, from]) => from <= i).at(-1)?.[0] ?? "setup"
-		const seen = [r.path, ...Object.values(r.query), ...Object.values(r.headers)].join(" ").toLowerCase()
-		const carried = accounts.filter(([, v]) => seen.includes(v.slice(2).toLowerCase())).map(([k]) => k)
-		const query = new URLSearchParams(r.query).toString()
-		s.log(
-			`[${s.tag}] asp ${step}: ${r.method} ${r.path}${query ? `?${query}` : ""} (${r.headers["user-agent"] ?? "no user-agent"}) -> ${r.status}; carries ${carried.join(", ") || "no named account"}`,
-		)
-	})
+/** Logs each request through the front once, and returns the lines of those that carry a named account. */
+function logAsp(s: Scratch, asp: AspRecord): string[] {
+	if (asp.logged) return []
+	asp.logged = true
+	const lines = aspLines(s.tag, asp.front.requests, asp.marks, asp.named)
+	for (const { line } of lines) s.log(line)
+	return lines.filter((l) => l.carried.length > 0).map((l) => l.line)
 }
 
 /** The canary's own requests through the front: those in its step that the bot did not send. */
@@ -226,7 +219,7 @@ export function stackRun(tag: string, manifestPath: string, log: (line: string) 
 export async function stackRehearsal(manifestPath: string, log: (line: string) => void): Promise<StackResult> {
 	const cleanup = new CleanupStack()
 	const { runId, dir, keys, s } = stackRun("stack", manifestPath, log)
-	let asp: { front: Recorder; marks: Mark[]; named: Record<string, string> } | undefined
+	let asp: AspRecord | undefined
 	const mark = (step: string) => asp?.marks.push([step, asp.front.requests.length])
 	try {
 		await stackFile(s, manifestPath, runId)
@@ -252,7 +245,8 @@ export async function stackRehearsal(manifestPath: string, log: (line: string) =
 		await must(s, "pause", [s.file, "--factory", factory])
 		await stopBot(s, second)
 		assertNoKeyIn(s.outputs, Object.values(keys))
-		logAsp(s, front.requests, asp.marks, named)
+		const carrying = logAsp(s, asp)
+		if (carrying.length > 0) throw new Error(`a request to the ASP carried a named account:\n${carrying.join("\n")}`)
 		const own = canaryRequests(front.requests, asp.marks)
 		if (own.length === 0) throw new Error("the canary sent no request through the ASP front")
 		const addresses = Object.fromEntries(Object.entries(named).filter(([k]) => k !== "event"))
@@ -266,7 +260,7 @@ export async function stackRehearsal(manifestPath: string, log: (line: string) =
 			canaryAsp: own.length,
 		}
 	} catch (e) {
-		if (asp) logAsp(s, asp.front.requests, asp.marks, asp.named)
+		if (asp) logAsp(s, asp)
 		log(`[stack] failed; its logs and scratch files stay in ${dir}`)
 		throw e
 	} finally {
