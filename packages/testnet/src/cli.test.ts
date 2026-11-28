@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vites
 import { FEE_FLOOR_WEI, needOf } from "./funding"
 import { isKeyValue, KEY_NAMES, keyFilePath } from "./keyfile"
 import { loopback } from "./network"
+import { configuredTarget } from "./schema"
 import { scratchHome, writeKeyFile } from "./test-support"
 
 const CLI = fileURLToPath(new URL("./cli/", import.meta.url))
@@ -102,7 +103,7 @@ const word = (n: number) => `0x${n.toString(16).padStart(64, "0")}`
 /** The own target on the fake L1, with every section a key-reading CLI requires and addresses no sentinel key owns. */
 function deploymentFile(home: string, sections: { pool: boolean }, expected: Record<string, string | undefined> = {}): string {
 	const d = {
-		...OWN,
+		...configuredTarget(OWN),
 		network: { ...OWN.network, l1Rpc: rpc, l1SendRpc: rpc },
 		expected: {
 			guardian: addr(1),

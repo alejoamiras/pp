@@ -189,6 +189,12 @@ export function parseDeployment(json: unknown): TestnetDeployment {
 }
 
 /** Tab-indented JSON with a trailing newline; validates first, so it never writes what `parseDeployment` refuses. */
+/** The target as configured: a deployment file without the `pool` and `bridge` sections its runs add. */
+export function configuredTarget<T extends { pool?: unknown; bridge?: unknown }>(d: T): Omit<T, "pool" | "bridge"> {
+	const { pool: _pool, bridge: _bridge, ...target } = d
+	return target
+}
+
 export function serializeDeployment(d: TestnetDeployment): string {
 	const text = `${JSON.stringify(d, (_k, v) => (typeof v === "bigint" ? v.toString() : v), "\t")}\n`
 	parseDeployment(JSON.parse(text))

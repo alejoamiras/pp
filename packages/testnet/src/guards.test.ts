@@ -21,7 +21,7 @@ import { redact } from "./redact"
 import { scratchHome, writeKeyFile } from "./test-support"
 import { toStackManifest } from "./manifest"
 import { loopback } from "./network"
-import { parseDeployment, serializeDeployment, type TestnetDeployment } from "./schema"
+import { configuredTarget, parseDeployment, serializeDeployment, type TestnetDeployment } from "./schema"
 
 const DIR = fileURLToPath(new URL("../deployments/", import.meta.url))
 const committed = readdirSync(DIR).map((f) => [f, JSON.parse(readFileSync(`${DIR}${f}`, "utf8"))] as const)
@@ -80,7 +80,7 @@ describe("the deployment file", () => {
 	})
 
 	it("projects a stack manifest without the factory's transaction once pool and bridge exist, and the bot once expected names it", () => {
-		expect(() => toStackManifest(own)).toThrow(/no pool, bridge sections/)
+		expect(() => toStackManifest(configuredTarget(own))).toThrow(/no pool, bridge sections/)
 		const word = `0x${"11".repeat(32)}` as Hex
 		const a = own.network.rollup
 		const { expected, ...bare } = own

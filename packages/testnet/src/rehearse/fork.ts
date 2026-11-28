@@ -18,7 +18,7 @@ import { sepolia } from "viem/chains"
 import type { FundedRole } from "../funding"
 import { generateKey } from "../keyfile"
 import { SEPOLIA } from "../network"
-import { parseDeployment, type TestnetDeployment } from "../schema"
+import { configuredTarget, parseDeployment, type TestnetDeployment } from "../schema"
 import { budgetCheck, gasBySender } from "./gas"
 import { listeningPorts, runCli, startCli, untilEvent } from "./runner"
 import { expectedOf, loadScratch, must, promote, type Scratch, writeScratch } from "./scratch"
@@ -43,7 +43,8 @@ export async function scratchFile(c: Ctx, scratchHome: string, runId: string): P
 	// The committed amounts, so the fork moves what the live run will.
 	if (!own.expected) throw new Error(`${OWN} has no expected section; commit it from \`addresses\` first`)
 	writeScratch(c, {
-		...own,
+		// The fork deploys its own pool and bridge, whatever sections the live file already holds.
+		...configuredTarget(own),
 		// Never the live send endpoint, which would carry a fork-signed transaction to Sepolia.
 		network: { ...own.network, l1Rpc: c.forkUrl, l1SendRpc: c.sendUrl, aspPort },
 		expected: expectedOf(addresses, own.expected.amounts),
