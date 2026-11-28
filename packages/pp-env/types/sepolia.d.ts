@@ -9,7 +9,9 @@ import type {
 	SepoliaPool,
 	SepoliaPoolUser,
 	SepoliaUserOptions,
+	StandInAsp,
 	StartMockAspOptions,
+	StartStandInAspOptions,
 } from "../src/sepolia/types.js"
 
 export type {
@@ -21,7 +23,9 @@ export type {
 	SepoliaPool,
 	SepoliaPoolUser,
 	SepoliaUserOptions,
+	StandInAsp,
 	StartMockAspOptions,
+	StartStandInAspOptions,
 } from "../src/sepolia/types.js"
 
 /**
@@ -46,6 +50,12 @@ export declare function deployPoolOn(o: DeployPoolOnOptions): Promise<SepoliaPoo
  * `owners` and a key without the postman role.
  */
 export declare function startMockAsp(o: StartMockAspOptions): Promise<MockAsp>
+
+/**
+ * Serves an operator pool's ASP read routes on the claimed `port` with nothing behind them: `root`, no
+ * leaves, and an X25519 key no one keeps. Reads no chain, approves nothing, signs nothing.
+ */
+export declare function startStandInAsp(o: StartStandInAspOptions): Promise<StandInAsp>
 
 /**
  * Compares, at one block, the runtime code of every contract the pool deploy produced, the test token

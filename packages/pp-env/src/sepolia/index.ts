@@ -10,6 +10,9 @@ export type {
 	SepoliaPool,
 	SepoliaPoolUser,
 	SepoliaUserOptions,
+	StandInAsp,
 	StartMockAspOptions,
+	StartStandInAspOptions,
 } from "./types.ts"
+export { startStandInAsp } from "./stand-in.ts"
 export { sepoliaPoolUser } from "./user.ts"
