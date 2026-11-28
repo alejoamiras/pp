@@ -12,6 +12,9 @@ import {
 	GUARDIAN_FEE_FLOOR_WEI,
 	liveGasOf,
 	needOf,
+	PAUSE_CEILING_WEI,
+	PAUSE_LIVE_GAS,
+	pauseHeadroomShort,
 	recipientsOf,
 	scriptFees,
 	staleSnapshot,
@@ -113,6 +116,16 @@ describe("forge's fee caps", () => {
 		expect(scriptFees(1_000_000_000n)).toEqual({ maxFeePerGas: 2_000_000_000n, maxPriorityFeePerGas: 100_000_000n })
 		// The pool deployer's budget at the floor: 306.8M live gas at the 0.2 gwei cap.
 		expect(needOf("poolDeployer", 16n)).toBe(61_360_000_000_000_000n)
+	})
+})
+
+describe("open's pause headroom", () => {
+	const need = 2n * PAUSE_LIVE_GAS * PAUSE_CEILING_WEI
+	it("is a pause and its replacement at 10 gwei, which a guardian funded at its floor holds, and names what is missing", () => {
+		expect(need).toBe(2_700_000_000_000_000n)
+		expect(pauseHeadroomShort(need)).toBe(0n)
+		expect(pauseHeadroomShort(need - 1n)).toBe(1n)
+		expect(pauseHeadroomShort(needOf("guardian", 0n))).toBe(0n)
 	})
 })
 

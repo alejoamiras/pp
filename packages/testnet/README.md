@@ -91,7 +91,7 @@ hashes and allowlisted URLs only. A guard refusal exits 2 before any key is read
 | `deploy` | L1 deployer, L2 deployer | the bridge generation with entries paused |
 | `verify-deployment [--pool-only] [--bot] [--label <l> --min-sequence <s>]` | none | code, bindings, the deploy block's history, the factory's creation, class ids, paused entries, the checks before opening, the bot's record |
 | `bot` | bot poster, bot intake | the ASP-root poster, snapshot server and birth intake, on the file's loopback port |
-| `open --factory <address>` | guardian | opens entries once every check before opening passes and the guardian holds gas for three pauses |
+| `open --factory <address>` | guardian | opens entries once every check before opening passes and the guardian holds gas for this open and three pauses at twice today's estimate, and for one pause and its replacement at 10 gwei |
 | `pause --factory <address> [--nonce <n> [--replace --pending <hash>]]` | guardian | pauses entries; done only when finalized |
 | `canary --min-sequence <s> --post <txHash>` | canary owner, canary sender | the end-to-end canary; exit 3 when the epoch proof is not seen in time |
 | `canary --settle <l2TxHash>…` | canary sender | settles burns an earlier canary left |
