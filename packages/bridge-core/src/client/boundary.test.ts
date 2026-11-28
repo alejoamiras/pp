@@ -55,6 +55,8 @@ const leaky = (): unknown[] => [
 	new UserRejectedRequestError(new Error(`user rejected signing ${SIGNATURE}`)),
 	new TypeError(`cannot read ${OPENING}`),
 	Object.assign(new Error(`rpc ${KEY_HEX}`), { name: `${SIGNATURE}` }),
+	// Bare hex that starts with a letter is identifier-shaped.
+	Object.assign(new TypeError("x"), { name: toHex(OPENING).slice(2) }),
 	`thrown string ${SALT}`,
 	// A caller's callback can throw the client's own error type, decorated.
 	Object.assign(new BridgeClientError("UNCERTAIN"), { cause: new Error(`salt ${SALT}`), opening: OPENING, message: `${KEY_HEX}` }),
@@ -91,6 +93,22 @@ describe("error boundary", () => {
 		const cyclic = foreignError(["TransactionExecutionError"])
 		Object.assign(cyclic, { cause: cyclic })
 		expect([isUserRejection(cyclic), translate(cyclic).code]).toEqual([false, "RPC_FAILED"])
+	})
+
+	it("names an unknown error by its `name` before its class, which a minifier renames; a bare Error names nothing", () => {
+		class XE extends Error {
+			constructor() {
+				super("x")
+				this.name = "ProofGenerationFailed"
+			}
+		}
+		class Unnamed extends Error {}
+		const named = [new XE(), new Unnamed(), new Error("x")].map((e) => translate(e)).map((t) => [t.code, t.source])
+		expect(named).toEqual([
+			["RPC_FAILED", "ProofGenerationFailed"],
+			["RPC_FAILED", "Unnamed"],
+			["RPC_FAILED", undefined],
+		])
 	})
 
 	it("refuses detail values outside each field's allowed set, and translate still never throws", () => {

@@ -69,17 +69,29 @@ const field = (x: object, key: string): unknown => {
  * is the class the send failed with (`InsufficientFundsError`, `ChainMismatchError`). Only the name.
  */
 export function innermostSource(e: unknown): { source?: string } {
-	const named = (v: unknown) => {
-		const name = identifier(v)
-		return name === "Error" ? undefined : name
-	}
 	for (const x of causeChain(e).reverse()) {
-		const ctor = field(x, "constructor")
-		// A subclass that never sets `name` keeps `Error` there; its class still names it.
-		const name = named(field(x, "name")) ?? (typeof ctor === "function" ? named(field(ctor, "name")) : undefined)
+		const name = kindOf(x)
 		if (name !== undefined) return { source: name }
 	}
 	return {}
+}
+
+/** Hex digits alone, the way every key, salt, signature and opening here is written; no error's name. */
+const HEX_RUN = /^[0-9a-f]{16,}$/i
+
+/**
+ * The kind `x` names: its `name` field, else its class's name; `Error` names none. The field comes
+ * first because a minifier renames classes but never the `name` an error sets. A `name` can carry
+ * data, so a hex run is refused rather than taken for a kind.
+ */
+function kindOf(x: object): string | undefined {
+	const named = (v: unknown) => {
+		const name = identifier(v)
+		return name === "Error" || (name !== undefined && HEX_RUN.test(name)) ? undefined : name
+	}
+	const ctor = field(x, "constructor")
+	// A subclass that never sets `name` keeps `Error` there; its class still names it.
+	return named(field(x, "name")) ?? (typeof ctor === "function" ? named(field(ctor, "name")) : undefined)
 }
 
 /** The error names a decoded revert may carry out: those of the contracts the client calls through viem. */
@@ -148,7 +160,7 @@ function translateOrThrow(e: unknown): BridgeClientError {
 	if (e instanceof SpecRangeError) return new BridgeClientError("SPEND_MISMATCH", { source: identifier(e.code) ?? "SpecRangeError" })
 	const reverted = contractRevert(e)
 	if (reverted) return new BridgeClientError("SIMULATION_REVERTED", reverted)
-	const name = e instanceof Error ? (identifier(e.constructor?.name) ?? identifier(e.name)) : undefined
+	const name = e instanceof Error ? kindOf(e) : undefined
 	return new BridgeClientError("RPC_FAILED", name ? { source: name } : {})
 }
 
