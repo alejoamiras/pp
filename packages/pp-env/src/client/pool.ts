@@ -7,7 +7,6 @@ import {
 	createEvmPoolSession,
 	createEvmPoolVaultInteractor,
 	type Hex as SdkHex,
-	HTTPClient,
 	HttpASPDataProvider,
 	type IGroth16Prover,
 	type IRelayerInteractor,
@@ -26,6 +25,7 @@ import { createProver, openPoolClient, type PoolClient } from "@pp/pool-client"
 import { type Address, getAddress, type Hex, keccak256, toHex, verifyTypedData } from "viem"
 import { publicClientAt } from "./chain.ts"
 import { secretDerivationTypedData } from "./derivation.ts"
+import { PinnedOriginHttpClient } from "./http.ts"
 import { createProofService } from "./prover.ts"
 import { explainSpendError, poolClientOptions, toPreparedSpend } from "./spend.ts"
 import type { ClientConfig, LocalWallet, PoolNote, PoolUser, PreparedSpend, SpendRequest } from "./types.ts"
@@ -79,7 +79,7 @@ export function contracts(config: ClientConfig, wallet: LocalWallet, merkleServi
 		aspUrl: config.aspUrl,
 		chainId: config.chainId,
 		entrypointAddress: d.entrypoint,
-		httpClient: new HTTPClient(),
+		httpClient: new PinnedOriginHttpClient(),
 	})
 	return {
 		rpcInteractor,
