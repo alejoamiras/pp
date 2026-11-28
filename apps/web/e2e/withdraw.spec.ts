@@ -6,20 +6,16 @@
  * injected wallet's separate sender. Payer: anvil's dev accounts and the SponsoredFPC. Estimated 90–150 s,
  * measured 54 s alone on a 192-core host, the actor's setup not counted.
  */
-import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import { TxHash } from "@aztec-labs/aztec.js/tx"
-import { computeFeePayerBalanceLeafSlot } from "@aztec-labs/protocol-contracts/fee-juice"
 import { createBridgeClient, type KeyValueStore } from "@pp/bridge-core"
 import { anvilKey } from "@pp/bridge-core/sandbox"
-import type { Locator } from "@playwright/test"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
 import { createPublicClient, erc20Abi, http } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
-import { sponsoredFpcAddress } from "../src/build/sponsored-fpc"
 import { formatAmount, plainAmount } from "../src/ui/format"
 import { approvedNote, seededStack } from "./stack"
-import { bridgeAndClaim, stepLog, submitted, watchPage } from "./support"
+import { amountOf, bridgeAndClaim, expectNoAccountInPublic, stepLog, submitted, watchPage } from "./support"
 
 test.use({ family: "withdraw", cells: 1, spares: 0 })
 test.skip(({ run }) => run.mode !== "stack", "the sandbox build withdraws in the fixture world, which the unit suite covers")
@@ -27,9 +23,6 @@ test.skip(({ run }) => run.mode !== "stack", "the sandbox build withdraws in the
 /** The bridge's, the claim's and the collect's waits are the ragequit spec's; the label's check is the unshield spec's. */
 const WAIT = { claimable: 60_000, claimed: 90_000, active: 30_000, sent: 60_000, read: 30_000, ready: 180_000, settled: 30_000 }
 const step = stepLog("withdraw-spec")
-
-/** A row's amount, which `Amount` renders as the figure followed by the symbol in a `small`. */
-const amountOf = (row: Locator) => row.locator("span:has(> small)")
 
 function memoryJournal(): KeyValueStore {
 	const m = new Map<string, string>()
@@ -75,25 +68,7 @@ test("withdraws part of a checked label to a fresh payee through the private exi
 	const node = createAztecNodeClient(s.manifest.aztecNode)
 	const hash = TxHash.fromString(sent[1]?.hash ?? "")
 	expect((await node.getTxReceipt(hash)).hasExecutionSucceeded(), "the exit's public check passed").toBe(true)
-	const effect = await node.getTxEffect(hash)
-	if (!effect) throw new Error("the node has no effect for the withdrawal")
-	const logs = effect.data.publicLogs
-	expect(
-		logs.map((l) => l.contractAddress.toString().toLowerCase()),
-		"the hub's ticket is the only public log",
-	).toEqual([s.manifest.bridge.hub.toLowerCase()])
-	for (const l of logs)
-		expect(
-			l.fields.map((f) => f.toBigInt()),
-			"no log names the account",
-		).not.toContain(BigInt(actor.address))
-	const feeLeaf = await computeFeePayerBalanceLeafSlot(AztecAddress.fromStringUnsafe(await sponsoredFpcAddress()))
-	const writes = effect.data.publicDataWrites
-	expect(writes.length, "the sponsor's fee is written").toBeGreaterThan(0)
-	expect(
-		writes.every((w) => w.leafSlot.equals(feeLeaf)),
-		"the sponsor's fee balance is the only public write",
-	).toBe(true)
+	await expectNoAccountInPublic(node, hash.toString(), s.manifest.bridge.hub, actor.address)
 
 	const client = createBridgeClient({ manifest: s.manifest, journal: memoryJournal() })
 	const [ticket, ...none] = await client.exitTickets({ payee })

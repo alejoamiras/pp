@@ -1,10 +1,14 @@
 /**
  * What the web specs share: the watch every test ends on (zero CSP violations, zero page errors), the
  * wallet frame and its control hook, the connect flow, the pool sign-in and a bridge claimed to the
- * connected account. A function
- * passed to `evaluate` runs in the page, so each one reaches its hook on its own.
+ * connected account, and what a landed private exit may make public. A function passed to `evaluate`
+ * runs in the page, so each one reaches its hook on its own.
  */
+import type { AztecNode } from "@aztec-labs/aztec.js/node"
+import { TxHash } from "@aztec-labs/aztec.js/tx"
+import { computeFeePayerBalanceLeafSlot } from "@aztec-labs/protocol-contracts/fee-juice"
 import type { Frame, Locator, Page } from "@playwright/test"
+import { sponsoredFpcAddress } from "@pp/bridge-core"
 import { anvilKey } from "@pp/bridge-core/sandbox"
 import type { L1WalletControl } from "@pp/e2e-kit/fixtures/l1-wallet.ts"
 import { expect } from "@pp/e2e-kit/fixtures/test.ts"
@@ -117,6 +121,9 @@ export async function signInToPool(page: Page): Promise<void> {
 	await expect(page.getByTestId("note-row").first()).toBeVisible()
 }
 
+/** A row's amount, which `Amount` renders as the figure followed by the symbol in a `small`. */
+export const amountOf = (row: Locator) => row.locator("span:has(> small)")
+
 /** Logs how long each step took since the previous one (`start` resets), so a spec's waits stay sized from measurements. */
 export function stepLog(spec: string): (name: string) => void {
 	let last = Date.now()
@@ -168,4 +175,30 @@ export async function bridgeAndClaim(
 	const row = page.locator(`[data-testid="label-row"][data-label="${o.note.label}"]`)
 	await expect(row).toContainText(formatAmount(o.amount, o.s.decimals, 2), { timeout: 30_000 })
 	return { frame, row }
+}
+
+/**
+ * Fails unless the landed private exit `hash` published no public log but the hub's ticket, named
+ * `account` in none, and wrote no public data but the SponsoredFPC's fee balance.
+ */
+export async function expectNoAccountInPublic(node: AztecNode, hash: string, hub: string, account: string): Promise<void> {
+	const effect = await node.getTxEffect(TxHash.fromString(hash))
+	if (!effect) throw new Error(`the node has no effect for ${hash}`)
+	const logs = effect.data.publicLogs
+	expect(
+		logs.map((l) => l.contractAddress.toString().toLowerCase()),
+		"the hub's ticket is the only public log",
+	).toEqual([hub.toLowerCase()])
+	for (const l of logs)
+		expect(
+			l.fields.map((f) => f.toBigInt()),
+			"no public log names the account",
+		).not.toContain(BigInt(account))
+	const feeLeaf = await computeFeePayerBalanceLeafSlot(await sponsoredFpcAddress())
+	const writes = effect.data.publicDataWrites
+	expect(writes.length, "the sponsor's fee is written").toBeGreaterThan(0)
+	expect(
+		writes.every((w) => w.leafSlot.equals(feeLeaf)),
+		"the sponsor's fee balance is the only public write",
+	).toBe(true)
 }
