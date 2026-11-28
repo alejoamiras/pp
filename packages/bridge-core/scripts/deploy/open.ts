@@ -375,6 +375,17 @@ function errorText(e: unknown): string {
 	return parts.join("\n")
 }
 
+/**
+ * The endpoint's words for a send that a send path reported as losing its nonce to another transaction.
+ * A send path keeps an endpoint's words in `data`, out of `message`, so no client retries on a rate
+ * limit's wording; matched by shape along the cause chain, since bridge-core does not depend on pp-env.
+ */
+function conflictWords(e: unknown): string | undefined {
+	for (let cur = e as { name?: unknown; kind?: unknown; data?: unknown; cause?: unknown } | undefined; cur; cur = cur.cause as typeof cur)
+		if (cur.name === "SendPathError" && cur.kind === "conflict" && typeof cur.data === "string") return cur.data
+	return undefined
+}
+
 type Sent = Omit<Signed, "serialized"> & { taken?: true }
 
 /** PAUSE_UNCONFIRMED naming `sent`, for a failure after it was signed: never a bare RPC error without its hash. */
@@ -411,7 +422,7 @@ async function sendPause(
 		await guardian.sendRawTransaction({ serializedTransaction: signed.serialized })
 		return sent
 	} catch (e) {
-		const text = errorText(e)
+		const text = conflictWords(e) ?? errorText(e)
 		// geth's and anvil's answers to a transaction they already hold.
 		if (/already known|transaction already imported/i.test(text)) return sent
 		if (/nonce too low/i.test(text)) return { ...sent, taken: true }

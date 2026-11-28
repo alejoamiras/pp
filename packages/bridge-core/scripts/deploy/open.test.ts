@@ -482,6 +482,36 @@ describe("pauseEntries", () => {
 		})
 	})
 
+	describe("a send path's conflict, read by its kind and the endpoint's words in data", () => {
+		const conflict = (words: string) =>
+			Object.assign(new Error("RPC Request failed."), {
+				cause: Object.assign(new Error(`${w(0x0c)} lost nonce 5 to another transaction`), {
+					name: "SendPathError",
+					kind: "conflict",
+					data: words,
+				}),
+			})
+
+		it("names an underpriced replacement as an occupied nonce", async () => {
+			const { l1, guardian } = chainOf()
+			;(guardian as { sendRawTransaction: unknown }).sendRawTransaction = async () => {
+				throw conflict("-32003 replacement transaction underpriced")
+			}
+			await expect(pauseEntries(target(l1), guardian, FAST)).rejects.toMatchObject({ code: "PAUSE_NONCE_OCCUPIED", nonce: 5 })
+		})
+
+		it("takes nonce too low as the nonce taken, and finds its own mined pause", async () => {
+			const { c, l1, guardian } = chainOf()
+			const send = guardian.sendRawTransaction
+			;(guardian as { sendRawTransaction: unknown }).sendRawTransaction = async (q: Parameters<typeof send>[0]) => {
+				await send(q)
+				throw conflict("-32000 nonce too low")
+			}
+			expect(await pauseEntries(target(l1), guardian, FAST)).toMatchObject({ nonce: 5 })
+			expect(c.sent.map((t) => t.nonce)).toEqual([5])
+		})
+	})
+
 	it("replaces a transaction pending at five times the estimate, outbidding each fee field by a quarter", async () => {
 		const { c, l1, guardian } = chainOf({ pendingAt: new Map([[5, { maxFeePerGas: 500n, maxPriorityFeePerGas: 50n }]]) })
 		const pending = { hash: w(9), from: GUARDIAN, nonce: 5, maxFeePerGas: 500n, maxPriorityFeePerGas: 50n }
