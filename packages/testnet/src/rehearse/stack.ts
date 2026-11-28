@@ -46,7 +46,15 @@ const PERMISSIONED_ABI = parseAbi(["function ACCESS_ROUTER() view returns (addre
 export const AMOUNTS = { debit: 100n, note: 100n, bridge: 10n, shield: 2n }
 const BOT_READY_MS = 15 * 60_000
 
-export type StackResult = { gas: Partial<Record<FundedRole, bigint>>; firstPost: bigint; restartPost: bigint }
+/** What a passing canary's report records of the one-transaction claim, the margins and the parities. */
+export type CanarySummary = { oneTx: boolean; marginSec: string[]; parity: boolean }
+
+export type StackResult = {
+	gas: Partial<Record<FundedRole, bigint>>
+	firstPost: bigint
+	restartPost: bigint
+	canary: CanarySummary
+}
 
 const anvilKey = (index: number): Hex => {
 	const key = mnemonicToAccount(ANVIL_MNEMONIC, { addressIndex: index }).getHdKey().privateKey
@@ -127,12 +135,26 @@ export async function deployBridge(s: Scratch): Promise<`0x${string}`> {
 	return loadScratch(s).bridge?.factory as `0x${string}`
 }
 
-/** The canary must exit 0; its report stays in its run dir for a failure. */
-async function canary(s: Scratch, post: Event): Promise<void> {
+type ReportCheck = { marginSec: string; poolRootParity: boolean; rootTimeParity: boolean }
+
+/**
+ * The canary must exit 0; its report stays in its run dir for a failure. A pass's run dir is deleted with
+ * the rest, so its summary is logged here and returned.
+ */
+async function canary(s: Scratch, post: Event): Promise<CanarySummary> {
 	const events = await must(s, "canary", [s.file, "--min-sequence", String(post.sequence), "--post", String(post.txHash)])
 	const report = events.find((e) => e.event === "canary-report")
 	if (report?.exitClass !== "PASS") throw new Error(`the canary reported ${String(report?.exitClass)}`)
-	s.outputs.push(readFileSync(String(report.path), "utf8"))
+	const text = readFileSync(String(report.path), "utf8")
+	s.outputs.push(text)
+	const { oneTx, checks } = JSON.parse(text) as { oneTx: boolean; checks: ReportCheck[] }
+	const summary = {
+		oneTx,
+		marginSec: checks.map((c) => c.marginSec),
+		parity: checks.length > 0 && checks.every((c) => c.poolRootParity && c.rootTimeParity),
+	}
+	s.log(`[stack] canary oneTx ${oneTx}, margins ${summary.marginSec.join(" ")} s, parity ${summary.parity}`)
+	return summary
 }
 
 export type StackRun = { runId: string; dir: string; keys: Record<string, Hex>; s: Scratch }
@@ -169,14 +191,19 @@ export async function stackRehearsal(manifestPath: string, log: (line: string) =
 		// The record against the registry; the canary itself checks its label at `--min-sequence`.
 		await must(s, "verify-deployment", [s.file, "--bot"])
 		await must(s, "open", [s.file, "--factory", factory])
-		await canary(s, second.ready)
+		const canaryRun = await canary(s, second.ready)
 		await must(s, "pause", [s.file, "--factory", factory])
 		await stopBot(s, second)
 		assertNoKeyIn(s.outputs, Object.values(keys))
 		const addresses = Object.fromEntries(Object.entries(named).filter(([k]) => k !== "event"))
 		const gas = budgetCheck(await gasBySender(loadScratch(s).network.l1Rpc, from), addresses)
 		rmSync(dir, { recursive: true, force: true })
-		return { gas, firstPost: BigInt(String(first.ready.sequence)), restartPost: BigInt(String(second.ready.sequence)) }
+		return {
+			gas,
+			firstPost: BigInt(String(first.ready.sequence)),
+			restartPost: BigInt(String(second.ready.sequence)),
+			canary: canaryRun,
+		}
 	} catch (e) {
 		log(`[stack] failed; its logs and scratch files stay in ${dir}`)
 		throw e
