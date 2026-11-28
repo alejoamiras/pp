@@ -103,7 +103,7 @@ describe("testnetTarget", () => {
 		]
 		for (const [what, edit, message] of refusals) expect(() => testnetTarget(file(edit), {}, FPC), what).toThrow(message)
 		expect(() => testnetTarget(join(dir, "absent.json"), {}, FPC)).toThrow(/cannot be read/)
-		// The schema knows no target but own and pool1, so it refuses another before the build's own rule.
+		// The schema refuses any target but own and pool1; the build has no rule of its own for it.
 		expect(() =>
 			testnetTarget(
 				file((d) => (d.target = "v9"), POOL1),
