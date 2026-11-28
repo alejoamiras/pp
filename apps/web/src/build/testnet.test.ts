@@ -103,14 +103,14 @@ describe("testnetTarget", () => {
 		]
 		for (const [what, edit, message] of refusals) expect(() => testnetTarget(file(edit), {}, FPC), what).toThrow(message)
 		expect(() => testnetTarget(join(dir, "absent.json"), {}, FPC)).toThrow(/cannot be read/)
-		// From pool1, whose pinned ASP URL the schema takes for v9 too, so only the build's own target rule refuses it.
+		// The schema knows no target but own and pool1, so it refuses another before the build's own rule.
 		expect(() =>
 			testnetTarget(
 				file((d) => (d.target = "v9"), POOL1),
 				{},
 				FPC,
 			),
-		).toThrow(/own pool or pool1/)
+		).toThrow(/target: Invalid option/)
 	})
 
 	test("takes pool1 with its ASP behind the page's origin, and only with the ceremony bundle", () => {
