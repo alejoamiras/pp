@@ -87,6 +87,23 @@ describe("the operator's ASP allowance", () => {
 		expect(r.calls[URL.leaves]).toBe(2)
 	})
 
+	test("keeps the leaves while the root stays the same, whatever its answer's bytes, and while the root's request fails", async () => {
+		const r = rig()
+		r.answers[URL.leaves] = async () => leavesOf("7")
+		const timeout: Forwarded = { ok: false, reason: "timeout" }
+		for (const [t, answer] of [
+			[0, ok('{"root":"7"}')],
+			[5 * MIN, ok('{"root":"0x07","at":1}')],
+			[10 * MIN, ok('{"at":2,"root":"007"}')],
+			[15 * MIN, timeout],
+		] as const) {
+			r.at(t)
+			r.answers[URL.root] = async () => answer
+			expect(await text(r.ask(URL.leaves, "leaves")), `at ${t} ms`).toBe(await text(Promise.resolve(leavesOf("7"))))
+		}
+		expect(r.calls).toEqual({ [URL.root]: 4, [URL.leaves]: 1 })
+	})
+
 	test("a root or leaves 200 of another shape, or over the SDK's leaves, is a failure for its window", async () => {
 		const r = rig()
 		r.answers[URL.root] = async () => ok("<html>try later</html>")
