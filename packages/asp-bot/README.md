@@ -115,7 +115,7 @@ allowance too.
 ## Tests
 
 - Unit: `bun run --cwd packages/asp-bot test`.
-- Against the local stack (after `bun run demo:prepare` once per clone):
+- Against the local stack (after `bun run demo:prepare` once per worktree):
   `bun run --cwd packages/asp-bot test:integration` boots `bun run demo`, deploys a registry per
   suite and runs them end to end (about 10 minutes). `bot` checks the first post. `births` checks a
   shield's birth, the bot's outputs, and a revocation after which a path fetched before it fails

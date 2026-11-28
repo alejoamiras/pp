@@ -63,7 +63,8 @@ with warm package and toolchain caches.
 | L1 invariant campaigns, reach checked | `bash contracts/bridge/evm/scripts/check-invariant.sh` | 42 s |
 | L1 nightly profile (deep fuzz + invariants) | `bash contracts/bridge/evm/scripts/nightly.sh` | 3 min |
 | L2 artifact parity | `bash contracts/bridge/aztec/scripts/compile.sh --check` | 76 s |
-| L2 TXE suite | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh` | 3.5 min |
+| L2 TXE suite, the hub | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh` (without `--crate` it runs `token_bridge_hub` alone; CI runs every crate with a `txe` gate in `contracts/crates.json`) | 3.5 min |
+| ASP registry TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate asp_registry`, then `--crate asp_registry_probe` | 1 min 45 s · 1.5 min |
 | L2 nargo tests + pinned commits | `bun scripts/ci-cd/crates.ts nargo-test && bun scripts/ci-cd/crates.ts check-pins` (keystone requires every v1 test by name) | 52 s |
 | Labelled token TXE | `bash contracts/bridge/aztec/scripts/run-txe-tests.sh --crate labelled_token` | 3 min |
 | Labelled token gates | `bun run --cwd packages/labelled-token gates:check` | 4 s |
@@ -75,7 +76,7 @@ with warm package and toolchain caches.
 | Sandbox smoke | `bun run --cwd packages/bridge-core sandbox:smoke` | 7.5 min |
 | Labelled token, two devices | `bun run --cwd packages/labelled-token test:net` | 6.5 min |
 | Labelled token proving bench | `bun run --cwd packages/labelled-token bench:prove` (real prover; run it alone on the host) | 5 min |
-| Local stack prerequisites | `bun run demo:prepare` (once per clone: pp-env's fetch, forge install and build) | 33 s with the pool fetched |
+| Local stack prerequisites | `bun run demo:prepare`, once per worktree before any integration suite: it links pp-env's pool checkout, installs the forge libraries and builds the bridge contracts, all gitignored and per worktree | 15 s once the host has built the pool (about 3.5 min cold) |
 | Local stack | `bun run demo` (`--keep` holds it up) | 1 min 45 s (ready in 97 s) |
 | Local stack integration | `bun run --cwd packages/local-stack test:integration` | imports 4 s · bridge 1.5 min · teardown 5 min · shared-anvil 6 min · heartbeat 7 min |
 | Bridge stack suite | `bun run --cwd packages/bridge-core test:integration:stack` (boots its own stack unless `PP_STACK_MANIFEST` is set; `-- deploy` runs one file in 2.5 min) | 18 min (boot 2.5 min, cases 15 min, stop 1 min) |
@@ -116,6 +117,12 @@ against the keyless public endpoint committed in that file; the real-wallet tier
 `test:real-wallet`.
 
 ## Working in this repo
+
+- **Noir builds take the committed artifacts away while they run.** `compile.sh`, with or without
+  `--check`, and `run-txe-tests.sh`, which calls it, move each crate's `target/*.json` aside and
+  rebuild it in place. Until the build ends, the artifacts that bridge-core and labelled-token import,
+  and that label-paths' tests read, are missing, so a typecheck, unit or integration suite run in the
+  same worktree at the same time fails. Run them one after the other, or in another worktree.
 
 - **The linker is `isolated`** (`bunfig.toml`). A workspace resolves only what its `package.json`
   declares; an undeclared import can still resolve locally through the store's hoist fallback and

@@ -19,9 +19,9 @@ its tests and CI gates. The pool processor, labelled notes and the web app build
 ```bash
 bun install                                         # Bun 1.4.2
 bun run lint && bun run typecheck:all && bun run test:all
+bun run demo:prepare                                # once per worktree: the pool checkout and the bridge contracts
 bun run --cwd packages/bridge-core test:integration # boots and reaps its own local network
 bun run --cwd packages/bridge-core test:hub         # the hub's own network suite, likewise
-bun run demo:prepare                                # once: the pool checkout and the bridge contracts
 bun run --cwd packages/bridge-core test:integration:stack  # the whole stack suite on a demo stack it boots and stops
 ```
 
