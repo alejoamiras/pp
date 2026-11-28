@@ -13,15 +13,14 @@ URLs.
   `bun run --cwd packages/pp-env fetch`. The browser check (step 3) needs Playwright's Chromium:
   `apps/web/node_modules/.bin/playwright install chromium` (add `--with-deps` once on a fresh
   machine; it installs system packages and needs root).
-- **The deployment file:** the own pool's (or pool1's) testnet deployment file, with its `pool` and
-  `bridge` sections. Use it only if `verify-deployment` passed on it before the factory was opened
-  with `open`.
+- **The deployment file:** the own pool's is `packages/testnet/deployments/testnet-own.json`, with its
+  `pool` and `bridge` sections; pool1's is not in this repository yet. Use a file only if
+  `verify-deployment` passed on it before the factory was opened with `open`.
 - **The testnet services:** the deployment's operator runs `bot` on the host, and for the own pool
-  also `asp --owner <canary owner>`.
-- **Not in this repository yet:** the deployment file and the commands named here (`verify-deployment`,
-  `open`, `bot`, `asp --owner`, `seed`); see `packages/testnet/README.md`. Until they land, step 3's
-  checks run on the fixture file `apps/web/src/build/fixtures/testnet-own.json` in place of
-  `$DEPLOYMENT` (the smoke with `--no-upstreams`).
+  also `asp --owner <canary owner> --owner <demo owner>`: the mock ASP approves only the deposits of
+  the owners it is given, each the file's canary owner or demo owner. These and the other commands
+  named here (`verify-deployment`, `open`, `seed`) are `@pp/testnet`'s:
+  `bun packages/testnet/src/cli/<command>.ts <deployment file>`; see `packages/testnet/README.md`.
 - **On your laptop:** Chrome with two extensions.
   - **MetaMask** on Sepolia, with two accounts:
     - the **owner**, who holds the pool note;
@@ -117,9 +116,10 @@ A balance needs two things:
   authorises its spends, then the key senders encrypt its notes to. The notes show once both have
   mined.
 - **A pool note deposited for the owner.** If your owner account is the canary owner, the canary
-  deposit (`seed`, without `--recipient`) is that note. For any other owner, once it is registered,
-  the deployment's operator runs `seed --recipient <owner address>`; `--recipient` refuses the
-  canary owner. The mock ASP then approves the note.
+  deposit (`seed`, without `--recipient`) is that note. If it is the demo owner, the deployment's
+  operator runs `seed --demo`, which registers the demo owner (paid by its own key) and deposits for
+  it. For any other owner, once it is registered, the operator runs `seed --recipient <owner
+  address>`; `--recipient` refuses the canary owner. The mock ASP then approves the note.
 
 ## The operator's pool (pool1)
 
