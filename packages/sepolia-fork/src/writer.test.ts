@@ -21,4 +21,5 @@ test("a fork client names the fork in its transport and as its chain's only RPC 
 	expect(client.transport.url).toBe(url)
 	expect(client.chain?.id).toBe(11_155_111)
 	expect(client.chain?.rpcUrls).toEqual({ default: { http: [url] } })
+	expect(client.ccipRead).toBe(false)
 })

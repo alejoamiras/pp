@@ -80,6 +80,10 @@ describe("the stack's Ethereum port", () => {
 		await expect(signing).rejects.toThrow()
 	})
 
+	test("reads with CCIP-read off, so an OffchainLookup revert sends the page nowhere", () => {
+		expect(stackL1(TARGET, undefined).reads.ccipRead).toBe(false)
+	})
+
 	test("without an injected wallet the page lists no account and refuses anything that needs one", async () => {
 		const l1 = stackL1(TARGET, undefined)
 		expect(l1.hasWallet).toBe(false)
