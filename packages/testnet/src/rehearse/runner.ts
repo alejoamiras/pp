@@ -1,8 +1,8 @@
 /** Runs the real CLIs as a rehearsal does: separate processes, stdin closed, one JSON event per stdout line. */
 import { spawn } from "node:child_process"
-import { readdirSync, readFileSync, readlinkSync } from "node:fs"
+import { closeSync, openSync, readdirSync, readFileSync, readlinkSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { killGroup, type OwnedChild, spawnOwned } from "@pp/run-isolation/process"
+import { killGroup, type OwnedChild, own, spawnOwned } from "@pp/run-isolation/process"
 import { groupMembers } from "@pp/run-isolation/process-group"
 
 const CLI = fileURLToPath(new URL("../cli/", import.meta.url))
@@ -39,6 +39,36 @@ export function runCli(name: string, args: readonly string[], env: NodeJS.Proces
 /** Starts a long-running CLI as its own process group, logging to `logFile`. */
 export const startCli = (name: string, args: readonly string[], env: NodeJS.ProcessEnv, logFile: string): OwnedChild =>
 	spawnOwned(process.execPath, [`${CLI}${name}.ts`, ...args], logFile, env)
+
+/**
+ * Starts `name` as the leader of its own group with no launcher between, so the child's pid is the CLI's
+ * own: for a rehearsal that kills the CLI outright. Nothing ends it when this process dies, so the caller
+ * registers its teardown.
+ */
+export function startBareCli(name: string, args: readonly string[], env: NodeJS.ProcessEnv, logFile: string): OwnedChild {
+	const fd = openSync(logFile, "a", 0o600)
+	try {
+		return own(spawn(process.execPath, [`${CLI}${name}.ts`, ...args], { env, detached: true, stdio: ["ignore", fd, fd] }))
+	} finally {
+		closeSync(fd)
+	}
+}
+
+/** The pid of a running child of `parent` whose command line holds `part`, from `/proc` (Linux). */
+export function childWith(parent: number, part: string): number | undefined {
+	for (const name of readdirSync("/proc")) {
+		if (!/^\d+$/.test(name)) continue
+		try {
+			const stat = readFileSync(`/proc/${name}/stat`, "utf8")
+			// After the command name's last ")" come state and ppid.
+			const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1])
+			if (ppid === parent && readFileSync(`/proc/${name}/cmdline`, "utf8").includes(part)) return Number(name)
+		} catch {
+			// the process ended while we read
+		}
+	}
+	return undefined
+}
 
 /** Waits for `event` (a name, or a test of each event with `what` naming it) in a long-running CLI's log; fails as soon as the child exits. */
 export async function untilEvent(

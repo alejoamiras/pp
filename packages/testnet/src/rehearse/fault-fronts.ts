@@ -6,8 +6,10 @@
  * - `refuse`: a send at that nonce answers HTTP 429, `times` times, before one is forwarded.
  * - `loseAnswer`: the first send at that nonce reaches anvil with mining paused and its answer is replaced
  *   by HTTP 504, so the same bytes sent again meet "transaction already imported"; mining resumes then.
- * - `stale`: once the send at that nonce is forwarded, its receipt reads null for `receiptMs`; for
- *   `nonceMs` the sender's count reads as it was before that send, and the first gas estimate reverts.
+ * - `stale`, each entry for its own nonce: once the send at that nonce is forwarded, its receipt reads null
+ *   for `receiptMs`; for `nonceMs` the sender's count reads as it was before that send, and with
+ *   `revertEstimate` the first gas estimate in that time reverts. Of two entries in their window, the
+ *   later nonce answers.
  * - `readError`: the first receipt read of the send at that nonce answers HTTP 503.
  */
 import { claimPort, releaseNamed } from "@pp/run-isolation/ports"
@@ -23,11 +25,13 @@ import {
 } from "viem"
 import { type LoopbackServer, type Reply, serveHttp } from "./loopback"
 
+export type StaleFault = { nonce: number; receiptMs: number; nonceMs: number; revertEstimate?: boolean }
+
 export type Faults = {
 	sender: Address
 	refuse?: { nonce: number; times: number }
 	loseAnswer?: number
-	stale?: { nonce: number; receiptMs: number; nonceMs: number }
+	stale?: readonly StaleFault[]
 	readError?: number
 }
 
@@ -38,6 +42,8 @@ export type Fired = {
 	alreadyImported: number
 	nullReceipts: number
 	staleCounts: number
+	/** Stale counts answered, by the nonce of the entry that answered them. */
+	staleCountsAt: Record<number, number>
 	revertedEstimates: number
 	readErrors: number
 	refusedHashes: Hex[]
@@ -65,6 +71,7 @@ const zero = (): Fired => ({
 	alreadyImported: 0,
 	nullReceipts: 0,
 	staleCounts: 0,
+	staleCountsAt: {},
 	revertedEstimates: 0,
 	readErrors: 0,
 	refusedHashes: [],
@@ -163,24 +170,31 @@ class Fronts {
 	async read(body: string): Promise<Reply> {
 		const call = single(body)
 		const f = this.faults
-		return (f && call && (this.stale(call, f) ?? this.readError(call, f))) || this.forward(body)
+		if (!f || !call) return this.forward(body)
+		// The newest send's stale view answers first: a later send supersedes an earlier one's.
+		for (const s of [...(f.stale ?? [])].sort((a, b) => b.nonce - a.nonce)) {
+			const r = this.stale(call, f.sender, s)
+			if (r) return r
+		}
+		return this.readError(call, f) ?? this.forward(body)
 	}
 
-	private stale(call: Call, f: Faults): Reply | undefined {
-		const sent = f.stale && this.forwarded.get(f.stale.nonce)
-		if (!f.stale || !sent) return undefined
+	private stale(call: Call, sender: Address, s: StaleFault): Reply | undefined {
+		const sent = this.forwarded.get(s.nonce)
+		if (!sent) return undefined
 		const age = Date.now() - sent.at
 		const [first] = call.params ?? []
-		if (call.method === "eth_getTransactionReceipt" && first === sent.hash && age < f.stale.receiptMs) {
+		if (call.method === "eth_getTransactionReceipt" && first === sent.hash && age < s.receiptMs) {
 			this.fired.nullReceipts++
 			return answer(call, { result: null })
 		}
-		if (age >= f.stale.nonceMs) return undefined
-		if (call.method === "eth_getTransactionCount" && typeof first === "string" && isAddressEqual(first as Address, f.sender)) {
+		if (age >= s.nonceMs) return undefined
+		if (call.method === "eth_getTransactionCount" && typeof first === "string" && isAddressEqual(first as Address, sender)) {
 			this.fired.staleCounts++
-			return answer(call, { result: numberToHex(f.stale.nonce) })
+			this.fired.staleCountsAt[s.nonce] = (this.fired.staleCountsAt[s.nonce] ?? 0) + 1
+			return answer(call, { result: numberToHex(s.nonce) })
 		}
-		if (call.method === "eth_estimateGas" && this.once("estimate")) {
+		if (s.revertEstimate && call.method === "eth_estimateGas" && this.once(`estimate ${s.nonce}`)) {
 			this.fired.revertedEstimates++
 			return answer(call, { error: { code: 3, message: "execution reverted", data: "0x" } })
 		}

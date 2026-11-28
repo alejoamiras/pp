@@ -1,41 +1,56 @@
 /**
  * The send path rehearsed on an anvil fork of Sepolia, through fronts that fail as a public gateway does:
  * `fund` and `deploy-pool` run as the real CLIs, reading through one front and sending through the other.
- * From one snapshot after `fund`, the negative case first: the send front refuses one nonce past the send
+ * From snapshots after `fund`, two negative cases first. The send front refuses one nonce past the send
  * budget, and `deploy-pool` must stop naming that send's hash, its nonce and how many transactions landed
- * before it. Then, from the same snapshot, every fault once in a deploy that must land each transaction
- * exactly once, one hash per nonce in its send log, with its code checked by `deploy-pool` and again by
- * `verify-deployment --pool-only`.
+ * before it. Then `deploy-pool` is killed outright mid-deploy: forge, whose only route to the chain was the
+ * relay inside it, must end by itself with nothing more landed. Then every fault once in a deploy that must
+ * land each transaction exactly once, one hash per nonce in its send log, the sends after forge's at the
+ * nonces after its last though the count reads stale there, with its code checked by `deploy-pool` and
+ * again by `verify-deployment --pool-only`.
  */
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { killGroup } from "@pp/run-isolation/process"
+import { endGroup, groupAlive } from "@pp/run-isolation/process-group"
 import { type Address, type Hex, numberToHex, parseEther } from "viem"
 import { keyFilePath, loadKeys } from "../keyfile"
 import { RUN_KEYS } from "../keys"
 import { type FaultFronts, type Faults, type Fired, startFaultFronts } from "./fault-fronts"
 import { type Ctx, type OnFork, onFork, scratchFile } from "./fork"
-import { runCli } from "./runner"
+import { childWith, runCli, startBareCli } from "./runner"
 import { assertNoKeyIn, must, promote } from "./scratch"
 
 /** The nonce the negative case refuses past the budget, so three creations land before it. */
 const REFUSED = 3
-/** Below the send budget (35 s) by its backoff tail and the last attempt's reserve. */
-const MIN_REFUSED_SPAN_MS = 30_000
+/** The send budget (35 s) less the last attempt's 1 s reserve and a second of slack: an earlier last attempt fails. */
+const MIN_REFUSED_SPAN_MS = 33_000
+/** How many of forge's transactions land before the CLI is killed. */
+const KILL_AFTER = 5
+/** How long forge may outlive the killed CLI before the rehearsal calls it a failure. */
+const FORGE_EXIT_MS = 120_000
+/** forge's last nonce in the pool's deploy script, where the handoff to the wallet's sends reads a stale count. */
+const FORGE_LAST = 38
 
 export type SendFaultsResult = {
 	block: bigint
 	transactions: number
 	fired: Fired
 	stopped: { landed: number; nonce: number; hash: Hex }
+	killed: { landed: number; forgeExitMs: number }
 }
 
 const everyFault = (sender: Address): Faults => ({
 	sender,
 	refuse: { nonce: 2, times: 3 },
 	loseAnswer: 5,
-	// Stale past forge's own nonce retries (five, a second apart) after the receipt shows, so only the
-	// relay's floor lets the deploy go on.
-	stale: { nonce: 8, receiptMs: 4_000, nonceMs: 15_000 },
+	stale: [
+		// Past forge's own nonce retries (five, a second apart) after the receipt shows, so only the relay's
+		// floor lets the deploy go on.
+		{ nonce: 8, receiptMs: 4_000, nonceMs: 15_000, revertEstimate: true },
+		// Past every send after forge's, so only the shared path's floor gives the wallet the next nonce.
+		{ nonce: FORGE_LAST, receiptMs: 2_000, nonceMs: 30_000 },
+	],
 	readError: 12,
 })
 
@@ -79,10 +94,47 @@ const filesUnder = (dir: string): string[] =>
 		.filter((e) => e.isFile())
 		.map((e) => join(e.parentPath, e.name))
 
-/** No output, log, send log or forge file of either deploy holds a value of the keys the runs loaded. */
+const until = async (done: () => Promise<boolean>, ms: number, what: string, everyMs = 200): Promise<void> => {
+	for (const deadline = Date.now() + ms; !(await done()); await Bun.sleep(everyMs))
+		if (Date.now() > deadline) throw new Error(`${what} within ${ms / 1000} s`)
+}
+
+/**
+ * `deploy-pool` killed outright once forge has landed {@link KILL_AFTER} transactions: forge must end by
+ * itself, and no transaction may land after the kill settles.
+ */
+async function forgeEndsWithTheCli(c: Ctx, f: OnFork, sender: Address): Promise<SendFaultsResult["killed"]> {
+	const logFile = join(c.dir, "deploy-pool-killed.log")
+	const cli = startBareCli("deploy-pool", [c.file, ...c.modeArgs], { ...c.env, PP_TESTNET_RUN_ROOT: join(c.dir, "runs-killed") }, logFile)
+	f.cleanup.push(() => killGroup(cli).then(() => {}))
+	const count = async () => Number(await f.fork.rpc<Hex>("eth_getTransactionCount", [sender, "latest"]))
+	await until(async () => cli.hasExited() || (await count()) >= KILL_AFTER, 300_000, `forge did not land ${KILL_AFTER} transactions`)
+	const forge = cli.child.pid === undefined ? undefined : childWith(cli.child.pid, "DeployE2ELocal.s.sol")
+	if (cli.hasExited() || forge === undefined)
+		throw new Error(`deploy-pool ran no forge script to kill under (${cli.exitReason() ?? "running"})`)
+	f.cleanup.push(() => (groupAlive(forge) ? endGroup(forge, 1_000).then(() => {}) : Promise.resolve()))
+	process.kill(cli.child.pid as number, "SIGKILL")
+	const killedAt = Date.now()
+	// A send already forwarded when the CLI died lands at once on the fork; only later ones count.
+	await Bun.sleep(1_000)
+	const landed = await count()
+	await until(async () => !groupAlive(forge), FORGE_EXIT_MS, "forge did not end by itself after the CLI was killed")
+	const forgeExitMs = Date.now() - killedAt
+	await f.fork.rpc("evm_mine", [])
+	await Bun.sleep(2_000)
+	const after = await count()
+	c.outputs.push(readFileSync(logFile, "utf8"))
+	if (after !== landed) throw new Error(`${after - landed} transactions landed after the CLI was killed (${landed} before)`)
+	c.log(
+		`[send-faults] CLI killed mid-deploy: forge ended by itself after ${(forgeExitMs / 1000).toFixed(1)} s, ${landed} landed, none after`,
+	)
+	return { landed, forgeExitMs }
+}
+
+/** No output, log, send log or forge file of any deploy holds a value of the keys the runs loaded. */
 function assertNoKeyLeft(c: Ctx, home: string): void {
 	const keys = loadKeys([...RUN_KEYS.fund, ...RUN_KEYS["deploy-pool"]], keyFilePath(home))
-	const files = ["runs", "runs-refused"].flatMap((d) => filesUnder(join(c.dir, d)))
+	const files = ["runs", "runs-refused", "runs-killed"].flatMap((d) => filesUnder(join(c.dir, d)))
 	assertNoKeyIn([...c.outputs, ...files.map((f) => readFileSync(f, "utf8"))], Object.values(keys))
 	c.log(`[send-faults] no key value in ${c.outputs.length} outputs and ${files.length} run files`)
 }
@@ -98,6 +150,20 @@ function onePerNonce(log: string): Hex[] {
 	const bad = hashes.findIndex((h) => h.length !== 1)
 	if (bad >= 0) throw new Error(`the send log holds ${hashes[bad]?.length ?? 0} hashes for nonce ${bad}, not one`)
 	return hashes.map(([h]) => h as Hex)
+}
+
+/**
+ * forge's transactions, from its broadcast log, are nonces 0 to {@link FORGE_LAST}; the stale count armed
+ * there was answered, and sends followed at the nonces after it.
+ */
+function assertHandoff(runDir: string, fired: Fired, sent: number): void {
+	const latest = filesUnder(join(runDir, "broadcast")).find((p) => p.endsWith("runLocal-latest.json"))
+	const forgeTxs = latest ? (JSON.parse(readFileSync(latest, "utf8")) as { transactions: unknown[] }).transactions.length : 0
+	const stale = fired.staleCountsAt[FORGE_LAST] ?? 0
+	if (forgeTxs !== FORGE_LAST + 1 || stale === 0 || sent <= forgeTxs)
+		throw new Error(
+			`the handoff was not proven: forge sent ${forgeTxs} transactions (FORGE_LAST expects ${FORGE_LAST + 1}), ${stale} stale counts answered at nonce ${FORGE_LAST}, ${sent} sent in all`,
+		)
 }
 
 /** `deploy-pool` through every fault: each fires, and every send of the deployer lands once and succeeds. */
@@ -116,13 +182,17 @@ async function landsOnce(c: Ctx, fronts: FaultFronts, f: OnFork, sender: Address
 		revertedEstimates: one,
 		readErrors: one,
 	})
-	const hashes = onePerNonce(join(c.dir, "runs", "own-rehearse-fork", "deploy-pool", "send-path.jsonl"))
+	const runDir = join(c.dir, "runs", "own-rehearse-fork", "deploy-pool")
+	const hashes = onePerNonce(join(runDir, "send-path.jsonl"))
 	const sent = Number(await f.fork.rpc<Hex>("eth_getTransactionCount", [sender, "latest"]))
 	const receipts = await Promise.all(hashes.map((h) => f.fork.rpc<{ status: Hex } | null>("eth_getTransactionReceipt", [h])))
 	const failed = receipts.findIndex((r) => r?.status !== "0x1")
 	if (sent !== hashes.length || failed >= 0)
 		throw new Error(`the deployer sent ${sent} transactions and the log names ${hashes.length}; nonce ${failed} did not succeed`)
-	c.log(`[send-faults] deploy-pool through every fault: ${sent} transactions, one hash each, all succeeded`)
+	assertHandoff(runDir, fired, sent)
+	c.log(
+		`[send-faults] deploy-pool through every fault: ${sent} transactions, one hash each, all succeeded; after forge's last (${FORGE_LAST}) the sends went on at ${FORGE_LAST + 1} through a stale count`,
+	)
 	return { transactions: sent, fired }
 }
 
@@ -146,11 +216,18 @@ export const sendFaultsRehearsal = (log: (line: string) => void): Promise<SendFa
 		const poolDeployer = addresses.POOL_DEPLOYER_KEY as Address
 		await f.fork.rpc("anvil_setBalance", [deployer, numberToHex(parseEther("10"))])
 		await fundThroughRefusals(c, fronts, deployer)
-		const snapshot = await f.fork.rpc<Hex>("evm_snapshot", [])
-		const stopped = await stopsPastBudget(c, fronts, f, poolDeployer)
-		if (!(await f.fork.rpc<boolean>("evm_revert", [snapshot]))) throw new Error("the fork did not revert to its snapshot")
+		// anvil drops a snapshot once reverted to, so each case takes its own.
+		const fromFunded = async <T>(run: () => Promise<T>): Promise<T> => {
+			const snapshot = await f.fork.rpc<Hex>("evm_snapshot", [])
+			const out = await run()
+			if (!(await f.fork.rpc<boolean>("evm_revert", [snapshot]))) throw new Error("the fork did not revert to its snapshot")
+			return out
+		}
+		const stopped = await fromFunded(() => stopsPastBudget(c, fronts, f, poolDeployer))
+		fronts.arm(undefined)
+		const killed = await fromFunded(() => forgeEndsWithTheCli(c, f, poolDeployer))
 		const { transactions, fired } = await landsOnce(c, fronts, f, poolDeployer)
 		await must(c, "verify-deployment", [c.file, "--pool-only"])
 		assertNoKeyLeft(c, join(f.dir, "home"))
-		return { block: f.block, transactions, fired, stopped }
+		return { block: f.block, transactions, fired, stopped, killed }
 	})
