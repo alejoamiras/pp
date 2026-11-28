@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { expect, test } from "bun:test"
 import { REAL_WALLET_TESTS } from "../../packages/e2e-kit/real-wallet/count-reporter"
 import { FORK_CASES } from "../../packages/sepolia-fork/src/forge"
+import { OPERATOR_FORK_STEPS } from "../../packages/testnet/src/rehearse/operator-steps"
 import {
 	boundedSuite,
 	countVerdict,
@@ -11,6 +12,8 @@ import {
 	expectedPassed,
 	forgePassed,
 	SEPOLIA_FORK_ENDPOINT,
+	rehearseListed,
+	rehearsedSteps,
 	SUITES,
 	sepoliaForkPassed,
 	verdict,
@@ -126,6 +129,7 @@ test("every bounded suite has a pull-request listing, and one the check cannot d
 		"bridge-spec-properties",
 		"bridge-spec-fresh-vectors",
 		"bridge-client-model",
+		"testnet-pool1-rehearsal",
 	])
 	for (const s of bounded) expect(s.list, s.name).toBeDefined()
 	const refused =
@@ -181,4 +185,22 @@ test("the unit-test workflow checks the counts on every pull request", () => {
 
 test("the sepolia-fork suite expects exactly its runner's named cases", () => {
 	expect(SUITES.find((s) => s.name === "sepolia-fork")?.expected).toBe(FORK_CASES.length)
+})
+
+test("the pool1 rehearsal counts the steps of its one `rehearsed` line, at the steps the rehearsal lists", () => {
+	expect(SUITES.find((s) => s.name === "testnet-pool1-rehearsal")?.expected).toBe(OPERATOR_FORK_STEPS.length)
+	const count = rehearsedSteps("pool1")
+	const line = (part: string, steps: number) =>
+		`${JSON.stringify({ event: "rehearsed", part, block: "1", asp: Array.from({ length: steps }, (_, i) => ({ step: `s${i}`, requests: [] })) })}\n`
+	expect(count(`testnet-pool1-rehearsal: FC_SEED=1, bound 300s\n[pool1] seed exited 2\n${line("pool1", 8)}`)).toBe(8)
+	expect(count(`\u001b[2m${line("pool1", 8)}`)).toBe(8)
+	expect(count(line("pool1", 8) + line("pool1", 8))).toBe(0)
+	expect(count(line("fork", 8))).toBe(0)
+	expect(count('{"event":"rehearsed","part":"pool1","asp":[\n')).toBe(0)
+	expect(count('{"event":"rehearsed","part":"pool1"}\n')).toBe(0)
+	expect(count("[rehearse] pool1 failed: seed exited 1\n")).toBe(0)
+	const listed = rehearseListed("pool1")
+	expect(listed("rehearse pool1: 8 steps listed\n")).toBe(8)
+	expect(listed("rehearse fork: 8 steps listed\n")).toBe(0)
+	expect(listed("rehearse pool1: 8 steps listed, and more\n")).toBe(0)
 })

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 // bun run --cwd packages/testnet rehearse [fork | send-faults | pool1 | stack | canary-failures | pause]
+// bun run --cwd packages/testnet rehearse pool1 --list   (its step count; loads no part)
 // Rehearses the testnet commands, never against a live network and never with the key file. Part `fork`
 // runs on an anvil fork of Sepolia this run owns, with keys generated into a scratch home; part
 // `send-faults` runs `fund` and `deploy-pool` on such a fork through fronts that inject send faults; part
@@ -11,6 +12,7 @@
 import { spawnSync } from "node:child_process"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { OPERATOR_FORK_STEPS } from "../src/rehearse/operator-steps"
 
 type Part = (log: (line: string) => void) => Promise<object>
 
@@ -41,6 +43,15 @@ const load = PARTS[part]
 if (!load) {
 	console.error(`unknown part ${part}; parts: ${Object.keys(PARTS).join(", ")}`)
 	process.exit(2)
+}
+// The nightly's pull-request count check reads this without the pool checkout.
+if (process.argv[3] === "--list") {
+	if (part !== "pool1" || process.argv.length > 4) {
+		console.error("usage: rehearse pool1 --list")
+		process.exit(2)
+	}
+	console.log(`rehearse ${part}: ${OPERATOR_FORK_STEPS.length} steps listed`)
+	process.exit(0)
 }
 if (process.env.SEED !== undefined) {
 	console.error("refused: SEED is set, which makes Aztec's randomness predictable; unset it")

@@ -57,8 +57,9 @@ exit "$code"`
 /**
  * A suite under one wall-clock bound, `timeout -s KILL`, with `FC_SEED` (the caller's, else a drawn one)
  * printed before it starts and again when it fails. It passes only when exactly `expected` tests pass, so
- * a skipped or deleted test fails it. Only for commands that start no detached process group: the kill
- * reaches `timeout`'s own group alone and runs no cleanup, so a booted stack or sandbox would be orphaned.
+ * a skipped or deleted test fails it. Only for commands whose cleanup the kill may skip: it reaches
+ * `timeout`'s own group alone and runs no teardown. A detached group survives it unless the group ends
+ * with its parent, as `@pp/run-isolation`'s owned children do; a booted stack or sandbox would be orphaned.
  * That group is not the terminal's, so a Ctrl-C on a local run leaves the command going until its bound.
  */
 export function boundedSuite(s: {
@@ -127,6 +128,31 @@ export const expectedPassed =
 		const only = lines.length === 1 ? lines[0] : undefined
 		return only && Number(only[3]) === total ? Number(only[2]) : 0
 	}
+
+/**
+ * Reads the steps of the one `rehearsed` line that testnet's `rehearse` prints once a part passed. A
+ * second such line, another part's or one that does not parse counts 0.
+ */
+export const rehearsedSteps =
+	(part: string) =>
+	(output: string): number => {
+		const lines = Bun.stripANSI(output)
+			.split("\n")
+			.filter((l) => l.startsWith('{"event":"rehearsed",'))
+		if (lines.length !== 1) return 0
+		try {
+			const r = JSON.parse(lines[0] as string) as { part?: unknown; asp?: unknown }
+			return r.part === part && Array.isArray(r.asp) ? r.asp.length : 0
+		} catch {
+			return 0
+		}
+	}
+
+/** Reads `rehearse <part> --list`'s one line. */
+export const rehearseListed =
+	(part: string) =>
+	(stdout: string): number =>
+		Number(new RegExp(`^rehearse ${part}: (\\d+) steps listed$`, "m").exec(stdout)?.[1] ?? 0)
 
 /**
  * A public Sepolia gateway that needs no key and serves state at every age. Committed on purpose: it is
@@ -230,6 +256,19 @@ export const SUITES: Suite[] = [
 		passed: sepoliaForkPassed,
 		expected: 4,
 	},
+	// packages/testnet owns the part: the pool1 target's `fund`, `verify-deployment --pool-only` and
+	// `seed` cases on an anvil fork of Sepolia it owns, the operator's ASP replaced by a recorded stand-in.
+	// Its fork anvil's group ends with it, so the kill at the bound ends that too, leaving only the run's
+	// directory under ~/.cache/pp. The workflow has fetched the pool already.
+	boundedSuite({
+		name: "testnet-pool1-rehearsal",
+		cwd: "packages/testnet",
+		argv: ["bun", "run", "rehearse", "pool1"],
+		minutes: 5,
+		expected: 8,
+		count: rehearsedSteps("pool1"),
+		list: { argv: ["bun", "scripts/rehearse.ts", "pool1", "--list"], count: rehearseListed("pool1") },
+	}),
 	// packages/e2e-kit owns the tier: web's screens against the wallet's pinned release, approved in its
 	// own windows, on a local stack the runner boots and reaps. Not bounded here: it starts detached
 	// groups. The stack deploys the bridge from its L1 build, which the workflow does not make.

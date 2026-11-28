@@ -121,7 +121,8 @@ cannot be listed is refused when the file loads. A failed run keeps the real-wal
 and logs as an artifact for three days. The L1 fuzz and invariant suites are
 `contracts/bridge/evm/scripts/nightly.sh` at that package's `nightly` Foundry profile; local-stack's
 32-minute idle case is its `test:integration:long`; the Sepolia fork suite is sepolia-fork's `run`,
-against the keyless public endpoint committed in that file; the real-wallet tier is e2e-kit's
+against the keyless public endpoint committed in that file; testnet's pool1 rehearsal is its
+`rehearse pool1`, whose steps `src/rehearse/operator-steps.ts` lists; the real-wallet tier is e2e-kit's
 `test:real-wallet`.
 
 ## Working in this repo
