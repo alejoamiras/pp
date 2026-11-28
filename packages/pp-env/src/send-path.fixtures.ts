@@ -1,7 +1,15 @@
 // Test fixtures for the send path and its relay: a scriptable JSON-RPC stub and signed transactions.
 import { privateKeyToAccount } from "viem/accounts"
 
-export type StubAnswer = { status?: number; hangMs?: number; body?: string; result?: unknown; error?: { code: number; message: string } }
+export type StubAnswer = {
+	status?: number
+	hangMs?: number
+	/** Held until this settles, after any `hangMs`. */
+	until?: Promise<unknown>
+	body?: string
+	result?: unknown
+	error?: { code: number; message: string }
+}
 export type Handler = (method: string, params: unknown[]) => StubAnswer
 
 /** A loopback JSON-RPC endpoint answering from `handle`, recording every call. */
@@ -16,6 +24,7 @@ export function stub() {
 			calls.push({ method: b.method, params: b.params })
 			const a = handle(b.method, b.params)
 			if (a.hangMs) await Bun.sleep(a.hangMs)
+			if (a.until) await a.until
 			if (a.body !== undefined) return new Response(a.body, { status: a.status ?? 200 })
 			const payload = a.error ? { error: a.error } : { result: a.result }
 			return Response.json({ jsonrpc: "2.0", id: b.id, ...payload }, { status: a.status ?? 200 })

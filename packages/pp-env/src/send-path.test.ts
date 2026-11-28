@@ -210,15 +210,24 @@ describe("a send", () => {
 	it("sends the same bytes sent twice at once as one send, which a final answer ends for both", async () => {
 		const raw = await signed(18)
 		read.set(() => ({ result: null }))
-		const answers: StubAnswer[] = [{ status: 429 }]
-		send.set((m) =>
-			m === "eth_sendRawTransaction"
-				? (answers.shift() ?? { error: { code: -32003, message: "insufficient funds" } })
-				: { result: null },
-		)
-		const p = path()
-		const [a, b] = await Promise.all([p.send(raw).catch(failure), p.send(raw).catch(failure)])
-		expect([String((a as SendPathError).kind), b, send.sends()]).toEqual(["final", a, [raw, raw]])
+		// The first answer is held until a second request arrives, which only a send that did not join
+		// the first one makes, or 300 ms pass; either way both callers are in before anything is answered.
+		let release = () => {}
+		const held = new Promise<void>((r) => {
+			release = r
+			setTimeout(r, 300)
+		})
+		const final = { error: { code: -32003, message: "insufficient funds" } }
+		send.set((m) => {
+			if (m !== "eth_sendRawTransaction") return { result: null }
+			if (send.sends().length > 1) release()
+			return { ...final, until: held }
+		})
+		const p = path({ attemptTimeoutMs: 1_000, budgetMs: 2_000 })
+		const first = p.send(raw).catch(failure)
+		while (send.sends().length === 0) await Bun.sleep(1)
+		const [a, b] = await Promise.all([first, p.send(raw).catch(failure)])
+		expect([String((a as SendPathError).kind), b, send.sends()]).toEqual(["final", a, [raw]])
 	})
 
 	it("answers the same bytes sent again after a final answer with that answer, without forwarding them", async () => {
