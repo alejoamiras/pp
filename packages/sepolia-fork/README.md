@@ -65,7 +65,8 @@ checks the same hashes with the same reads through `@pp/sepolia-fork/pins`, whic
 must answer every call at that block or throw) and `codeMismatches(want, got)`. A refresh (`pins <block>`)
 refuses a block that is not finalized, empty code, a cleared slot or 1x1 route, wiring that names other
 contracts, and a proxy whose code differs from the pinned one: a new proxy needs its dispatch reviewed and
-its pin edited by hand first.
+its pin edited by hand first. Two more subpaths serve `@pp/testnet`'s rehearsals: `./anvil` (the pinned
+anvil, its client version and a fork this run owns) and `./rpc` (a bare JSON-RPC client).
 
 What a pass does not cover:
 - The finalized block lags the head by about 15 minutes, so an upgrade can land between the compared block

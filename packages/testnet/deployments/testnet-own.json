@@ -1,0 +1,59 @@
+{
+	"description": "l1Rpc is the Tenderly gateway because discovery reads logs from the pool's deploy block on. publicnode keeps only about 34 hours of Sepolia receipts and state (measured 2026-11-27), so do not pin it here.",
+	"network": {
+		"l1ChainId": 11155111,
+		"rollup": "0x1f435a7f2da358caf887a470faeee7d5d5f4efba",
+		"l1Registry": "0xa0bfb1b494fb49041e5c6e8c2c1be09cd171c6ba",
+		"inbox": "0x7cdc32dd7d008870a95f1837ffd7229ef676ef8a",
+		"outbox": "0xa5a0f7a7bdaf280964a1922a68c83462e5f6e15b",
+		"rollupVersion": 679261766,
+		"fpc": "0x2d8fff82a3b0c15d0a89169e7d8d043e079ab94d52031f1de1e4972ebad169d3",
+		"l1Rpc": "https://sepolia.gateway.tenderly.co",
+		"l1SendRpc": "https://ethereum-sepolia-rpc.publicnode.com",
+		"aztecNode": "https://aztec-testnet.drpc.org",
+		"botPort": 48601,
+		"aspPort": 48602
+	},
+	"target": "own",
+	"bundle": "ceremony",
+	"expected": {
+		"guardian": "0xAD1127652b10042b5558818D6e362f54b4A4C518",
+		"lifetimeCap": "1000000000000",
+		"l1Deployer": "0x7473c0B7E59440401ec33A0b2b9263C98D92e270",
+		"l2Deployer": "0x2662ecea7b47c6b7e05fd33ba6b572ed2d613fee8e24d99bae15a341a740e365",
+		"botPoster": "0x1924ff866e94ef8e308b409f180fd3e644113ffe2b86d18ff446cb093e5c9635",
+		"aspPostman": "0xF636da69f1473be6014c14B43ce5272ACA8a1F04",
+		"poolDeployer": "0x2D03f8cB1F1DF4D5f823CDc282990fC0487Cc154",
+		"canaryOwner": "0x32f984A9561635dAb2AD48881FDd8E4782Da82D5",
+		"canarySender": "0x44c39e28726C19b19770065Cc0E70CD63930cEbB",
+		"demoOwner": "0x73546C799c99b7A0A46f1a6184b1a8274636A5eC",
+		"demoSender": "0xB30F9E7f9F33F89f5833084E5429559ed52b01A8",
+		"birthIntake": "0x2a8bf62bfd30dbe6a42a302e51d0d45bc3578d885001c3c30f1a7bc321b8ecce",
+		"tokenClassId": "0x1e897c194970e0f495ca5e73956992f131fc38243e3f5b74812a99b9e86d397f",
+		"amounts": {
+			"debit": "100000000",
+			"note": "100000000",
+			"bridge": "100000000"
+		}
+	},
+	"pool": {
+		"poolVault": "0xa15d2CbA5b917d1b93000F466e697C98A7b289b6",
+		"entrypoint": "0x0966eF7BB777dFA5158A8B5D359daf39aCBE0471",
+		"aspRegistry": "0xC1E221BfBEf467A7BEa5f96BE5E6FF1a4C8B9146",
+		"keystore": "0xcD420390188746C8f99D54306d57F3CcF6877723",
+		"asset": "0x01ECb3fC7e1E7eaFb80D9602119171664F888A4c",
+		"deployBlock": "12227015",
+		"aspApiUrl": "http://127.0.0.1:48602",
+		"accessRouter": "0x4004b8BB7dC48257153e2cd6Cc44e4D9dDa8DD3f",
+		"relay": "0x336a187960879EFB99d00CABb46208CF2Be486dF"
+	},
+	"bridge": {
+		"factory": "0xbb63a3f1597b61ca5fa8f2c4a3ea9d1b53e9c57d",
+		"portal": "0xeb490adff9e2a65c3c9c2db0320f27362c9e4a95",
+		"hub": "0x24b67800241ca8b9a88dfd65726f0dd6f91fa18d4193192a6f728754c7d1cbe5",
+		"token": "0x1a32df4016bc15b9d2be9862da33e023412660d71b76471e3a17b89a2048f30c",
+		"registry": "0x098f741eb33939a75b1cf62cb38ca21fae19317b5d3fdf0a69e62f001b156623",
+		"deployBlock": "12227181",
+		"factoryTx": "0x15c79f7a88365584f50b2c6fbb5195602b41b6084a017389d81a01989d4f7599"
+	}
+}

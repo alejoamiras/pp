@@ -6,7 +6,9 @@
 	"description": "The bridge's Ethereum side against the real Sepolia pool and Aztec testnet Inbox, on an owned anvil fork.",
 	"type": "module",
 	"exports": {
-		"./pins": "./src/pins.ts"
+		"./anvil": "./src/anvil.ts",
+		"./pins": "./src/pins.ts",
+		"./rpc": "./src/rpc.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
