@@ -1,7 +1,7 @@
 // open <deployment file> --factory <address>
 // Opens entries with the guardian's own key once checkBeforeOpen passes on the file's expectations, and
 // only while the guardian holds gas for this open and three pauses at twice today's fee estimate, and
-// for one pause and its replacement at a fixed 10 gwei, so a later fee rise cannot leave entries open.
+// for a replacement pause through a 9 gwei estimate, so a fee rise to there cannot leave entries open.
 import { type GuardianWallet, openDeployedEntries } from "@pp/bridge-core/deploy"
 import { PORTAL_FACTORY_ABI, PUBLIC_CHAIN_TIMING } from "@pp/bridge-core"
 import { formatEther, formatGwei, isAddress, isAddressEqual } from "viem"
@@ -44,7 +44,7 @@ await main(async () => {
 	if (short > 0n)
 		throw new GuardError(
 			"gas",
-			`the guardian holds ${formatEther(balance)} ETH, ${formatEther(short)} ETH short of a pause and its replacement at ${formatGwei(PAUSE_CEILING_WEI)} gwei`,
+			`the guardian holds ${formatEther(balance)} ETH, ${formatEther(short)} ETH short of a replacement pause through a ${formatGwei(PAUSE_CEILING_WEI)} gwei estimate`,
 		)
 	const hash = await openDeployedEntries(openContextOf(d, l1, node), guardian as unknown as GuardianWallet, {
 		timing: PUBLIC_CHAIN_TIMING,

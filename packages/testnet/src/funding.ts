@@ -60,19 +60,25 @@ export const FEE_FLOOR_WEI = 100_000_000n
 export const GUARDIAN_FEE_FLOOR_WEI = 1_000_000_000n
 const floorOf = (role: FundedRole): bigint => (role === "guardian" ? GUARDIAN_FEE_FLOOR_WEI : FEE_FLOOR_WEI)
 
-/** The fee per gas at which the guardian must afford a stalled pause and its replacement before `open`. */
-export const PAUSE_CEILING_WEI = 10_000_000_000n
+/**
+ * The fee estimate through which `open` requires the guardian to afford a stalled pause's replacement. A
+ * stalled pause never lands, so the replacement alone must fit the balance upfront.
+ */
+export const PAUSE_CEILING_WEI = 9_000_000_000n
+/** `pause --replace` signs at four times the estimate (bridge-core's `pauseEntries`). */
+const REPLACEMENT_FEE_FACTOR = 4n
 /**
  * A pause's gas on live Sepolia, where it writes a fresh slot: the own target's first pause used 130,062
  * under viem's estimate of 131,161, about five times what anvil charges for it.
  */
 export const PAUSE_LIVE_GAS = 135_000n
 
-/** What a guardian holding `balance` lacks for one pause and one replacement at {@link PAUSE_CEILING_WEI}; 0n when nothing. */
+/** What a guardian holding `balance` lacks for a replacement pause through {@link PAUSE_CEILING_WEI}; 0n when nothing. */
 export const pauseHeadroomShort = (balance: bigint): bigint => {
-	const need = 2n * PAUSE_LIVE_GAS * PAUSE_CEILING_WEI
+	const need = PAUSE_LIVE_GAS * REPLACEMENT_FEE_FACTOR * PAUSE_CEILING_WEI
 	return balance >= need ? 0n : need - balance
 }
+
 export type Recipient = { role: Exclude<FundedRole, "l1Deployer">; address: Address }
 
 /** The keys `fund` tops up from the deployer: the file's committed addresses, never ones a key derives. */

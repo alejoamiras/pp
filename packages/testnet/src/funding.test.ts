@@ -12,8 +12,6 @@ import {
 	GUARDIAN_FEE_FLOOR_WEI,
 	liveGasOf,
 	needOf,
-	PAUSE_CEILING_WEI,
-	PAUSE_LIVE_GAS,
 	pauseHeadroomShort,
 	recipientsOf,
 	scriptFees,
@@ -120,9 +118,10 @@ describe("forge's fee caps", () => {
 })
 
 describe("open's pause headroom", () => {
-	const need = 2n * PAUSE_LIVE_GAS * PAUSE_CEILING_WEI
-	it("is a pause and its replacement at 10 gwei, which a guardian funded at its floor holds, and names what is missing", () => {
-		expect(need).toBe(2_700_000_000_000_000n)
+	// 135,000 gas at four times a 9 gwei estimate.
+	const need = 4_860_000_000_000_000n
+	it("is a replacement pause through a 9 gwei estimate, which a guardian funded at its floor holds, and names what is missing", () => {
+		expect(pauseHeadroomShort(0n)).toBe(need)
 		expect(pauseHeadroomShort(need)).toBe(0n)
 		expect(pauseHeadroomShort(need - 1n)).toBe(1n)
 		expect(pauseHeadroomShort(needOf("guardian", 0n))).toBe(0n)
