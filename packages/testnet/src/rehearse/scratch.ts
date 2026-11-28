@@ -1,5 +1,6 @@
 /** A rehearsal's scratch deployment file, and the real CLI runs that read and extend it. */
-import { readFileSync, writeFileSync } from "node:fs"
+import { readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { committedClassIds } from "../pins"
 import { parseDeployment, serializeDeployment, type TestnetDeployment } from "../schema"
 import { type CliRun, type Event, runCli } from "./runner"
@@ -58,12 +59,26 @@ export function expectedOf(a: Record<string, string>, amounts: Amounts): NonNull
 	}
 }
 
+/** Every file under `dir`, at any depth. */
+export const filesUnder = (dir: string): string[] =>
+	readdirSync(dir, { withFileTypes: true, recursive: true })
+		.filter((e) => e.isFile())
+		.map((e) => join(e.parentPath, e.name))
+
+/** A key's padded hex, its minimal hex (a value with leading zero digits loses them) and its decimal. */
+const keyForms = (key: string): string[] => {
+	const hex = key.toLowerCase().replace(/^0x/, "")
+	const value = BigInt(`0x${hex}`)
+	return [hex, value.toString(16), value.toString(10)]
+}
+
 /**
- * Throws when any output holds a key value, with or without its 0x prefix and in any case. The CLIs
- * already scrub what they print; this checks the scrub from outside.
+ * Throws when any output holds a key value: its 64-digit hex with or without the 0x prefix, its hex
+ * without leading zeros, or its decimal, in any case. The CLIs already scrub what they print; this
+ * checks the scrub from outside.
  */
 export function assertNoKeyIn(outputs: readonly string[], keys: readonly string[]): void {
 	const text = outputs.join("\n").toLowerCase()
-	const leaked = keys.findIndex((k) => text.includes(k.toLowerCase().replace(/^0x/, "")))
+	const leaked = keys.findIndex((k) => keyForms(k).some((form) => text.includes(form)))
 	if (leaked >= 0) throw new Error(`a CLI printed key ${leaked + 1} of ${keys.length}`)
 }

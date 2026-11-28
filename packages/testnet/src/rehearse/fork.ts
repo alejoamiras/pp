@@ -16,12 +16,12 @@ import { type Address, createPublicClient, createWalletClient, type Hex, http, n
 import { privateKeyToAccount } from "viem/accounts"
 import { sepolia } from "viem/chains"
 import type { FundedRole } from "../funding"
-import { generateKey } from "../keyfile"
+import { generateKey, KEY_NAMES, keyFilePath, loadKeys } from "../keyfile"
 import { SEPOLIA } from "../network"
 import { configuredTarget, parseDeployment, type TestnetDeployment } from "../schema"
 import { budgetCheck, gasBySender } from "./gas"
 import { listeningPorts, runCli, startCli, untilEvent } from "./runner"
-import { expectedOf, loadScratch, must, promote, type Scratch, writeScratch } from "./scratch"
+import { assertNoKeyIn, expectedOf, filesUnder, loadScratch, must, promote, type Scratch, writeScratch } from "./scratch"
 
 const OWN = fileURLToPath(new URL("../../deployments/testnet-own.json", import.meta.url))
 const MINT_ABI = parseAbi(["function mint(address to, uint256 amount)"])
@@ -35,6 +35,7 @@ export type Ctx = Scratch & { dir: string; forkUrl: string; sendUrl: string }
 export async function scratchFile(c: Ctx, scratchHome: string, runId: string): Promise<Record<string, string>> {
 	const keys = await runCli("keys", [], { ...c.env, HOME: scratchHome })
 	if (keys.code !== 0) throw new Error(`keys exited ${keys.code}:\n${keys.out.trim()}`)
+	c.outputs.push(keys.out)
 	const addresses = Object.fromEntries(keys.events.map((e) => [e.name as string, e.address as string]))
 	// Claimed then released at once: the asp command claims the row itself, under its own run id.
 	const aspPort = await claimPort(runId, "rehearse-asp")
@@ -50,6 +51,13 @@ export async function scratchFile(c: Ctx, scratchHome: string, runId: string): P
 		expected: expectedOf(addresses, own.expected.amounts),
 	})
 	return addresses
+}
+
+/** No CLI's output, `keys`' included, and none of `files` holds a value of any key in the scratch key file. */
+function assertNoKeyLeft(c: Ctx, home: string, files: readonly string[]): void {
+	const keys = loadKeys(KEY_NAMES, keyFilePath(home))
+	assertNoKeyIn([...c.outputs, ...files.map((f) => readFileSync(f, "utf8"))], Object.values(keys))
+	c.log(`[fork] no key value in ${c.outputs.length} outputs and ${files.length} files`)
 }
 
 /** The mock ASP up, answering reads only and listening on its one port. */
@@ -214,5 +222,6 @@ export const forkRehearsal = (log: (line: string) => void): Promise<ForkResult> 
 			throw new Error(`the asp did not stop clean (${asp.exitReason()})`)
 		const gas = budgetCheck(await gasBySender(fork.url, block), addresses)
 		if (!gas.demoOwner) throw new Error("the demo owner spent no gas, so its keystore was not registered from its own key")
+		assertNoKeyLeft(c, join(dir, "home"), [logFile, ...filesUnder(join(dir, "runs"))])
 		return { block, gas, debit, poolSpentWei }
 	})
