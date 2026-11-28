@@ -367,7 +367,10 @@ describe("the demo accounts", () => {
 			return cli(name, [deploymentFile(home, { pool: true }, { canaryOwner, ...expected }), ...args, "--rehearse-fork", rpc], home)
 		}
 		const cases: [Promise<Run>, RegExp][] = [
-			[run("seed", ["--demo", "--recipient", addr(30)], {}), /refused: argv: --demo and --recipient exclude each other/],
+			[
+				run("seed", ["--demo", "--recipient", addr(30)], {}),
+				/refused: argv: --no-register, --recipient and --demo exclude each other/,
+			],
 			[run("seed", ["--demo"], { demoOwner: undefined }), /refused: file: --demo needs expected.demoOwner/],
 			[run("seed", ["--demo"], { demoOwner: canaryOwner }), /refused: file: expected.demoOwner is the canary owner/],
 			[run("seed", ["--demo"], {}), /refused: account: the demo owner key is for 0x\w+, the file expects/],

@@ -27,6 +27,9 @@ export function readTestnetDeployment(file: string) {
 	if (d.network.l1SendRpc !== undefined && !isPinned("l1SendRpc", d.network.l1SendRpc))
 		fail(file, `network.l1SendRpc ${d.network.l1SendRpc} is not the pinned Sepolia send RPC`)
 	if (!isPinned("aztecNode", d.network.aztecNode)) fail(file, `network.aztecNode ${d.network.aztecNode} is not the pinned testnet node`)
+	// The schema also admits a loopback stand-in for the operator's API, which only a fork rehearsal reaches.
+	if (d.target === "pool1" && !isPinned("aspApi", d.pool.aspApiUrl))
+		fail(file, `pool.aspApiUrl ${d.pool.aspApiUrl} is not the operator's pinned ASP API`)
 	return d
 }
 

@@ -35,11 +35,10 @@ export function openContextOf(d: Full, l1: PublicClient, node: unknown): OpenCon
 }
 
 /**
- * Operator targets re-read their pool against `operator` before any signature. Until that adaptation
- * lands with the operator pass, a CLI that signs on one refuses.
+ * The own pool's deployer and mock ASP exist only on the own target; an operator's pool and ASP are the operator's.
  * @throws GuardError `operator`
  */
-export function assertOwnTarget(d: TestnetDeployment): void {
+export function assertOwnPool(d: TestnetDeployment): void {
 	if (d.target !== "own")
-		throw new GuardError("operator", `target ${d.target} needs the operator checks, which this build does not have yet`)
+		throw new GuardError("operator", `target ${d.target} uses the operator's pool and ASP; this command serves the own pool`)
 }

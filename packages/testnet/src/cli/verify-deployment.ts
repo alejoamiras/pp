@@ -1,5 +1,6 @@
 // verify-deployment <deployment file> [--pool-only] [--bot] [--label <decimal> --min-sequence <n>] [--rehearse <manifest> | --rehearse-fork <url>]
-// Read-only. --pool-only: the own pool's code against the build, its bindings, roles and asset config.
+// Read-only. --pool-only: the pool's code (the own pool's against the build, an operator's against its
+// `operator` block), its bindings, roles and asset config.
 // Otherwise also the bridge: the factory's creation transaction, the token class, the registry roles,
 // entries paused and `checkBeforeOpen`; with --bot, the record against the registry's root and its
 // block; with --label, that label ACTIVE in the bot's latest snapshot at or after --min-sequence.
@@ -8,6 +9,7 @@ import { checkBeforeOpen } from "@pp/bridge-core/deploy"
 import { labelState, parseAspSnapshot, readRootRecord } from "@pp/label-paths"
 import { GuardError } from "../guards"
 import { loopback, SEPOLIA } from "../network"
+import { checkOperator } from "../operator"
 import type { TestnetDeployment } from "../schema"
 import {
 	checkDeployBlock,
@@ -33,6 +35,8 @@ async function checkPool(d: WithPool, l1: Parameters<typeof checkPoolBindings>[0
 		const matched = await verifyPoolCode({ rpcUrl: d.network.l1Rpc, chainId: SEPOLIA, deployment })
 		report("pool-code", { matched: matched.length })
 	}
+	const read = await checkOperator(l1, d)
+	if (read !== undefined && d.operator) report("operator", { block: read, reviewedAt: d.operator.evidence.forkBlock })
 	const o = d.operator?.asset
 	const asset = o ? { minAmount: o.minDeposit, vettingFeeBps: BigInt(o.vettingFeeBps) } : OWN_ASSET
 	await checkPoolBindings(l1, p, d.expected.aspPostman, asset)

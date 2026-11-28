@@ -9,7 +9,7 @@ import { RUN_KEYS } from "../keys"
 import { loopback, SEPOLIA } from "../network"
 import { POOL_FIELDS } from "../schema"
 import { feeAboveBudget, scriptFees } from "../funding"
-import { assertOwnTarget } from "./context"
+import { assertOwnPool } from "./context"
 import { cliArgs, guarded, logLine, main, report, runDir, writeCandidate } from "./common"
 import { sendRpcOf } from "./wallet"
 
@@ -29,7 +29,7 @@ await main(async () => {
 	if (mode.kind === "rehearse")
 		throw new GuardError("argv", "the local stack brings its own pool; deploy-pool runs live or on a Sepolia fork")
 	const { d, l1 } = await guarded(file, mode, ["expected"], false)
-	assertOwnTarget(d)
+	assertOwnPool(d)
 	if (d.pool) throw new GuardError("file", "the file already has a pool section; a second deploy would orphan it")
 	const keys = readKeys(RUN_KEYS["deploy-pool"], mode, { env: process.env }, l1AddressOf)
 	const deployerKey = keys.POOL_DEPLOYER_KEY as `0x${string}`
