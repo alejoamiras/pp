@@ -54,10 +54,10 @@ export async function scratchFile(c: Ctx, scratchHome: string, runId: string): P
 }
 
 /** No CLI's output, `keys`' included, and none of `files` holds a value of any key in the scratch key file. */
-function assertNoKeyLeft(c: Ctx, home: string, files: readonly string[]): void {
+export function assertNoKeyLeft(c: Scratch, home: string, files: readonly string[]): void {
 	const keys = loadKeys(KEY_NAMES, keyFilePath(home))
 	assertNoKeyIn([...c.outputs, ...files.map((f) => readFileSync(f, "utf8"))], Object.values(keys))
-	c.log(`[fork] no key value in ${c.outputs.length} outputs and ${files.length} files`)
+	c.log(`[${c.tag}] no key value in ${c.outputs.length} outputs and ${files.length} files`)
 }
 
 /** The mock ASP up, answering reads only and listening on its one port. */

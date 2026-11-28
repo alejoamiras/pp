@@ -13,7 +13,8 @@ const ZERO = "0x0000000000000000000000000000000000000000"
 const AZTEC_ZERO = `0x${"00".repeat(32)}`
 const OTHER_L1 = ["feeJuice", "feeJuicePortal", "coinIssuer", "rewardDistributor", "governanceProposer", "governance", "stakingAsset"]
 
-const nodeInfo = (n: TestnetDeployment["network"]) => ({
+/** `getNodeInfo`'s answer for `n`'s rollup, which a CLI's node guard accepts. */
+export const nodeInfo = (n: TestnetDeployment["network"]) => ({
 	nodeVersion: "6.0.0",
 	l1ChainId: n.l1ChainId,
 	rollupVersion: n.rollupVersion,

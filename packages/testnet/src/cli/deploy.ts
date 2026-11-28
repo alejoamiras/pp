@@ -13,18 +13,18 @@ import { l1AddressOf, l2AddressOf } from "../accounts"
 import { deployBuildMismatch } from "../creation"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
+import { checkOperator } from "../operator"
 import { BRIDGE_FIELDS } from "../schema"
 import { cliArgs, guarded, main, report, runDir, sendLogPath, writeCandidate } from "./common"
 import { sendPathOf } from "./wallet"
-import { assertOwnTarget } from "./context"
 
 /** The L2 deploy and send waits on a public network, where proving and checkpoints take minutes. */
 const L2_WAIT_SEC = 600
 
 await main(async () => {
 	const { file, mode } = cliArgs(process.argv.slice(2), {})
-	const { d } = await guarded(file, mode, ["expected", "pool"], true)
-	assertOwnTarget(d)
+	const { d, l1 } = await guarded(file, mode, ["expected", "pool"], true)
+	await checkOperator(l1, d)
 	if (d.bridge) throw new GuardError("bridge", "the file already has a bridge; a new generation is a new file")
 	const mismatch = deployBuildMismatch(mode, process.env)
 	if (mismatch) throw new GuardError("build", `the forge build is not the committed one: ${mismatch}`)

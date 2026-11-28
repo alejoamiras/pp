@@ -122,6 +122,8 @@ describe("testnetTarget", () => {
 				FPC,
 			),
 		)
+		const standIn = file((d) => (d.pool = { ...d.pool, aspApiUrl: "http://127.0.0.1:9000" }), POOL1)
+		expect(() => testnetTarget(standIn, {}, FPC)).toThrow(/operator's pinned ASP API/)
 		const preCeremony = join(dir, `deployment-${n++}.json`)
 		writeFileSync(preCeremony, JSON.stringify({ ...JSON.parse(readFileSync(POOL1, "utf8")), bundle: "pre-ceremony" }))
 		expect(() => testnetTarget(preCeremony, {}, FPC)).toThrow(/ceremony bundle the app pins/)

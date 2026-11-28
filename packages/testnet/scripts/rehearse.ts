@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
-// bun run --cwd packages/testnet rehearse [fork | send-faults | stack | canary-failures | pause]
+// bun run --cwd packages/testnet rehearse [fork | send-faults | pool1 | stack | canary-failures | pause]
 // Rehearses the testnet commands, never against a live network and never with the key file. Part `fork`
 // runs on an anvil fork of Sepolia this run owns, with keys generated into a scratch home; part
-// `send-faults` runs `fund` and `deploy-pool` on such a fork through fronts that inject send faults. Parts `stack`
+// `send-faults` runs `fund` and `deploy-pool` on such a fork through fronts that inject send faults; part
+// `pool1` runs the operator target's `fund`, `verify-deployment` and `seed` cases on such a fork, its ASP
+// requests recorded at a loopback front to a stand-in. Parts `stack`
 // and `canary-failures` run on the local stack at `PP_STACK_MANIFEST`, or boot one through bridge-core's
 // with-stack, which stops it and checks it left nothing behind. Part `pause` runs the guardian's failure
 // and recovery cases on bare local anvils with anvil's well-known keys.
@@ -14,11 +16,14 @@ type Part = (log: (line: string) => void) => Promise<object>
 
 const manifest = process.env.PP_STACK_MANIFEST
 const ON_STACK = new Set(["stack", "canary-failures"])
-// Loaded on demand: parts `fork`, `send-faults`, `stack` and `canary-failures` import pp-env's entries, which need the
-// pool checkout; `pause` does not.
+// Loaded on demand: every part but `pause` imports pp-env's entries, which need the pool checkout.
 const PARTS: Record<string, () => Promise<Part>> = {
 	fork: async () => (await import("../src/rehearse/fork")).forkRehearsal,
 	"send-faults": async () => (await import("../src/rehearse/send-faults")).sendFaultsRehearsal,
+	pool1: async () => {
+		const { operatorForkRehearsal } = await import("../src/rehearse/operator-fork")
+		return (log) => operatorForkRehearsal("pool1", log)
+	},
 	stack: async () => {
 		const { stackRehearsal } = await import("../src/rehearse/stack")
 		return (log) => stackRehearsal(manifest as string, log)

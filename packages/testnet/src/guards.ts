@@ -8,7 +8,7 @@ import { type Address, type Hex, isAddressEqual } from "viem"
 import { mnemonicToAccount } from "viem/accounts"
 import { GuardError } from "./errors"
 import { isKeyValue, type KeySpec, keyFilePath, loadKeys } from "./keyfile"
-import { isPinned, LOCAL, MAINNET, SEPOLIA } from "./network"
+import { isLoopbackUrl, isPinned, LOCAL, MAINNET, SEPOLIA } from "./network"
 import { remember } from "./redact"
 import type { TestnetDeployment } from "./schema"
 
@@ -18,8 +18,7 @@ export type { KeySpec } from "./keyfile"
 /** Where a run signs: the public chains, the local stack, or a loopback fork of Sepolia this run started. */
 export type Mode = { kind: "live" } | { kind: "rehearse"; manifest: string } | { kind: "rehearse-fork"; url: string }
 
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"])
-const isLoopback = (u: string) => URL.canParse(u) && new URL(u).protocol === "http:" && LOOPBACK.has(new URL(u).hostname)
+const isLoopback = isLoopbackUrl
 
 /** The chain every guard of `mode` expects. */
 export const chainOf = (mode: Mode): number => (mode.kind === "rehearse" ? LOCAL : SEPOLIA)
@@ -37,6 +36,7 @@ export function assertTransport(d: TestnetDeployment, mode: Mode, usesL2: boolea
 	const n = d.network
 	if (n.l1ChainId !== chainOf(mode))
 		throw new GuardError("transport", `the file names chain ${n.l1ChainId}, this mode signs on ${chainOf(mode)}`)
+	assertOperatorAsp(d, mode)
 	if (mode.kind === "live") {
 		assertPinned(n)
 		return
@@ -56,6 +56,15 @@ export function assertTransport(d: TestnetDeployment, mode: Mode, usesL2: boolea
 	if (!isLoopback(n.l1Rpc)) throw new GuardError("transport", `a rehearsal's L1 must be loopback, not ${n.l1Rpc}`)
 	if (usesL2 && !isLoopback(n.aztecNode)) throw new GuardError("transport", `a rehearsal's node must be loopback, not ${n.aztecNode}`)
 	assertStackEndpoints(n, mode.manifest)
+}
+
+/** An operator's ASP is its pinned API in a live run, and a loopback stand-in in a rehearsal. */
+function assertOperatorAsp(d: TestnetDeployment, mode: Mode): void {
+	if (d.target === "own" || !d.pool) return
+	const url = d.pool.aspApiUrl
+	if (mode.kind === "live" && !isPinned("aspApi", url)) throw new GuardError("transport", `${url} is not the operator's pinned ASP API`)
+	if (mode.kind !== "live" && !isLoopback(url))
+		throw new GuardError("transport", `a rehearsal reaches the operator's ASP through a loopback stand-in, not ${url}`)
 }
 
 /** A live run's endpoints are each exactly a pinned URL, the send endpoint included. */

@@ -97,6 +97,7 @@ with warm package and toolchain caches.
 | Sepolia fork, unit | `bun run --cwd packages/sepolia-fork test` | 4 s |
 | Testnet, unit (spawns each key-reading command against a fake loopback L1) | `bun run --cwd packages/testnet test` | 24 s |
 | Testnet send path through injected faults (Sepolia fork, keyless reads) | `bun run --cwd packages/testnet rehearse send-faults` (after pp-env's `fetch`; Foundry 1.7.1 on `PATH`) | 100 s |
+| Testnet operator target, pool1 (Sepolia fork; its ASP requests recorded at a stand-in) | `bun run --cwd packages/testnet rehearse pool1` (after pp-env's `fetch`; Foundry 1.7.1 on `PATH`) | 28 s |
 | Testnet inputs, live (keyless reads of the pinned endpoints; forced bridge build) | `PP_FORGE=<Foundry 1.7.1 forge> bun packages/testnet/src/cli/verify-inputs.ts packages/testnet/deployments/testnet-own.json` (after pp-env's `fetch` and the L2 artifacts) | 57 s |
 | Sepolia fork, against Sepolia | `SEPOLIA_RPC_URL=<public endpoint with archive state> bun run --cwd packages/sepolia-fork test:net`, then `run` after `forge build` in `contracts/bridge/evm` (`run --prepare-only` stops before Forge) | 14 s · 5 min 15 s (the pool user's sync 4 min 15 s) |
 

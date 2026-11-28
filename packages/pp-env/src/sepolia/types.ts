@@ -84,6 +84,25 @@ export interface MockAsp {
 	stop(): Promise<void>
 }
 
+export type StartStandInAspOptions = {
+	/** A loopback port the caller already claimed. */
+	port: number
+	/** The pool whose scope the scoped routes answer for; any other `chainId` or `entrypoint` is refused. */
+	entrypoint: Address
+	/** Where the served event snapshot says the pool's history starts. */
+	deployBlock: bigint
+	/** Served at `/association-set/root`. */
+	root: bigint
+}
+
+export interface StandInAsp {
+	url: string
+	/** The X25519 key served at `/public-key`, whose private half no one holds. */
+	publicKey: Hex
+	/** Closes the server. Idempotent. */
+	stop(): Promise<void>
+}
+
 /** A Sepolia pool user that can also deposit for another registered address. */
 export type SepoliaPoolUser = PoolUser & {
 	/**

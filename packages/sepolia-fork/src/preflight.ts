@@ -1,15 +1,4 @@
-import {
-	type Address,
-	concatHex,
-	encodeAbiParameters,
-	getAddress,
-	type Hex,
-	hexToBigInt,
-	keccak256,
-	numberToHex,
-	slice,
-	toFunctionSelector,
-} from "viem"
+import { type Address, getAddress, type Hex, hexToBigInt, keccak256, numberToHex, slice, toFunctionSelector } from "viem"
 import {
 	type CodeReader,
 	type ContractCode,
@@ -20,6 +9,8 @@ import {
 	type PoolCode,
 	type PoolContract,
 	readPoolCode,
+	routeOf,
+	routeSlot,
 } from "./code.ts"
 import { missingKeyPoints, type Vkey } from "./keys.ts"
 import { type Bindings, type Pins, SEPOLIA_CHAIN_ID } from "./pins.ts"
@@ -41,14 +32,6 @@ export class PreflightError extends Error {
 	}
 }
 
-/** The vault's ERC-7201 router storage; its first slot maps keccak256(abi.encode(inputs, outputs)) to a packed route. */
-const ROUTER_LOCATION = "0x0c027be59f417c97b0d67624f8bfbaef96df39bc0b10e77a5d17c62359798400"
-
-function routeSlot(inputs: bigint, outputs: bigint): Hex {
-	const key = keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [inputs, outputs]))
-	return keccak256(concatHex([key, ROUTER_LOCATION]))
-}
-
 const call = (rpc: Rpc, to: Address, signature: string, tag: string) =>
 	rpc<Hex>("eth_call", [{ to, data: toFunctionSelector(signature) }, tag])
 const addressWord = (word: Hex): Address => getAddress(slice(word, 12, 32))
@@ -64,15 +47,15 @@ const codeReader = (rpc: Rpc): CodeReader => ({
 export async function readBindings(rpc: Rpc, pins: Pins, block: bigint, code?: PoolCode): Promise<Bindings> {
 	const tag = numberToHex(block)
 	const { vault } = pins.pool
-	const route = await rpc<Hex>("eth_getStorageAt", [vault, routeSlot(1n, 1n), tag])
-	const transact1x1Verifier = addressWord(route)
+	const route = routeOf(await rpc<Hex>("eth_getStorageAt", [vault, routeSlot(1n, 1n), tag]))
+	const transact1x1Verifier = route.verifier
 	const rollup = addressWord(await call(rpc, pins.aztec.registry, "getCanonicalRollup()", tag))
 	const inbox = addressWord(await call(rpc, rollup, "getInbox()", tag))
 	return {
 		code: code ?? (await readPoolCode(codeReader(rpc), pins.pool, block)),
 		depositVerifier: addressWord(await call(rpc, vault, "depositVerifier()", tag)),
 		transact1x1Verifier,
-		transact1x1Selector: slice(route, 8, 12),
+		transact1x1Selector: route.selector,
 		transact1x1VerifierCodeHash: await codeHash(rpc, transact1x1Verifier, tag),
 		rollup,
 		rollupVersion: hexToBigInt(await call(rpc, rollup, "getVersion()", tag)),

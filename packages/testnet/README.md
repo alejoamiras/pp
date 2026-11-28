@@ -13,6 +13,14 @@ package deploys with pp-env's pinned build and approves through its own mock ASP
 existing pool and the operator's ASP. A run never edits the checkout: it writes a candidate section to
 `~/.cache/pp/testnet/<target>/<run>/`, which is checked and committed before the next run.
 
+An operator target's `operator` block records the pool as it was reviewed, at the block it names: each
+contract's proxy and implementation with their code hashes, the vault's deposit and ragequit verifiers
+with theirs, its 1x1 transact route and the asset's config. `deploy`, `seed`, `open` and `canary` read
+all of it again at the latest block number before reading a key, with the wiring between the four
+contracts, the vault's pause and the entrypoint's depositor role, and refuse naming each field that
+moved or whose getter reverts; `verify-deployment` and `verify-inputs` make the same read. `canary --settle` does not, since a refusal there would strand burns
+already sent. The operator's ASP is its pinned API in a live run and a loopback stand-in in a rehearsal.
+
 A pool's `deployBlock` is where note discovery starts, so it must not follow any of the pool's events, and
 the file's L1 endpoint must serve logs from it. The own pool's comes from its deploy script, read before
 broadcast. An operator target's is the earliest creation block of its vault, keystore and entrypoint, not
@@ -87,7 +95,7 @@ hashes and allowlisted URLs only. A guard refusal exits 2 before any key is read
 | `verify-inputs` | none | a clean working tree (naming HEAD), frozen lockfile, the pinned Forge binary with FFI off, a forced bridge build and the pool build against their pins, L2 class ids, and both endpoints' reads by block hash |
 | `deploy-pool` (own) | pool deployer | the pinned pool, built with no key and checked against `pool-creation-codes.json` before its key reaches Forge; the test token minted to the canary owner, the postman role for the ASP key, every contract's runtime code checked against the build |
 | `asp --owner <address>…` (own) | ASP postman | the mock ASP on its loopback port: approves only the deposits of the owners given, each the canary owner or the demo owner, posts roots, serves reads only |
-| `seed [--recipient <address> \| --demo]` | canary owner; demo owner with `--demo` | registers and makes the canary deposit; with `--recipient`, deposits it for that registered address instead; with `--demo`, registers the demo owner's keystore from its own key and gas, then deposits for it |
+| `seed [--no-register \| --recipient <address> \| --demo]` | canary owner; demo owner with `--demo` | registers and makes the canary deposit, refusing before any signature when the owner holds less of the asset than the debit, and before registering when the keystore holds either half under other keys than the owner's signature derives; with `--no-register`, registers nothing and checks the owner's registration instead; with `--recipient`, deposits for that registered address instead; with `--demo`, registers the demo owner's keystore from its own key and gas, then deposits for it |
 | `deploy` | L1 deployer, L2 deployer | the bridge generation with entries paused |
 | `verify-deployment [--pool-only] [--bot] [--label <l> --min-sequence <s>]` | none | code, bindings, the deploy block's history, the factory's creation, class ids, paused entries, the checks before opening, the bot's record |
 | `bot` | bot poster, bot intake | the ASP-root poster, snapshot server and birth intake, on the file's loopback port |
@@ -108,6 +116,10 @@ Run order for the own target: `keys`, `addresses` (commit `expected`, the demo a
 owner and one for the demo owner, `seed`, `seed --demo`, `deploy`, `verify-deployment`, `bot`, `open`,
 `canary`, `pause`. Then the owner imports the two demo keys into their wallet, from the key file, and
 hand-tests.
+
+Run order for an operator target: `fund --quote`, `fund`, `verify-inputs`, `deploy`, `verify-deployment`,
+`bot`, then `seed` once the asset reaches the canary owner from its faucet, the operator's approval of
+that deposit, `open`, `canary`, `pause`. Nothing here transfers the asset: `seed` names any shortfall.
 
 `reports/` keeps each live canary's `report.json` as it wrote it, as `testnet-<target>-canary-<date>.json`.
 
@@ -131,4 +143,5 @@ Aztec node of its own, so commands that use L2 rehearse on the local stack only.
 | `test` | unit tests, including the key-reading commands spawned with sentinel keys, those that reach L1 against a fake loopback one |
 | `pins`, `pins:check` | rewrite or compare the pool creation codes and class ids (needs pp-env's fetch and the L2 artifacts) |
 | `rehearse send-faults` | `fund` and `deploy-pool` on an anvil fork of Sepolia, reading and sending through fronts that inject faults: 429s in a row, a lost answer whose re-send anvil answers "transaction already imported", a stale nonce and null receipt after each of two writes, a reverted estimate, one read error, and a stale count at forge's last nonce, past which the wallet's sends must go on at the next nonces; each must fire, each stale entry on its own, and every transaction lands once (one hash per nonce in the send log) before `verify-deployment --pool-only`. First, each from its own snapshot after `fund`, two negative cases: a send refused past the budget must stop `deploy-pool` naming its hash, nonce and the transactions landed, its refusals spanning at least 33 s; and `deploy-pool` killed outright mid-deploy must leave forge to end by itself (about 10 s), with every transaction the pool deployer landed in the dead command's send log. About 100 s (needs pp-env's fetch) |
+| `rehearse pool1` | the operator target on an anvil fork of Sepolia, depositing a 101 note whose 1% fee rounds differently down than up (the committed amounts are checked by read): `fund`, `verify-deployment --pool-only`, `seed` refused with none of the asset, `seed --no-register` failing for an owner with no registration, `seed`, `seed --no-register`, and `seed` refused on a file whose vault implementation hash moved, none of the stopped runs sending or moving the asset; every request to the operator's ASP passes a loopback recording front to a stand-in, the bot's leaves request included, and is printed. About 30 s (needs pp-env's fetch) |
 | `rehearse pause` | the guardian's failure and recovery cases (a pending open with a lost send, a nonce gap, an occupied nonce and both manual branches, a finality time-out, a stalled pause) and `deploy`'s stale-build refusal, through the real CLIs with real sends, each on a bare local anvil; about 33 min, since the CLI's own 10- and 30-minute budgets run in full (needs `contracts/bridge/evm/out` at the committed build) |

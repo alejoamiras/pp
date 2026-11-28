@@ -1,5 +1,5 @@
 // Loads nothing but viem, so a package that only checks code imports it without the pool's clients.
-import { type Address, getAddress, type Hex, keccak256, slice } from "viem"
+import { type Address, concatHex, encodeAbiParameters, getAddress, type Hex, keccak256, slice } from "viem"
 
 export const EIP1967_IMPLEMENTATION_SLOT: Hex = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 
@@ -60,3 +60,18 @@ export function codeMismatches(want: PoolCode, got: PoolCode): string[] {
 			.map((f) => `code.${c}.${f}`),
 	)
 }
+
+/** The vault's ERC-7201 router storage; its first slot maps keccak256(abi.encode(inputs, outputs)) to a packed route. */
+export const ROUTER_LOCATION: Hex = "0x0c027be59f417c97b0d67624f8bfbaef96df39bc0b10e77a5d17c62359798400"
+
+/** The storage slot of the vault's route for `inputs` inputs and `outputs` outputs. */
+export function routeSlot(inputs: bigint, outputs: bigint): Hex {
+	const key = keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [inputs, outputs]))
+	return keccak256(concatHex([key, ROUTER_LOCATION]))
+}
+
+/** A packed route word: the verifier in its low 20 bytes, the selector it calls in bytes 8 to 12. */
+export const routeOf = (word: Hex): { verifier: Address; selector: Hex } => ({
+	verifier: getAddress(slice(word, 12, 32)),
+	selector: slice(word, 8, 12),
+})

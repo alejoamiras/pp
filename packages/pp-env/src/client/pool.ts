@@ -7,7 +7,6 @@ import {
 	createEvmPoolSession,
 	createEvmPoolVaultInteractor,
 	type Hex as SdkHex,
-	HTTPClient,
 	HttpASPDataProvider,
 	type IGroth16Prover,
 	type IRelayerInteractor,
@@ -26,6 +25,8 @@ import { createProver, openPoolClient, type PoolClient } from "@pp/pool-client"
 import { type Address, getAddress, type Hex, keccak256, toHex, verifyTypedData } from "viem"
 import { publicClientAt } from "./chain.ts"
 import { secretDerivationTypedData } from "./derivation.ts"
+import { PinnedOriginHttpClient } from "./http.ts"
+import { assertRegistered, type KeystoreKeys, registerMissingHalves } from "./keystore.ts"
 import { createProofService } from "./prover.ts"
 import { explainSpendError, poolClientOptions, toPreparedSpend } from "./spend.ts"
 import type { ClientConfig, LocalWallet, PoolNote, PoolUser, PreparedSpend, SpendRequest } from "./types.ts"
@@ -79,7 +80,7 @@ export function contracts(config: ClientConfig, wallet: LocalWallet, merkleServi
 		aspUrl: config.aspUrl,
 		chainId: config.chainId,
 		entrypointAddress: d.entrypoint,
-		httpClient: new HTTPClient(),
+		httpClient: new PinnedOriginHttpClient(),
 	})
 	return {
 		rpcInteractor,
@@ -115,8 +116,9 @@ async function wireSession(
 	const hashService = await PoseidonHashService.create()
 	const merkleService = new MerkleService({ hashService })
 	const noteComputationService = new NoteComputationService({ hashService, cryptoService })
+	const interactors = contracts(config, wallet, merkleService)
 	const session = createEvmPoolSession({
-		...contracts(config, wallet, merkleService),
+		...interactors,
 		chainId: config.chainId,
 		ownerAddress: wallet.account.address,
 		noteManager,
@@ -129,7 +131,7 @@ async function wireSession(
 		merkleService,
 		relayerInteractor: noRelayer(),
 	})
-	return { session, noteManager }
+	return { session, noteManager, keystore: interactors.keystoreInteractor }
 }
 
 function pickInput(noteManager: NoteManager, asset: Address, input: bigint | undefined): Note {
@@ -209,13 +211,27 @@ export async function openPoolUser(live: ClientConfig, o: { wallet: LocalWallet;
 		{ signature, signerAddress: owner, addressHash: keccak256(owner), revocableKeyIndex: "0x0" },
 		{ cryptoService },
 	)
-	const { session, noteManager } = await wireSession(config, wallet, keystoreManager, cryptoService, prover)
+	const { session, noteManager, keystore } = await wireSession(config, wallet, keystoreManager, cryptoService, prover)
 	const spend = spender(config, owner, signature, prover)
+	const held = async (): Promise<KeystoreKeys> => {
+		const [nullifying, viewing] = await Promise.all([keystore.getNullifyingKeyHash(owner), keystore.getViewingKey(owner)])
+		return { nullifyingKeyHash: BigInt(nullifying), viewingKey: BigInt(viewing) }
+	}
+	// The prepare step derives the nullifying key hash and builds calldata for the unset halves; it signs nothing.
+	const derivedFrom = (prepared: { nullifyingKeyHash: string }): KeystoreKeys => ({
+		nullifyingKeyHash: BigInt(prepared.nullifyingKeyHash),
+		viewingKey: BigInt(keystoreManager.getViewingKeyPair().publicKey),
+	})
 	const user: PoolUser = {
 		address: owner,
 		async registerKeystore() {
-			const receipts = await session.registerKeystore()
-			if (receipts.some((r) => !r.status)) throw new Error("keystore registration reverted")
+			const prepared = await session.prepareRegisterKeystore()
+			const send = () => session.executeRegisterKeystore(prepared)
+			await registerMissingHalves({ owner, held: await held(), derived: derivedFrom(prepared), send })
+		},
+		async checkKeystore() {
+			const prepared = await session.prepareRegisterKeystore()
+			assertRegistered(owner, await held(), derivedFrom(prepared))
 		},
 		async deposit({ asset, value }) {
 			const prepared = await session.prepareDeposit({ tokenId: asset, value: toHex(value) as SdkHex })

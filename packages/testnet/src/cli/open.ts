@@ -8,9 +8,10 @@ import { formatEther, formatGwei, isAddress, isAddressEqual } from "viem"
 import { PAUSE_CEILING_WEI, pauseHeadroomShort } from "../funding"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
+import { checkOperator } from "../operator"
 import { journalTo } from "@pp/pp-env/send-log"
 import { cliArgs, guarded, main, report, sendLogPath } from "./common"
-import { assertOwnTarget, openContextOf } from "./context"
+import { openContextOf } from "./context"
 import { l1AddressOf } from "../accounts"
 import { l1Wallet } from "./wallet"
 
@@ -20,7 +21,7 @@ const SENDS = 4n
 await main(async () => {
 	const { file, mode, values } = cliArgs(process.argv.slice(2), { factory: { type: "string" } })
 	const { d, l1, node } = await guarded(file, mode, ["expected", "pool", "bridge"], true)
-	assertOwnTarget(d)
+	await checkOperator(l1, d)
 	const factory = values.factory as string | undefined
 	if (!factory || !isAddress(factory) || !isAddressEqual(factory, d.bridge.factory))
 		throw new GuardError("factory", `--factory must be the file's factory ${d.bridge.factory}`)
