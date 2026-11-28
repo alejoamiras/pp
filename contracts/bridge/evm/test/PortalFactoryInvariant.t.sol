@@ -11,15 +11,26 @@ import {IPrivacyPoolVault} from "../src/interfaces/IPrivacyPoolVault.sol";
 import {CapturingInbox, CapturingOutbox, FakeRegistry, FakeRollup} from "./mocks/AztecFakes.sol";
 import {PlainERC20} from "./mocks/MetadataERC20s.sol";
 
-/// Cross-call INVARIANT suite for the factory. A handler drives randomized create and pause
-/// sequences from several actors; after every sequence:
+/// Cross-call INVARIANT suite for the factory. A handler drives randomized create, pause and
+/// ownership-handoff sequences from several actors; after every sequence:
 ///
 ///   I1  A token's portal address never changes and always equals the prediction.
-///   I3  Only the guardian ever flips the entry pause; it equals the guardian's last write.
+///   I3  Only the current owner (the guardian, or whoever accepted a handoff) flips the entry pause,
+///       it always can, and the pause equals the owner's last write.
 ///   I4  The factory never sends a second `register` for a token (one Inbox message per portal).
+///   I5  Ownership moves only by the pending owner's accept, never by a transfer alone, and renounce
+///       never succeeds, so the pause always has an owner.
 ///
-/// Clone custody and the pause's effect on entries live in ProcessorPortalInvariant.t.sol.
+/// Each run appends its handoff counts in `afterInvariant`, and `scripts/check-invariant.sh`
+/// requires the totals to be non-zero, so a walk that never hands ownership over cannot pass for I3
+/// and I5 holding across a handoff. Clone custody and the pause's effect on entries live in
+/// ProcessorPortalInvariant.t.sol.
 contract PortalFactoryInvariantTest is Test {
+    string internal constant STATS_DIR = "out/invariant-stats";
+    string internal constant STATS = "out/invariant-stats/PortalFactoryInvariant.csv";
+    /// Lets a gate give each invocation its own file, so concurrent runs cannot lend each other counts.
+    string internal constant STATS_ENV = "FACTORY_INVARIANT_STATS";
+
     FactoryHandler internal handler;
 
     function setUp() public {
@@ -38,13 +49,26 @@ contract PortalFactoryInvariantTest is Test {
         }
     }
 
-    function invariant_onlyGuardianFlipsPause() public view {
+    function invariant_onlyTheOwnerFlipsPause() public view {
         assertEq(handler.factory().entriesPaused(), handler.ghostEntriesPaused(), "entry pause drifted");
-        assertFalse(handler.strangerPaused(), "a non-guardian flipped the entry pause");
+        assertFalse(handler.strangerPaused(), "a non-owner flipped the entry pause");
+        assertFalse(handler.ownerRefused(), "the owner could not flip the entry pause");
     }
 
     function invariant_oneRegisterPerPortal() public view {
         assertEq(handler.inbox().sent(), handler.ghostRegisters(), "extra Inbox messages");
+    }
+
+    function invariant_ownershipMovesOnlyByAccept() public view {
+        assertEq(handler.factory().owner(), handler.ghostOwner(), "the owner moved other than by an accept");
+        assertEq(handler.factory().pendingOwner(), handler.ghostPending(), "the pending owner drifted");
+        assertTrue(handler.factory().owner() != address(0), "ownership was cleared");
+        assertEq(handler.wrongMoves(), 0, "a transfer, accept or renounce succeeded for the wrong caller");
+    }
+
+    function afterInvariant() external {
+        vm.createDir(STATS_DIR, true);
+        vm.writeLine(vm.envOr(STATS_ENV, STATS), handler.statsLine());
     }
 }
 
@@ -60,7 +84,17 @@ contract FactoryHandler is StdUtils {
     mapping(address => address) public firstPortal;
     bool public ghostEntriesPaused = true;
     bool public strangerPaused;
+    bool public ownerRefused;
     uint256 public ghostRegisters;
+
+    address public ghostOwner = guardian;
+    address public ghostPending;
+    uint256 public wrongMoves;
+    uint256 internal handoffs;
+    uint256 internal newOwnerPauses;
+    uint256 internal refusedTransfers;
+    uint256 internal refusedAccepts;
+    uint256 internal refusedRenounces;
 
     constructor() {
         inbox = new CapturingInbox();
@@ -88,16 +122,86 @@ contract FactoryHandler is StdUtils {
         }
     }
 
-    function guardianPause(bool paused) external {
-        vm.prank(guardian);
-        factory.setEntriesPaused(paused);
-        ghostEntriesPaused = paused;
+    function ownerPause(bool paused) external {
+        vm.prank(ghostOwner);
+        try factory.setEntriesPaused(paused) {
+            ghostEntriesPaused = paused;
+            if (ghostOwner != guardian) newOwnerPauses++;
+        } catch {
+            ownerRefused = true;
+        }
     }
 
-    function strangerPause(uint256 actorSeed, bool paused) external {
-        vm.prank(actors[actorSeed % 3]);
+    function strangerPause(uint256 seed, bool paused) external {
+        address who = _person(seed);
+        if (who == ghostOwner) return;
+        vm.prank(who);
         try factory.setEntriesPaused(paused) {
             strangerPaused = true;
         } catch {}
+    }
+
+    /// From the owner, the pending owner or anyone else, to anyone in the cast or to nobody.
+    function transferOwnership(uint256 callerSeed, uint256 toSeed) external {
+        address caller = _caller(callerSeed);
+        address to = toSeed % 5 == 4 ? address(0) : _person(toSeed);
+        vm.prank(caller);
+        try factory.transferOwnership(to) {
+            if (caller != ghostOwner) wrongMoves++;
+            ghostPending = to;
+        } catch {
+            if (caller == ghostOwner) wrongMoves++;
+            else refusedTransfers++;
+        }
+    }
+
+    function acceptOwnership(uint256 callerSeed) external {
+        address caller = _caller(callerSeed);
+        vm.prank(caller);
+        try factory.acceptOwnership() {
+            if (caller != ghostPending) wrongMoves++;
+            if (caller != ghostOwner) handoffs++;
+            ghostOwner = caller;
+            ghostPending = address(0);
+        } catch {
+            if (caller == ghostPending) wrongMoves++;
+            else refusedAccepts++;
+        }
+    }
+
+    function renounceOwnership(uint256 callerSeed) external {
+        vm.prank(_caller(callerSeed));
+        try factory.renounceOwnership() {
+            wrongMoves++;
+        } catch {
+            refusedRenounces++;
+        }
+    }
+
+    /// `handoffs,newOwnerPauses,refusedTransfers,refusedAccepts,refusedRenounces`, one line per run.
+    function statsLine() external view returns (string memory) {
+        return string.concat(
+            vm.toString(handoffs),
+            ",",
+            vm.toString(newOwnerPauses),
+            ",",
+            vm.toString(refusedTransfers),
+            ",",
+            vm.toString(refusedAccepts),
+            ",",
+            vm.toString(refusedRenounces)
+        );
+    }
+
+    function _person(uint256 seed) internal view returns (address) {
+        uint256 i = seed % 4;
+        return i == 3 ? guardian : actors[i];
+    }
+
+    /// The owner a third of the time, the pending owner (when there is one) a third, anyone otherwise.
+    function _caller(uint256 seed) internal view returns (address) {
+        if (seed % 3 == 0) return ghostOwner;
+        if (seed % 3 == 1 && ghostPending != address(0)) return ghostPending;
+        return _person(seed / 3);
     }
 }

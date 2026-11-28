@@ -17,7 +17,7 @@ allow_paths = ["../../../node_modules"]
 solc = "0.8.28"
 via_ir = true
 # Read: test/BridgeMessageV1.t.sol and PortalVectors read the shared wire-format vectors.
-# Write: ProcessorPortalInvariant appends each run's counts for scripts/check-invariant.sh.
+# Write: ProcessorPortalInvariant and PortalFactoryInvariant append each run's counts for scripts/check-invariant.sh.
 fs_permissions = [
   { access = "read", path = "../../../packages/bridge-spec/vectors" },
   { access = "write", path = "./out/invariant-stats" },
