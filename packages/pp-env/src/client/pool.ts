@@ -7,6 +7,8 @@ import {
 	createEvmPoolSession,
 	createEvmPoolVaultInteractor,
 	type Hex as SdkHex,
+	HTTPRequestFailed,
+	HTTPResponseError,
 	HttpASPDataProvider,
 	type IGroth16Prover,
 	type IRelayerInteractor,
@@ -21,11 +23,10 @@ import {
 	ViemWalletInteractor,
 	WitnessPreparationService,
 } from "#ppv2/evm-sdk"
-import { createProver, openPoolClient, type PoolClient } from "@pp/pool-client"
+import { createProver, openPoolClient, type PoolClient, pinnedOriginHttpClient } from "@pp/pool-client"
 import { type Address, getAddress, type Hex, keccak256, toHex, verifyTypedData } from "viem"
 import { publicClientAt } from "./chain.ts"
 import { secretDerivationTypedData } from "./derivation.ts"
-import { PinnedOriginHttpClient } from "./http.ts"
 import { assertRegistered, type KeystoreKeys, registerMissingHalves } from "./keystore.ts"
 import { createProofService } from "./prover.ts"
 import { explainSpendError, poolClientOptions, toPreparedSpend } from "./spend.ts"
@@ -80,7 +81,8 @@ export function contracts(config: ClientConfig, wallet: LocalWallet, merkleServi
 		aspUrl: config.aspUrl,
 		chainId: config.chainId,
 		entrypointAddress: d.entrypoint,
-		httpClient: new PinnedOriginHttpClient(),
+		// This SDK build's error classes, which its provider's 404 fallback checks by `instanceof`.
+		httpClient: pinnedOriginHttpClient({ HTTPRequestFailed, HTTPResponseError }),
 	})
 	return {
 		rpcInteractor,

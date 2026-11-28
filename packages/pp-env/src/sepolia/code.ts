@@ -4,7 +4,6 @@ import {
 	type Address,
 	bytesToHex,
 	type ContractFunctionName,
-	createPublicClient,
 	encodeAbiParameters,
 	getAddress,
 	type Hex,
@@ -19,7 +18,7 @@ import { checkout } from "../env/checkout.ts"
 import { FIXTURES_DIR } from "../env/deploy.ts"
 import { assertCanonicalPoseidon, assertSepolia } from "./chain.ts"
 import type { CodeMatch, PoolCodeTargets, SepoliaChainId } from "./types.ts"
-import { readTransport } from "./wallet.ts"
+import { readClient } from "./wallet.ts"
 
 type Range = { start: number; length: number }
 type Ranges = readonly Range[]
@@ -249,7 +248,7 @@ export async function checkPoolCode(
  * chain other than 11155111
  */
 export async function verifyPoolCode(o: { rpcUrl: string; chainId: SepoliaChainId; deployment: PoolCodeTargets }): Promise<CodeMatch[]> {
-	const client = createPublicClient({ transport: readTransport(o.rpcUrl) })
+	const client = readClient(o.rpcUrl)
 	await assertSepolia(client, o.chainId)
 	const co = checkout()
 	const blockNumber = await client.getBlockNumber()

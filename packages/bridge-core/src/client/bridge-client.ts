@@ -101,9 +101,16 @@ export function clientIo(manifest: StackManifest, store: KeyValueStore, timing: 
 	return { reader: l1Reader(manifest.l1Rpc, timing), node: createAztecNodeClient(manifest.aztecNode), store }
 }
 
-/** The client's L1 reader: a lagging backend's answers are retried at the transport, and only there. */
+/**
+ * The client's L1 reader: a lagging backend's answers are retried at the transport, and only there.
+ * CCIP-read is off, so the pool's contracts, which another party may control, cannot answer a read with a URL to fetch.
+ */
 export const l1Reader = (url: string, timing: ClientTiming) =>
-	createPublicClient({ transport: laggingTolerant(http(url), timing.pollingIntervalMs), pollingInterval: timing.pollingIntervalMs })
+	createPublicClient({
+		transport: laggingTolerant(http(url), timing.pollingIntervalMs),
+		pollingInterval: timing.pollingIntervalMs,
+		ccipRead: false,
+	})
 
 /**
  * `createBridgeClient` over given IO. The manifest's fields are copied here; later changes to it are

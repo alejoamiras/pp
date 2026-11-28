@@ -1,4 +1,5 @@
 import { type Account, type Address, type Chain, type PublicClient, type Transport, toHex, type WalletClient } from "viem"
+import { pinnedOriginHttpClient } from "./http.ts"
 import type { Keys } from "./keys.ts"
 import { createProver } from "./runtime/prover.ts"
 import type { VerifiedArtifacts } from "./runtime/artifacts.ts"
@@ -15,7 +16,6 @@ import {
 	EvmContextHashService,
 	EvmPayoutRoutingCodec,
 	EvmRelayBatchCodec,
-	HTTPClient,
 	HttpASPDataProvider,
 	type IGroth16Prover,
 	type IRelayerInteractor,
@@ -75,7 +75,7 @@ function contracts(pool: PoolConfig, publicClient: PublicClient, merkleService: 
 		aspUrl: pool.aspApiUrl,
 		chainId: pool.chainId,
 		entrypointAddress: pool.entrypoint,
-		httpClient: new HTTPClient(),
+		httpClient: pinnedOriginHttpClient(),
 	})
 	const aspRegistryInteractor = new ASPRegistryInteractor({ rpcInteractor, contractAddress: pool.aspRegistry })
 	return {

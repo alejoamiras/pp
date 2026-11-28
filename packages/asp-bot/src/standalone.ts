@@ -13,6 +13,8 @@ import { Poster, type Ports } from "./loop"
 import { Runner } from "./runner"
 import { SnapshotBook, serve } from "./server"
 
+export { isBotUserAgent } from "./asp"
+
 export type StandaloneBotConfig = {
 	deployment: {
 		l1Rpc: string
@@ -85,7 +87,7 @@ export const scopedLeaves = (d: StandaloneBotConfig["deployment"], userAgent?: s
 
 /** A post's margin plus the lag of `tag` behind the head beyond the registry's bound skips every post; warn, never refuse. */
 async function warnMargin(c: StandaloneBotConfig, tag: L1Tag, log: Ports["log"]): Promise<void> {
-	const l1 = createPublicClient({ transport: http(c.deployment.l1Rpc) })
+	const l1 = createPublicClient({ transport: http(c.deployment.l1Rpc), ccipRead: false })
 	const [head, tagged] = await Promise.all([l1.getBlock({ blockTag: "latest" }), l1.getBlock({ blockTag: tag })])
 	const lag = head.timestamp - tagged.timestamp
 	if (BigInt(c.inclusionMarginSec) + lag >= MAX_OBSERVATION_LAG)
