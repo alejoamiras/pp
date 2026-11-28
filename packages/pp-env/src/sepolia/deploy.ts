@@ -64,6 +64,8 @@ async function finish(
 	before: bigint,
 	log: (line: string) => void,
 ): Promise<SepoliaPool> {
+	// These four sends carry no fee caps on purpose: a fee spike must not strand a pool forge already
+	// deployed, and the pool deployer's balance is their ceiling.
 	if (o.postman !== undefined) {
 		const hash = await wallet.writeContract({
 			address: deployment.accessRouter,
