@@ -91,5 +91,14 @@
 		"asset": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
 		"deployBlock": "10956341",
 		"aspApiUrl": "https://api-dev.0xbow.io"
+	},
+	"bridge": {
+		"factory": "0x527a7969c323cbd84a183503d13eafb0ce82e72b",
+		"portal": "0x1e9b91e2fefb9687f711a69ccea635e8d31104b0",
+		"hub": "0x173480ddd7bc442bfddeb853178fbd237b61c6070a4387cef0238efae5adc5db",
+		"token": "0x0210ddda8d133ae51d1693ad33577079c060a135777c43d738e95f37e024d96c",
+		"registry": "0x220101272ff5732cdf661348a2b9825c439cded8165be19ba9024494ba3a9ec6",
+		"deployBlock": "12228826",
+		"factoryTx": "0x3b5bd5042fd6d74d45bd6c28abd0a0b894b72b9ee3f86d35e0bc8965937057e9"
 	}
 }
