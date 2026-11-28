@@ -58,15 +58,13 @@ function assertBalance(owner: Address, asset: Address, held: bigint, debit: bigi
 }
 
 /**
- * Registers `registrant`'s keystore, then checks it holds the keys its signature derives: the SDK
- * registers nothing for an owner whose keystore already holds keys, and a deposit under other keys could
- * not be spent. With no registrant, `--no-register` checks the owner's registration alone.
+ * Registers `registrant`'s keystore, which refuses before sending when a half is already set under other
+ * keys than its signature derives; with no registrant, `--no-register` checks the owner's registration.
  * @returns whether a registration ran, which may have sent transactions
  */
 async function prepareKeystore(registrant: SepoliaPoolUser | undefined, owner: SepoliaPoolUser, noRegister: boolean): Promise<boolean> {
 	if (registrant) {
 		await registrant.registerKeystore()
-		await registrant.checkKeystore()
 		return true
 	}
 	if (noRegister) await owner.checkKeystore()

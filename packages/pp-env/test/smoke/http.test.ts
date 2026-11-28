@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test"
 import { HTTPRequestFailed, HTTPResponseError } from "#ppv2/core-sdk"
-import { PinnedOriginHttpClient } from "./http.ts"
+import { PinnedOriginHttpClient } from "../../src/client/http.ts"
 
 describe("the pinned-origin HTTP client", () => {
 	let reached = 0

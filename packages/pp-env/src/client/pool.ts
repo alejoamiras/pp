@@ -26,6 +26,7 @@ import { type Address, getAddress, type Hex, keccak256, toHex, verifyTypedData }
 import { publicClientAt } from "./chain.ts"
 import { secretDerivationTypedData } from "./derivation.ts"
 import { PinnedOriginHttpClient } from "./http.ts"
+import { assertRegistered, type KeystoreKeys, registerMissingHalves } from "./keystore.ts"
 import { createProofService } from "./prover.ts"
 import { explainSpendError, poolClientOptions, toPreparedSpend } from "./spend.ts"
 import type { ClientConfig, LocalWallet, PoolNote, PoolUser, PreparedSpend, SpendRequest } from "./types.ts"
@@ -212,21 +213,25 @@ export async function openPoolUser(live: ClientConfig, o: { wallet: LocalWallet;
 	)
 	const { session, noteManager, keystore } = await wireSession(config, wallet, keystoreManager, cryptoService, prover)
 	const spend = spender(config, owner, signature, prover)
+	const held = async (): Promise<KeystoreKeys> => {
+		const [nullifying, viewing] = await Promise.all([keystore.getNullifyingKeyHash(owner), keystore.getViewingKey(owner)])
+		return { nullifyingKeyHash: BigInt(nullifying), viewingKey: BigInt(viewing) }
+	}
+	// The prepare step derives the nullifying key hash and builds calldata for the unset halves; it signs nothing.
+	const derivedFrom = (prepared: { nullifyingKeyHash: string }): KeystoreKeys => ({
+		nullifyingKeyHash: BigInt(prepared.nullifyingKeyHash),
+		viewingKey: BigInt(keystoreManager.getViewingKeyPair().publicKey),
+	})
 	const user: PoolUser = {
 		address: owner,
 		async registerKeystore() {
-			const receipts = await session.registerKeystore()
-			if (receipts.some((r) => !r.status)) throw new Error("keystore registration reverted")
+			const prepared = await session.prepareRegisterKeystore()
+			const send = () => session.executeRegisterKeystore(prepared)
+			await registerMissingHalves({ owner, held: await held(), derived: derivedFrom(prepared), send })
 		},
 		async checkKeystore() {
-			// The prepare step derives the nullifying key hash and reads whether both halves are set; it signs nothing.
 			const prepared = await session.prepareRegisterKeystore()
-			if (!prepared.alreadyRegistered) throw new Error(`the keystore holds no complete registration for ${owner}`)
-			const [nullifying, viewing] = await Promise.all([keystore.getNullifyingKeyHash(owner), keystore.getViewingKey(owner)])
-			if (BigInt(nullifying) !== BigInt(prepared.nullifyingKeyHash))
-				throw new Error(`${owner} is registered under another nullifying key than its signature derives`)
-			if (BigInt(viewing) !== BigInt(keystoreManager.getViewingKeyPair().publicKey))
-				throw new Error(`${owner} is registered under another viewing key than its signature derives`)
+			assertRegistered(owner, await held(), derivedFrom(prepared))
 		},
 		async deposit({ asset, value }) {
 			const prepared = await session.prepareDeposit({ tokenId: asset, value: toHex(value) as SdkHex })
