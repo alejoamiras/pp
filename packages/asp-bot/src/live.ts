@@ -70,7 +70,8 @@ export type Live = {
 }
 
 function l1Source(rpc: string) {
-	const client = createPublicClient({ transport: http(rpc) })
+	// CCIP-read off: a contract another party controls must not answer a read with a URL to fetch.
+	const client = createPublicClient({ transport: http(rpc), ccipRead: false })
 	const header = (b: { number: bigint | null; hash: Hex | null; timestamp: bigint }): L1Block => ({
 		number: b.number ?? 0n,
 		hash: b.hash ?? "0x",

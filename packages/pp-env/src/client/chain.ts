@@ -13,5 +13,11 @@ export function publicClientAt(config: Pick<ClientConfig, "chainId" | "rpcUrl">)
 		nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
 		rpcUrls: { default: { http: [config.rpcUrl] } },
 	})
-	return createPublicClient({ chain, transport: http(config.rpcUrl, { fetchOptions: { redirect: "error" } }), pollingInterval: 100 })
+	// CCIP-read off: a contract another party controls must not answer a read with a URL to fetch.
+	return createPublicClient({
+		chain,
+		transport: http(config.rpcUrl, { fetchOptions: { redirect: "error" } }),
+		pollingInterval: 100,
+		ccipRead: false,
+	})
 }

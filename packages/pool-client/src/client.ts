@@ -281,7 +281,8 @@ export async function openPoolClient(a: {
 	const pool: PoolConfig = { chainId: poolChain, l1Rpc, poolVault, entrypoint, aspRegistry, keystore, asset, deployBlock, aspApiUrl }
 	const artifacts = createArtifacts(a.artifacts, { chainId: pool.chainId })
 	await verifySigner(owner, signature)
-	const publicClient = createPublicClient({ transport: http(pool.l1Rpc) })
+	// CCIP-read off: a contract another party controls must not answer a read with a URL to fetch.
+	const publicClient = createPublicClient({ transport: http(pool.l1Rpc), ccipRead: false })
 	const chainId = await publicClient.getChainId()
 	if (chainId !== pool.chainId) throw new PoolClientError("CHAIN_MISMATCH", `RPC serves chain ${chainId}, the pool is on ${pool.chainId}`)
 	const sdk = await createSession({ pool, owner, keys: deriveKeys(owner, signature), artifacts, publicClient, prover: a.prover })
