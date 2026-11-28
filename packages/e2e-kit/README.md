@@ -34,7 +34,7 @@ network's artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the networ
 ## Stack mode
 
 `bun run --cwd apps/web e2e` runs this mode; it needs what `bun run demo` needs (`bun run
-demo:prepare` once per clone, Foundry 1.7.1 or `FORGE` pointing at it). `stack.ts up` writes
+demo:prepare` once per worktree, Foundry 1.7.1 or `FORGE` pointing at it). `stack.ts up` writes
 `<state>/stack.json` (the CLI's process group, the manifest path, the circuits directory the CLI
 printed, the anvil indices of the stack's seeded pool user and bridge sender; never a key) and
 `<state>/wallet/handle.json`, the node, chain and rollup version the test wallet builds from. The
