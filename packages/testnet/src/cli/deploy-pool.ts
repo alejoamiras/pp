@@ -8,7 +8,7 @@ import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { loopback, SEPOLIA } from "../network"
 import { POOL_FIELDS } from "../schema"
-import { scriptFees } from "../funding"
+import { feeAboveBudget, scriptFees } from "../funding"
 import { assertOwnTarget } from "./context"
 import { cliArgs, guarded, logLine, main, report, runDir, writeCandidate } from "./common"
 import { sendRpcOf } from "./wallet"
@@ -36,10 +36,13 @@ await main(async () => {
 	const deployer = l1AddressOf(deployerKey)
 	if (!d.expected.poolDeployer || !isAddressEqual(deployer, d.expected.poolDeployer))
 		throw new GuardError("account", `the pool deployer key is for ${deployer}, the file expects ${d.expected.poolDeployer ?? "none"}`)
+	const estimate = (await l1.estimateFeesPerGas()).maxFeePerGas
+	const pricey = feeAboveBudget({ maxFeePerGas: estimate, balance: await l1.getBalance({ address: deployer }) })
+	if (pricey) throw new GuardError("fees", pricey)
+	const fees = scriptFees(estimate)
 	const dir = runDir(d, "deploy-pool", mode)
 	// Past the guards: this entry loads the pool checkout, which a refusal must not need.
 	const { deployPoolOn } = await import("@pp/pp-env/sepolia")
-	const fees = scriptFees((await l1.estimateFeesPerGas()).maxFeePerGas)
 	logLine(`forge's fee caps: max ${fees.maxFeePerGas} wei, tip ${fees.maxPriorityFeePerGas} wei per gas`)
 	const pool = await deployPoolOn({
 		rpcUrl: d.network.l1Rpc,

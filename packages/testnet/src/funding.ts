@@ -1,4 +1,4 @@
-import { type Address, formatEther, type Hex, isAddressEqual } from "viem"
+import { type Address, formatEther, formatGwei, type Hex, isAddressEqual } from "viem"
 import { GuardError } from "./errors"
 import type { TestnetDeployment } from "./schema"
 
@@ -78,6 +78,17 @@ export const scriptFees = (maxFeePerGas: bigint): { maxFeePerGas: bigint; maxPri
 	maxFeePerGas: (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN,
 	maxPriorityFeePerGas: FEE_FLOOR_WEI,
 })
+
+/**
+ * Why `deploy-pool` must not start: its budget at caps priced from the fee estimate `maxFeePerGas` costs
+ * more than the pool deployer's `balance`, which `fund` tops up to that budget at its own estimate. After
+ * a `fund` at an estimate under the floor, that is any estimate above the floor, or a balance spent since.
+ */
+export function feeAboveBudget(o: { maxFeePerGas: bigint; balance: bigint }): string | undefined {
+	const need = needOf("poolDeployer", o.maxFeePerGas)
+	if (o.balance >= need) return undefined
+	return `the pool deployer holds ${formatEther(o.balance)} ETH, under the ${formatEther(need)} ETH its budget costs at the fee estimate of ${formatGwei(o.maxFeePerGas)} gwei; fund budgeted it at a lower fee, so wait for the estimate to fall and run again`
+}
 
 export const needOf = (role: FundedRole, maxFeePerGas: bigint): bigint =>
 	liveGasOf(role) * (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN

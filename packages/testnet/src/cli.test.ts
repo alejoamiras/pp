@@ -9,6 +9,7 @@ import { ANVIL_CLIENT_VERSION } from "@pp/sepolia-fork/anvil"
 import { encodeAbiParameters, maxUint256, toFunctionSelector } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest"
+import { FEE_FLOOR_WEI, needOf } from "./funding"
 import { isKeyValue, KEY_NAMES, keyFilePath } from "./keyfile"
 import { loopback } from "./network"
 import { scratchHome, writeKeyFile } from "./test-support"
@@ -289,6 +290,27 @@ describe("every key-reading CLI on a fork", () => {
 			true,
 			false,
 		])
+	}, 60_000)
+
+	it("deploy-pool refuses caps its balance from a fund at the floor does not cover, past its key's checks and before any send", async () => {
+		const home = scratchHome()
+		answers.eth_getBalance = `0x${needOf("poolDeployer", FEE_FLOOR_WEI).toString(16)}`
+		onTestFinished(() => {
+			answers.eth_getBalance = "0x56bc75e2d63100000"
+		})
+		const key = generatePrivateKey()
+		writeKeyFile(
+			home,
+			sentinels().map(([n, v]) => `${n}=${n === "POOL_DEPLOYER_KEY" ? key : v}`),
+		)
+		const file = deploymentFile(home, { pool: false }, { poolDeployer: privateKeyToAccount(key).address })
+		seen.length = 0
+		// The fake L1's base fee and tip are 1 gwei each, so viem estimates 2.2 gwei.
+		const r = await cli("deploy-pool", [file, "--rehearse-fork", rpc], home)
+		expect([r.code, /refused: fees: .* under the .* ETH .* fee estimate of 2.2 gwei; .*wait/.test(r.out), leaks(r.out, [key])]).toEqual(
+			[2, true, []],
+		)
+		expect(seen).not.toContain("eth_sendRawTransaction")
 	}, 60_000)
 
 	it("fund --quote reads no key: it answers with no key file at all", async () => {

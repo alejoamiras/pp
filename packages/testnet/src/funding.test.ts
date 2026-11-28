@@ -6,6 +6,7 @@ import {
 	assertTopUp,
 	assertWithinLimits,
 	FEE_FLOOR_WEI,
+	feeAboveBudget,
 	FUNDING_GAS,
 	fundingPlan,
 	liveGasOf,
@@ -97,6 +98,18 @@ describe("a plan's snapshot block", () => {
 	])("%s", (_, atSnapshot, pendingRead, pendingSend, refused) => {
 		const why = staleSnapshot({ block: 100n, atSnapshot, pendingRead, pendingSend })
 		expect(why === undefined ? "planned" : why).toMatch(refused ? /at block 100 .*run again$/ : /^planned$/)
+	})
+})
+
+describe("deploy-pool after a fund at the floor", () => {
+	const funded = needOf("poolDeployer", FEE_FLOOR_WEI)
+	it.each([
+		["an estimate under the floor", FEE_FLOOR_WEI / 2n, funded, false],
+		["an estimate at the floor", FEE_FLOOR_WEI, funded, false],
+		["an estimate one wei above it", FEE_FLOOR_WEI + 1n, funded, true],
+		["a balance one wei short at the floor", FEE_FLOOR_WEI, funded - 1n, true],
+	])("starts at %s only if the balance covers its caps", (_, maxFeePerGas, balance, refused) => {
+		expect(feeAboveBudget({ maxFeePerGas, balance }) ?? "starts").toMatch(refused ? /under the .* ETH .*wait/ : /^starts$/)
 	})
 })
 

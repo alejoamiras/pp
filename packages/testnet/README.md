@@ -25,9 +25,14 @@ Every L1 send goes to `network.l1SendRpc`, a second pinned endpoint, and every o
 the Tenderly gateway refuses sends under load. A live run refuses a file whose send endpoint is missing or
 not pinned, and checks that it serves Sepolia before reading a key; a rehearsal's is loopback, or absent,
 and then sends go where it reads. The send rules are `@pp/pp-env/send-path`'s, for the viem wallets and,
-through a loopback relay, for `deploy-pool`'s Forge script, which gets fee caps of twice the fee estimate
-(never below 1 gwei) and a 1 gwei tip. Each keyed run appends every send's hash, nonce and each answer to
-`send-path.jsonl` in its run directory. `pause` sends through the same endpoint, so it needs it up.
+through a loopback relay, for `deploy-pool`'s Forge script, which gets fee caps of twice the 1 gwei floor
+and a 1 gwei tip. `deploy-pool` refuses to start, before any send, while the pool deployer's budget at
+caps priced from the live estimate costs more than its balance, which `fund` tops up to that budget at
+its own estimate; after a `fund` under the floor, that is any estimate above it: wait and run it again. Its four sends after Forge's (the
+postman grant, the test token, its enabling and its mint) carry no caps, so a fee spike cannot strand a
+pool Forge deployed; the pool deployer's balance bounds them. Each keyed run logs every send's hash and
+nonce to `send-path.jsonl` in its run directory before its bytes leave, and each answer after. `pause`
+sends through the same endpoint, so it needs it up.
 
 ## Keys
 
