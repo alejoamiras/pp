@@ -107,34 +107,78 @@ describe("the standalone bot", () => {
 			expect(readFileSync(join(dir, "ports.md"), "utf8")).not.toContain("second-bot")
 		})
 
-		it("resolves on an abort between stages, releasing its own row and no sibling's under the same run", async () => {
-			await claimRows("shared-run", { sibling: 43_212 }, process.pid)
-			// Aborts at the check after the server binds, before the wallet starts.
+		/**
+		 * Aborts at the check after the server binds, before the wallet starts. `thrown` keeps what an abort
+		 * listener throws: under Bun that ends the process at the end of the tick, before any teardown.
+		 */
+		const abortAfterServe = () => {
+			const listeners: (() => void)[] = []
+			const thrown: unknown[] = []
+			const fireOnce = () => {
+				for (const l of listeners.splice(0)) {
+					try {
+						l()
+					} catch (e) {
+						thrown.push(e)
+					}
+				}
+			}
 			let checks = 0
 			const signal = {
 				get aborted() {
 					return checks >= 2
 				},
 				throwIfAborted() {
-					if (++checks >= 2) throw new DOMException("aborted", "AbortError")
+					if (++checks < 2) return
+					fireOnce()
+					throw new DOMException("aborted", "AbortError")
 				},
-				addEventListener() {},
+				addEventListener: (_: string, l: () => void) => listeners.push(l),
 			} as unknown as AbortSignal
-			const lines: { event: string; step?: unknown; at?: unknown; ms?: unknown; settled?: unknown }[] = []
+			return { signal, thrown }
+		}
+
+		it("resolves on an abort between stages, releasing its own row and no sibling's under the same run", async () => {
+			await claimRows("shared-run", { sibling: 43_212 }, process.pid)
+			const lines: { event: string; step?: unknown; at?: unknown; ms?: unknown; settled?: unknown; postInFlight?: unknown }[] = []
 			const log = (event: string, fields: Record<string, unknown>) => lines.push({ event, ...fields })
 			await expect(
-				runStandaloneBot(config({ port: 43_213, runId: "shared-run" }), { poster: Fr.random() }, { signal, log }),
+				runStandaloneBot(
+					config({ port: 43_213, runId: "shared-run" }),
+					{ poster: Fr.random() },
+					{ signal: abortAfterServe().signal, log },
+				),
 			).resolves.toBeUndefined()
 			const rows = readFileSync(join(dir, "ports.md"), "utf8")
 			expect(rows).toContain("| 43212 | sibling | shared-run |")
 			expect(rows).not.toContain("43213")
 			// The wallet never started, so the teardown begins at the drain, which has no step to wait for.
-			expect(lines.map((l) => l.step ?? l.event)).toEqual(["drain", "server_close", "store_remove", "port_release", "teardown_done"])
-			expect(lines[0]?.settled).toBe(true)
+			expect(lines.map((l) => l.step ?? l.event)).toEqual([
+				"teardown_signal",
+				"drain",
+				"server_close",
+				"store_remove",
+				"port_release",
+				"teardown_done",
+			])
+			expect(lines[0]?.postInFlight).toBe(false)
+			expect(lines[1]?.settled).toBe(true)
 			for (const l of lines) {
 				expect(Date.parse(String(l.at)), l.event).toBeGreaterThan(0)
-				expect(l.ms, l.event).toBeGreaterThanOrEqual(0)
+				if (l.event !== "teardown_signal") expect(l.ms, l.event).toBeGreaterThanOrEqual(0)
 			}
+		})
+
+		it("tears down the same under a logger that throws on every line", async () => {
+			const log = () => {
+				throw new Error("no space left on device")
+			}
+			const { signal, thrown } = abortAfterServe()
+			await expect(
+				runStandaloneBot(config({ port: 43_214, runId: "full-disk" }), { poster: Fr.random() }, { signal, log }),
+			).resolves.toBeUndefined()
+			expect(thrown).toEqual([])
+			expect(readFileSync(join(dir, "ports.md"), "utf8")).not.toContain("43214")
 		})
 
 		it.each([
@@ -198,6 +242,17 @@ describe("the standalone bot", () => {
 			expect(lines).toEqual([
 				expect.objectContaining({ event: "teardown_step", step: "port_release", error: "the port registry stayed locked" }),
 			])
+		})
+
+		it("lets no logger that throws change a step's outcome", async () => {
+			const log = () => {
+				throw new Error("no space left on device")
+			}
+			await expect(loggedStep(log, "store_remove", async () => undefined)()).resolves.toBeUndefined()
+			const failing = loggedStep(log, "port_release", async () => {
+				throw new Error("the port registry stayed locked")
+			})
+			await expect(failing()).rejects.toThrow("the port registry stayed locked")
 		})
 	})
 })

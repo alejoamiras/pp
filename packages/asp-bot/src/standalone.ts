@@ -134,6 +134,20 @@ async function drain(step: Promise<unknown> | undefined, ms: number): Promise<bo
 const at = () => new Date().toISOString()
 
 /**
+ * `log` for the teardown's own lines, swallowing what the logger throws: a line must never change the
+ * teardown, and under Bun an abort listener that throws ends the process before any teardown runs.
+ */
+function teardownLog(log: Ports["log"]): Ports["log"] {
+	return (event, fields) => {
+		try {
+			log(event, fields)
+		} catch {
+			// A logger that cannot write (a full disk under its file) loses the line, not the teardown.
+		}
+	}
+}
+
+/**
  * `ports` whose `post` records when the post in flight began, for the teardown log; behaves as `ports`
  * otherwise. The poster never runs two posts at once.
  */
@@ -153,13 +167,14 @@ export function trackPosts(ports: Ports): { ports: Ports; postingSince: () => nu
 /**
  * Wraps a teardown step to log one `teardown_step` line when it ends: its name, the time, how long it
  * took, what it threw (rethrown) and the fields it returns. A step that never ends logs nothing, so the
- * last line names the step before it.
+ * last line names the step before it. A logger that throws changes neither outcome.
  */
 export function loggedStep(log: Ports["log"], step: string, fn: () => Promise<Record<string, unknown> | undefined>) {
+	const say = teardownLog(log)
 	return async (): Promise<void> => {
 		const start = performance.now()
 		const end = (fields?: Record<string, unknown>) =>
-			log("teardown_step", { step, at: at(), ms: Math.round(performance.now() - start), ...fields })
+			say("teardown_step", { step, at: at(), ms: Math.round(performance.now() - start), ...fields })
 		try {
 			end(await fn())
 		} catch (e) {
@@ -198,7 +213,7 @@ export async function runStandaloneBot(c: StandaloneBotConfig, s: BotSecrets, o:
 		try {
 			await cleanup.run()
 		} finally {
-			log("teardown_done", { at: at(), ms: Math.round(performance.now() - start) })
+			teardownLog(log)("teardown_done", { at: at(), ms: Math.round(performance.now() - start) })
 			done = true
 		}
 	}
@@ -219,7 +234,7 @@ async function run(
 		() => {
 			const since = postingSince()
 			const postMs = since === undefined ? {} : { postMs: Math.round(performance.now() - since) }
-			log("teardown_signal", { at: at(), postInFlight: since !== undefined, ...postMs })
+			teardownLog(log)("teardown_signal", { at: at(), postInFlight: since !== undefined, ...postMs })
 		},
 		{ once: true },
 	)
