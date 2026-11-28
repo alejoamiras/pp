@@ -10,6 +10,8 @@ export const LOCAL = 31337
 /** Every public URL a testnet run may reach. A URL is pinned by equality with one of these, never by pattern. */
 export const PINNED_URLS = {
 	l1Rpc: ["https://ethereum-sepolia-rpc.publicnode.com", "https://sepolia.gateway.tenderly.co"],
+	/** Where keyed sends go: Tenderly's gateway refuses most sends from one host, publicnode admitted every one probed. */
+	l1SendRpc: ["https://ethereum-sepolia-rpc.publicnode.com"],
 	aztecNode: ["https://aztec-testnet.drpc.org"],
 	aspApi: ["https://api-dev.0xbow.io"],
 } as const satisfies Record<string, readonly string[]>

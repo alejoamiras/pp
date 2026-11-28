@@ -1,0 +1,153 @@
+{
+	"version": 1,
+	"command": "canary",
+	"target": "own",
+	"l1ChainId": 11155111,
+	"startedAt": "2026-11-28T02:31:23.788Z",
+	"endedAt": "2026-11-28T02:51:19.075Z",
+	"exitClass": "PASS",
+	"exitCode": 0,
+	"oneTx": true,
+	"bridgeL1Tx": "0xccafa22f431264cabaebeb043015ef511fbc217e6831b1ea6e1f55746014081a",
+	"bridgeL1Block": "12227257",
+	"balanceDelta": "100000000",
+	"steps": {
+		"attach": 1794,
+		"account": 1880,
+		"bridge": 33539,
+		"claimable": 7348,
+		"deployClaim": 101909,
+		"selfTransfer": 72150,
+		"shield": 300915,
+		"ragequit": 133891,
+		"epochProof": 517282,
+		"settle": 23544
+	},
+	"waits": {
+		"claimable": 7348,
+		"bridgeFinality": 963578,
+		"birthRoot": 32051,
+		"epochProof": 517282
+	},
+	"sends": [
+		{
+			"step": "deployClaim",
+			"txHash": "0x14d89710069b7ac976339f04a03ff5639fbafca17f75c3dda343a87e2a5b01fc",
+			"provingMs": 17112,
+			"inclusionMs": 7414,
+			"checkpointMs": 77085,
+			"outcome": "checkpointed"
+		},
+		{
+			"step": "selfTransfer",
+			"txHash": "0x1274045536a40c6bd54387cc1d69ea2e0f40c196c70ec4762fe26ac69556a019",
+			"provingMs": 12018,
+			"inclusionMs": 4899,
+			"checkpointMs": 54277,
+			"outcome": "checkpointed"
+		},
+		{
+			"step": "unshield",
+			"txHash": "0x105817d5ab3ddd58c161f07e79763df735dbf9911c62fe06c3a54526c67fc3f5",
+			"provingMs": 10658,
+			"inclusionMs": 5661,
+			"checkpointMs": 54078,
+			"outcome": "checkpointed"
+		},
+		{
+			"step": "shield",
+			"txHash": "0x140eab6367434cc62cb52694c07ee0e7136bbe0cdd518562405a724c9822cef2",
+			"provingMs": 12875,
+			"inclusionMs": 5007,
+			"checkpointMs": 55607,
+			"outcome": "checkpointed"
+		},
+		{
+			"step": "birthTransfer",
+			"txHash": "0x0f9dcc37c6abb17669703f6d1d23f8854cd48a995529afbe66c87ac6427427c7",
+			"provingMs": 10289,
+			"inclusionMs": 11377,
+			"checkpointMs": 98808,
+			"outcome": "checkpointed"
+		},
+		{
+			"step": "burn",
+			"txHash": "0x068d7853d34a293fd42a22b59738d01a3f990f3e90a76e1f5dd38c853f240dcf",
+			"provingMs": 10262,
+			"inclusionMs": 3111,
+			"checkpointMs": 42806,
+			"outcome": "checkpointed"
+		},
+		{
+			"step": "burn",
+			"txHash": "0x2c809ec3685890c6f411f52b58279efaa20094481e1077a121ba1e68c97f6962",
+			"provingMs": 8089,
+			"inclusionMs": 7104,
+			"checkpointMs": 55449,
+			"outcome": "checkpointed"
+		}
+	],
+	"checks": [
+		{
+			"step": "selfTransfer",
+			"txHash": "0x1274045536a40c6bd54387cc1d69ea2e0f40c196c70ec4762fe26ac69556a019",
+			"anchorBlock": 75467,
+			"anchorTime": "1795833300",
+			"sequence": "2",
+			"l1Block": "12227179",
+			"l1BlockHash": "0xedf128bbdd3d51b38b2c6492a5211f2382bbe901e2acdc37369143ea7e7a847c",
+			"poolRootParity": true,
+			"rootTimeParity": true,
+			"marginSec": "648",
+			"failed": []
+		},
+		{
+			"step": "unshield",
+			"txHash": "0x105817d5ab3ddd58c161f07e79763df735dbf9911c62fe06c3a54526c67fc3f5",
+			"anchorBlock": 75469,
+			"anchorTime": "1795833372",
+			"sequence": "2",
+			"l1Block": "12227179",
+			"l1BlockHash": "0xedf128bbdd3d51b38b2c6492a5211f2382bbe901e2acdc37369143ea7e7a847c",
+			"poolRootParity": true,
+			"rootTimeParity": true,
+			"marginSec": "576",
+			"failed": []
+		},
+		{
+			"step": "birthTransfer",
+			"txHash": "0x0f9dcc37c6abb17669703f6d1d23f8854cd48a995529afbe66c87ac6427427c7",
+			"anchorBlock": 75474,
+			"anchorTime": "1795833516",
+			"sequence": "4",
+			"l1Block": "12227209",
+			"l1BlockHash": "0xf108bb1a60a16e7d9e6a6432b6e85814f8ca9f403bdb294cd81da715231bdbef",
+			"poolRootParity": true,
+			"rootTimeParity": true,
+			"marginSec": "816",
+			"failed": []
+		}
+	],
+	"burns": [
+		{
+			"txHash": "0x068d7853d34a293fd42a22b59738d01a3f990f3e90a76e1f5dd38c853f240dcf",
+			"amount": "99999999"
+		},
+		{
+			"txHash": "0x2c809ec3685890c6f411f52b58279efaa20094481e1077a121ba1e68c97f6962",
+			"amount": "1"
+		}
+	],
+	"settles": [
+		{
+			"l2TxHash": "0x068d7853d34a293fd42a22b59738d01a3f990f3e90a76e1f5dd38c853f240dcf",
+			"l1TxHash": "0x2ed9c0e9770ad0ee2d07746e301066f4cc154c8916f20ef93a24c2d11dde861a",
+			"amount": "99999999"
+		},
+		{
+			"l2TxHash": "0x2c809ec3685890c6f411f52b58279efaa20094481e1077a121ba1e68c97f6962",
+			"l1TxHash": "0x3e4aca6f0d9be6b3ef94d86f60befe2b6561f46575705ae876df2b6d8265ea55",
+			"amount": "1"
+		}
+	]
+}

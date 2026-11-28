@@ -190,6 +190,11 @@ function spender(config: ClientConfig, owner: Address, signature: Hex, prover: I
  * payload. A supplied signature must be the wallet's own: any other derives keys it cannot reproduce.
  */
 export async function createPoolUser(live: ClientConfig, o: { wallet: LocalWallet; signature?: Hex }): Promise<PoolUser> {
+	return (await openPoolUser(live, o)).user
+}
+
+/** `createPoolUser`'s user with the SDK session behind it, for entries that add operations to it. */
+export async function openPoolUser(live: ClientConfig, o: { wallet: LocalWallet; signature?: Hex }) {
 	// Read once: the signature that is verified must be the one both sides derive keys from.
 	const { wallet, signature: supplied } = o
 	const owner = wallet.account.address
@@ -206,7 +211,7 @@ export async function createPoolUser(live: ClientConfig, o: { wallet: LocalWalle
 	)
 	const { session, noteManager } = await wireSession(config, wallet, keystoreManager, cryptoService, prover)
 	const spend = spender(config, owner, signature, prover)
-	return {
+	const user: PoolUser = {
 		address: owner,
 		async registerKeystore() {
 			const receipts = await session.registerKeystore()
@@ -224,4 +229,5 @@ export async function createPoolUser(live: ClientConfig, o: { wallet: LocalWalle
 		notes: () => noteManager.getNotes().map(toPoolNote),
 		prepareSpend: async (p) => spend(pickInput(noteManager, p.asset, p.input), p),
 	}
+	return { user, session }
 }

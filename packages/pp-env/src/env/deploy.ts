@@ -5,6 +5,7 @@ import { type Address, getAddress, type Hex, isAddress, maxUint256, type PublicC
 import { type Checkout, PACKAGE_DIR } from "./checkout.ts"
 import type { PoolDeployment } from "./types.ts"
 import { withFileLock } from "@pp/run-isolation/lock"
+import { type RelayedScriptOptions, runRelayed } from "./relayed-script.ts"
 import { rpc } from "./harness/rpc.ts"
 import { CANONICAL_CODE_FIXTURE, forgeLibraryFlags, POSEIDON_LIBRARIES } from "./pins.ts"
 import { assertFfiDisabled, forgeBin, forgeEnv, run } from "./tools.ts"
@@ -51,6 +52,14 @@ export async function installPoseidon(rpcUrl: string, co: Checkout): Promise<voi
 	}
 }
 
+const RECOMPILED = /^Compiling \d+ files/m
+
+/**
+ * Builds the pool with no key in forge's environment, runs `checkBuild`, and only then runs the keyed
+ * `DeployE2ELocal` script, which must find nothing left to compile.
+ * @throws Error when either forge run compiles, `checkBuild` throws, the script fails, or a deployed
+ * contract has no code; nothing is broadcast when the first build compiles or `checkBuild` throws
+ */
 export async function deployPool(o: {
 	rpcUrl: string
 	co: Checkout
@@ -59,6 +68,21 @@ export async function deployPool(o: {
 	/** Per-run dir for forge's cache copy and broadcast logs. */
 	workDir: string
 	client: PublicClient
+	/** Runs between the keyless build and the keyed script; a throw stops the deploy there. */
+	checkBuild?: () => void | Promise<void>
+	/**
+	 * Take each transaction's gas limit from the node's `eth_estimateGas` instead of forge's own replay,
+	 * which prices gas at the pinned `evm_version` and so underprices a chain on a later fork.
+	 */
+	skipSimulation?: boolean
+	/**
+	 * Run forge's script through a loopback send relay over `rpcUrl` ({@link runRelayed}): it listens
+	 * before the script starts, stops when the script exits, and ends the script's process group when no
+	 * new receipt comes for `noReceiptMs`.
+	 */
+	relay?: RelayedScriptOptions
+	/** Caps on every transaction of the script; default forge's own estimate. */
+	fees?: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
 }): Promise<PoolDeployment> {
 	await assertFfiDisabled(o.co.contracts)
 	// forge script also writes its sensitive broadcast log under the cache path. A per-run cache dir seeded
@@ -67,26 +91,41 @@ export async function deployPool(o: {
 	const cachePath = join(o.workDir, "cache")
 	await mkdir(cachePath, { recursive: true })
 	await copyFile(join(o.co.contracts, "cache", FORGE_CACHE_FILE), join(cachePath, FORGE_CACHE_FILE))
-	const cmd = [
+	const shared = ["--root", o.co.contracts, "--offline", "--cache-path", cachePath, ...forgeLibraryFlags()]
+	// The script compiles whatever the cache misses and then broadcasts, so the build runs keyless first;
+	// `--skip test` is the fetch's own build, which the published cache records.
+	const build = await run([forgeBin(), "build", "--skip", "test", ...shared], { cwd: o.co.contracts, env: forgeEnv() })
+	if (RECOMPILED.test(build.stdout)) throw new Error("forge recompiled the pool before the deploy: the fetched build is stale")
+	await o.checkBuild?.()
+	const fees = o.fees
+		? ["--with-gas-price", String(o.fees.maxFeePerGas), "--priority-gas-price", String(o.fees.maxPriorityFeePerGas)]
+		: []
+	const script = (rpcUrl: string) => [
 		forgeBin(),
 		"script",
 		"script/DeployE2ELocal.s.sol",
 		"--sig",
 		"runLocal()",
-		"--root",
-		o.co.contracts,
 		"--rpc-url",
-		o.rpcUrl,
+		rpcUrl,
 		"--broadcast",
 		"--slow",
-		"--offline",
-		"--cache-path",
-		cachePath,
-		...forgeLibraryFlags(),
+		...(o.skipSimulation ? ["--skip-simulation"] : []),
+		...fees,
+		...shared,
 	]
 	const env = forgeEnv({ PRIVATE_KEY: o.deployerKey, FOUNDRY_BROADCAST: join(o.workDir, "broadcast") })
-	const { stdout } = await run(cmd, { cwd: o.co.contracts, env })
-	if (/^Compiling \d+ files/m.test(stdout)) throw new Error("forge recompiled the pool at deploy time: the fetched build is stale")
+	const stdout = o.relay
+		? await runRelayed({
+				readUrl: o.rpcUrl,
+				cmd: script,
+				cwd: o.co.contracts,
+				env,
+				logFile: join(o.workDir, "forge-script.log"),
+				relay: o.relay,
+			})
+		: (await run(script(o.rpcUrl), { cwd: o.co.contracts, env })).stdout
+	if (RECOMPILED.test(stdout)) throw new Error("forge recompiled the pool at deploy time: the fetched build is stale")
 	const deployment = parseDeployOutput(stdout)
 	if (deployment.postman !== o.deployer) throw new Error(`POSTMAN ${deployment.postman} is not the deployer ${o.deployer}`)
 	for (const field of Object.values(CONTRACT_KEYS)) {

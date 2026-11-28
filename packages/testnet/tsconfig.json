@@ -6,12 +6,12 @@
 		"lib": ["ESNext", "DOM"],
 		"strict": true,
 		"noEmit": true,
+		"allowImportingTsExtensions": true,
 		"esModuleInterop": true,
 		"isolatedModules": true,
 		"skipLibCheck": true,
-		"types": ["node"],
-		"allowImportingTsExtensions": true,
-		"erasableSyntaxOnly": true
+		"resolveJsonModule": true,
+		"types": ["bun", "node"]
 	},
-	"include": ["src/**/*.ts", "vitest.config.ts"]
+	"include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }

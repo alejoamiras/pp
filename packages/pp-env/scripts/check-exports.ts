@@ -12,6 +12,7 @@ const ENTRIES = [
 	["src/index.ts", "types/index.d.ts"],
 	["src/client/index.ts", "types/client.d.ts"],
 	["src/env/fork.ts", "types/fork.d.ts"],
+	["src/sepolia/index.ts", "types/sepolia.d.ts"],
 ] as const
 
 const program = ts.createProgram(

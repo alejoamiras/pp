@@ -6,9 +6,11 @@ import type * as ClientImpl from "../../src/client/index.ts"
 import type { CircuitBundleName as BundleName, NoteStatusName } from "../../src/client/types.ts"
 import type * as ForkImpl from "../../src/env/fork.ts"
 import type * as Impl from "../../src/index.ts"
+import type * as SepoliaImpl from "../../src/sepolia/index.ts"
 import type * as ClientPublic from "../../types/client.js"
 import type * as ForkPublic from "../../types/fork.js"
 import type * as Public from "../../types/index.js"
+import type * as SepoliaPublic from "../../types/sepolia.js"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Assert<T extends true> = T
@@ -22,6 +24,7 @@ export type Conformance = [
 	Assert<Equal<Mismatched<typeof Impl, typeof Public>, never>>,
 	Assert<Equal<Mismatched<typeof ClientImpl, typeof ClientPublic>, never>>,
 	Assert<Equal<Mismatched<typeof ForkImpl, typeof ForkPublic>, never>>,
+	Assert<Equal<Mismatched<typeof SepoliaImpl, typeof SepoliaPublic>, never>>,
 	Assert<Equal<NoteStatusName, `${NoteStatus}`>>,
 	Assert<Equal<BundleName, CircuitBundleName>>,
 ]

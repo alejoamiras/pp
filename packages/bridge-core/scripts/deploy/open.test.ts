@@ -205,7 +205,7 @@ describe("checkBeforeOpen", () => {
 
 // ─── The guardian's writes, against a scripted chain ─────────────────────────
 
-type Tx = { nonce: number; maxFeePerGas: bigint; hash: Hex; paused: boolean }
+type Tx = { nonce: number; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; hash: Hex; paused: boolean }
 type Chain = {
 	latest: number
 	pending: number
@@ -225,6 +225,8 @@ type Chain = {
 	pins: Hex[]
 	onSend?: (tx: Tx) => void
 	sendError?: string
+	/** Another transaction pending at a nonce: a send there must outbid both fee fields by geth's 10%, or is refused. */
+	pendingAt?: Map<number, { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>
 	tick?: () => void
 }
 
@@ -293,22 +295,30 @@ function chainOf(init: Partial<Chain> = {}): {
 		account: { address: GUARDIAN, type: "local" },
 		chain: { id: CHAIN },
 		getChainId: async () => CHAIN,
-		prepareTransactionRequest: async (r: { nonce?: number; maxFeePerGas?: bigint; data: Hex }) => ({
+		prepareTransactionRequest: async (r: { nonce?: number; maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint; data: Hex }) => ({
 			...r,
 			nonce: r.nonce ?? c.latest,
 			maxFeePerGas: r.maxFeePerGas ?? 100n,
+			maxPriorityFeePerGas: r.maxPriorityFeePerGas ?? 10n,
 		}),
-		signTransaction: async (r: { nonce: number; maxFeePerGas: bigint; data: Hex }) =>
-			toHex(`${r.nonce}:${r.maxFeePerGas}:${r.data}`) as Hex,
+		signTransaction: async (r: { nonce: number; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; data: Hex }) =>
+			toHex(`${r.nonce}:${r.maxFeePerGas}:${r.maxPriorityFeePerGas}:${r.data}`) as Hex,
 		sendRawTransaction: async ({ serializedTransaction }: { serializedTransaction: Hex }) => {
 			if (c.sendError) throw new Error(c.sendError)
-			const [nonce, fee, data] = Buffer.from(serializedTransaction.slice(2), "hex").toString().split(":")
+			const [nonce, fee, tip, data] = Buffer.from(serializedTransaction.slice(2), "hex").toString().split(":")
 			const tx = {
 				nonce: Number(nonce),
 				maxFeePerGas: BigInt(fee as string),
+				maxPriorityFeePerGas: BigInt(tip as string),
 				hash: keccak256(serializedTransaction),
 				paused: data?.endsWith("1") ?? false,
 			}
+			const held = c.pendingAt?.get(tx.nonce)
+			if (
+				held &&
+				(tx.maxFeePerGas * 10n < held.maxFeePerGas * 11n || tx.maxPriorityFeePerGas * 10n < held.maxPriorityFeePerGas * 11n)
+			)
+				throw new Error("replacement transaction underpriced")
 			c.sent.push(tx)
 			if (c.onSend) c.onSend(tx)
 			else mine(tx)
@@ -386,7 +396,7 @@ describe("pauseEntries", () => {
 			mine(tx)
 			if (!first) return
 			first = false
-			mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, hash: w(0x0e), paused: false })
+			mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, maxPriorityFeePerGas: 10n, hash: w(0x0e), paused: false })
 		}
 		const r = await pauseEntries(target(l1), guardian, FAST)
 		expect(c.sent.map((t) => t.nonce)).toEqual([5, 7])
@@ -401,14 +411,14 @@ describe("pauseEntries", () => {
 			sameBlock.mine(tx)
 			if (!once) return
 			once = false
-			sameBlock.mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, hash: w(0x0e), paused: false }, true)
+			sameBlock.mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, maxPriorityFeePerGas: 10n, hash: w(0x0e), paused: false }, true)
 		}
 		expect(await pauseEntries(target(sameBlock.l1), sameBlock.guardian, FAST)).toMatchObject({ nonce: 7 })
 
 		const reopening = chainOf()
 		reopening.c.onSend = (tx) => {
 			reopening.mine(tx)
-			reopening.mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, hash: w(0x0e + tx.nonce), paused: false })
+			reopening.mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, maxPriorityFeePerGas: 10n, hash: w(0x0e + tx.nonce), paused: false })
 		}
 		await expect(pauseEntries(target(reopening.l1), reopening.guardian, FAST)).rejects.toMatchObject({
 			code: "PAUSE_UNCONFIRMED",
@@ -428,7 +438,7 @@ describe("pauseEntries", () => {
 			}
 			first = false
 			c.finalized = c.block
-			mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, hash: w(0x0e), paused: false })
+			mine({ nonce: tx.nonce + 1, maxFeePerGas: 100n, maxPriorityFeePerGas: 10n, hash: w(0x0e), paused: false })
 			c.latestLag = [2n]
 		}
 		expect(await pauseEntries(target(l1), guardian, FAST)).toMatchObject({ nonce: 7 })
@@ -470,9 +480,89 @@ describe("pauseEntries", () => {
 			code: "PAUSE_NONCE_OCCUPIED",
 			nonce: 5,
 		})
-		const replace = chainOf()
-		await pauseEntries(target(replace.l1), replace.guardian, { ...FAST, nonce: 5, replace: true })
-		expect(replace.c.sent[0]?.maxFeePerGas).toBe(400n)
+	})
+
+	describe("a send path's conflict, read by its kind and the endpoint's words in data", () => {
+		const conflict = (words: string) =>
+			Object.assign(new Error("RPC Request failed."), {
+				cause: Object.assign(new Error(`${w(0x0c)} lost nonce 5 to another transaction`), {
+					name: "SendPathError",
+					kind: "conflict",
+					data: words,
+				}),
+			})
+
+		it.each(["-32003 replacement transaction underpriced", "-32000 replacement underpriced"])(
+			"names %s as an occupied nonce",
+			async (words) => {
+				const { l1, guardian } = chainOf()
+				;(guardian as { sendRawTransaction: unknown }).sendRawTransaction = async () => {
+					throw conflict(words)
+				}
+				await expect(pauseEntries(target(l1), guardian, FAST)).rejects.toMatchObject({ code: "PAUSE_NONCE_OCCUPIED", nonce: 5 })
+			},
+		)
+
+		it("takes nonce too low as the nonce taken, and finds its own mined pause", async () => {
+			const { c, l1, guardian } = chainOf()
+			const send = guardian.sendRawTransaction
+			;(guardian as { sendRawTransaction: unknown }).sendRawTransaction = async (q: Parameters<typeof send>[0]) => {
+				await send(q)
+				throw conflict("-32000 nonce too low")
+			}
+			expect(await pauseEntries(target(l1), guardian, FAST)).toMatchObject({ nonce: 5 })
+			expect(c.sent.map((t) => t.nonce)).toEqual([5])
+		})
+	})
+
+	it("replaces a transaction pending at five times the estimate, outbidding each fee field by a quarter", async () => {
+		const { c, l1, guardian } = chainOf({ pendingAt: new Map([[5, { maxFeePerGas: 500n, maxPriorityFeePerGas: 50n }]]) })
+		const pending = { hash: w(9), from: GUARDIAN, nonce: 5, maxFeePerGas: 500n, maxPriorityFeePerGas: 50n }
+		const r = await pauseEntries(target(l1), guardian, { ...FAST, nonce: 5, replace: pending })
+		expect(r).toMatchObject({ nonce: 5 })
+		expect(c.sent).toHaveLength(1)
+		expect(c.sent[0]).toMatchObject({ maxFeePerGas: 625n, maxPriorityFeePerGas: 63n })
+		const cheap = chainOf()
+		await pauseEntries(target(cheap.l1), cheap.guardian, {
+			...FAST,
+			nonce: 5,
+			replace: { ...pending, maxFeePerGas: 20n, maxPriorityFeePerGas: 2n },
+		})
+		expect(cheap.c.sent[0]).toMatchObject({ maxFeePerGas: 400n, maxPriorityFeePerGas: 40n })
+	})
+
+	it("refuses to replace another account's transaction or one at another nonce, with nothing signed", async () => {
+		const pending = { hash: w(9), from: GUARDIAN, nonce: 5, maxFeePerGas: 500n, maxPriorityFeePerGas: 50n }
+		for (const replace of [
+			{ ...pending, from: "0x00000000000000000000000000000000000000ee" as Address },
+			{ ...pending, nonce: 6 },
+		]) {
+			const { c, l1, guardian } = chainOf()
+			await expect(pauseEntries(target(l1), guardian, { ...FAST, nonce: 5, replace })).rejects.toBeInstanceOf(OpenRefusedError)
+			expect(c.sent).toEqual([])
+		}
+	})
+
+	it("names the signed pause in PAUSE_UNCONFIRMED when its broadcast or its receipt read fails, and takes anvil's duplicate answer", async () => {
+		const lost = chainOf({ sendError: "fetch failed" })
+		const signed: string[] = []
+		const e = await pauseEntries(target(lost.l1), lost.guardian, { ...FAST, onSigned: (s) => signed.push(s.hash) }).catch(
+			(x: unknown) => x,
+		)
+		expect(e).toMatchObject({ code: "PAUSE_UNCONFIRMED", nonce: 5, hash: signed[0] })
+		const unread = chainOf()
+		;(unread.l1 as { getTransactionReceipt: unknown }).getTransactionReceipt = async () => {
+			throw new Error("fetch failed")
+		}
+		const u = await pauseEntries(target(unread.l1), unread.guardian, FAST).catch((x: unknown) => x)
+		expect(u).toMatchObject({ code: "PAUSE_UNCONFIRMED", nonce: 5, hash: unread.c.sent[0]?.hash })
+		const dup = chainOf()
+		const send = dup.guardian.sendRawTransaction
+		;(dup.guardian as { sendRawTransaction: unknown }).sendRawTransaction = async (a: Parameters<typeof send>[0]) => {
+			await send(a)
+			throw new Error("transaction already imported")
+		}
+		await expect(pauseEntries(target(dup.l1), dup.guardian, FAST)).resolves.toMatchObject({ nonce: 5 })
 	})
 
 	it("fails PAUSE_UNFINALIZED when finality never reaches the receipt, and refuses another chain before signing", async () => {

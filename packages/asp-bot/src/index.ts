@@ -1,4 +1,4 @@
-export { localBotAccounts } from "./accounts"
+export { actorAddressOf, localBotAccounts } from "./accounts"
 export { fetchLeaves } from "./asp"
 export type { DecideInput, Decision, L1Block, PostArgs, SkipReason } from "./decide"
 export { decide, HEARTBEAT_SEC } from "./decide"

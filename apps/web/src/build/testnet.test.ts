@@ -1,6 +1,7 @@
-import { readFileSync, rmSync, writeFileSync } from "node:fs"
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { parseStackManifest } from "@pp/bridge-core/stack-manifest"
+import { parseDeployment } from "@pp/testnet/schema"
 import { afterAll, describe, expect, test } from "vitest"
 import { scratchDir } from "../../scripts/proc"
 import { resolveSameOrigin } from "./same-origin"
@@ -93,6 +94,7 @@ describe("testnetTarget", () => {
 			["operator section", (d) => (d.operator = {}), /operator/],
 			["local chain", (d) => (d.network.l1ChainId = 31337), /Sepolia/],
 			["unpinned L1 RPC", (d) => (d.network.l1Rpc = "https://rpc.example"), /pinned Sepolia RPC/],
+			["unpinned L1 send RPC", (d) => (d.network.l1SendRpc = "https://sepolia.gateway.tenderly.co"), /pinned Sepolia send RPC/],
 			["unpinned node", (d) => (d.network.aztecNode = "https://node.example"), /pinned testnet node/],
 			["other FPC", (d) => (d.network.fpc = `0x${"11".repeat(32)}`), /canonical SponsoredFPC/],
 			["no bridge", (d) => (d.bridge = undefined), /bridge/],
@@ -101,14 +103,14 @@ describe("testnetTarget", () => {
 		]
 		for (const [what, edit, message] of refusals) expect(() => testnetTarget(file(edit), {}, FPC), what).toThrow(message)
 		expect(() => testnetTarget(join(dir, "absent.json"), {}, FPC)).toThrow(/cannot be read/)
-		// From pool1, whose pinned ASP URL the schema takes for v9 too, so only the build's own target rule refuses it.
+		// The schema knows no target but own and pool1, so it refuses another before the build's own rule.
 		expect(() =>
 			testnetTarget(
 				file((d) => (d.target = "v9"), POOL1),
 				{},
 				FPC,
 			),
-		).toThrow(/own pool or pool1/)
+		).toThrow(/target: Invalid option/)
 	})
 
 	test("takes pool1 with its ASP behind the page's origin, and only with the ceremony bundle", () => {
@@ -131,6 +133,14 @@ describe("testnetTarget", () => {
 			for (const value of ["x", ""])
 				expect(() => testnetTarget(FIXTURE, { [name]: value }, FPC), name).toThrow(new RegExp(`${name} is set`))
 	})
+})
+
+test("every committed deployment file parses under the schema the build reads them with", () => {
+	const committed = join(import.meta.dirname, "../../../../packages/testnet/deployments")
+	const files = readdirSync(committed).filter((f) => f.endsWith(".json"))
+	expect(files.length).toBeGreaterThan(0)
+	for (const f of [...files.map((f) => join(committed, f)), FIXTURE])
+		expect(() => parseDeployment(JSON.parse(readFileSync(f, "utf8"))), f).not.toThrow()
 })
 
 test("the fixture names the SponsoredFPC the build derives", async () => {

@@ -3,19 +3,37 @@
 	"version": "0.0.0",
 	"private": true,
 	"license": "Apache-2.0",
-	"description": "The schema of the bridge's testnet deployment file, safe for a browser build; the guarded testnet CLIs are to follow.",
+	"description": "The bridge on Sepolia and Aztec testnet: the deployment file, the key file and its guarded CLIs, and the rehearsal.",
 	"type": "module",
 	"exports": {
 		"./schema": "./src/schema.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
-		"test": "bun --bun vitest run"
+		"test": "bun --bun vitest run",
+		"pins": "bun scripts/pins.ts",
+		"pins:check": "bun scripts/pins.ts --check",
+		"rehearse": "bun scripts/rehearse.ts"
 	},
 	"dependencies": {
+		"@aztec-labs/accounts": "6.0.0",
+		"@aztec-labs/aztec.js": "6.0.0",
+		"@aztec-labs/foundation": "6.0.0",
+		"@aztec-labs/stdlib": "6.0.0",
+		"@nulo-sh/wallet-crypto": "catalog:",
+		"@pp/asp-bot": "workspace:*",
+		"@pp/bridge-core": "workspace:*",
+		"@pp/label-paths": "workspace:*",
+		"@pp/labelled-token": "workspace:*",
+		"@pp/pool-client": "workspace:*",
+		"@pp/pp-env": "workspace:*",
+		"@pp/run-isolation": "workspace:*",
+		"@pp/sepolia-fork": "workspace:*",
+		"viem": "catalog:",
 		"zod": "catalog:"
 	},
 	"devDependencies": {
+		"@types/bun": "catalog:",
 		"@types/node": "catalog:",
 		"typescript": "catalog:",
 		"vitest": "catalog:"

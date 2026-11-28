@@ -19,6 +19,9 @@ const CONSUMER = `import {
 } from "@pp/pp-env"
 import { type ClientConfig, secretDerivationTypedData } from "@pp/pp-env/client"
 import { attachForkPoolEnv, type ForkPoolEnv } from "@pp/pp-env/fork"
+import { deployPoolOn, type MockAsp, startMockAsp, type SepoliaPool, verifyPoolCode } from "@pp/pp-env/sepolia"
+import { SendPath, sendThrough } from "@pp/pp-env/send-path"
+import { http } from "viem"
 
 export async function use(): Promise<bigint> {
 	const env: PoolEnv = await startPoolEnv({ signals: false })
@@ -34,7 +37,13 @@ export async function use(): Promise<bigint> {
 	const [proof] = spend.args
 	// @ts-expect-error pubSignals rows are bigint arrays
 	const wrong: string = proof.pubSignals[0]
-	void [fork.clientConfig.circuitBundle, bundle, chain, wrong, STUB_PROCESSOR_ABI.length, TRANSACT_ABI.length, secretDerivationTypedData(env.asset).primaryType]
+	const pool: SepoliaPool = await deployPoolOn({ rpcUrl: "", sendRpcUrl: "", chainId: 11155111, deployerKey: "0x", mint: { to: env.asset, amount: 1n }, runDir: "", checkBuild: () => {} })
+	// @ts-expect-error only Sepolia is accepted
+	await deployPoolOn({ rpcUrl: "", sendRpcUrl: "", chainId: 1, deployerKey: "0x", mint: { to: env.asset, amount: 1n }, runDir: "", checkBuild: () => {} })
+	const asp: MockAsp = await startMockAsp({ rpcUrl: "", sendRpcUrl: "", chainId: 11155111, postmanKey: "0x", deployment: pool.deployment, port: 1, owners: [env.asset] })
+	const checked = await verifyPoolCode({ rpcUrl: "", chainId: 11155111, deployment: { ...pool.deployment, asset: pool.asset } })
+	const transport: ReturnType<typeof http> = sendThrough(http(""), new SendPath({ readUrl: "", sendUrl: "", chainId: 11155111, senders: [] }))
+	void [transport, checked.length, asp.approved(), fork.clientConfig.circuitBundle, bundle, chain, wrong, STUB_PROCESSOR_ABI.length, TRANSACT_ABI.length, secretDerivationTypedData(env.asset).primaryType]
 	return spend.nullifier
 }
 `

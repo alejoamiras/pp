@@ -20,7 +20,7 @@ How to work in this repository, for people and agents. [`README.md`](README.md) 
 | [`packages/pool-client`](packages/pool-client/README.md) | `@pp/pool-client`: Privacy Pools v2 notes and a checked one-input spend to a processor, in Node, Bun and the browser; never submits. `@pp/pool-client/testing` seeds a running `pp-env up`. |
 | [`packages/run-isolation`](packages/run-isolation/README.md) | `@pp/run-isolation`: the primitives a local run uses to own its ports and processes: the host port registry and its lock, group-leader children that end with the process that spawned them and their teardown, and `./process-group`, which tells a running group from one of unreaped zombies. Node-only, no dependencies. |
 | [`packages/sepolia-fork`](packages/sepolia-fork/README.md) | `@pp/sepolia-fork`: the bridge's Ethereum side against the real Sepolia pool and Aztec testnet Inbox, on an anvil fork it owns at a pinned block, with the pins checked on the fork and live. |
-| [`packages/testnet`](packages/testnet/README.md) | `@pp/testnet`: the testnet deployment file's schema, as `@pp/testnet/schema`, which imports only zod so a browser build can read the file and refuse unpinned endpoints. |
+| [`packages/testnet`](packages/testnet/README.md) | `@pp/testnet`: the bridge on Sepolia and the Aztec testnet: deployment files per target, the key file outside the repository, and the guarded commands from `keys` to `canary` and `pause`. `@pp/testnet/schema` imports only zod, so a browser build can read a deployment file and refuse unpinned endpoints. |
 | [`scripts/`](scripts) | CI-gating tests (`scripts/ci-cd/`), the complexity baseline, the absolute-path guard. |
 | [`.github/`](.github) | PR workflows, each with a `changes` filter and an exact-state aggregator. |
 
@@ -95,6 +95,9 @@ with warm package and toolchain caches.
 | Real-wallet tier (the wallet's pinned release, local stack, Playwright) | `bun run --cwd packages/e2e-kit test:real-wallet` or `bun run nightly real-wallet`, either after `bun run demo:prepare` | 4.7 min |
 | Pool client, against a local pool | `bun run --cwd packages/pool-client test:integration:node`, `test:browser`, `test:browser:integration` (after pp-env's `fetch`) | 35 s · 45 s · 30 s |
 | Sepolia fork, unit | `bun run --cwd packages/sepolia-fork test` | 4 s |
+| Testnet, unit (spawns each key-reading command against a fake loopback L1) | `bun run --cwd packages/testnet test` | 24 s |
+| Testnet send path through injected faults (Sepolia fork, keyless reads) | `bun run --cwd packages/testnet rehearse send-faults` (after pp-env's `fetch`; Foundry 1.7.1 on `PATH`) | 100 s |
+| Testnet inputs, live (keyless reads of the pinned endpoints; forced bridge build) | `PP_FORGE=<Foundry 1.7.1 forge> bun packages/testnet/src/cli/verify-inputs.ts packages/testnet/deployments/testnet-own.json` (after pp-env's `fetch` and the L2 artifacts) | 57 s |
 | Sepolia fork, against Sepolia | `SEPOLIA_RPC_URL=<public endpoint with archive state> bun run --cwd packages/sepolia-fork test:net`, then `run` after `forge build` in `contracts/bridge/evm` (`run --prepare-only` stops before Forge) | 14 s · 5 min 15 s (the pool user's sync 4 min 15 s) |
 
 After any change: lint, typecheck and the unit tests of the touched package. Before a PR: every row

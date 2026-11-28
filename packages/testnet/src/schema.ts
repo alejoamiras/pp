@@ -46,6 +46,8 @@ const networkSchema = z
 		rollupVersion: z.number().int().positive(),
 		fpc: word,
 		l1Rpc: url,
+		/** Where every keyed L1 send goes; reads stay on `l1Rpc`. Required live; a rehearsal defaults it to `l1Rpc`. */
+		l1SendRpc: url.optional(),
 		aztecNode: url,
 		/** The bot's snapshot server, on loopback. */
 		botPort: port,
@@ -69,6 +71,9 @@ const expectedSchema = z
 		poolDeployer: evmAddress.optional(),
 		canaryOwner: evmAddress,
 		canarySender: evmAddress,
+		/** The owner's hand-test accounts, which no canary step signs with. */
+		demoOwner: evmAddress.optional(),
+		demoSender: evmAddress.optional(),
 		/** Zero keeps shields paused. */
 		birthIntake: word,
 		tokenClassId: word,
@@ -122,7 +127,7 @@ export const POOL_FIELDS: readonly string[] = Object.keys(poolSchema.shape)
 export const BRIDGE_FIELDS: readonly string[] = Object.keys(bridgeSchema.shape)
 
 /** `pool1` is the operator's poolId 1, which the operator's own app calls "V8". */
-export const TARGETS = ["own", "v9", "pool1"] as const
+export const TARGETS = ["own", "pool1"] as const
 
 export const deploymentSchema = z
 	.object({
@@ -181,6 +186,12 @@ export function parseDeployment(json: unknown): TestnetDeployment {
 		throw new Error(`deployment file failed strict validation — ${issues}`)
 	}
 	return r.data
+}
+
+/** The target as configured: a deployment file without the `pool` and `bridge` sections its runs add. */
+export function configuredTarget<T extends { pool?: unknown; bridge?: unknown }>(d: T): Omit<T, "pool" | "bridge"> {
+	const { pool: _pool, bridge: _bridge, ...target } = d
+	return target
 }
 
 /** Tab-indented JSON with a trailing newline; validates first, so it never writes what `parseDeployment` refuses. */

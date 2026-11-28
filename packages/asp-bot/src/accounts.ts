@@ -16,8 +16,8 @@ export function botSecret(role: BotRole, stackRunId: string): Hex {
 	return new Fr(BigInt(`0x${digest}`) % Fr.MODULUS).toString() as Hex
 }
 
-/** The address `createActor` deploys for `secret`: the same Nulo key derivation and Schnorr account. */
-async function addressOf(secret: Hex): Promise<Hex> {
+/** The address `createActor` deploys for `secret` at the committed salt, derived with no wallet or network. */
+export async function actorAddressOf(secret: Hex): Promise<Hex> {
 	const { signingKey, secretKey } = await deriveNuloAccountKeys(Fr.fromHexString(secret))
 	return (await getSchnorrAccountContractAddress(signingKey, new Fr(SANDBOX_ACTOR_SALT), secretKey)).toString() as Hex
 }
@@ -25,8 +25,8 @@ async function addressOf(secret: Hex): Promise<Hex> {
 /** The bot's poster and birth-intake addresses for a stack, derived without a wallet or a network. */
 export async function localBotAccounts(stackRunId: string): Promise<{ poster: Hex; birthIntake: Hex }> {
 	const [poster, birthIntake] = await Promise.all([
-		addressOf(botSecret("poster", stackRunId)),
-		addressOf(botSecret("intake", stackRunId)),
+		actorAddressOf(botSecret("poster", stackRunId)),
+		actorAddressOf(botSecret("intake", stackRunId)),
 	])
 	return { poster, birthIntake }
 }

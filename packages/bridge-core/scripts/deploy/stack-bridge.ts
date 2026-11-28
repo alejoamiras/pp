@@ -8,7 +8,7 @@ import { AztecAddress } from "@aztec-labs/aztec.js/addresses"
 import { Contract, type ContractBase } from "@aztec-labs/aztec.js/contracts"
 import { TxStatus } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
-import { type Address, defineChain, type Hex, isAddressEqual } from "viem"
+import { type Address, defineChain, type Hex, isAddressEqual, type Transport } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { aspRootRegistryArtifact } from "../../src/asp-registry-artifact"
 import { PORTAL_FACTORY_ABI } from "../../src/factory-abi"
@@ -35,6 +35,9 @@ export const missingDeployArtifacts = (): string[] => missingEvmArtifacts(DEPLOY
 
 export type DeployBridgeOptions = {
 	l1Rpc: string
+	/** Wraps the deployer's L1 wallet transport, such as a resend when a public gateway refuses a send as
+	 *  rate-limited; default the plain transport, as on a local network. */
+	wrapL1WalletTransport?: (transport: Transport) => Transport
 	aztecNode: string
 	chainId: number
 	pool: { poolVault: Address; asset: Address }
@@ -94,7 +97,8 @@ function l1For(o: DeployBridgeOptions): L1Ctx {
 		rpcUrls: { default: { http: [o.l1Rpc] } },
 	})
 	const account = privateKeyToAccount(o.deployerKey)
-	return { ...createL1Clients({ chain, rpcUrl: o.l1Rpc, account }), account } as unknown as L1Ctx
+	const l1 = createL1Clients({ chain, rpcUrl: o.l1Rpc, account, wrapWalletTransport: o.wrapL1WalletTransport })
+	return { ...l1, account } as unknown as L1Ctx
 }
 
 async function l2For(o: DeployBridgeOptions, wallet: Wallet, node: AztecNode): Promise<L2Ctx> {
