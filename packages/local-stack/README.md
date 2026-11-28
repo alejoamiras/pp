@@ -3,7 +3,7 @@
 One command brings up everything the bridge and the pool need on one machine:
 
 ```bash
-bun run demo:prepare  # once per clone (networked): the pool's checkout and the bridge contracts
+bun run demo:prepare  # once per worktree (networked): the pool's checkout and the bridge contracts
 bun run demo          # boot (about 97 s), print how to reach it, tear down
 bun run demo --keep   # boot and hold until SIGINT, SIGTERM or SIGHUP
 bun run demo:smoke    # with the kept stack's PP_STACK_MANIFEST: bridge, claim, ragequit and settle once
@@ -19,7 +19,7 @@ the demo's pool user and gives it two approved notes of 100. The `bot` step star
 approves the births of the bridge's labelled token. It finishes only once the first post has
 landed, and the manifest's `bot` block names its snapshot URL.
 
-Besides the toolchain (Bun, Foundry 1.7.1, Aztec 6.0.0), a fresh clone needs one networked step:
+Besides the toolchain (Bun, Foundry 1.7.1, Aztec 6.0.0), a fresh worktree needs one networked step:
 `bun run demo:prepare`. It fetches the pool's checkout (about 1.5 min on a CI runner) and installs
 and builds the bridge contracts the `bridge` step deploys. Every boot after that is offline, and a
 boot that finds either missing fails in under a second naming that command. Set `FORGE` to point

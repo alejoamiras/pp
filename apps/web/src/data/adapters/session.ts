@@ -25,7 +25,7 @@ import {
 	prepareBridgeSpend,
 	type SubmitOptions,
 } from "@pp/bridge-core"
-import { type ArtifactSource, PoolClientError, type PoolClientErrorCode, secretDerivationTypedData, workerProver } from "@pp/pool-client"
+import { type ArtifactSource, PoolClientError, type PoolClientErrorCode, secretDerivationTypedData } from "@pp/pool-client"
 import { createArtifacts } from "@pp/pool-client/circuits"
 import {
 	BaseError,
@@ -40,6 +40,7 @@ import {
 } from "viem"
 import type { StackManifestJson } from "../../build/target"
 import { BridgeFailure, ProviderError, type UiCode } from "../errors"
+import { loadOnce } from "../lazy"
 import { parseAztecAddress } from "../parse"
 import type { Attempt, L1TxState, Proved, Session, SessionPort, SubmitHooks, Timer } from "../ports"
 import type { AztecAddress, BridgeRecordView } from "../stack-types"
@@ -49,7 +50,7 @@ import { PROVED_CIRCUIT } from "./circuit"
 import type { StackL1 } from "./l1"
 import { asPageError } from "./page-error"
 import { bridgeTiming } from "./timing"
-import { type DelegatingProver, delegatingProver } from "./prover"
+import { type DelegatingProver, delegatingProver, spawnWorker } from "./prover"
 
 // The exits run over the same bridge-core, whose SponsoredFPC artifact the build lets only this chunk carry.
 export { exitClient, stackExits } from "./exits"
@@ -147,6 +148,7 @@ interface Ctx {
 	known: Map<string, Known>
 	proofs: WeakMap<Proved, { spend: PreparedBridgeSpend; attempt: Attempt }>
 	timing: ClientTiming
+	warm: () => Promise<void>
 }
 
 /** The pool client's refusals of a keystore this app cannot register in, in the page's codes. */
@@ -239,7 +241,11 @@ async function knownOrRead(c: Ctx, id: string): Promise<Known> {
 
 async function prove(c: Ctx, a: Attempt): Promise<Proved> {
 	const recipient = sdk(a.recipient)
-	const spend = await (c.deps.prepare ?? prepareBridgeSpend)(c.s, { note: a.note, amount: a.amount, portal: c.portal, recipient })
+	const spend = await (c.deps.prepare ?? prepareBridgeSpend)(c.s, { note: a.note, amount: a.amount, portal: c.portal, recipient }).catch(
+		(err: unknown) => {
+			throw asPageError(err)
+		},
+	)
 	const proved = Object.freeze({ note: a.note, label: spend.change.label, amount: spend.amount, change: spend.change.value }) as Proved
 	c.proofs.set(proved, { spend, attempt: a })
 	return proved
@@ -273,7 +279,7 @@ function stackSession(c: Ctx): Session {
 			live()
 			await c.client.preflight({ recipient: sdk(recipient), wallet: preflightWallet(deps.aztec, epoch) })
 		},
-		warmUp: () => warmUp(deps.artifacts),
+		warmUp: c.warm,
 		async prove(a) {
 			live()
 			return prove(c, a)
@@ -309,17 +315,16 @@ function stackSession(c: Ctx): Session {
 	}
 }
 
-let warm: Promise<void> | undefined
-
-/** Fetches and checks the proved circuit's files once per page, so the first proof does not wait on them. */
-function warmUp(artifacts: ArtifactSource): Promise<void> {
-	warm ??= (async () => {
+/**
+ * Fetches and checks the proved circuit's files, so the first proof does not wait on them. pool-client
+ * reports a file that failed to load and one that broke its pin alike, as `ARTIFACT_MISMATCH`.
+ */
+async function warmUp(artifacts: ArtifactSource): Promise<void> {
+	try {
 		await createArtifacts(artifacts).ensure(PROVED_CIRCUIT)
-	})().catch((err: unknown) => {
-		warm = undefined
-		throw err
-	})
-	return warm
+	} catch (err) {
+		throw err instanceof PoolClientError && err.code === "ARTIFACT_MISMATCH" ? new BridgeFailure("PROVING_FILES_FAILED") : err
+	}
 }
 
 export function stackSessions(deps: SessionDeps): SessionPort {
@@ -329,11 +334,13 @@ export function stackSessions(deps: SessionDeps): SessionPort {
 	if (!bridge) throw new BridgeFailure("DEPLOYMENT_MISMATCH")
 	const timing = bridgeTiming(manifest)
 	const client = deps.client ?? createBridgeClient({ manifest, journal: journalStore(deps.storage), timing })
+	// Once per port, which the page makes once: every sign-in shares the files' first check.
+	const warm = loadOnce(() => warmUp(deps.artifacts))
 	return {
 		async open({ owner, sign }) {
 			const signature = await sign(secretDerivationTypedData(owner))
 			const s = await open({ manifest, l1Address: owner, signature, artifacts: deps.artifacts, prover: deps.prover })
-			return stackSession({ s, deps, client, portal: bridge.portal, known: new Map(), proofs: new WeakMap(), timing })
+			return stackSession({ s, deps, client, portal: bridge.portal, known: new Map(), proofs: new WeakMap(), timing, warm })
 		},
 		// A mined bridge stays recoverable from the signature and the chain; an unmined record goes with the journal.
 		forget: async () => forgetJournal(deps.storage),
@@ -345,7 +352,7 @@ let pageProver: DelegatingProver | undefined
 /** The page's one prover; its worker starts on the first proof. */
 export function proverFor(timer: Timer): DelegatingProver {
 	pageProver ??= delegatingProver(
-		() => workerProver(new Worker(new URL("./prover.worker.ts", import.meta.url), { type: "module" })),
+		spawnWorker(() => new Worker(new URL("./prover.worker.ts", import.meta.url), { type: "module" })),
 		timer,
 	)
 	return pageProver

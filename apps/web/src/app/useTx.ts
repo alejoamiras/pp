@@ -4,7 +4,7 @@ import type { AztecAddress } from "../data/stack-types"
 import { isWalletRefusal, type UiCode } from "../data/errors"
 import type { Sent } from "../data/ports"
 import type { DataSource } from "../data/source"
-import { isFinal, MAKES_CHANGE, REVERT_WAITS_FINALITY, sentOutcome, type TxAction, type TxOutcome, thrownOutcome } from "../data/tx"
+import { beforeHandoffOutcome, isFinal, MAKES_CHANGE, REVERT_WAITS_FINALITY, sentOutcome, type TxAction, type TxOutcome } from "../data/tx"
 import { useAztecProven } from "./queries"
 
 /** A send from one account that may still land: `txHash` is what a Refresh reads, absent when the wallet's send threw. */
@@ -17,8 +17,8 @@ const heldCode = (u: Unsettled | undefined): UiCode | null => (u ? (u.txHash ? "
 
 /**
  * One Aztec send at a time from this page, so a first send to a new recipient always goes alone; and
- * after an unshield reverts, no change-making spend until the node's proven block reaches the block it
- * reverted in. A failed read of the proven block keeps the wait.
+ * after an unshield or a private exit reverts, no change-making spend until the node's proven block
+ * reaches the block it reverted in. A failed read of the proven block keeps the wait.
  *
  * A send that may still land holds its account: no send from it until a Refresh the user makes reads
  * that transaction included or reverted. A pending receipt or a failed read keeps the hold, and one
@@ -86,7 +86,7 @@ export function useTx(source: DataSource, refresh: () => void) {
 				})
 				return answered(action, from, sent, recipient)
 			} catch (err) {
-				if (!handed) return thrownOutcome(err)
+				if (!handed) return beforeHandoffOutcome(err)
 				// Past the handoff, only a trusted refusal shape is a no; anything else may hide a send that went out.
 				if (isWalletRefusal(err)) return { ok: false, code: "WALLET_REJECTED" }
 				hold(from, { action })

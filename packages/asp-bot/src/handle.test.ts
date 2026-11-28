@@ -1,7 +1,8 @@
-import { existsSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { portsOwnedBy } from "@pp/run-isolation/ports"
 import { afterAll, describe, expect, it } from "vitest"
 import { type BotConfig, startBot } from "./handle"
 
@@ -40,6 +41,44 @@ afterAll(() => {
 })
 
 describe("startBot", () => {
+	it("has the child claim its port in the registry the parent releases from, an override included", async () => {
+		const c = config("registry")
+		const scratch = join(homedir(), ".cache", "pp", "asp-bot", "unit", `${c.runId}-registry`)
+		mkdirSync(scratch, { recursive: true })
+		const saved = { registry: process.env.PP_PORTS_REGISTRY, home: process.env.HOME }
+		process.env.PP_PORTS_REGISTRY = join(scratch, "ports.md")
+		// A child that misses the override falls back under this HOME, never to the host's registry.
+		process.env.HOME = join(scratch, "home")
+		const port = 45_678
+		let bot: Awaited<ReturnType<typeof startBot>> | undefined
+		try {
+			// No env file: a dotenv in the working directory must not supply the variable under test.
+			bot = await startBot(c, {
+				command: [process.execPath, "--no-env-file", FAKE, "claims", String(port)],
+				killAfterMs: 300,
+				removeDataOnStop: true,
+			})
+			expect([bot.url, portsOwnedBy(c.runId)]).toEqual([`http://127.0.0.1:${port}`, [port]])
+			// The child dies on SIGTERM with its row still listed, so only the parent's release can clear it.
+			await bot.stop()
+			expect(portsOwnedBy(c.runId)).toEqual([])
+			expect(existsSync(join(scratch, "home", ".agents", "ports.md"))).toBe(false)
+		} finally {
+			try {
+				await bot?.stop()
+			} finally {
+				for (const [key, value] of [
+					["PP_PORTS_REGISTRY", saved.registry],
+					["HOME", saved.home],
+				] as const) {
+					if (value === undefined) delete process.env[key]
+					else process.env[key] = value
+				}
+				rmSync(scratch, { recursive: true, force: true })
+			}
+		}
+	})
+
 	it("resolves on ready, answers post-now both ways, and stops the whole group", async () => {
 		const c = config("ok")
 		const released: string[] = []

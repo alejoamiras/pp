@@ -1,21 +1,28 @@
 /**
- * The app server's proxy for a testnet build: the ASP bot's snapshot server and the own pool's mock
- * ASP under the page's origin, so the owner forwards one port. Upstreams are fixed when the server
- * starts. A request picks one of the exact routes below and never a host; it is matched undecoded,
- * and the query that goes up is rebuilt from the values parsed out of it.
+ * The app server's proxy for a testnet build: the ASP bot's snapshot server and the pool's ASP under
+ * the page's origin, so the owner forwards one port. Upstreams are fixed when the server starts. A
+ * request picks one of the exact routes below and never a host; it is matched undecoded, and the
+ * query that goes up is rebuilt from the values parsed out of it.
  */
 
 export interface ProxyConfig {
 	/** The pool's L1 chain, as the SDK puts it in ASP paths and queries. */
 	readonly chainId: number
-	/** The pool's entrypoint; a query must name it (compared without case). */
+	/** The pool's entrypoint; a query must name it (compared without case), and it goes up spelled as here. */
 	readonly entrypoint: string
-	/** Upstream origins, `http://127.0.0.1:<port>`. */
+	/** The own pool's mock ASP on loopback, or the operator's pinned API. */
 	readonly asp: string
+	/** The bot's snapshot server, `http://127.0.0.1:<port>`. */
 	readonly bot: string
+	/** The ASP is the operator's: its request limits apply (`asp-allowance.ts`) and note events are never asked of it. */
+	readonly operator: boolean
 }
 
+import pkg from "../package.json" with { type: "json" }
 import { MAX_SNAPSHOT_BYTES } from "../src/data/adapters/snapshot-download.ts"
+
+/** Sent on every forward, so the operator can tell the app's requests from the bot's in its logs. */
+export const USER_AGENT = `pp-aztec-bridge-app/${pkg.version}`
 
 export type Upstream = "asp" | "bot"
 
@@ -29,17 +36,25 @@ const DIGITS = /^[0-9]{1,78}$/
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 const SEQUENCE = /^\/bot\/v1\/snapshots\/(latest|[1-9][0-9]{0,19})$/
 
-type Rule = { required: boolean; check(value: string, c: ProxyConfig): boolean }
+/** `canonical` is the one spelling forwarded, so case variants of a value share one upstream URL. */
+type Rule = { required: boolean; check(value: string, c: ProxyConfig): boolean; canonical?(c: ProxyConfig): string }
 const chainRule: Rule = { required: true, check: (v, c) => v === String(c.chainId) }
-const entrypointRule: Rule = { required: true, check: (v, c) => ADDRESS.test(v) && v.toLowerCase() === c.entrypoint.toLowerCase() }
+const entrypointRule: Rule = {
+	required: true,
+	check: (v, c) => ADDRESS.test(v) && v.toLowerCase() === c.entrypoint.toLowerCase(),
+	canonical: (c) => c.entrypoint,
+}
 const blockRule: Rule = { required: false, check: (v) => DIGITS.test(v) }
 
+export type AspKind = "root" | "leaves" | "public-key" | "snapshot" | "note-events"
+
 /**
- * Each ASP route the mock serves, with its query keys in the order the SDK writes them. `{c}` is the
- * pool's chain id. Anything else, `/admin/*` included, never reaches the mock.
+ * Each ASP route the SDK reads, with its query keys in the order the SDK writes them. `{c}` is the
+ * pool's chain id. Anything else, `/admin/*` included, never reaches the ASP.
  */
-const ASP_ROUTES: ReadonlyArray<{ path: string; query: ReadonlyArray<readonly [string, Rule]> }> = [
+const ASP_ROUTES: ReadonlyArray<{ kind: AspKind; path: string; query: ReadonlyArray<readonly [string, Rule]> }> = [
 	{
+		kind: "root",
 		path: "/association-set/root",
 		query: [
 			["chainId", chainRule],
@@ -47,15 +62,17 @@ const ASP_ROUTES: ReadonlyArray<{ path: string; query: ReadonlyArray<readonly [s
 		],
 	},
 	{
+		kind: "leaves",
 		path: "/association-set/leaves",
 		query: [
 			["chainId", chainRule],
 			["entrypoint", entrypointRule],
 		],
 	},
-	{ path: "/public-key", query: [] },
-	{ path: "/{c}/public/event-snapshot/payload", query: [["entrypoint", entrypointRule]] },
+	{ kind: "public-key", path: "/public-key", query: [] },
+	{ kind: "snapshot", path: "/{c}/public/event-snapshot/payload", query: [["entrypoint", entrypointRule]] },
 	{
+		kind: "note-events",
 		path: "/{c}/public/note-events",
 		query: [
 			["entrypoint", entrypointRule],
@@ -87,16 +104,18 @@ function rebuild(query: string, rules: ReadonlyArray<readonly [string, Rule]>, c
 			continue
 		}
 		if (!rule.check(value, c)) return null
-		kept.push(`${name}=${value}`)
+		kept.push(`${name}=${rule.canonical?.(c) ?? value}`)
 	}
 	return kept.length > 0 ? `?${kept.join("&")}` : ""
 }
+
+export type Route = { upstream: "bot"; url: string } | { upstream: "asp"; url: string; kind: AspKind }
 
 /**
  * The upstream URL for a raw request target (`req.url`, not decoded), or `null` when it is no route
  * of this proxy. The bot drops a query unread, so the proxy drops it too.
  */
-export function proxyRoute(rawTarget: string, c: ProxyConfig): { upstream: Upstream; url: string } | null {
+export function proxyRoute(rawTarget: string, c: ProxyConfig): Route | null {
 	if (!rawTarget.startsWith("/") || rawTarget.startsWith("//")) return null
 	const q = rawTarget.indexOf("?")
 	const path = q === -1 ? rawTarget : rawTarget.slice(0, q)
@@ -109,7 +128,7 @@ export function proxyRoute(rawTarget: string, c: ProxyConfig): { upstream: Upstr
 		const upstreamPath = route.path.replace("{c}", String(c.chainId))
 		if (rest !== upstreamPath) continue
 		const rebuilt = route.query.length === 0 && q !== -1 ? null : rebuild(query, route.query, c)
-		return rebuilt === null ? null : { upstream: "asp", url: `${c.asp}${upstreamPath}${rebuilt}` }
+		return rebuilt === null ? null : { upstream: "asp", url: `${c.asp}${upstreamPath}${rebuilt}`, kind: route.kind }
 	}
 	return null
 }
@@ -162,8 +181,10 @@ export async function forward(url: string, o: { deadlineMs?: number; capBytes?: 
 		// Bun decodes a compressed body as it arrives, before the cap counts it, unless `decompress` is off.
 		const init: RequestInit & { decompress: boolean } = {
 			method: "GET",
-			headers: { accept: "application/json", "accept-encoding": "identity" },
+			headers: { accept: "application/json", "accept-encoding": "identity", "user-agent": USER_AGENT },
 			redirect: "manual",
+			// Bun resends a request whose reused connection drops, which would make one allowed request two.
+			keepalive: false,
 			signal: AbortSignal.timeout(o.deadlineMs ?? DEADLINE_MS),
 			decompress: false,
 		}

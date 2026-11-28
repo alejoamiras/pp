@@ -8,7 +8,7 @@
  * leaves; they are GPL and never part of a build. It refuses to start unless that names an absolute
  * directory; a directory without the files answers 503 on their routes and serves everything else.
  *
- * With `--deployment <file>` (a testnet build) it also proxies the ASP bot and the pool's mock ASP under
+ * With `--deployment <file>` (a testnet build) it also proxies the ASP bot and the pool's ASP under
  * `/bot/` and `/asp/` (see `proxy.ts`). It then binds 127.0.0.1 only, refuses a build that is not the
  * one for that file, and answers only a Host of `localhost:<port>` or `127.0.0.1:<port>`, so a page
  * that points its own name at the forwarded port reads nothing. `--claim` registers the port in the
@@ -28,7 +28,8 @@ import { HEADER_FILE, parseHeaderFile, type SecurityHeaders } from "../src/build
 import { PROVED_CIRCUIT, PROVED_PINS } from "../src/data/adapters/circuit.ts"
 import { APP_ROOT } from "./proc"
 import { TARGET_FILE } from "../src/build/plugins.ts"
-import { bypassProxyForLoopback, CAPS, forward, isProxyPath, type ProxyConfig, proxyRoute, UPSTREAM_DOWN } from "./proxy"
+import { aspAllowance } from "./asp-allowance"
+import { bypassProxyForLoopback, CAPS, type Forwarded, forward, isProxyPath, type ProxyConfig, proxyRoute, UPSTREAM_DOWN } from "./proxy"
 import { loadTestnetServing } from "./testnet-serve"
 
 type Getter = "getWasm" | "getProvingKey" | "getVerificationKey"
@@ -139,11 +140,15 @@ const fileReply = (path: string): Reply => ({
 	body: readFileSync(path),
 })
 
-async function proxied(method: string | undefined, rawTarget: string, config: ProxyConfig): Promise<Reply> {
+async function proxied(method: string | undefined, rawTarget: string, testnet: Testnet): Promise<Reply> {
 	if (method !== "GET") return text(405, "method not allowed")
-	const route = proxyRoute(rawTarget, config)
+	const route = proxyRoute(rawTarget, testnet.proxy)
 	if (route === null) return text(404, "not found")
-	const r = await forward(route.url, { capBytes: CAPS[route.upstream] })
+	let r: Forwarded
+	if (route.upstream === "bot" || testnet.ask === null) r = await forward(route.url, { capBytes: CAPS[route.upstream] })
+	// Their block range changes with every read, so no per-URL window could reuse an answer; the 501 hands note discovery to the chain, as the mock's does.
+	else if (route.kind === "note-events") return text(501, "note events are read from the chain")
+	else r = await testnet.ask(route.url, route.kind)
 	if (r.ok) return { status: r.status, type: TYPES[".json"] as string, body: r.body, headers: { "Cache-Control": "no-store" } }
 	console.error(`serve: ${route.upstream}: ${r.reason}`)
 	return text(502, UPSTREAM_DOWN[route.upstream])
@@ -151,6 +156,8 @@ async function proxied(method: string | undefined, rawTarget: string, config: Pr
 
 interface Testnet {
 	readonly proxy: ProxyConfig
+	/** The operator's ASP behind its limits; `null` for the own pool's mock. */
+	readonly ask: ReturnType<typeof aspAllowance> | null
 	/** The header set checked against the deployment file, so what is served is what was checked. */
 	readonly headers: SecurityHeaders
 	/** The exact Host values this server answers. */
@@ -172,7 +179,7 @@ function testnetReply(req: IncomingMessage, testnet: Testnet): Promise<Reply> | 
 	const target = req.url ?? "/"
 	if (!target.startsWith("/") || target.startsWith("//")) return text(400, "bad request target")
 	// Before any URL parsing: `new URL` resolves `..` and `%2e`, which would turn a refused target into a route.
-	return isProxyPath(target) ? proxied(req.method, target, testnet.proxy) : null
+	return isProxyPath(target) ? proxied(req.method, target, testnet) : null
 }
 
 async function reply(req: IncomingMessage, outDir: string, circuits: string, testnet: Testnet | null): Promise<Reply> {
@@ -188,6 +195,12 @@ async function reply(req: IncomingMessage, outDir: string, circuits: string, tes
 	return text(404, "not found")
 }
 
+function rootUrl(proxy: ProxyConfig): string {
+	const route = proxyRoute(`/asp/association-set/root?chainId=${proxy.chainId}&entrypoint=${proxy.entrypoint}`, proxy)
+	if (route === null) throw new Error("serve: the deployment's ASP scope names no root route")
+	return route.url
+}
+
 async function testnetFor(file: string | undefined, outDir: string, host: string, port: number): Promise<Testnet | null> {
 	if (file === undefined) {
 		if (existsSync(join(outDir, TARGET_FILE))) throw new Error(`serve: ${outDir} is a testnet build; serve it with --deployment <file>`)
@@ -196,7 +209,8 @@ async function testnetFor(file: string | undefined, outDir: string, host: string
 	if (host !== "127.0.0.1") throw new Error(`serve: --deployment binds 127.0.0.1 only, got --host ${host}`)
 	const { proxy, headers } = await loadTestnetServing(resolve(file), outDir)
 	bypassProxyForLoopback()
-	return { proxy, headers, hosts: new Set([`localhost:${port}`, `127.0.0.1:${port}`]) }
+	const ask = proxy.operator ? aspAllowance((url) => forward(url, { capBytes: CAPS.asp }), rootUrl(proxy)) : null
+	return { proxy, ask, headers, hosts: new Set([`localhost:${port}`, `127.0.0.1:${port}`]) }
 }
 
 /**

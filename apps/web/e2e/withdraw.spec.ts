@@ -1,22 +1,21 @@
 /**
  * The label row's withdrawal on a stack build, against the local stack: a bridge sent from the build's
  * demo sender and claimed through the test wallet puts one note under the pool note's label on a fresh
- * Aztec account; once the label is checked, the page unshields part of it and exits it to a fresh payee
- * in one transaction through the same wallet, lists the public ticket from the chain and collects it from
- * the injected wallet's separate sender. Payer: anvil's dev accounts and the SponsoredFPC. Estimated
- * 90–150 s, measured 1.2 min alone on a 192-core host (the withdrawal 12 s), the actor's setup not counted.
+ * Aztec account; once the label is checked, the page sends part of it to a fresh payee through the hub's
+ * private exit in the same wallet, lists the public ticket from the chain and collects it from the
+ * injected wallet's separate sender. Payer: anvil's dev accounts and the SponsoredFPC. Estimated 90–150 s,
+ * measured 54 s alone on a 192-core host, the actor's setup not counted.
  */
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
 import { TxHash } from "@aztec-labs/aztec.js/tx"
 import { createBridgeClient, type KeyValueStore } from "@pp/bridge-core"
 import { anvilKey } from "@pp/bridge-core/sandbox"
-import type { Locator } from "@playwright/test"
 import { expect, test } from "@pp/e2e-kit/fixtures/test.ts"
 import { createPublicClient, erc20Abi, http } from "viem"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 import { formatAmount, plainAmount } from "../src/ui/format"
 import { approvedNote, seededStack } from "./stack"
-import { bridgeAndClaim, stepLog, submitted, watchPage } from "./support"
+import { amountOf, bridgeAndClaim, expectNoAccountInPublic, stepLog, submitted, watchPage } from "./support"
 
 test.use({ family: "withdraw", cells: 1, spares: 0 })
 test.skip(({ run }) => run.mode !== "stack", "the sandbox build withdraws in the fixture world, which the unit suite covers")
@@ -25,19 +24,16 @@ test.skip(({ run }) => run.mode !== "stack", "the sandbox build withdraws in the
 const WAIT = { claimable: 60_000, claimed: 90_000, active: 30_000, sent: 60_000, read: 30_000, ready: 180_000, settled: 30_000 }
 const step = stepLog("withdraw-spec")
 
-/** A row's amount, which `Amount` renders as the figure followed by the symbol in a `small`. */
-const amountOf = (row: Locator) => row.locator("span:has(> small)")
-
 function memoryJournal(): KeyValueStore {
 	const m = new Map<string, string>()
 	return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v), removeItem: (k) => void m.delete(k) }
 }
 
-// Fails if the page's three-call payload (the sponsor, the checked unshield, the hub's exit_public) does
-// not go through the wallet SDK and the test wallet as one transaction, if its public credit does not
-// run before its burn, or if a public ticket the page sent does not settle on the real portal through
-// Exits. The unit suite checks the payload's shape against fakes only.
-test("withdraws part of a checked label to a fresh payee in one transaction and collects it on Ethereum", async ({
+// Fails if the page's private exit (the sponsor, then the hub's exit_private with the checked path) does
+// not go through the wallet SDK and the test wallet, if the landed transaction publishes any public log
+// but the hub's ticket, names the Aztec account in one or writes public data beyond the sponsor's fee
+// balance, or if the ticket does not settle on the real portal through Exits. The unit suite checks the payload's shape against fakes only.
+test("withdraws part of a checked label to a fresh payee through the private exit and collects it on Ethereum", async ({
 	page,
 	run,
 	actor,
@@ -69,8 +65,10 @@ test("withdraws part of a checked label to a fresh payee in one transaction and 
 	step("withdrawal sent")
 	const sent = await submitted(frame)
 	expect(sent, "the claim and the withdrawal, each once").toHaveLength(2)
-	const receipt = await createAztecNodeClient(s.manifest.aztecNode).getTxReceipt(TxHash.fromString(sent[1]?.hash ?? ""))
-	expect(receipt.hasExecutionSucceeded(), "the unshield's credit ran before the exit's burn").toBe(true)
+	const node = createAztecNodeClient(s.manifest.aztecNode)
+	const hash = TxHash.fromString(sent[1]?.hash ?? "")
+	expect((await node.getTxReceipt(hash)).hasExecutionSucceeded(), "the exit's public check passed").toBe(true)
+	await expectNoAccountInPublic(node, hash.toString(), s.manifest.bridge.hub, actor.address)
 
 	const client = createBridgeClient({ manifest: s.manifest, journal: memoryJournal() })
 	const [ticket, ...none] = await client.exitTickets({ payee })
@@ -80,8 +78,7 @@ test("withdraws part of a checked label to a fresh payee in one transaction and 
 	expect(ticket.l2TxHash.toLowerCase(), "the ticket is the withdrawal's").toBe(sent[1]?.hash.toLowerCase())
 
 	await dialog.getByRole("button", { name: "Close" }).click()
-	// The whole figure, which a read from before the send cannot show. With the ticket's amount, it makes
-	// the unshield's credit equal the exit's burn; the public row's 0 cannot, as it read 0 before the send.
+	// The whole figure, which a read from before the send cannot show: the change kept the label.
 	await expect(amountOf(row)).toHaveText(`${formatAmount(amount - withdrawn, s.decimals, 2)}${s.symbol}`, {
 		timeout: WAIT.read,
 	})

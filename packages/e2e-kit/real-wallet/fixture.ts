@@ -14,6 +14,7 @@ import { walletChainIdOf } from "@pp/bridge-core"
 import { type RunEnv, runEnv, stackRun } from "../env"
 import { installL1Wallet, type L1WalletControl } from "../fixtures/l1-wallet"
 import { openNetwork } from "../fixtures/network"
+import { loopbackPorts } from "../scripts/e2e/owned"
 import { type Chain, chainAt } from "./chain"
 import { prepareCrs, readCrsPin, type SeedArrays } from "./crs"
 import { type WalletDriver, walletDriver } from "./driver"
@@ -60,14 +61,6 @@ interface Stack {
 	nodeUrl: string
 	expectedChainId: number
 	ports: number[]
-}
-
-const loopbackPorts = (v: unknown, out: Set<number> = new Set()): Set<number> => {
-	if (typeof v === "string") {
-		const m = /^(?:https?|wss?):\/\/(?:127\.0\.0\.1|localhost):(\d+)/.exec(v)
-		if (m) out.add(Number(m[1]))
-	} else if (v && typeof v === "object") for (const x of Object.values(v)) loopbackPorts(x, out)
-	return out
 }
 
 /** The stack's coordinates from its handle, and every loopback port its handle and manifest name. */

@@ -104,7 +104,7 @@ const L1_LIBS: string[][] = [
 ]
 
 /** `real-wallet/count-reporter.ts`'s total; `nightly.test.ts` holds the two equal. */
-const REAL_WALLET_TESTS = 4
+const REAL_WALLET_TESTS = 5
 
 export const SUITES: Suite[] = [
 	// contracts/bridge/evm owns the script and the Foundry `nightly` profile it runs; the libraries and
@@ -141,8 +141,8 @@ export const SUITES: Suite[] = [
 		expected: 4,
 		env: { FC_RUNS_SCALE: "10", FC_DEEP: "1" },
 	}),
-	// The forge and Noir parity suites against a corpus built from FC_SEED. Its preparation and the pin
-	// check of what nargo fetched run inside the same bound.
+	// The forge and Noir parity suites against four corpora, built from FC_SEED to FC_SEED + 3. Their
+	// preparation and the pin check of what nargo fetched run inside the same bound.
 	boundedSuite({
 		name: "bridge-spec-fresh-vectors",
 		cwd: ".",
@@ -156,8 +156,9 @@ export const SUITES: Suite[] = [
 				"bun scripts/ci-cd/crates.ts check-pins keystone",
 			].join(" && "),
 		],
-		minutes: 4,
-		expected: 34,
+		minutes: 8,
+		expected: 136,
+		env: { FC_RUNS_SCALE: "4" },
 		count: freshPassed,
 	}),
 	// The bridge client's model test and properties. The model test's coverage floor runs at the pull-request seed only.

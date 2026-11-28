@@ -1,7 +1,8 @@
 # The app on testnet
 
 This runbook opens the app in your own browser against Sepolia and the public Aztec testnet, on the
-own pool's deployment. Everything runs on one host. Your laptop reaches it through one forwarded port.
+own pool's deployment or the operator's pool1 ("The operator's pool" below). Everything runs on one
+host. Your laptop reaches it through one forwarded port.
 
 Nothing here needs a key. The build reads only the deployment file, which holds public addresses and
 URLs.
@@ -12,10 +13,11 @@ URLs.
   `bun run --cwd packages/pp-env fetch`. The browser check (step 3) needs Playwright's Chromium:
   `apps/web/node_modules/.bin/playwright install chromium` (add `--with-deps` once on a fresh
   machine; it installs system packages and needs root).
-- **The deployment file:** the own pool's testnet deployment file, with its `pool` and `bridge`
-  sections. Use it only if `verify-deployment` passed on it before the factory was opened with `open`.
-- **The testnet services:** the deployment's operator runs `bot` and `asp --owner <canary owner>` on
-  the host.
+- **The deployment file:** the own pool's (or pool1's) testnet deployment file, with its `pool` and
+  `bridge` sections. Use it only if `verify-deployment` passed on it before the factory was opened
+  with `open`.
+- **The testnet services:** the deployment's operator runs `bot` on the host, and for the own pool
+  also `asp --owner <canary owner>`.
 - **Not in this repository yet:** the deployment file and the commands named here (`verify-deployment`,
   `open`, `bot`, `asp --owner`, `seed`); see `packages/testnet/README.md`. Until they land, step 3's
   checks run on the fixture file `apps/web/src/build/fixtures/testnet-own.json` in place of
@@ -54,6 +56,13 @@ file path it is given is absolute.
    ```sh
    bun run --cwd apps/web test:headers -- --target "$DEPLOYMENT"
    bun run --cwd apps/web test:testnet-smoke -- --target "$DEPLOYMENT"
+   ```
+
+   For pool1, run the smoke offline instead. A live smoke runs a server of its own, which would ask the
+   operator again within the 5 minutes that `serve` in step 4 also counts:
+
+   ```sh
+   bun run --cwd apps/web test:testnet-smoke -- --target "$DEPLOYMENT" --no-upstreams
    ```
 
    Each ends with a `passed` line. In the smoke, a `502` on a `GET /bot/…` or `GET /asp/…` line means
@@ -112,6 +121,33 @@ A balance needs two things:
   the deployment's operator runs `seed --recipient <owner address>`; `--recipient` refuses the
   canary owner. The mock ASP then approves the note.
 
+## The operator's pool (pool1)
+
+The same steps serve the operator's poolId 1 from a `pool1` deployment file. Only the ASP differs:
+
+- The host runs `bot` only. There is no mock ASP and no `asp --owner`: deposits are approved by the
+  operator's ASP.
+- `serve` asks the operator's ASP API (`https://api-dev.0xbow.io`) itself, within the limits the
+  operator set for automated clients:
+  - each ASP request goes out at most once every 5 minutes (the public key once an hour), whatever
+    its answer, and every tab shares that answer;
+  - once their 5 minutes are up, asking for the leaves first asks for the root (within the root's own
+    5 minutes), and the leaves held are kept only if they were fetched under the last root `serve`
+    accepted from a well-formed `200` (an answer that differs only in the root's spelling or its other
+    fields names the same root); otherwise they are asked for again. So a failed root request alone
+    keeps them, and a changed root or a failed leaves request asks again;
+  - note events are never asked of it; the page reads them from Sepolia;
+  - the limits are kept per `serve` process: a restart starts them over.
+- So a deposit shows as approved only once `serve` has fetched a new root and then the leaves under it:
+  up to about 10 minutes after the operator approves it. A `502` on an `/asp/` route lasts until that
+  route's next request, up to 5 minutes (an hour for the public key).
+
+## Leave the pool
+
+In the pinned Nulo release, a ragequit asked for after a private exit never opens; the page waits
+until it is reloaded. When testing by hand, do the ragequit before any private exit, or exit the
+whole label privately.
+
 ## When something fails
 
 | You see | It means | Do this |
@@ -122,7 +158,9 @@ A balance needs two things:
 | "Switch your Ethereum wallet to a separate account: …" | The owner is selected to pay for a bridge | Select the sender account in MetaMask |
 | "Select your signed-in account in your Ethereum wallet: the keystore registers …" | Another account is selected while registering | Select the owner account in MetaMask, then press **Register** |
 | "The pool's keystore holds other keys for this account, …" | The owner registered with another app's keys | Sign in with an owner this app registered, or a fresh one |
+| On pool1, a deposit the operator approved still shows as unapproved | `serve` asks the operator's ASP for the root and the leaves at most once every 5 minutes each | Wait up to 10 minutes, then press Refresh |
 | "Allow list #… being reset: wait for its next post" | The registry's poster was replaced, which clears the list until the new poster posts | Wait for the next post, then press Refresh; leaving to Ethereum still works |
+| A ragequit after a private exit never opens | The pinned Nulo release does not open it ("Leave the pool") | Reload the page |
 | "The Aztec node does not answer. …" | The public testnet node is unreachable | Wait, then try again |
 | "The Aztec node serves L1 chain …; this app is built for …" | The node is on another network or rollup | Report it: the deployment file is out of date |
 | "That wallet is no longer available. Search again." | Nulo is closed or locked | Open Nulo, unlock it, search again |

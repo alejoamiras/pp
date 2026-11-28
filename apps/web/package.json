@@ -43,6 +43,7 @@
 	"devDependencies": {
 		"@aztec-labs/constants": "6.0.0",
 		"@aztec-labs/noir-contracts.js": "6.0.0",
+		"@aztec-labs/protocol-contracts": "6.0.0",
 		"@nulo-sh/resolve-asset": "catalog:",
 		"@playwright/test": "catalog:",
 		"@pp/bridge-spec": "workspace:*",
@@ -56,6 +57,7 @@
 		"@types/node": "catalog:",
 		"@types/react": "^19.3.0",
 		"@types/react-dom": "^19.3.0",
+		"fast-check": "catalog:",
 		"jsdom": "29.1.1",
 		"typescript": "catalog:",
 		"vite": "catalog:",

@@ -10,7 +10,7 @@ import { AttachRefused } from "../../src/attach.ts"
 import { nodeInfo } from "../../src/node-rpc.ts"
 import { newRunId } from "../../src/run-dir.ts"
 import { startStack } from "../../src/stack.ts"
-import { portsOwnedBy, processTree, registryRows, residueOf, sampleTree } from "./residue.ts"
+import { lookAtGroups, portsOwnedBy, processTree, registryRows, residueOf, sampleTree } from "./residue.ts"
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..")
 const BOOT_MS = 600_000
@@ -33,7 +33,6 @@ async function reap(run: Reapable): Promise<void> {
 				if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err
 			}
 		}
-		for (const g of run.tree.unverifiedAlive()) console.warn(`[reap] left group ${g} alone: its leader is not the process sampled`)
 	}
 	const { child } = run
 	if (child.exitCode === null && child.signalCode === null) {
@@ -45,6 +44,8 @@ async function reap(run: Reapable): Promise<void> {
 	}
 	run.stopSampling()
 	kill()
+	for (const g of await lookAtGroups(run.tree.unverifiedAlive()).settle())
+		console.warn(`[reap] left group ${g} alone: its leader is not the process sampled`)
 }
 
 /** One CLI run in its own process group, with its output, its sampled tree and the ports it claimed. */

@@ -25,7 +25,7 @@ bun run --cwd packages/e2e-kit test:browser reap               # stop networks t
    or the stack's `PP_STACK_MANIFEST`, then a check that both bundles name the node, then
    Playwright with one server per build: `vite preview` for a fixture build, the app's own `serve`
    for a stack build.
-5. Reap.
+5. Reap. A run whose tests passed still exits 1 when a stop or a port release fails.
 
 State lives under `.e2e-state/<run>/` (gitignored), or `PP_E2E_STATE_DIR` when set: ports, the
 network's artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the network and prints the line that reattaches to it
@@ -34,7 +34,7 @@ network's artifacts, both builds, logs, traces. `PP_E2E_KEEP=1` keeps the networ
 ## Stack mode
 
 `bun run --cwd apps/web e2e` runs this mode; it needs what `bun run demo` needs (`bun run
-demo:prepare` once per clone, Foundry 1.7.1 or `FORGE` pointing at it). `stack.ts up` writes
+demo:prepare` once per worktree, Foundry 1.7.1 or `FORGE` pointing at it). `stack.ts up` writes
 `<state>/stack.json` (the CLI's process group, the manifest path, the circuits directory the CLI
 printed, the anvil indices of the stack's seeded pool user and bridge sender; never a key) and
 `<state>/wallet/handle.json`, the node, chain and rollup version the test wallet builds from. The
@@ -43,8 +43,17 @@ the circuits line did not precede. From the spawn on, `<state>/stack.pid` record
 group and its leader's start time. `stack.ts down` sends SIGTERM to that group only while its
 leader still has that start time and runs the CLI, and waits up to three minutes: the CLI tears
 down every group it started itself, which SIGKILL would orphan. A live group led by anything else
-is left alone, and so is its record. `reap` runs `down` for every stack state under `.e2e-state/`
-and under `PP_E2E_STATE_DIR`; a state's ports go back to the registry only once its `stack.pid` is gone.
+is left alone, and so is its record. Once the stack is ready, `up` writes `<state>/stack-owned.json`:
+every port claimed by a registry owner on one of the ports the handle and manifest name, with its
+listeners then. Once the group is gone, `down` fails if the CLI logged a failed teardown, or if any
+of those ports still keeps a listener of the stack's or a row of its owners after 45 s (a service's
+watcher ends its group and releases its rows after the CLI dies); it also fails on a `stack.pid` it
+cannot resolve to this state's group, and signals nothing then. `stack.pid` stays until the check
+passes, holding `gone` once the group is, so a later `down` checks the ports again without
+resolving a pid; the CLI's report fails only the first. `reap` runs `down` for every stack state under `.e2e-state/`
+and under `PP_E2E_STATE_DIR`, and exits 1 if any stop, check or release failed; a state's ports go
+back to the registry only once its `stack.pid` is gone. `reap` takes every recorded stack in the
+checkout, a live run's included, so run it only when no run of this checkout is active.
 
 On the stack, `Network.l1(0)` is the seeded pool user and `l1(1)` its sender, the stack runs its own
 block heartbeat, and actors are sponsor-deployed through bridge-core's `connectL2` and
@@ -116,8 +125,8 @@ own windows. `real-wallet/run.ts` gives the run a fresh state directory (a `mkdt
 `PP_E2E_STATE_DIR`, else of `.e2e-state/`), runs `agent.sh` on the local stack (`PP_E2E_MODE=stack`,
 so `bun run demo:prepare` first) with `PP_E2E_WALLET=real`, then fails if a listener, a port row, a
 browser process or the `real-wallet/` directory of the run survives. Playwright's output ends with
-`real-wallet: N/4 passed as expected`, which `bun run nightly real-wallet` (the suite in
-`scripts/nightly.ts`) requires at 4/4: boot, connects, claims, ragequits. The Aztec side is the
+`real-wallet: N/5 passed as expected`, which `bun run nightly real-wallet` (the suite in
+`scripts/nightly.ts`) requires at 5/5: boot, connects, claims, ragequits, withdraws. The Aztec side is the
 wallet, approved in its own windows; the Ethereum side is the kit's injected wallet, signing as the
 stack's seeded accounts.
 

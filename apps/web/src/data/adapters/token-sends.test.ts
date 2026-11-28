@@ -4,9 +4,10 @@ import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import { describe, expect, test, vi } from "vitest"
 import { stageManifest } from "../capabilities"
-import { AllowListError } from "../errors"
+import { AllowListError, codeOf } from "../errors"
 import type { AllowListPort, AztecSendHooks, Stage } from "../ports"
 import type { AztecAddress, LabelCheck } from "../stack-types"
+import { beforeHandoffOutcome } from "../tx"
 import type { HeldWallet } from "../wallet/connector"
 import { parseGrant } from "../wallet/grant"
 import type { AztecDeps } from "./aztec"
@@ -374,5 +375,38 @@ describe("the shield", () => {
 		expect(balance).toHaveBeenCalledWith(ME)
 		expect(neverHanded).not.toHaveBeenCalled()
 		expect(spent.wallet.sendTx).not.toHaveBeenCalled()
+	})
+})
+
+describe("a read or build that fails before the handoff", () => {
+	const failed = () => Promise.reject(new Error("the wallet's socket closed"))
+	// A path too short for the circuit's depth fails the call's argument encoding.
+	const SHORT: LabelCheck = { state: "ACTIVE", path: { index: 1, depth: 1, siblings: [7n] } }
+	test.each([
+		["the label's notes", { notes: failed }, ACTIVE, "unshield", /the wallet's socket closed/],
+		["the public balance", { publicBalance: failed }, ACTIVE, "shield", /the wallet's socket closed/],
+		["the payload build", {}, SHORT, "unshield", /Expected array of length 18 for 'path.siblings'/],
+	] as const)("%s: never asks the wallet to send, and reads as nothing sent", async (_, reads, checked, op, cause) => {
+		const r = rig()
+		const record = { sequence: 1n, poolRoot: 9n, birthRoot: 0n, l1Block: 1n, rootTime: 1n, poolSize: 1n, birthSize: 0n }
+		const sends = stackTokenSends({
+			aztec: r.aztec,
+			allowList: { current: async () => ({ record, nowSec: 2n }), check: async () => checked },
+			sponsoredFpc: FPC,
+			notes: ENOUGH,
+			publicBalance: PUBLIC,
+			...reads,
+		})
+		const handoff = vi.fn()
+		const a = { amount: 5n, label: 77n, origin: 0 as const }
+		const sent = op === "shield" ? sends.shield(ME, 5n, on(handoff)) : sends.unshield(ME, a, on(handoff))
+		const err = await sent.then(
+			() => null,
+			(e: unknown) => e,
+		)
+		expect(String(err)).toMatch(cause)
+		expect(codeOf(err)).toBeNull()
+		expect(beforeHandoffOutcome(err)).toEqual({ ok: false, code: "NOT_SENT" })
+		expect([handoff.mock.calls.length, r.wallet.sendTx.mock.calls.length]).toEqual([0, 0])
 	})
 })

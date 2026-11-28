@@ -24,7 +24,7 @@ describe("count reporter", () => {
 			r.onTestEnd(tc("claims"), res("passed", 1))
 			r.onTestEnd(tc("marked-to-fail", "failed"), res("failed"))
 		})
-		expect(lines).toEqual(["real-wallet: 1/4 passed as expected"])
+		expect(lines).toEqual(["real-wallet: 1/5 passed as expected"])
 	})
 
 	it("counts one test repeated with --repeat-each once", () => {
@@ -32,6 +32,6 @@ describe("count reporter", () => {
 		const lines = printed((r) => {
 			for (const i of [0, 1, 2]) r.onTestEnd(repeat(`boot-${i}`, i), res("passed"))
 		})
-		expect(lines).toEqual(["real-wallet: 1/4 passed as expected"])
+		expect(lines).toEqual(["real-wallet: 1/5 passed as expected"])
 	})
 })

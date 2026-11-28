@@ -1,7 +1,9 @@
 // Stands in for `cli.ts run` in the handle's tests. Modes: "ok" answers like the bot; "stubborn" does too but
-// ignores SIGTERM and leaves a SIGTERM-proof grandchild in its group; "die" exits before ready.
+// ignores SIGTERM and leaves a SIGTERM-proof grandchild in its group; "die" exits before ready; "claims <port>"
+// registers that port as `cli.ts` registers its server, then dies on SIGTERM without releasing it.
 import { spawn } from "node:child_process"
 import { createInterface } from "node:readline"
+import { registerHostPorts } from "@pp/bridge-core/sandbox"
 import { line } from "../src/protocol"
 
 const mode = process.argv[2]
@@ -11,8 +13,12 @@ if (mode === "stubborn") {
 	spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], { stdio: "ignore" })
 }
 const config = JSON.parse(process.env.PP_BOT_CONFIG ?? "{}")
+const port = mode === "claims" ? Number(process.argv[3]) : 1
+if (mode === "claims") await registerHostPorts(config.runId, "asp-bot", { http: port }, process.pid)
 process.stdout.write("a stray dependency print\n")
-process.stdout.write(line({ event: "ready", url: "http://127.0.0.1:1", port: 1, poster: "0x0b", birthIntake: "0x0c", runId: config.runId }))
+process.stdout.write(
+	line({ event: "ready", url: `http://127.0.0.1:${port}`, port, poster: "0x0b", birthIntake: "0x0c", runId: config.runId }),
+)
 createInterface({ input: process.stdin }).on("line", (text) => {
 	const { id } = JSON.parse(text)
 	const reply =

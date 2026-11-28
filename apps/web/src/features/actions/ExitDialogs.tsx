@@ -27,7 +27,8 @@ const COLLECT = "The exit is on Aztec. Collect it on Ethereum from Exits once it
 const COLLECT_PAYER =
 	"Collecting it on Ethereum later takes a funded Ethereum account to pay the gas. Not your pool owner's: collecting from it links the owner to this payee in public."
 const BALANCE_PUBLIC = "Public: your Aztec account, the payee and the amount."
-const SCREENED_PUBLIC = "Public: your Aztec account, the payee and the amount. Not shown: the label."
+const PRIVATE_PUBLIC =
+	"Public: the payee and the amount. This transaction does not name your Aztec account, but the amount and the timing can still link it to you."
 
 interface ReviewProps {
 	payee: Address
@@ -263,11 +264,6 @@ export function WithdrawDialog({ account, amount: available, onClose }: { accoun
 	)
 }
 
-/**
- * Leaves part of a label's balance to Ethereum in one transaction that unshields it and withdraws it,
- * so Ethereum is never shown the label. The amount is capped at what the label's 8 largest notes hold,
- * and the send stays bound to the Aztec connection the confirm was made in.
- */
 export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 	const { aztec, live, addPayee } = useApp()
 	const spend = useSpendCap(account, balance)
@@ -279,9 +275,8 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 		const a = { payee: to, amount: value, label: balance.label, origin: balance.origin }
 		const on = bound(live, account, act)
 		if (!on) return
-		// The port reads the notes again after the allow-list check.
-		await act.send("unshieldAndExit", (guard) =>
-			aztec.unshieldAndExit(
+		await act.send("exitPrivate", (guard) =>
+			aztec.exitPrivate(
 				account,
 				a,
 				listedAt(guard, on, () => addPayee(to)),
@@ -293,7 +288,7 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 	return (
 		<ActionShell
 			title="Withdraw to Ethereum"
-			description="Unshields part of this label's balance and withdraws it to Ethereum in one transaction."
+			description="Withdraws part of this label's balance to Ethereum without naming your Aztec account."
 			action="exit"
 			state={act.state}
 			onClose={onClose}
@@ -305,7 +300,7 @@ export function LabelExitDialog({ account, balance, onClose }: LabelProps) {
 					amount={review.amount}
 					label={balance.label}
 					labelPublic={false}
-					exposes={SCREENED_PUBLIC}
+					exposes={PRIVATE_PUBLIC}
 					confirm="Withdraw to Ethereum"
 					state={act.state}
 					onBack={() => {

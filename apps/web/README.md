@@ -21,9 +21,9 @@ through bridge-core's client. The allow list is the registry's record and its ti
 block, with each label checked against the bot's snapshot of that record's lists in one Web Worker
 (see below). A private send, an unshield or a withdrawal from a label checks its label again right
 before it is built and sends nothing for a label the latest list does not hold. A withdrawal from a
-label is one transaction that unshields the amount and withdraws it, so Ethereum sees the payee and
-the amount but not the label. These spends, the shield and the public withdrawal are paid by the
-SponsoredFPC. On the local stack
+label is the hub's private exit: Ethereum sees the payee and the amount but not the label, and its
+public calls do not name the Aztec account. These spends, the shield and the public withdrawal are
+paid by the SponsoredFPC. On the local stack
 (chain 31337 over a loopback RPC) the build can also send a bridge and collect an exit from anvil's
 dev account, so the demo needs no second wallet account. It is served by `serve`, which also serves
 the three proving files of `transact_1x1`, the one circuit the app proves, from `PP_CIRCUITS_DIR`,
@@ -80,8 +80,11 @@ as far as a check needs:
   reads the list); and the next post is read on the next refresh.
 
 A testnet build (`build --mode testnet` with `PP_DEPLOYMENT`, a testnet deployment file, into
-`dist-testnet/`) targets the own pool on Sepolia and the public Aztec testnet. Its ASP and bot are
-the page's own `/asp` and `/bot`, which `serve --deployment` proxies to the file's loopback ports.
+`dist-testnet/`) targets the own pool, or the operator's `pool1`, on Sepolia and the public Aztec
+testnet. Its ASP and bot are the page's own `/asp` and `/bot`, which `serve --deployment` proxies:
+the bot and the own pool's mock ASP on the file's loopback ports, and pool1's ASP at the operator's
+pinned API within the limits the operator set for automated clients (`scripts/asp-allowance.ts`),
+kept per server process.
 [`TESTNET.md`](TESTNET.md) is the runbook.
 
 ## Scripts

@@ -45,8 +45,8 @@ contract BridgeMessageV1Test is Test {
     uint256 internal constant IN = 73;
     uint256 internal constant OUT = 69;
     uint256 internal constant RAGEQUIT = 71;
-    uint256 internal constant REJECTIONS = 23;
-    uint256 internal constant SOL_REJECTIONS = 14;
+    uint256 internal constant REJECTIONS = 30;
+    uint256 internal constant SOL_REJECTIONS = 21;
 
     BridgeMessageV1Harness internal h;
     string internal json;
