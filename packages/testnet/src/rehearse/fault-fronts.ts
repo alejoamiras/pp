@@ -47,6 +47,8 @@ export type Fired = {
 	revertedEstimates: number
 	readErrors: number
 	refusedHashes: Hex[]
+	/** Every distinct raw transaction of the armed sender the send front received, refused or not. */
+	raws: Hex[]
 	/** From the first refusal to the last, in ms. */
 	refusedSpanMs: number
 }
@@ -75,6 +77,7 @@ const zero = (): Fired => ({
 	revertedEstimates: 0,
 	readErrors: 0,
 	refusedHashes: [],
+	raws: [],
 	refusedSpanMs: 0,
 })
 const status = (code: number, text: string): Reply => ({ status: code, body: text })
@@ -139,6 +142,7 @@ class Fronts {
 		if (!f || call?.method !== "eth_sendRawTransaction") return this.forward(body)
 		const raw = call.params?.[0] as TransactionSerialized
 		if (!isAddressEqual(await recoverTransactionAddress({ serializedTransaction: raw }), f.sender)) return this.forward(body)
+		if (!this.fired.raws.includes(raw)) this.fired.raws.push(raw)
 		const nonce = parseTransaction(raw).nonce as number
 		const hash = keccak256(raw)
 		const refused = this.refusals.get(nonce) ?? 0

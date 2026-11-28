@@ -14,7 +14,7 @@ import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { killGroup } from "@pp/run-isolation/process"
 import { endGroup, groupAlive } from "@pp/run-isolation/process-group"
-import { type Address, type Hex, isAddressEqual, numberToHex, parseEther } from "viem"
+import { type Address, type Hex, isAddressEqual, keccak256, numberToHex, parseEther, parseTransaction } from "viem"
 import { keyFilePath, loadKeys } from "../keyfile"
 import { RUN_KEYS } from "../keys"
 import { type FaultFronts, type Faults, type Fired, startFaultFronts } from "./fault-fronts"
@@ -173,6 +173,26 @@ function onePerNonce(log: string): Hex[] {
 }
 
 /**
+ * Each of forge's transactions, as the send front received it, is type 2 at exactly the max fee and tip
+ * `deploy-pool` logged: a legacy transaction would pay the whole max fee.
+ */
+function assertForgeCaps(out: string, raws: readonly Hex[], forgeHashes: readonly Hex[]): string {
+	const m = /forge's fee caps: max (\d+) wei, tip (\d+) wei per gas/.exec(out)
+	if (!m) throw new Error("deploy-pool logged no fee caps for forge")
+	const [max, tip] = [BigInt(m[1] as string), BigInt(m[2] as string)]
+	const byHash = new Map(raws.map((r) => [keccak256(r), r]))
+	const off = forgeHashes.flatMap((h, nonce) => {
+		const raw = byHash.get(h)
+		if (!raw) return [`nonce ${nonce}: never reached the send front`]
+		const tx = parseTransaction(raw)
+		if (tx.type === "eip1559" && tx.maxFeePerGas === max && tx.maxPriorityFeePerGas === tip) return []
+		return [`nonce ${nonce}: ${tx.type}, max ${tx.maxFeePerGas ?? tx.gasPrice}, tip ${tx.maxPriorityFeePerGas ?? "none"}`]
+	})
+	if (off.length) throw new Error(`forge's transactions are not type 2 at max ${max}, tip ${tip}:\n  ${off.join("\n  ")}`)
+	return `${forgeHashes.length} forge transactions type 2 at max ${max} wei, tip ${tip} wei`
+}
+
+/**
  * forge's transactions, from its broadcast log, are nonces 0 to {@link FORGE_LAST}; the stale count armed
  * there was answered, and sends followed at the nonces after it.
  */
@@ -210,10 +230,12 @@ async function landsOnce(c: Ctx, fronts: FaultFronts, f: OnFork, sender: Address
 	if (sent !== hashes.length || failed >= 0)
 		throw new Error(`the deployer sent ${sent} transactions and the log names ${hashes.length}; nonce ${failed} did not succeed`)
 	assertHandoff(runDir, fired, sent)
+	c.log(`[send-faults] ${assertForgeCaps(c.outputs.at(-1) ?? "", fired.raws, hashes.slice(0, FORGE_LAST + 1))}`)
 	c.log(
 		`[send-faults] deploy-pool through every fault: ${sent} transactions, one hash each, all succeeded; after forge's last (${FORGE_LAST}) the sends went on at ${FORGE_LAST + 1} through a stale count`,
 	)
-	return { transactions: sent, fired }
+	// The raw transactions served the check above; the result keeps the counts.
+	return { transactions: sent, fired: { ...fired, raws: [] } }
 }
 
 export const sendFaultsRehearsal = (log: (line: string) => void): Promise<SendFaultsResult> =>

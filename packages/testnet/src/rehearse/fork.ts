@@ -26,7 +26,7 @@ import { expectedOf, loadScratch, must, promote, type Scratch, writeScratch } fr
 const OWN = fileURLToPath(new URL("../../deployments/testnet-own.json", import.meta.url))
 const MINT_ABI = parseAbi(["function mint(address to, uint256 amount)"])
 
-export type ForkResult = { block: bigint; gas: Partial<Record<FundedRole, bigint>>; debit: bigint }
+export type ForkResult = { block: bigint; gas: Partial<Record<FundedRole, bigint>>; debit: bigint; poolSpentWei: bigint }
 
 /** `forkUrl` is where the CLIs read, and the fork flag's value; `sendUrl` where they send. */
 export type Ctx = Scratch & { dir: string; forkUrl: string; sendUrl: string }
@@ -203,7 +203,9 @@ export const forkRehearsal = (log: (line: string) => void): Promise<ForkResult> 
 		const addresses = await scratchFile(c, join(dir, "home"), runId)
 		await fork.rpc("anvil_setBalance", [addresses.L1_DEPLOYER_KEY as Address, numberToHex(parseEther("10"))])
 		await must(c, "fund", [c.file])
-		promote(c, await must(c, "deploy-pool", [c.file]), "pool-deployed")
+		const deployed = await must(c, "deploy-pool", [c.file])
+		promote(c, deployed, "pool-deployed")
+		const poolSpentWei = BigInt(String(deployed.find((e) => e.event === "pool-deployed")?.spentWei))
 		await must(c, "verify-deployment", [c.file, "--pool-only"])
 		const { asp, url, logFile } = await startAsp(c, cleanup)
 		const debit = await approvals(c, url)
@@ -211,5 +213,5 @@ export const forkRehearsal = (log: (line: string) => void): Promise<ForkResult> 
 			throw new Error(`the asp did not stop clean (${asp.exitReason()})`)
 		const gas = budgetCheck(await gasBySender(fork.url, block), addresses)
 		if (!gas.demoOwner) throw new Error("the demo owner spent no gas, so its keystore was not registered from its own key")
-		return { block, gas, debit }
+		return { block, gas, debit, poolSpentWei }
 	})
