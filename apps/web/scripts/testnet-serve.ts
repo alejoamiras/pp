@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from "node:util"
 import { HEADER_FILE, type SecurityHeaders, securityHeaders } from "../src/build/headers.ts"
 import { TARGET_FILE } from "../src/build/plugins.ts"
 import { sponsoredFpcAddress } from "../src/build/sponsored-fpc.ts"
+import { isPinned } from "@pp/testnet/schema"
 import { readTestnetDeployment, testnetTargetOf } from "../src/build/testnet.ts"
 import type { ProxyConfig } from "./proxy"
 
@@ -28,10 +29,19 @@ function loopbackOrigin(url: string, field: string): string {
 	return u.origin
 }
 
+/** The operator's pinned API as an https origin with nothing after it, or a refusal. */
+function operatorOrigin(url: string): string {
+	const u = URL.canParse(url) ? new URL(url) : null
+	if (!isPinned("aspApi", url) || u?.protocol !== "https:" || u.origin !== url)
+		throw new Error(`serve: pool.aspApiUrl ${url} is not the operator's pinned ASP origin`)
+	return u.origin
+}
+
 /**
  * Each input is read once, so the proxy and the headers come from the same reads as the checks.
  *
- * @throws when the build in `outDir` is not the one `file` yields, or an upstream is not on loopback.
+ * @throws when the build in `outDir` is not the one `file` yields, or an upstream is neither on
+ * loopback nor, for pool1, the operator's pinned API.
  */
 export async function loadTestnetServing(file: string, outDir: string): Promise<{ proxy: ProxyConfig; headers: SecurityHeaders }> {
 	const d = readTestnetDeployment(file)
@@ -46,8 +56,9 @@ export async function loadTestnetServing(file: string, outDir: string): Promise<
 		proxy: {
 			chainId: d.network.l1ChainId,
 			entrypoint: d.pool.entrypoint,
-			asp: loopbackOrigin(d.pool.aspApiUrl, "pool.aspApiUrl"),
+			asp: d.target === "own" ? loopbackOrigin(d.pool.aspApiUrl, "pool.aspApiUrl") : operatorOrigin(d.pool.aspApiUrl),
 			bot: `http://127.0.0.1:${d.network.botPort}`,
+			operator: d.target !== "own",
 		},
 	}
 }

@@ -137,14 +137,17 @@ jobs:
       - uses: ./.github/actions/bridge-evm-build
 
       # serve --deployment's own refusals (Host, origin-form targets, its build, the loopback bind) and its
-      # proxy's isolation, against counting fake upstreams, on a testnet build of the fixture file. The
-      # circuit files it serves come from the pool checkout above.
+      # proxy's isolation, against counting fake upstreams, on a testnet build of each fixture file; for
+      # pool1, the operator's allowance, counted at a fake proxy that sends nothing on. The circuit files
+      # it serves come from the pool checkout above.
       - name: Testnet server
         run: |
           PP_CIRCUITS_DIR="$(bun -e 'import { checkout } from "./packages/pp-env/src/env/checkout.ts"; console.log(checkout().circuits)')"
           export PP_CIRCUITS_DIR
-          PP_DEPLOYMENT="$PWD/apps/web/src/build/fixtures/testnet-own.json" bun run --cwd apps/web build --mode testnet --outDir dist-testnet
-          bun run --cwd apps/web test:headers -- --target src/build/fixtures/testnet-own.json
+          for target in own pool1; do
+            PP_DEPLOYMENT="$PWD/apps/web/src/build/fixtures/testnet-$target.json" bun run --cwd apps/web build --mode testnet --outDir "dist-testnet-$target"
+            bun run --cwd apps/web test:headers -- --target "src/build/fixtures/testnet-$target.json" --outDir "dist-testnet-$target"
+          done
 
       - uses: ./.github/actions/setup-playwright
 

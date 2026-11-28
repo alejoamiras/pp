@@ -2,10 +2,10 @@ import { createServer, type IncomingHttpHeaders, type Server, type ServerRespons
 import type { AddressInfo } from "node:net"
 import { afterAll, beforeAll, describe, expect, test } from "vitest"
 import { MAX_SNAPSHOT_BYTES } from "../src/data/adapters/snapshot-download"
-import { bypassProxyForLoopback, CAPS, forward, isProxyPath, type ProxyConfig, proxyRoute } from "./proxy"
+import { bypassProxyForLoopback, CAPS, forward, isProxyPath, type ProxyConfig, proxyRoute, USER_AGENT } from "./proxy"
 
 const EP = "0x1111111111111111111111111111111111111111"
-const C: ProxyConfig = { chainId: 11155111, entrypoint: EP, asp: "http://127.0.0.1:1", bot: "http://127.0.0.1:2" }
+const C: ProxyConfig = { chainId: 11155111, entrypoint: EP, asp: "http://127.0.0.1:1", bot: "http://127.0.0.1:2", operator: false }
 
 describe("proxyRoute", () => {
 	test("maps each frozen route to its upstream and rebuilds the query", () => {
@@ -32,12 +32,19 @@ describe("proxyRoute", () => {
 			],
 		]
 		for (const [raw, url] of cases) expect(proxyRoute(raw, C)?.url, raw).toBe(url)
-		// The entrypoint compares without case; the value that goes up is the request's, once checked.
+		// The kind picks the operator's allowance for a route; the bot has none.
+		expect(
+			cases.map(([raw]) => {
+				const r = proxyRoute(raw, C)
+				return r?.upstream === "asp" ? r.kind : r?.upstream
+			}),
+		).toEqual(["bot", "bot", "root", "leaves", "public-key", "snapshot", "note-events", "note-events"])
+		// The entrypoint compares without case and goes up spelled as configured, so every spelling is one upstream URL.
 		const mixed = { ...C, entrypoint: `0x${"aB".repeat(20)}` }
-		const lower = `0x${"ab".repeat(20)}`
-		expect(proxyRoute(`/asp/association-set/root?chainId=11155111&entrypoint=${lower}`, mixed)?.url).toBe(
-			`http://127.0.0.1:1/association-set/root?chainId=11155111&entrypoint=${lower}`,
-		)
+		for (const spelling of [`0x${"ab".repeat(20)}`, `0x${"AB".repeat(20)}`, `0x${"Ab".repeat(20)}`])
+			expect(proxyRoute(`/asp/association-set/root?chainId=11155111&entrypoint=${spelling}`, mixed)?.url).toBe(
+				`http://127.0.0.1:1/association-set/root?chainId=11155111&entrypoint=0x${"aB".repeat(20)}`,
+			)
 	})
 
 	test("refuses every other target without decoding it", () => {
@@ -112,7 +119,7 @@ describe("forward", () => {
 			}),
 	)
 
-	test("passes the statuses the page acts on with their bodies, asking for JSON in no encoding and nothing else", async () => {
+	test("passes the statuses the page acts on with their bodies, asking for JSON in no encoding as the app and nothing else", async () => {
 		for (const status of [200, 400, 404, 501]) {
 			const r = await forward(`${base}/status/${status}`)
 			expect(r).toEqual({ ok: true, status, body: expect.any(Uint8Array) })
@@ -121,6 +128,7 @@ describe("forward", () => {
 		for (const h of seen) {
 			expect(h.accept).toBe("application/json")
 			expect(h["accept-encoding"]).toBe("identity")
+			expect(h["user-agent"]).toBe(USER_AGENT)
 			for (const name of ["cookie", "authorization", "origin", "referer", "x-forwarded-for"]) expect(h[name], name).toBeUndefined()
 		}
 	})
@@ -138,6 +146,27 @@ describe("forward", () => {
 			expect(Date.now() - started).toBeLessThan(1_500)
 		}
 		expect(await forward("http://127.0.0.1:1/")).toMatchObject({ ok: false, reason: expect.stringMatching(/^unreachable/) })
+	})
+
+	test("sends one request per call: a dropped connection is not retried", async () => {
+		let drop = false
+		let requests = 0
+		const flaky = createServer((req, res) => {
+			requests++
+			if (drop) req.socket.destroy()
+			else res.writeHead(200, { "content-type": "application/json" }).end("{}")
+		})
+		await new Promise<void>((resolve) => flaky.listen(0, "127.0.0.1", resolve))
+		const url = `http://127.0.0.1:${(flaky.address() as AddressInfo).port}/`
+		try {
+			expect(await forward(url)).toMatchObject({ ok: true })
+			drop = true
+			expect(await forward(url)).toMatchObject({ ok: false })
+			expect(requests).toBe(2)
+		} finally {
+			flaky.closeAllConnections()
+			flaky.close()
+		}
 	})
 })
 

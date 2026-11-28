@@ -1,8 +1,8 @@
 /**
  * The target of a testnet build (`vite build --mode testnet`), read from the deployment file at
  * `PP_DEPLOYMENT` and nothing else. The page talks to the node and the L1 RPC directly, both pinned,
- * and to the ASP and the bot through the app's own server (`SAME_ORIGIN`). Only the own pool's
- * deployment is accepted; its circuit bundle is the default ceremony one, which the app already pins.
+ * and to the ASP and the bot through the app's own server (`SAME_ORIGIN`). It serves the own pool or
+ * the operator's `pool1`, each with the default ceremony bundle, which the app already pins.
  */
 import { isPinned, parseDeployment, requireSections } from "@pp/testnet/schema"
 import { SAME_ORIGIN } from "./same-origin.ts"
@@ -13,11 +13,14 @@ const SEPOLIA = 11_155_111
 /** Inputs of the other modes; any of them beside `PP_DEPLOYMENT` is a mistake about which build this is. */
 const OTHER_INPUTS = ["PP_STACK_MANIFEST", "PP_SANDBOX_ARTIFACTS", "PP_DATA", "PP_WEB_WALLETS"] as const
 
-/** The deployment at `file`, with its pool and bridge, refused unless it is the own pool on Sepolia over pinned endpoints. */
+/** The deployment at `file`, with its pool and bridge, refused unless it is the own pool or pool1 on Sepolia over pinned endpoints. */
 export function readTestnetDeployment(file: string) {
 	const json = readJson(file)
 	const d = attempt(file, () => requireSections(parseDeployment(json), ["pool", "bridge"]))
-	if (d.target !== "own") fail(file, `targets ${JSON.stringify(d.target)}; a testnet build serves the own pool only`)
+	if (d.target !== "own" && d.target !== "pool1")
+		fail(file, `targets ${JSON.stringify(d.target)}; a testnet build serves the own pool or pool1`)
+	if (d.bundle !== "ceremony")
+		fail(file, `proves with the ${d.bundle} bundle; a testnet build proves with the ceremony bundle the app pins`)
 	if (d.network.l1ChainId !== SEPOLIA) fail(file, `is for L1 chain ${d.network.l1ChainId}; a testnet build is for Sepolia (${SEPOLIA})`)
 	if (!isPinned("l1Rpc", d.network.l1Rpc)) fail(file, `network.l1Rpc ${d.network.l1Rpc} is not a pinned Sepolia RPC`)
 	if (!isPinned("aztecNode", d.network.aztecNode)) fail(file, `network.aztecNode ${d.network.aztecNode} is not the pinned testnet node`)

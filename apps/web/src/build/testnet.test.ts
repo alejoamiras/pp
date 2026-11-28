@@ -8,6 +8,8 @@ import { sponsoredFpcAddress } from "./sponsored-fpc"
 import { testnetTarget } from "./testnet"
 
 const FIXTURE = join(import.meta.dirname, "fixtures", "testnet-own.json")
+/** The same made-up pool and bridge, as the operator's pool1. */
+const POOL1 = join(import.meta.dirname, "fixtures", "testnet-pool1.json")
 const FPC = "0x2d8fff82a3b0c15d0a89169e7d8d043e079ab94d52031f1de1e4972ebad169d3"
 /** The fixture as plain JSON; an edit sets a section to `undefined` to drop it from the written file. */
 type Draft = {
@@ -17,7 +19,7 @@ type Draft = {
 	bridge?: unknown
 	expected: Record<string, unknown>
 }
-const base = (): Draft => JSON.parse(readFileSync(FIXTURE, "utf8"))
+const base = (from = FIXTURE): Draft => JSON.parse(readFileSync(from, "utf8"))
 /** Every string under `v`, hex without its prefix: each is a value the fixture makes distinct. */
 const leaves = (v: unknown): string[] =>
 	typeof v === "string" ? [v.replace(/^0x/, "")] : typeof v === "object" && v !== null ? Object.values(v).flatMap(leaves) : []
@@ -25,8 +27,8 @@ const leaves = (v: unknown): string[] =>
 const dir = scratchDir("testnet-target")
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 let n = 0
-function file(edit: (d: Draft) => void): string {
-	const d = base()
+function file(edit: (d: Draft) => void, from = FIXTURE): string {
+	const d = base(from)
 	edit(d)
 	const path = join(dir, `deployment-${n++}.json`)
 	writeFileSync(path, JSON.stringify(d))
@@ -88,7 +90,6 @@ describe("testnetTarget", () => {
 
 	test("refuses any other target, chain, endpoint or fee contract, and an incomplete file", () => {
 		const refusals: [string, (d: Draft) => void, RegExp][] = [
-			["operator target", (d) => (d.target = "pool1"), /not this target's ASP URL|own pool only/],
 			["operator section", (d) => (d.operator = {}), /operator/],
 			["local chain", (d) => (d.network.l1ChainId = 31337), /Sepolia/],
 			["unpinned L1 RPC", (d) => (d.network.l1Rpc = "https://rpc.example"), /pinned Sepolia RPC/],
@@ -100,6 +101,28 @@ describe("testnetTarget", () => {
 		]
 		for (const [what, edit, message] of refusals) expect(() => testnetTarget(file(edit), {}, FPC), what).toThrow(message)
 		expect(() => testnetTarget(join(dir, "absent.json"), {}, FPC)).toThrow(/cannot be read/)
+		// From pool1, whose pinned ASP URL the schema takes for v9 too, so only the build's own target rule refuses it.
+		expect(() =>
+			testnetTarget(
+				file((d) => (d.target = "v9"), POOL1),
+				{},
+				FPC,
+			),
+		).toThrow(/own pool or pool1/)
+	})
+
+	test("takes pool1 with its ASP behind the page's origin, and only with the ceremony bundle", () => {
+		const entrypoint = base(POOL1).pool?.entrypoint
+		expect(testnetTarget(POOL1, {}, FPC)).toEqual(
+			testnetTarget(
+				file((d) => (d.pool = { ...d.pool, entrypoint })),
+				{},
+				FPC,
+			),
+		)
+		const preCeremony = join(dir, `deployment-${n++}.json`)
+		writeFileSync(preCeremony, JSON.stringify({ ...JSON.parse(readFileSync(POOL1, "utf8")), bundle: "pre-ceremony" }))
+		expect(() => testnetTarget(preCeremony, {}, FPC)).toThrow(/ceremony bundle the app pins/)
 	})
 
 	test("reads PP_DEPLOYMENT alone", () => {
