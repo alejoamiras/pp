@@ -19,6 +19,9 @@
  *   Then either endpoint knowing the hash makes it admitted; else it fails, with the hash and nonce.
  * - anything else, however worded: admitted if either endpoint knows the local hash; else final, passed
  *   through as the endpoint gave it, and the same bytes sent again get that answer without leaving.
+ * - a message that is not a string is read as no words at all: only its code counts.
+ *
+ * The same bytes sent while a send of them is under way join it.
  *
  * An endpoint knows a transaction when it answers `eth_getTransactionByHash` with HTTP 200 and that hash.
  * After an admission the read endpoint must show the hash within `visibilityMs`; each time it does not,
@@ -134,16 +137,19 @@ export function parseAnswer(text: string): Answer | undefined {
  */
 export function isRefusal(error: NonNullable<Answer["error"]>): boolean {
 	const code = Number(error.code)
-	const message = String(error.message ?? "")
+	const message = textOf(error)
 	if (RETRIED_CODES.has(code)) return true
 	const part = RETRIED_WITH.get(code)
 	if (part !== undefined && message.includes(part)) return true
 	return RETRIED_EXACT.has(message) || RETRIED_PARTS.some((p) => message.includes(p))
 }
 
+/** An error's message, or "" when it is not a string: no rule reads words into another type. */
+const textOf = (error: NonNullable<Answer["error"]>): string => (typeof error.message === "string" ? error.message : "")
+
 function classifyError(status: number, text: string, error: NonNullable<Answer["error"]>): Outcome {
-	const message = String(error.message ?? "")
-	const detail = `${error.code} ${message}`
+	const message = textOf(error)
+	const detail = `${error.code} ${String(error.message ?? "")}`
 	if (KNOWN.test(message)) return { kind: "known" }
 	if (CONFLICT.test(message)) return { kind: "conflict", detail }
 	if (isRefusal(error)) return { kind: "refused", detail }
@@ -243,6 +249,8 @@ export class SendPath {
 	private readonly claimed = new Map<string, Hex>()
 	/** Sends that got a final answer, which the same bytes get again without leaving. */
 	private readonly finals = new Map<Hex, SendPathError>()
+	/** The send under way for each hash; the same bytes sent meanwhile join it. */
+	private readonly inflight = new Map<Hex, Promise<Hex>>()
 	private readonly watches = new Map<Hex, Promise<number | undefined>>()
 	private closed = false
 
@@ -349,14 +357,29 @@ export class SendPath {
 	async send(raw: Hex): Promise<Hex> {
 		const tx = await checkEnvelope(raw, this.o.chainId, this.o.senders)
 		this.claim(tx)
+		const under = this.inflight.get(tx.hash)
+		if (under) return under
+		const run = this.attempts(raw, tx).finally(() => this.inflight.delete(tx.hash))
+		this.inflight.set(tx.hash, run)
+		return run
+	}
+
+	/** Why no further attempt of `tx` may leave: a final answer it got, or the path closed. */
+	private ended(tx: SentTx): SendPathError | undefined {
 		const final = this.finals.get(tx.hash)
-		if (final) throw final
+		if (final) return final
+		if (this.closed) return new SendPathError("closed", `${tx.hash} (nonce ${tx.nonce}) was not admitted: the send path closed`, tx)
+		return undefined
+	}
+
+	private async attempts(raw: Hex, tx: SentTx): Promise<Hex> {
 		const deadline = Date.now() + this.o.budgetMs
 		// What the last attempt gets of the budget at least; a shorter one could not be answered.
 		const reserve = Math.min(1_000, this.o.budgetMs / 10)
 		let first: string | undefined
 		for (let n = 1; ; n++) {
-			if (this.closed) throw new SendPathError("closed", `${tx.hash} (nonce ${tx.nonce}) was not admitted: the send path closed`, tx)
+			const ended = this.ended(tx)
+			if (ended) throw ended
 			const out = await this.attempt(raw, tx, n, Math.min(this.o.attemptTimeoutMs, Math.max(1, deadline - Date.now())))
 			const end = await this.settle(raw, tx, out)
 			if (typeof end === "string") return end

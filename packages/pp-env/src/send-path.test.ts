@@ -39,6 +39,12 @@ describe("an endpoint's answer to a send", () => {
 		["anvil: transaction already imported", 200, rpcError(-32003, "transaction already imported"), "known"],
 		["already known, in another case and padded", 200, rpcError(-32000, " Already Known "), "known"],
 		["transaction is not already known", 200, rpcError(-32000, "transaction is not already known"), "final"],
+		[
+			"a message that is not a string",
+			200,
+			JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: ["already known"] } }),
+			"final",
+		],
 		["unknown transaction", 200, rpcError(-32000, "unknown transaction"), "final"],
 		["another hash", 200, JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x${"cd".repeat(32)}` }), "other-hash"],
 		["a null result", 200, JSON.stringify({ jsonrpc: "2.0", id: 1, result: null }), "ambiguous"],
@@ -199,6 +205,20 @@ describe("a send", () => {
 		const out = await path().send(raw).catch(failure)
 		expect(found ? out : String((out as SendPathError).kind)).toBe(found ? keccak256(raw) : "final")
 		expect(send.sends()).toHaveLength(1)
+	})
+
+	it("sends the same bytes sent twice at once as one send, which a final answer ends for both", async () => {
+		const raw = await signed(18)
+		read.set(() => ({ result: null }))
+		const answers: StubAnswer[] = [{ status: 429 }]
+		send.set((m) =>
+			m === "eth_sendRawTransaction"
+				? (answers.shift() ?? { error: { code: -32003, message: "insufficient funds" } })
+				: { result: null },
+		)
+		const p = path()
+		const [a, b] = await Promise.all([p.send(raw).catch(failure), p.send(raw).catch(failure)])
+		expect([String((a as SendPathError).kind), b, send.sends()]).toEqual(["final", a, [raw, raw]])
 	})
 
 	it("answers the same bytes sent again after a final answer with that answer, without forwarding them", async () => {
