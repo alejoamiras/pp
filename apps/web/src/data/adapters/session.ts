@@ -25,7 +25,7 @@ import {
 	prepareBridgeSpend,
 	type SubmitOptions,
 } from "@pp/bridge-core"
-import { type ArtifactSource, PoolClientError, type PoolClientErrorCode, secretDerivationTypedData, workerProver } from "@pp/pool-client"
+import { type ArtifactSource, PoolClientError, type PoolClientErrorCode, secretDerivationTypedData } from "@pp/pool-client"
 import { createArtifacts } from "@pp/pool-client/circuits"
 import {
 	BaseError,
@@ -50,7 +50,7 @@ import { PROVED_CIRCUIT } from "./circuit"
 import type { StackL1 } from "./l1"
 import { asPageError } from "./page-error"
 import { bridgeTiming } from "./timing"
-import { type DelegatingProver, delegatingProver } from "./prover"
+import { type DelegatingProver, delegatingProver, spawnWorker } from "./prover"
 
 // The exits run over the same bridge-core, whose SponsoredFPC artifact the build lets only this chunk carry.
 export { exitClient, stackExits } from "./exits"
@@ -352,7 +352,7 @@ let pageProver: DelegatingProver | undefined
 /** The page's one prover; its worker starts on the first proof. */
 export function proverFor(timer: Timer): DelegatingProver {
 	pageProver ??= delegatingProver(
-		() => workerProver(new Worker(new URL("./prover.worker.ts", import.meta.url), { type: "module" })),
+		spawnWorker(() => new Worker(new URL("./prover.worker.ts", import.meta.url), { type: "module" })),
 		timer,
 	)
 	return pageProver

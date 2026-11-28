@@ -1,4 +1,4 @@
-import type { IGroth16Prover, WorkerProver } from "@pp/pool-client"
+import { type IGroth16Prover, type ProverPort, type WorkerProver, workerProver } from "@pp/pool-client"
 import { PROVE_DEADLINE_MS } from "../bridge-driver"
 import { BridgeFailure } from "../errors"
 import type { Timer } from "../ports"
@@ -14,15 +14,28 @@ export interface DelegatingProver extends IGroth16Prover {
  * so each internal re-proof needs the same bound as the first proof. On expiry the worker is
  * terminated, the call rejects with `PROVE_TIMEOUT` and the next call starts a fresh worker, so at most
  * one is alive and the client is never reopened (that would re-derive keys and re-sync notes).
+ *
+ * @param spawn starts a worker and calls `died` once it can answer no call (later, never during
+ *   `spawn`), so the next call starts a fresh one instead of failing on the dead one until a reload.
  */
-export function delegatingProver(spawn: () => WorkerProver, timer: Timer, deadlineMs: number = PROVE_DEADLINE_MS): DelegatingProver {
+export function delegatingProver(
+	spawn: (died: () => void) => WorkerProver,
+	timer: Timer,
+	deadlineMs: number = PROVE_DEADLINE_MS,
+): DelegatingProver {
 	let current: WorkerProver | null = null
 	const cancel = () => {
 		current?.terminate()
 		current = null
 	}
+	const start = (): WorkerProver => {
+		const worker: WorkerProver = spawn(() => {
+			if (current === worker) cancel()
+		})
+		return worker
+	}
 	async function bounded<T>(call: (p: WorkerProver) => Promise<T>): Promise<T> {
-		current ??= spawn()
+		current ??= start()
 		const worker = current
 		const stop = new AbortController()
 		let expiredFirst = false
@@ -47,3 +60,15 @@ export function delegatingProver(spawn: () => WorkerProver, timer: Timer, deadli
 		cancel,
 	}
 }
+
+/** A `spawn` for {@link delegatingProver} over the worker port `open` starts. */
+export const spawnWorker =
+	(open: () => ProverPort): ((died: () => void) => WorkerProver) =>
+	(died) => {
+		const port = open()
+		// Exactly workerProver's two ways to die, heard before its own listeners: microtasks run between
+		// listeners, so the worker is dropped before anything chained on its rejected calls can reach it.
+		port.addEventListener("error", died)
+		port.addEventListener("messageerror", died)
+		return workerProver(port)
+	}

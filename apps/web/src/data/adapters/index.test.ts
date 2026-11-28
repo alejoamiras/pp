@@ -79,6 +79,7 @@ beforeEach(() => {
 		})
 	vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" })
 	vi.stubGlobal("localStorage", {})
+	vi.spyOn(console, "error").mockImplementation(() => {})
 })
 
 const OWNER = `0x${"0".repeat(62)}aa` as AztecAddress
