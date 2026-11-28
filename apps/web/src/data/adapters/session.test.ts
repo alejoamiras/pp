@@ -4,7 +4,7 @@ import type { ExecutionPayload } from "@aztec-labs/aztec.js/tx"
 import type { Wallet } from "@aztec-labs/aztec.js/wallet"
 import type { BridgeClient, BridgeReceipt, BridgeSession, openBridgeSession, PreparedBridgeSpend } from "@pp/bridge-core"
 import { tokenBridgeHubArtifact } from "@pp/bridge-core/artifacts"
-import { PoolClientError, secretDerivationTypedData } from "@pp/pool-client"
+import { openPoolClient, PoolClientError, secretDerivationTypedData } from "@pp/pool-client"
 import { createArtifacts } from "@pp/pool-client/circuits"
 import { type Address, type Hash, type Hex, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem"
 import { describe, expect, test, vi } from "vitest"
@@ -23,6 +23,11 @@ import type { AztecDeps } from "./aztec"
 import { type InjectedWallet, stackL1 } from "./l1"
 import type { DelegatingProver } from "./prover"
 import { JOURNAL_PREFIX, journalStore, l1TxState, type PageStorage, type SessionDeps, stackSessions } from "./session"
+
+vi.mock("@pp/pool-client", async (actual) => {
+	const m = await actual<typeof import("@pp/pool-client")>()
+	return { ...m, openPoolClient: vi.fn(m.openPoolClient) }
+})
 
 vi.mock("@pp/pool-client/circuits", async (actual) => {
 	const m = await actual<typeof import("@pp/pool-client/circuits")>()
@@ -148,7 +153,7 @@ function memoryStorage(seed: Record<string, string> = {}): PageStorage & { data:
 }
 
 /** A stack session over fakes at the bridge client, the Ethereum client and the Aztec wallet. */
-function rig(o: Partial<Pick<SessionDeps, "open" | "reads" | "l1">> = {}) {
+function rig(o: Partial<Pick<SessionDeps, "open" | "prepare" | "reads" | "l1">> = {}) {
 	const aztecWallet = freshWallet()
 	let held: HeldWallet | null = { epoch: 1, wallet: aztecWallet.asWallet, grant: GRANT }
 	const gate: { reached: () => void; open: Promise<void>; release: () => void } = {
@@ -413,6 +418,51 @@ describe("the stack session", () => {
 		const spend = new BridgeClientError("SPEND_MISMATCH", { source: "ASSET_MISMATCH" })
 		r.prepare.mockRejectedValueOnce(spend)
 		await expect(session.prove(a)).rejects.toBe(spend)
+	})
+
+	test("a proof or a re-proof the prover could not make reads PROVE_FAILED; another unknown failure keeps RPC_FAILED", async () => {
+		const { openBridgeSession, prepareBridgeSpend } = await import("@pp/bridge-core")
+		// The pool SDK's error as the built page holds it: the minifier renamed the class, not the name it sets.
+		class XE extends Error {
+			constructor(name: string) {
+				super("x")
+				this.name = name
+			}
+		}
+		const prepareSpend = vi.fn(async (): Promise<unknown> => ({ amount: 70n, change: { label: 3n, value: 30n }, spentCommitment: 1n }))
+		const unused = {
+			changeOpening: vi.fn(),
+			nullifierOf: vi.fn(),
+			assertRecoverable: vi.fn(),
+			assertFresh: vi.fn(),
+			registrationStep: vi.fn(),
+		}
+		const pool = { notes: async () => [], prepareSpend, ...unused }
+		vi.mocked(openPoolClient).mockResolvedValue(pool as never)
+		const r = rig({ open: openBridgeSession, prepare: prepareBridgeSpend })
+		// As the bridge client's submit re-proves: `prepareBridgeSpend` over the session, before any send.
+		r.client.submit.mockImplementation((s: PreparedBridgeSpend, _wallet: unknown, session: BridgeSession) =>
+			prepareBridgeSpend(session, {
+				note: s.spentCommitment,
+				amount: s.amount,
+				portal: MANIFEST.bridge.portal as Address,
+				recipient: s.recipient,
+			}),
+		)
+		// A real session derives its claim key from the signature, which needs a v the key derivation accepts.
+		const session = await r.sessions().open({ owner: OWNER, sign: async () => `0x${"5a".repeat(64)}1b` })
+		const a = attempt(1)
+		const proved = await session.prove(a)
+
+		prepareSpend.mockRejectedValue(new XE("ProofGenerationFailed"))
+		await expect(session.submit(proved, a, hooks())).rejects.toMatchObject({ name: "BridgeFailure", code: "PROVE_FAILED" })
+		await expect(session.prove(a)).rejects.toMatchObject({ name: "BridgeFailure", code: "PROVE_FAILED" })
+		prepareSpend.mockRejectedValue(new XE("WitnessPreparationFailed"))
+		await expect(session.prove(a)).rejects.toMatchObject({
+			name: "BridgeClientError",
+			code: "RPC_FAILED",
+			source: "WitnessPreparationFailed",
+		})
 	})
 
 	test("the journal keeps to the app's prefix, and forgetting deletes only it", async () => {
