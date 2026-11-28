@@ -12,6 +12,7 @@ import {
 	liveGasOf,
 	needOf,
 	recipientsOf,
+	scriptFees,
 	staleSnapshot,
 } from "./funding"
 import { parseDeployment } from "./schema"
@@ -27,7 +28,7 @@ describe("fundingPlan", () => {
 		expect(liveGasOf("canaryOwner")).toBe((FUNDING_GAS.canaryOwner * 501n) / 100n)
 	})
 
-	it("tops each key up to its budget at twice the fee, floored at 1 gwei, and counts the deployer's own budget in the total", () => {
+	it("tops each key up to its budget at twice the fee, floored at 0.1 gwei, and counts the deployer's own budget in the total", () => {
 		const fee = 3n
 		const need = needOf("guardian", fee)
 		expect(need).toBe(liveGasOf("guardian") * FEE_FLOOR_WEI * 2n)
@@ -84,7 +85,7 @@ describe("a top-up within the owner's limits", () => {
 		expect(at({ now: 1.873, sent: 0.6, amount: 0.25 })).toThrow(/over its 0.8 ETH limit/)
 		expect(at({ now: 1.2, sent: 0.67, amount: 0.1 })).not.toThrow()
 		expect(at({ start: 1.1, now: 1.1, amount: 0.1 })).toThrow(/under its 1 ETH floor/)
-		// The whole plan, before any send: today's quote passes, fresh keys' full budgets do not.
+		// The whole plan, before any send: a 0.72 ETH plan passes, a 0.85 ETH one does not.
 		expect(at({ now: 1.873, amount: 0.722886 })).not.toThrow()
 		expect(at({ now: 1.873, amount: 0.849196 })).toThrow(/over its 0.8 ETH limit/)
 	})
@@ -98,6 +99,16 @@ describe("a plan's snapshot block", () => {
 	])("%s", (_, atSnapshot, pendingRead, pendingSend, refused) => {
 		const why = staleSnapshot({ block: 100n, atSnapshot, pendingRead, pendingSend })
 		expect(why === undefined ? "planned" : why).toMatch(refused ? /at block 100 .*run again$/ : /^planned$/)
+	})
+})
+
+describe("forge's fee caps", () => {
+	it("are 0.2 gwei max and a 0.1 gwei tip at an estimate under the floor, and twice the estimate above it", () => {
+		expect(FEE_FLOOR_WEI).toBe(100_000_000n)
+		expect(scriptFees(16n)).toEqual({ maxFeePerGas: 200_000_000n, maxPriorityFeePerGas: 100_000_000n })
+		expect(scriptFees(1_000_000_000n)).toEqual({ maxFeePerGas: 2_000_000_000n, maxPriorityFeePerGas: 100_000_000n })
+		// The pool deployer's budget at the floor: 306.8M live gas at the 0.2 gwei cap.
+		expect(needOf("poolDeployer", 16n)).toBe(61_360_000_000_000_000n)
 	})
 })
 

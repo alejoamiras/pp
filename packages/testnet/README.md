@@ -25,8 +25,8 @@ Every L1 send goes to `network.l1SendRpc`, a second pinned endpoint, and every o
 the Tenderly gateway refuses sends under load. A live run refuses a file whose send endpoint is missing or
 not pinned, and checks that it serves Sepolia before reading a key; a rehearsal's is loopback, or absent,
 and then sends go where it reads. The send rules are `@pp/pp-env/send-path`'s, for the viem wallets and,
-through a loopback relay, for `deploy-pool`'s Forge script, which gets fee caps of twice the 1 gwei floor
-and a 1 gwei tip. `deploy-pool` refuses to start, before any send, while the pool deployer's budget at
+through a loopback relay, for `deploy-pool`'s Forge script, which gets a max fee of twice the fee
+estimate, never below twice the 0.1 gwei floor, and a 0.1 gwei tip. `deploy-pool` refuses to start, before any send, while the pool deployer's budget at
 caps priced from the live estimate costs more than its balance, which `fund` tops up to that budget at
 its own estimate; after a `fund` under the floor, that is any estimate above it: wait and run it again. Its four sends after Forge's (the
 postman grant, the test token, its enabling and its mint) carry no caps, so a fee spike cannot strand a
@@ -47,7 +47,7 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
 - No value is ever formatted into output; every line a command prints is also scrubbed of the values it
   loaded. Every command refuses to run while `SEED` is set, which makes Aztec's randomness predictable.
 - One address is funded by hand: the L1 deployer. `fund` tops each other L1 address up to the summed
-  gas budgets of the roles it holds (`src/funding.ts`) at twice the fee estimate, never below 1 gwei;
+  gas budgets of the roles it holds (`src/funding.ts`) at twice the fee estimate, never below 0.1 gwei;
   `fund --quote` reads no key and prints what the deployer must hold, the top-ups' own gas included.
   Each top-up reports the seconds until the read endpoint showed it and until its receipt; one not shown
   within 60 s stops the run. The quote says whether the plan fits the owner's limits (`FUNDING_LIMITS`):

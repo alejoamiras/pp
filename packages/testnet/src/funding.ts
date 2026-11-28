@@ -47,8 +47,12 @@ export const liveGasOf = (role: FundedRole): bigint => (FUNDING_GAS[role] * LIVE
 
 /** Each budget is priced at twice the fee estimate when funded, so a fee spike mid-run still clears. */
 export const FEE_MARGIN = 2n
-/** Sepolia's fee sits near zero for hours, so pricing at today's estimate alone would underfund every key after a spike. */
-export const FEE_FLOOR_WEI = 1_000_000_000n
+/**
+ * The lowest fee per gas a budget and forge's max fee are priced at, and forge's tip. Sepolia's estimate
+ * sits near zero for hours, so a budget priced at it alone would fall short after a spike. As a tip,
+ * 0.1 gwei was at or above the fifth-percentile tip of 1,015 of 1,024 Sepolia blocks to 2026-11-28.
+ */
+export const FEE_FLOOR_WEI = 100_000_000n
 export type Recipient = { role: Exclude<FundedRole, "l1Deployer">; address: Address }
 
 /** The keys `fund` tops up from the deployer: the file's committed addresses, never ones a key derives. */
@@ -71,8 +75,8 @@ export function recipientsOf(e: NonNullable<TestnetDeployment["expected"]>): Rec
 
 /**
  * Fee caps for a forge script, matching what its budget was funded at: the max fee is the floored
- * estimate times the margin, the tip the floor, so a base fee rising to the floor strands nothing and
- * no transaction can pay more per gas than the budget assumed.
+ * estimate times the margin, so a base fee rising inside that margin strands nothing and no transaction
+ * pays more per gas than the budget assumed; the tip is the floor.
  */
 export const scriptFees = (maxFeePerGas: bigint): { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } => ({
 	maxFeePerGas: (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN,
