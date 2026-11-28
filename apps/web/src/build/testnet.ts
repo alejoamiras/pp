@@ -17,8 +17,6 @@ const OTHER_INPUTS = ["PP_STACK_MANIFEST", "PP_SANDBOX_ARTIFACTS", "PP_DATA", "P
 export function readTestnetDeployment(file: string) {
 	const json = readJson(file)
 	const d = attempt(file, () => requireSections(parseDeployment(json), ["pool", "bridge"]))
-	if (d.target !== "own" && d.target !== "pool1")
-		fail(file, `targets ${JSON.stringify(d.target)}; a testnet build serves the own pool or pool1`)
 	if (d.bundle !== "ceremony")
 		fail(file, `proves with the ${d.bundle} bundle; a testnet build proves with the ceremony bundle the app pins`)
 	if (d.network.l1ChainId !== SEPOLIA) fail(file, `is for L1 chain ${d.network.l1ChainId}; a testnet build is for Sepolia (${SEPOLIA})`)
