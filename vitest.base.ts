@@ -28,10 +28,10 @@ function seedFromEnv(): number {
 	return envInt("FC_SEED", PR_SEED, -(2 ** 31))
 }
 
-/** `packages/<name>` and the path below it, for a replay command run from the repository root. */
+/** `packages/<name>` or `apps/<name>` and the path below it, for a replay command run from the repository root. */
 function where(fileUrl: string): { pkg: string; file: string } {
 	const path = new URL(fileUrl).pathname
-	const m = /\/(packages\/[^/]+)\/(.+)$/.exec(path)
+	const m = /\/((?:packages|apps)\/[^/]+)\/(.+)$/.exec(path)
 	return m ? { pkg: m[1] as string, file: m[2] as string } : { pkg: ".", file: path }
 }
 
