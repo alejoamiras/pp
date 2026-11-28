@@ -12,11 +12,14 @@ import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vites
 import { FEE_FLOOR_WEI, needOf } from "./funding"
 import { isKeyValue, KEY_NAMES, keyFilePath } from "./keyfile"
 import { loopback } from "./network"
+import { NODE_INFO, nodeInfo } from "./rehearse/node-stub"
 import { configuredTarget } from "./schema"
 import { scratchHome, writeKeyFile } from "./test-support"
 
 const CLI = fileURLToPath(new URL("./cli/", import.meta.url))
-const OWN = JSON.parse(readFileSync(fileURLToPath(new URL("../deployments/testnet-own.json", import.meta.url)), "utf8"))
+const committed = (name: string) => JSON.parse(readFileSync(fileURLToPath(new URL(`../deployments/${name}.json`, import.meta.url)), "utf8"))
+const OWN = committed("testnet-own")
+const POOL1 = committed("testnet-pool1")
 
 type Run = { code: number | null; out: string }
 
@@ -49,10 +52,23 @@ let rpc: string
 const answers: Record<string, unknown> = {}
 const seen: string[] = []
 const ASSETS = toFunctionSelector("assets(address)")
+const BALANCE_OF = toFunctionSelector("balanceOf(address)")
 const ASSET_CONFIG = encodeAbiParameters(
 	[{ type: "bool" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }],
 	[true, 1n, 150n, maxUint256],
 )
+type Call = { id: number; method: string; params?: [{ data?: string }] }
+function answerCall({ id, method, params }: Call) {
+	seen.push(method)
+	const answer = answers[method]
+	const result =
+		method === "eth_call" && params?.[0].data?.startsWith(ASSETS)
+			? ASSET_CONFIG
+			: typeof answer === "function"
+				? (answer as (p: unknown) => unknown)(params)
+				: answer
+	return result === undefined ? { jsonrpc: "2.0", id, error: { code: -32601, message: "no" } } : { jsonrpc: "2.0", id, result }
+}
 beforeAll(async () => {
 	Object.assign(answers, {
 		web3_clientVersion: ANVIL_CLIENT_VERSION,
@@ -75,21 +91,10 @@ beforeAll(async () => {
 		let body = ""
 		req.on("data", (b) => (body += b))
 		req.on("end", () => {
-			const { id, method, params } = JSON.parse(body) as { id: number; method: string; params?: [{ data?: string }] }
-			seen.push(method)
-			const answer = answers[method]
-			const result =
-				method === "eth_call" && params?.[0].data?.startsWith(ASSETS)
-					? ASSET_CONFIG
-					: typeof answer === "function"
-						? (answer as (p: unknown) => unknown)(params)
-						: answer
+			// The Aztec node client sends a batch of one; viem sends single calls.
+			const call = JSON.parse(body) as Call | Call[]
 			res.setHeader("content-type", "application/json")
-			res.end(
-				JSON.stringify(
-					result === undefined ? { jsonrpc: "2.0", id, error: { code: -32601, message: "no" } } : { jsonrpc: "2.0", id, result },
-				),
-			)
+			res.end(JSON.stringify(Array.isArray(call) ? call.map(answerCall) : answerCall(call)))
 		})
 	})
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
@@ -99,9 +104,18 @@ afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())))
 
 const addr = (n: number) => `0x${n.toString(16).padStart(40, "0")}`
 const word = (n: number) => `0x${n.toString(16).padStart(64, "0")}`
+const BRIDGE = {
+	factory: addr(18),
+	portal: addr(19),
+	hub: word(20),
+	token: word(21),
+	registry: word(22),
+	deployBlock: "2",
+	factoryTx: word(23),
+}
 
 /** The own target on the fake L1, with every section a key-reading CLI requires and addresses no sentinel key owns. */
-function deploymentFile(home: string, sections: { pool: boolean }, expected: Record<string, string | undefined> = {}): string {
+function deploymentFile(home: string, sections: { pool: boolean }, expected: Record<string, unknown> = {}): string {
 	const d = {
 		...configuredTarget(OWN),
 		network: { ...OWN.network, l1Rpc: rpc, l1SendRpc: rpc },
@@ -134,20 +148,27 @@ function deploymentFile(home: string, sections: { pool: boolean }, expected: Rec
 				accessRouter: addr(16),
 				relay: addr(17),
 			},
-			bridge: {
-				factory: addr(18),
-				portal: addr(19),
-				hub: word(20),
-				token: word(21),
-				registry: word(22),
-				deployBlock: "2",
-				factoryTx: word(23),
-			},
+			bridge: BRIDGE,
 		}),
 	}
 	const path = join(home, sections.pool ? "full.json" : "bare.json")
 	writeFileSync(path, JSON.stringify(d))
 	return path
+}
+
+/**
+ * pool1 over the fake L1, its ASP a loopback stand-in nothing serves: on a Sepolia fork, or with `stack`
+ * as chain 31337 under `--rehearse`, the only mode but a live run in which its L2 commands run.
+ */
+function pool1File(home: string, o: { stack?: boolean; bridge?: boolean } = {}): { file: string; mode: string[] } {
+	const network = { ...POOL1.network, l1Rpc: rpc, l1SendRpc: rpc, ...(o.stack && { l1ChainId: 31337, aztecNode: rpc }) }
+	const pool = { ...POOL1.pool, aspApiUrl: loopback(9) }
+	const file = join(home, `pool1-${o.stack ? "stack" : "fork"}${o.bridge ? "-bridge" : ""}.json`)
+	writeFileSync(file, JSON.stringify({ ...POOL1, network, pool, ...(o.bridge && { bridge: BRIDGE }) }))
+	if (!o.stack) return { file, mode: ["--rehearse-fork", rpc] }
+	const manifest = join(home, "stack.json")
+	writeFileSync(manifest, JSON.stringify({ version: 1, chainId: 31337, l1Rpc: rpc, aztecNode: rpc, pool }))
+	return { file, mode: ["--rehearse", manifest] }
 }
 
 const sentinels = () => KEY_NAMES.map((k) => [k.name, k.kind === "l1" ? generatePrivateKey() : Fr.random().toString()] as const)
@@ -352,6 +373,83 @@ describe("seed", () => {
 	}, 60_000)
 })
 
+describe("seed's balance check", () => {
+	it("refuses an owner holding less of the asset than the debit, naming the shortfall, before it signs or sends anything", async () => {
+		const home = scratchHome()
+		const key = generatePrivateKey()
+		writeKeyFile(
+			home,
+			sentinels().map(([n, v]) => `${n}=${n === "CANARY_OWNER_KEY" ? key : v}`),
+		)
+		const owner = privateKeyToAccount(key).address
+		// 101 is what a note of 100 debits at the fake L1's 150 bps, so the run passes the debit check.
+		const file = deploymentFile(home, { pool: true }, { canaryOwner: owner, amounts: { debit: "101", note: "100", bridge: "50" } })
+		answers.eth_call = (p: unknown) => ((p as [{ data: string }])[0].data.startsWith(BALANCE_OF) ? word(100) : undefined)
+		onTestFinished(() => {
+			delete answers.eth_call
+		})
+		seen.length = 0
+		const r = await cli("seed", [file, "--rehearse-fork", rpc], home)
+		const refusal = new RegExp(`refused: balance: ${owner} holds 100 of ${addr(15)}, 1 short of the deposit's debit 101`, "i")
+		expect([r.code, refusal.test(r.out), leaks(r.out, [key])]).toEqual([2, true, []])
+		expect(seen.filter((m) => m.startsWith("eth_send"))).toEqual([])
+	}, 60_000)
+})
+
+describe("an operator target", () => {
+	// Every address holds other code than the operator block pins, and every getter returns nothing.
+	const MOVED = { eth_getCode: "0x6000", eth_getStorageAt: word(0), eth_call: "0x" }
+	const refusal =
+		/refused: operator: the pool moved since block 12228161, where it was reviewed: code\.vault\.proxyCodeHash, .* differ at block 16/
+
+	it("refuses every signing command and verify-deployment on a pool that moved, with no key file to read", async () => {
+		const home = scratchHome()
+		Object.assign(answers, MOVED)
+		onTestFinished(() => {
+			for (const k of [...Object.keys(MOVED), NODE_INFO]) delete answers[k]
+			answers.eth_chainId = "0xaa36a7"
+		})
+		seen.length = 0
+		const fork = pool1File(home)
+		const onFork = await Promise.all(
+			(
+				[
+					["seed", [fork.file]],
+					["verify-deployment", [fork.file, "--pool-only"]],
+				] as const
+			).map(async ([name, args]) => [name, await cli(name, [...args, ...fork.mode], home)] as const),
+		)
+		answers.eth_chainId = "0x7a69"
+		answers[NODE_INFO] = nodeInfo({ ...POOL1.network, l1ChainId: 31337 })
+		const [stack, full] = [pool1File(home, { stack: true }), pool1File(home, { stack: true, bridge: true })]
+		const onStack = await Promise.all(
+			(
+				[
+					["deploy", [stack.file]],
+					["open", [full.file, "--factory", BRIDGE.factory]],
+					["canary", [full.file, "--min-sequence", "1", "--post", word(24)]],
+				] as const
+			).map(async ([name, args]) => [name, await cli(name, [...args, ...full.mode], home)] as const),
+		)
+		for (const [name, r] of [...onFork, ...onStack]) expect([name, r.code, refusal.test(r.out)], r.out).toEqual([name, 2, true])
+		expect([existsSync(keyFilePath(home)), seen.filter((m) => m.startsWith("eth_send"))]).toEqual([false, []])
+	}, 60_000)
+
+	it("asp and deploy-pool refuse it: they serve only the own pool", async () => {
+		const home = scratchHome()
+		const { file, mode } = pool1File(home)
+		const runs = await Promise.all([
+			cli("asp", [file, "--owner", POOL1.expected.canaryOwner, ...mode], home),
+			cli("deploy-pool", [file, ...mode], home),
+		])
+		for (const r of runs)
+			expect([
+				r.code,
+				/refused: operator: target pool1 uses the operator's pool and ASP; this command serves the own pool/.test(r.out),
+			]).toEqual([2, true])
+	}, 60_000)
+})
+
 describe("the demo accounts", () => {
 	it("seed --demo and asp refuse what the file does not commit, printing no key value", async () => {
 		const key = generatePrivateKey()
@@ -367,10 +465,14 @@ describe("the demo accounts", () => {
 			return cli(name, [deploymentFile(home, { pool: true }, { canaryOwner, ...expected }), ...args, "--rehearse-fork", rpc], home)
 		}
 		const cases: [Promise<Run>, RegExp][] = [
-			[
-				run("seed", ["--demo", "--recipient", addr(30)], {}),
+			...[
+				["--demo", "--recipient", addr(30)],
+				["--no-register", "--recipient", addr(30)],
+				["--no-register", "--demo"],
+			].map((args): [Promise<Run>, RegExp] => [
+				run("seed", args, {}),
 				/refused: argv: --no-register, --recipient and --demo exclude each other/,
-			],
+			]),
 			[run("seed", ["--demo"], { demoOwner: undefined }), /refused: file: --demo needs expected.demoOwner/],
 			[run("seed", ["--demo"], { demoOwner: canaryOwner }), /refused: file: expected.demoOwner is the canary owner/],
 			[run("seed", ["--demo"], {}), /refused: account: the demo owner key is for 0x\w+, the file expects/],

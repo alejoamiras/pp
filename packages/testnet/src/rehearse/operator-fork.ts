@@ -2,10 +2,11 @@
  * Rehearsal of an operator target on an anvil fork of Sepolia this run owns: `keys` into a scratch home,
  * `fund`, `verify-deployment --pool-only`, then `seed` refused while the owner holds none of the asset,
  * `seed --no-register` failing before any registration, `seed`, `seed --no-register`, and `seed` refused
- * on a file whose operator block no longer reads as the pool. Every request to the operator's ASP goes
- * through a recording front to a stand-in, and the bot's leaves request is made once through that front.
+ * on a file whose operator block no longer reads as the pool, with no key file to read. Every request to
+ * the operator's ASP goes through a recording front to a stand-in; the stopped runs must make none, and
+ * the bot's leaves request is made once through that front.
  */
-import { readFileSync } from "node:fs"
+import { mkdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { scopedLeaves } from "@pp/asp-bot/standalone"
@@ -27,7 +28,7 @@ import { sepolia } from "viem/chains"
 import { parseDeployment, type TestnetDeployment } from "../schema"
 import { assertNoKeyLeft, onFork } from "./fork"
 import { budgetCheck, gasBySender } from "./gas"
-import { type Recorded, startRecorder } from "./recorder"
+import { type Recorded, type Recorder, startRecorder } from "./recorder"
 import { runCli } from "./runner"
 import { checkDepositDebit } from "../verify"
 import { type Amounts, expectedOf, filesUnder, loadScratch, must, type Scratch, writeScratch } from "./scratch"
@@ -79,10 +80,11 @@ async function mintAsset(fork: Fork, asset: Address, to: Address, amount: bigint
 type Owner = { fork: Fork; owner: Address; asset: Address }
 
 /**
- * Runs `seed`, which must exit `code` (2, a guard refusal before any key; 1, a failure after) with output
- * matching `why`, sending nothing from the owner and moving none of its asset.
+ * Runs `seed` under `env`, which must exit `code` (2, a guard's refusal; 1, a failure) with output matching
+ * `why`, sending nothing from the owner and moving none of its asset. The code alone does not say whether
+ * the run stopped before or after its key read.
  */
-async function seedStops(s: Scratch, o: Owner, args: readonly string[], code: 1 | 2, why: RegExp): Promise<void> {
+async function seedStops(s: Scratch, o: Owner, args: readonly string[], code: 1 | 2, why: RegExp, env = s.env): Promise<void> {
 	const client = createPublicClient({ transport: http(o.fork.url) })
 	const state = () =>
 		Promise.all([
@@ -90,7 +92,7 @@ async function seedStops(s: Scratch, o: Owner, args: readonly string[], code: 1 
 			client.readContract({ address: o.asset, abi: erc20Abi, functionName: "balanceOf", args: [o.owner] }),
 		])
 	const before = await state()
-	const r = await runCli("seed", [...args, ...s.modeArgs], s.env)
+	const r = await runCli("seed", [...args, ...s.modeArgs], env)
 	s.outputs.push(r.out)
 	const name = ["seed", ...args.slice(1)].join(" ")
 	if (r.code !== code || !why.test(r.out))
@@ -123,6 +125,35 @@ function tamperedFile(s: Scratch, dir: string): string {
 	const file = join(dir, "tampered.json")
 	writeScratch({ ...s, file }, { ...d, operator: { ...operator, code: { ...operator.code, vault } } })
 	return file
+}
+
+/**
+ * Steps that keep each one's requests to the operator's ASP. A `quiet` step must make none, and a step
+ * that throws prints every request recorded so far before the error goes on.
+ */
+function aspSteps(front: Recorder, tag: string, log: (line: string) => void) {
+	const phases: AspPhase[] = []
+	const print = () => {
+		for (const p of phases)
+			for (const r of p.requests) log(`[${tag}] ${p.step}: ${r.method} ${r.path} ${new URLSearchParams(r.query)} -> ${r.status}`)
+	}
+	const step = async <T>(name: string, run: () => Promise<T>, o: { quiet?: boolean } = {}): Promise<T> => {
+		const from = front.requests.length
+		const phase: AspPhase = { step: name, requests: [] }
+		phases.push(phase)
+		try {
+			const out = await run()
+			phase.requests = front.requests.slice(from)
+			if (o.quiet && phase.requests.length > 0)
+				throw new Error(`${name} made ${phase.requests.length} requests to the operator's ASP; a stopped run makes none`)
+			return out
+		} catch (e) {
+			phase.requests = front.requests.slice(from)
+			print()
+			throw e
+		}
+	}
+	return { phases, step, print }
 }
 
 /** The stand-in, the recording front before it, and the scratch file pointing at the front. */
@@ -183,39 +214,41 @@ export const operatorForkRehearsal = (target: string, log: (line: string) => voi
 		const owner = d.expected?.canaryOwner as Address
 		const o: Owner = { fork, owner, asset }
 		const debit = d.expected?.amounts.debit as bigint
-		const asp: AspPhase[] = []
-		const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
-			const from = front.requests.length
-			const out = await run()
-			asp.push({ step: name, requests: front.requests.slice(from) })
-			return out
-		}
+		const { phases: asp, step, print } = aspSteps(front, target, log)
 		await fork.rpc("anvil_setBalance", [addresses.L1_DEPLOYER_KEY as Address, numberToHex(parseEther("10"))])
 		await step("fund", () => must(s, "fund", [s.file]))
 		await step("verify-deployment --pool-only", () => must(s, "verify-deployment", [s.file, "--pool-only"]))
 		const short = new RegExp(`refused: balance: .* ${debit} short of the deposit's debit ${debit}`)
-		await step("seed, no asset", () => seedStops(s, o, [s.file], 2, short))
+		await step("seed, no asset", () => seedStops(s, o, [s.file], 2, short), { quiet: true })
 		// Exactly two debits: the second deposit spends the balance to zero, so `seed`'s check admits an equal balance.
 		await mintAsset(fork, asset, owner, 2n * debit)
-		await step("seed --no-register, unregistered", () =>
-			seedStops(s, o, [s.file, "--no-register"], 1, /failed: the keystore holds no complete registration/),
+		await step(
+			"seed --no-register, unregistered",
+			() => seedStops(s, o, [s.file, "--no-register"], 1, /failed: the keystore holds no complete registration/),
+			{ quiet: true },
 		)
 		const seeded = await step("seed", () => must(s, "seed", [s.file]))
 		await step("seed --no-register", () => must(s, "seed", [s.file, "--no-register"]))
-		await step("seed, operator block moved", () =>
-			seedStops(
-				s,
-				o,
-				[tamperedFile(s, dir)],
-				2,
-				/refused: operator: the pool moved since block \d+, where it was reviewed: code\.vault\.implementationCodeHash differ/,
-			),
+		// A scratch home with no key file: the refusal must come before the key read.
+		const keyless = join(dir, "no-keys")
+		mkdirSync(keyless, { mode: 0o700 })
+		await step(
+			"seed, operator block moved",
+			() =>
+				seedStops(
+					s,
+					o,
+					[tamperedFile(s, dir)],
+					2,
+					/refused: operator: the pool moved since block \d+, where it was reviewed: code\.vault\.implementationCodeHash differ/,
+					{ ...s.env, PP_TESTNET_SCRATCH_HOME: keyless },
+				),
+			{ quiet: true },
 		)
 		const leaves = await step("bot leaves", () => scopedLeaves(botDeployment(d, front.url))())
 		if (leaves.length !== 0) throw new Error(`the stand-in served ${leaves.length} leaves`)
 		const gas = budgetCheck(await gasBySender(fork.url, block), addresses)
 		assertNoKeyLeft(s, join(dir, "home"), filesUnder(join(dir, "runs")))
-		for (const p of asp)
-			for (const r of p.requests) log(`[${target}] ${p.step}: ${r.method} ${r.path} ${new URLSearchParams(r.query)} -> ${r.status}`)
+		print()
 		return { block, debit: BigInt(seeded.find((e) => e.event === "seeded")?.debit as string), gas, asp }
 	})

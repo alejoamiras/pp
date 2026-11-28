@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { registerMissingHalves } from "./keystore.ts"
+import { assertRegistered, registerMissingHalves } from "./keystore.ts"
 
 const owner = "0x00000000000000000000000000000000000000aa"
 const derived = { nullifyingKeyHash: 11n, viewingKey: 22n }
@@ -28,5 +28,22 @@ describe("registering a keystore's missing halves", () => {
 		await expect(
 			registerMissingHalves({ owner, held: { nullifyingKeyHash: 11n, viewingKey: 0n }, derived, send: reverted }),
 		).rejects.toThrow("keystore registration reverted")
+	})
+})
+
+describe("checking an existing registration", () => {
+	it("passes both halves the owner's, and refuses one half unset or a half under other keys", () => {
+		expect(() => assertRegistered(owner, derived, derived)).not.toThrow()
+		for (const held of [
+			{ nullifyingKeyHash: 11n, viewingKey: 0n },
+			{ nullifyingKeyHash: 0n, viewingKey: 22n },
+		])
+			expect(() => assertRegistered(owner, held, derived)).toThrow(`the keystore holds no complete registration for ${owner}`)
+		expect(() => assertRegistered(owner, { nullifyingKeyHash: 11n, viewingKey: 99n }, derived)).toThrow(
+			`${owner} is registered under another viewing key than its signature derives`,
+		)
+		expect(() => assertRegistered(owner, { nullifyingKeyHash: 99n, viewingKey: 22n }, derived)).toThrow(
+			`${owner} is registered under another nullifying key than its signature derives`,
+		)
 	})
 })
