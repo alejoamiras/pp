@@ -2,13 +2,15 @@
  * Rehearsal part 2, on a running local stack (`PP_STACK_MANIFEST`): `addresses`, `deploy`,
  * `verify-deployment`, `bot` stopped and restarted, `verify-deployment --bot`, `open`, the canary with its
  * shield, and `pause`, all through the real CLIs with `--rehearse` and anvil's well-known keys, never the
- * key file; then the guardian's and the canary sender's gas against their budgets.
+ * key file; then the guardian's and the canary sender's gas against their budgets. The bot and the canary
+ * reach the stack's ASP through a recording front, and the run lists every request each made.
  */
 import { mkdirSync, readFileSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node"
+import { isBotUserAgent } from "@pp/asp-bot/standalone"
 import { parseStackManifest } from "@pp/bridge-core"
 import { claimPort, releaseNamed } from "@pp/run-isolation/ports"
 import { CleanupStack, killGroup, type OwnedChild } from "@pp/run-isolation/process"
@@ -19,6 +21,7 @@ import { generateKey, KEY_NAMES } from "../keyfile"
 import { LOCAL } from "../network"
 import { parseDeployment, type TestnetDeployment } from "../schema"
 import { budgetCheck, gasBySender } from "./gas"
+import { type Recorded, type Recorder, startRecorder } from "./recorder"
 import { type Event, startCli, untilEvent } from "./runner"
 import { assertNoKeyIn, expectedOf, loadScratch, must, promote, type Scratch, writeScratch } from "./scratch"
 
@@ -54,6 +57,8 @@ export type StackResult = {
 	firstPost: bigint
 	restartPost: bigint
 	canary: CanarySummary
+	/** How many requests the canary itself sent through the ASP front. */
+	canaryAsp: number
 }
 
 const anvilKey = (index: number): Hex => {
@@ -100,6 +105,49 @@ export async function stackFile(s: Scratch, manifestPath: string, runId: string)
 		},
 		pool: { ...m.pool, accessRouter },
 	} as unknown as TestnetDeployment)
+}
+
+/**
+ * Puts a recording front before the scratch file's ASP, the stack's mock ASP, and points the file at it,
+ * so the bot and the canary send it what a live run would send an operator's ASP.
+ */
+async function recordAsp(s: Scratch, runId: string, cleanup: CleanupStack): Promise<Recorder> {
+	const d = loadScratch(s)
+	const pool = d.pool as NonNullable<TestnetDeployment["pool"]>
+	const port = await claimPort(runId, "rehearse-asp-front")
+	const front = startRecorder({ port, upstream: pool.aspApiUrl })
+	cleanup.push(async () => {
+		await front.stop()
+		await releaseNamed([{ port, service: "rehearse-asp-front", owner: runId }])
+	})
+	writeScratch(s, { ...d, network: { ...d.network, aspPort: port }, pool: { ...pool, aspApiUrl: front.url } })
+	return front
+}
+
+type Mark = readonly [step: string, from: number]
+
+/**
+ * Logs each request through the front under the step it arrived in, with its User-Agent and the named
+ * accounts its path, query or headers carry.
+ */
+function logAsp(s: Scratch, requests: readonly Recorded[], marks: readonly Mark[], named: Record<string, string>): void {
+	const accounts = Object.entries(named).filter(([, v]) => /^0x[0-9a-f]{40}([0-9a-f]{24})?$/i.test(v))
+	requests.forEach((r, i) => {
+		const step = marks.filter(([, from]) => from <= i).at(-1)?.[0] ?? "setup"
+		const seen = [r.path, ...Object.values(r.query), ...Object.values(r.headers)].join(" ").toLowerCase()
+		const carried = accounts.filter(([, v]) => seen.includes(v.slice(2).toLowerCase())).map(([k]) => k)
+		const query = new URLSearchParams(r.query).toString()
+		s.log(
+			`[${s.tag}] asp ${step}: ${r.method} ${r.path}${query ? `?${query}` : ""} (${r.headers["user-agent"] ?? "no user-agent"}) -> ${r.status}; carries ${carried.join(", ") || "no named account"}`,
+		)
+	})
+}
+
+/** The canary's own requests through the front: those in its step that the bot did not send. */
+function canaryRequests(requests: readonly Recorded[], marks: readonly Mark[]): Recorded[] {
+	const at = marks.findIndex(([step]) => step === "canary")
+	const [from, to] = [marks[at]?.[1] ?? 0, marks[at + 1]?.[1] ?? requests.length]
+	return requests.slice(from, to).filter((r) => !isBotUserAgent(r.headers["user-agent"]))
 }
 
 /** A stop mid-post lets the post drain for up to 10 s before the bot stops its wallet and server. */
@@ -178,23 +226,35 @@ export function stackRun(tag: string, manifestPath: string, log: (line: string) 
 export async function stackRehearsal(manifestPath: string, log: (line: string) => void): Promise<StackResult> {
 	const cleanup = new CleanupStack()
 	const { runId, dir, keys, s } = stackRun("stack", manifestPath, log)
+	let asp: { front: Recorder; marks: Mark[]; named: Record<string, string> } | undefined
+	const mark = (step: string) => asp?.marks.push([step, asp.front.requests.length])
 	try {
 		await stackFile(s, manifestPath, runId)
+		const front = await recordAsp(s, runId, cleanup)
 		const l1 = createPublicClient({ transport: http(loadScratch(s).network.l1Rpc) })
 		const from = await l1.getBlockNumber()
 		const named = (await must(s, "addresses", [s.file])).find((e) => e.event === "addresses") as Record<string, string>
+		asp = { front, marks: [], named }
 		writeScratch(s, { ...loadScratch(s), expected: expectedOf(named, AMOUNTS) })
+		mark("deploy")
 		const factory = await deployBridge(s)
+		mark("bot 1")
 		const first = await startBot(s, dir, 1, cleanup)
 		await stopBot(s, first)
+		mark("bot 2, verify-deployment --bot, open")
 		const second = await startBot(s, dir, 2, cleanup)
 		// The record against the registry; the canary itself checks its label at `--min-sequence`.
 		await must(s, "verify-deployment", [s.file, "--bot"])
 		await must(s, "open", [s.file, "--factory", factory])
+		mark("canary")
 		const canaryRun = await canary(s, second.ready)
+		mark("pause, bot 2 stop")
 		await must(s, "pause", [s.file, "--factory", factory])
 		await stopBot(s, second)
 		assertNoKeyIn(s.outputs, Object.values(keys))
+		logAsp(s, front.requests, asp.marks, named)
+		const own = canaryRequests(front.requests, asp.marks)
+		if (own.length === 0) throw new Error("the canary sent no request through the ASP front")
 		const addresses = Object.fromEntries(Object.entries(named).filter(([k]) => k !== "event"))
 		const gas = budgetCheck(await gasBySender(loadScratch(s).network.l1Rpc, from), addresses)
 		rmSync(dir, { recursive: true, force: true })
@@ -203,8 +263,10 @@ export async function stackRehearsal(manifestPath: string, log: (line: string) =
 			firstPost: BigInt(String(first.ready.sequence)),
 			restartPost: BigInt(String(second.ready.sequence)),
 			canary: canaryRun,
+			canaryAsp: own.length,
 		}
 	} catch (e) {
+		if (asp) logAsp(s, asp.front.requests, asp.marks, asp.named)
 		log(`[stack] failed; its logs and scratch files stay in ${dir}`)
 		throw e
 	} finally {

@@ -13,6 +13,8 @@ import { Poster, type Ports } from "./loop"
 import { Runner } from "./runner"
 import { SnapshotBook, serve } from "./server"
 
+export { isBotUserAgent } from "./asp"
+
 export type StandaloneBotConfig = {
 	deployment: {
 		l1Rpc: string
