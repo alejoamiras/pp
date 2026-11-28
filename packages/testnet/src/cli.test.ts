@@ -164,7 +164,8 @@ function pool1File(home: string, o: { stack?: boolean; bridge?: boolean } = {}):
 	const network = { ...POOL1.network, l1Rpc: rpc, l1SendRpc: rpc, ...(o.stack && { l1ChainId: 31337, aztecNode: rpc }) }
 	const pool = { ...POOL1.pool, aspApiUrl: loopback(9) }
 	const file = join(home, `pool1-${o.stack ? "stack" : "fork"}${o.bridge ? "-bridge" : ""}.json`)
-	writeFileSync(file, JSON.stringify({ ...POOL1, network, pool, ...(o.bridge && { bridge: BRIDGE }) }))
+	const { bridge: _committed, ...target } = POOL1
+	writeFileSync(file, JSON.stringify({ ...target, network, pool, ...(o.bridge && { bridge: BRIDGE }) }))
 	if (!o.stack) return { file, mode: ["--rehearse-fork", rpc] }
 	const manifest = join(home, "stack.json")
 	writeFileSync(manifest, JSON.stringify({ version: 1, chainId: 31337, l1Rpc: rpc, aztecNode: rpc, pool }))

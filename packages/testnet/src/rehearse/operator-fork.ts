@@ -28,6 +28,7 @@ import { sepolia } from "viem/chains"
 import { parseDeployment, type TestnetDeployment } from "../schema"
 import { assertNoKeyLeft, onFork } from "./fork"
 import { budgetCheck, gasBySender } from "./gas"
+import { OPERATOR_FORK_STEPS, type OperatorForkStep } from "./operator-steps"
 import { type Recorded, type Recorder, startRecorder } from "./recorder"
 import { runCli } from "./runner"
 import { checkDepositDebit } from "../verify"
@@ -137,7 +138,7 @@ function aspSteps(front: Recorder, tag: string, log: (line: string) => void) {
 		for (const p of phases)
 			for (const r of p.requests) log(`[${tag}] ${p.step}: ${r.method} ${r.path} ${new URLSearchParams(r.query)} -> ${r.status}`)
 	}
-	const step = async <T>(name: string, run: () => Promise<T>, o: { quiet?: boolean } = {}): Promise<T> => {
+	const step = async <T>(name: OperatorForkStep, run: () => Promise<T>, o: { quiet?: boolean } = {}): Promise<T> => {
 		const from = front.requests.length
 		const phase: AspPhase = { step: name, requests: [] }
 		phases.push(phase)
@@ -247,6 +248,9 @@ export const operatorForkRehearsal = (target: string, log: (line: string) => voi
 		)
 		const leaves = await step("bot leaves", () => scopedLeaves(botDeployment(d, front.url))())
 		if (leaves.length !== 0) throw new Error(`the stand-in served ${leaves.length} leaves`)
+		const ran = asp.map((p) => p.step).join(" · ")
+		if (ran !== OPERATOR_FORK_STEPS.join(" · "))
+			throw new Error(`the rehearsal ran ${ran}; operator-steps.ts lists ${OPERATOR_FORK_STEPS.join(" · ")}`)
 		const gas = budgetCheck(await gasBySender(fork.url, block), addresses)
 		assertNoKeyLeft(s, join(dir, "home"), filesUnder(join(dir, "runs")))
 		print()
