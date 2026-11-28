@@ -115,11 +115,73 @@ async function loop(runner: Runner, signal: AbortSignal, inflight: { step?: Prom
 	}
 }
 
-/** `step` settled, or `ms` passed. */
-async function drain(step: Promise<unknown> | undefined, ms: number): Promise<void> {
+/** Whether `step` settled before `ms` passed; resolves at whichever comes first. */
+async function drain(step: Promise<unknown> | undefined, ms: number): Promise<boolean> {
 	let timer: ReturnType<typeof setTimeout> | undefined
-	await Promise.race([step?.catch(() => {}), new Promise<void>((r) => (timer = setTimeout(r, ms)))])
+	const settled = await Promise.race([
+		step === undefined
+			? true
+			: step.then(
+					() => true,
+					() => true,
+				),
+		new Promise<false>((r) => (timer = setTimeout(() => r(false), ms))),
+	])
 	clearTimeout(timer)
+	return settled
+}
+
+const at = () => new Date().toISOString()
+
+/**
+ * `log` for the teardown's own lines, swallowing what the logger throws: a line must never change the
+ * teardown, and under Bun an abort listener that throws ends the process before any teardown runs.
+ */
+function teardownLog(log: Ports["log"]): Ports["log"] {
+	return (event, fields) => {
+		try {
+			log(event, fields)
+		} catch {
+			// A logger that cannot write (a full disk under its file) loses the line, not the teardown.
+		}
+	}
+}
+
+/**
+ * `ports` whose `post` records when the post in flight began, for the teardown log; behaves as `ports`
+ * otherwise. The poster never runs two posts at once.
+ */
+export function trackPosts(ports: Ports): { ports: Ports; postingSince: () => number | undefined } {
+	let since: number | undefined
+	const post: Ports["post"] = async (a) => {
+		since = performance.now()
+		try {
+			return await ports.post(a)
+		} finally {
+			since = undefined
+		}
+	}
+	return { ports: { ...ports, post }, postingSince: () => since }
+}
+
+/**
+ * Wraps a teardown step to log one `teardown_step` line when it ends: its name, the time, how long it
+ * took, what it threw (rethrown) and the fields it returns. A step that never ends logs nothing, so the
+ * last line names the step before it. A logger that throws changes neither outcome.
+ */
+export function loggedStep(log: Ports["log"], step: string, fn: () => Promise<Record<string, unknown> | undefined>) {
+	const say = teardownLog(log)
+	return async (): Promise<void> => {
+		const start = performance.now()
+		const end = (fields?: Record<string, unknown>) =>
+			say("teardown_step", { step, at: at(), ms: Math.round(performance.now() - start), ...fields })
+		try {
+			end(await fn())
+		} catch (e) {
+			end({ error: e instanceof Error ? e.message : String(e) })
+			throw e
+		}
+	}
 }
 
 /**
@@ -147,9 +209,11 @@ export async function runStandaloneBot(c: StandaloneBotConfig, s: BotSecrets, o:
 	} catch (e) {
 		if (!o.signal.aborted) throw e
 	} finally {
+		const start = performance.now()
 		try {
 			await cleanup.run()
 		} finally {
+			teardownLog(log)("teardown_done", { at: at(), ms: Math.round(performance.now() - start) })
 			done = true
 		}
 	}
@@ -164,19 +228,31 @@ async function run(
 	const log = o.log
 	const tag = c.tag ?? "finalized"
 	const d = c.deployment
+	let postingSince = (): number | undefined => undefined
+	o.signal.addEventListener(
+		"abort",
+		() => {
+			const since = postingSince()
+			const postMs = since === undefined ? {} : { postMs: Math.round(performance.now() - since) }
+			teardownLog(log)("teardown_signal", { at: at(), postInFlight: since !== undefined, ...postMs })
+		},
+		{ once: true },
+	)
 	await claimRows(c.runId, { "asp-bot": c.port }, process.pid)
-	cleanup.push(async () => {
-		if (!(await releaseNamed([{ port: c.port, service: "asp-bot", owner: c.runId }])))
-			throw new Error(`the port registry stayed locked; ${c.port} is still listed for ${c.runId}`)
-	})
+	cleanup.push(
+		loggedStep(log, "port_release", async () => {
+			if (!(await releaseNamed([{ port: c.port, service: "asp-bot", owner: c.runId }])))
+				throw new Error(`the port registry stayed locked; ${c.port} is still listed for ${c.runId}`)
+		}),
+	)
 	const store = ownedWalletStore("aspbot")
-	cleanup.push(async () => rmSync(store, { recursive: true, force: true }))
+	cleanup.push(loggedStep(log, "store_remove", async () => void rmSync(store, { recursive: true, force: true })))
 	const book = new SnapshotBook()
 	const server = await serve(book, c.port)
-	cleanup.push(() => server.close())
+	cleanup.push(loggedStep(log, "server_close", async () => void (await server.close())))
 	// Runs after the wallet stops (the stack unwinds in reverse) and before the store and server go.
 	const inflight: { step?: Promise<unknown> } = {}
-	cleanup.push(() => drain(inflight.step, DRAIN_MS))
+	cleanup.push(loggedStep(log, "drain", async () => ({ settled: await drain(inflight.step, DRAIN_MS) })))
 	o.signal.throwIfAborted()
 	const own = ownPosts(book)
 	const live = await liveFrom(
@@ -195,10 +271,12 @@ async function run(
 		},
 		log,
 	)
-	cleanup.push(() => live.stop())
+	cleanup.push(loggedStep(log, "wallet_stop", async () => void (await live.stop())))
+	const tracked = trackPosts(live.ports)
+	postingSince = tracked.postingSince
 	o.signal.throwIfAborted()
 	await warnMargin(c, tag, log)
-	const poster = new Poster(live.ports, book, {
+	const poster = new Poster(tracked.ports, book, {
 		self: live.self,
 		inclusionMarginSec: BigInt(c.inclusionMarginSec),
 		leavesFloorMs: ASP_LEAVES_FLOOR_MS,
