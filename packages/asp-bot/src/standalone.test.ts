@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { DEFAULT_USER_AGENT, fetchLeaves } from "./asp"
 import { type Ports, Poster } from "./loop"
 import { SnapshotBook } from "./server"
-import { checkStandaloneConfig, runStandaloneBot, type StandaloneBotConfig, scopedLeaves } from "./standalone"
+import { checkStandaloneConfig, loggedStep, runStandaloneBot, type StandaloneBotConfig, scopedLeaves, trackPosts } from "./standalone"
 
 const ENTRYPOINT = "0xeb3e3961008952348445513e418ad6f43c23ca9a"
 const LEAVES = [aspLeaf(11n), aspLeaf(22n), aspLeaf(33n)]
@@ -107,25 +107,78 @@ describe("the standalone bot", () => {
 			expect(readFileSync(join(dir, "ports.md"), "utf8")).not.toContain("second-bot")
 		})
 
-		it("resolves on an abort between stages, releasing its own row and no sibling's under the same run", async () => {
-			await claimRows("shared-run", { sibling: 43_212 }, process.pid)
-			// Aborts at the check after the server binds, before the wallet starts.
+		/**
+		 * Aborts at the check after the server binds, before the wallet starts. `thrown` keeps what an abort
+		 * listener throws: under Bun that ends the process at the end of the tick, before any teardown.
+		 */
+		const abortAfterServe = () => {
+			const listeners: (() => void)[] = []
+			const thrown: unknown[] = []
+			const fireOnce = () => {
+				for (const l of listeners.splice(0)) {
+					try {
+						l()
+					} catch (e) {
+						thrown.push(e)
+					}
+				}
+			}
 			let checks = 0
 			const signal = {
 				get aborted() {
 					return checks >= 2
 				},
 				throwIfAborted() {
-					if (++checks >= 2) throw new DOMException("aborted", "AbortError")
+					if (++checks < 2) return
+					fireOnce()
+					throw new DOMException("aborted", "AbortError")
 				},
-				addEventListener() {},
+				addEventListener: (_: string, l: () => void) => listeners.push(l),
 			} as unknown as AbortSignal
+			return { signal, thrown }
+		}
+
+		it("resolves on an abort between stages, releasing its own row and no sibling's under the same run", async () => {
+			await claimRows("shared-run", { sibling: 43_212 }, process.pid)
+			const lines: { event: string; step?: unknown; at?: unknown; ms?: unknown; settled?: unknown; postInFlight?: unknown }[] = []
+			const log = (event: string, fields: Record<string, unknown>) => lines.push({ event, ...fields })
 			await expect(
-				runStandaloneBot(config({ port: 43_213, runId: "shared-run" }), { poster: Fr.random() }, { signal }),
+				runStandaloneBot(
+					config({ port: 43_213, runId: "shared-run" }),
+					{ poster: Fr.random() },
+					{ signal: abortAfterServe().signal, log },
+				),
 			).resolves.toBeUndefined()
 			const rows = readFileSync(join(dir, "ports.md"), "utf8")
 			expect(rows).toContain("| 43212 | sibling | shared-run |")
 			expect(rows).not.toContain("43213")
+			// The wallet never started, so the teardown begins at the drain, which has no step to wait for.
+			expect(lines.map((l) => l.step ?? l.event)).toEqual([
+				"teardown_signal",
+				"drain",
+				"server_close",
+				"store_remove",
+				"port_release",
+				"teardown_done",
+			])
+			expect(lines[0]?.postInFlight).toBe(false)
+			expect(lines[1]?.settled).toBe(true)
+			for (const l of lines) {
+				expect(Date.parse(String(l.at)), l.event).toBeGreaterThan(0)
+				if (l.event !== "teardown_signal") expect(l.ms, l.event).toBeGreaterThanOrEqual(0)
+			}
+		})
+
+		it("tears down the same under a logger that throws on every line", async () => {
+			const log = () => {
+				throw new Error("no space left on device")
+			}
+			const { signal, thrown } = abortAfterServe()
+			await expect(
+				runStandaloneBot(config({ port: 43_214, runId: "full-disk" }), { poster: Fr.random() }, { signal, log }),
+			).resolves.toBeUndefined()
+			expect(thrown).toEqual([])
+			expect(readFileSync(join(dir, "ports.md"), "utf8")).not.toContain("43214")
 		})
 
 		it.each([
@@ -156,6 +209,50 @@ describe("the standalone bot", () => {
 				expect(check({ userAgent })).toThrow("userAgent must be")
 			for (const chainId of [0, 1.5, "11155111"]) expect(check({}, { chainId })).toThrow("chainId")
 			for (const entrypoint of ["0x01", `${ENTRYPOINT}00`, 5]) expect(check({}, { entrypoint })).toThrow("entrypoint")
+		})
+	})
+
+	describe("the teardown log", () => {
+		it("knows a post is in flight from its start until it settles, either way", async () => {
+			let settle = (_: boolean) => {}
+			const post: Ports["post"] = () =>
+				new Promise((ok, fail) => (settle = (passes) => (passes ? ok({ inclusionTime: 1n }) : fail(new Error("reverted")))))
+			const { ports, postingSince } = trackPosts({ post } as Ports)
+			const args = { sequence: 1n, poolRoot: 0n, birthRoot: 0n, l1Block: 0n, rootTime: 0n, poolSize: 0n, birthSize: 0n }
+			for (const passes of [true, false]) {
+				expect(postingSince()).toBeUndefined()
+				const posted = ports.post(args)
+				expect(postingSince()).toBeGreaterThan(0)
+				settle(passes)
+				await (passes ? expect(posted).resolves.toEqual({ inclusionTime: 1n }) : expect(posted).rejects.toThrow("reverted"))
+				expect(postingSince()).toBeUndefined()
+			}
+		})
+
+		it("logs a step that throws with its error, and still throws", async () => {
+			const lines: Record<string, unknown>[] = []
+			const step = loggedStep(
+				(event, fields) => lines.push({ event, ...fields }),
+				"port_release",
+				async () => {
+					throw new Error("the port registry stayed locked")
+				},
+			)
+			await expect(step()).rejects.toThrow("the port registry stayed locked")
+			expect(lines).toEqual([
+				expect.objectContaining({ event: "teardown_step", step: "port_release", error: "the port registry stayed locked" }),
+			])
+		})
+
+		it("lets no logger that throws change a step's outcome", async () => {
+			const log = () => {
+				throw new Error("no space left on device")
+			}
+			await expect(loggedStep(log, "store_remove", async () => undefined)()).resolves.toBeUndefined()
+			const failing = loggedStep(log, "port_release", async () => {
+				throw new Error("the port registry stayed locked")
+			})
+			await expect(failing()).rejects.toThrow("the port registry stayed locked")
 		})
 	})
 })
