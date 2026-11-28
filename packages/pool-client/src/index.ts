@@ -1,6 +1,7 @@
 import "./shim.ts"
 
 export { openPoolClient } from "./client.ts"
+export { type HttpErrorClasses, pinnedOriginHttpClient } from "./http.ts"
 export {
 	type ArtifactFile,
 	PoolClientError,

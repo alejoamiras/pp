@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test"
-import { HTTPRequestFailed, HTTPResponseError } from "#ppv2/core-sdk"
-import { PinnedOriginHttpClient } from "../../src/client/http.ts"
+import { HTTPRequestFailed, HTTPResponseError } from "#ppv2/evm-sdk"
+import { pinnedOriginHttpClient } from "@pp/pool-client"
 
-describe("the pinned-origin HTTP client", () => {
+describe("the pinned-origin HTTP client on the checkout's SDK", () => {
 	let reached = 0
 	let moved = 0
 	const elsewhere = Bun.serve({
@@ -32,8 +32,8 @@ describe("the pinned-origin HTTP client", () => {
 		elsewhere.stop(true)
 	})
 
-	it("refuses a redirect at once without reaching its target, and keeps the SDK's error classes", async () => {
-		const client = new PinnedOriginHttpClient()
+	it("refuses a redirect at once without reaching its target, and throws the classes it is given", async () => {
+		const client = pinnedOriginHttpClient({ HTTPRequestFailed, HTTPResponseError })
 		expect(await client.get(`${base}/public-key`)).toEqual({ publicKey: "0x18" })
 		const refused = client.get(`${base}/moved`)
 		await expect(refused).rejects.toBeInstanceOf(HTTPRequestFailed)
