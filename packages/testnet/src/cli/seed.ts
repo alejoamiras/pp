@@ -1,3 +1,12 @@
+// seed <deployment file> [--recipient <address> | --demo] [--rehearse-fork <url>]
+// Registers the canary owner's keystore and makes the canary deposit: a note of `amounts.note` whose
+// wallet debit must equal `amounts.debit`, checked against the entrypoint's asset config before anything
+// is signed and as the balance change after. With `--recipient`, the owner deposits that note for
+// another address instead, which must already hold a registered viewing key; the owner's keystore is
+// left as it is. `--demo` first registers the demo owner's keystore, signed and paid by the demo owner's
+// own key, then deposits for it as `--recipient` does. Prints the label the ASP approves: the depositor
+// is the canary owner every way. The own pool's ASP must already be running: the deposit encrypts its
+// label to the key the ASP serves.
 import { type Address, erc20Abi, getAddress, type Hex, isAddress, isAddressEqual } from "viem"
 import { l1AddressOf } from "../accounts"
 import { GuardError, type Mode, readKeys } from "../guards"

@@ -1,3 +1,7 @@
+// asp <deployment file> --owner <address> [--owner <address>] [--rehearse-fork <url>]
+// Runs the own pool's mock ASP on the file's loopback port until SIGINT or SIGTERM: it approves only
+// the deposits of the owners named, each the file's canary owner or its demo owner, posts each grown
+// set's root with the postman key, and serves reads only.
 import { claimRows, releaseNamed } from "@pp/run-isolation/ports"
 import { type Address, getAddress, isAddress, isAddressEqual } from "viem"
 import { l1AddressOf } from "../accounts"
