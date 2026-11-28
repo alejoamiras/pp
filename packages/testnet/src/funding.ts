@@ -53,6 +53,12 @@ export const FEE_MARGIN = 2n
  * 0.1 gwei was at or above the fifth-percentile tip of 1,015 of 1,024 Sepolia blocks to 2026-11-28.
  */
 export const FEE_FLOOR_WEI = 100_000_000n
+/**
+ * The guardian's floor instead: its pauses are the lever that closes entries, so its budget must still
+ * pay for a pause and a replacement through a fee rise that every other role can wait out.
+ */
+export const GUARDIAN_FEE_FLOOR_WEI = 1_000_000_000n
+const floorOf = (role: FundedRole): bigint => (role === "guardian" ? GUARDIAN_FEE_FLOOR_WEI : FEE_FLOOR_WEI)
 export type Recipient = { role: Exclude<FundedRole, "l1Deployer">; address: Address }
 
 /** The keys `fund` tops up from the deployer: the file's committed addresses, never ones a key derives. */
@@ -95,7 +101,7 @@ export function feeAboveBudget(o: { maxFeePerGas: bigint; balance: bigint }): st
 }
 
 export const needOf = (role: FundedRole, maxFeePerGas: bigint): bigint =>
-	liveGasOf(role) * (maxFeePerGas > FEE_FLOOR_WEI ? maxFeePerGas : FEE_FLOOR_WEI) * FEE_MARGIN
+	liveGasOf(role) * (maxFeePerGas > floorOf(role) ? maxFeePerGas : floorOf(role)) * FEE_MARGIN
 
 /** One top-up per address: roles that share an address share its balance, so their needs add up. */
 export type Send = { roles: Recipient["role"][]; address: Address; balance: bigint; need: bigint; amount: bigint; transferGas: bigint }

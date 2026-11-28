@@ -9,6 +9,7 @@ import {
 	feeAboveBudget,
 	FUNDING_GAS,
 	fundingPlan,
+	GUARDIAN_FEE_FLOOR_WEI,
 	liveGasOf,
 	needOf,
 	recipientsOf,
@@ -28,11 +29,14 @@ describe("fundingPlan", () => {
 		expect(liveGasOf("canaryOwner")).toBe((FUNDING_GAS.canaryOwner * 501n) / 100n)
 	})
 
-	it("tops each key up to its budget at twice the fee, floored at 0.1 gwei, and counts the deployer's own budget in the total", () => {
+	it("tops each key up to its budget at twice the fee, floored at 0.1 gwei and the guardian's at 1 gwei, and counts the deployer's own budget in the total", () => {
 		const fee = 3n
+		expect(needOf("canaryOwner", fee)).toBe(liveGasOf("canaryOwner") * FEE_FLOOR_WEI * 2n)
+		expect(needOf("canaryOwner", 5n * FEE_FLOOR_WEI)).toBe(liveGasOf("canaryOwner") * 10n * FEE_FLOOR_WEI)
 		const need = needOf("guardian", fee)
-		expect(need).toBe(liveGasOf("guardian") * FEE_FLOOR_WEI * 2n)
-		expect(needOf("guardian", 5n * FEE_FLOOR_WEI)).toBe(liveGasOf("guardian") * 10n * FEE_FLOOR_WEI)
+		// 2,505,000 live gas at twice 1 gwei: 0.00501 ETH.
+		expect(need).toBe(5_010_000_000_000_000n)
+		expect(needOf("guardian", 2n * GUARDIAN_FEE_FLOOR_WEI)).toBe(liveGasOf("guardian") * 4n * GUARDIAN_FEE_FLOOR_WEI)
 		// Live Sepolia's estimate for a transfer that creates its recipient, against 21,000 for one that exists.
 		const creating = 207_391n
 		const plan = fundingPlan(

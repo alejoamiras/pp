@@ -47,7 +47,8 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
 - No value is ever formatted into output; every line a command prints is also scrubbed of the values it
   loaded. Every command refuses to run while `SEED` is set, which makes Aztec's randomness predictable.
 - One address is funded by hand: the L1 deployer. `fund` tops each other L1 address up to the summed
-  gas budgets of the roles it holds (`src/funding.ts`) at twice the fee estimate, never below 0.1 gwei;
+  gas budgets of the roles it holds (`src/funding.ts`) at twice the fee estimate, never below 0.1 gwei,
+  or 1 gwei for the guardian, whose pauses must clear through a fee rise the other roles can wait out;
   `fund --quote` reads no key and prints what the deployer must hold, the top-ups' own gas included.
   Each top-up reports the seconds until the read endpoint showed it and until its receipt; one not shown
   within 60 s stops the run. The quote says whether the plan fits the owner's limits (`FUNDING_LIMITS`):
