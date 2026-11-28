@@ -14,10 +14,11 @@ existing pool and the operator's ASP. A run never edits the checkout: it writes 
 `~/.cache/pp/testnet/<target>/<run>/`, which is checked and committed before the next run.
 
 An operator target's `operator` block records the pool as it was reviewed, at the block it names: each
-contract's proxy and implementation with their code hashes, the vault's deposit verifier, its 1x1
-transact route and the asset's config. `deploy`, `seed`, `open` and `canary` read all of it again at the
-latest block before reading a key, and refuse naming each field that moved; `verify-deployment` and
-`verify-inputs` make the same read. `canary --settle` does not, since a refusal there would strand burns
+contract's proxy and implementation with their code hashes, the vault's deposit and ragequit verifiers
+with theirs, its 1x1 transact route and the asset's config. `deploy`, `seed`, `open` and `canary` read
+all of it again at the latest block number before reading a key, with the wiring between the four
+contracts, the vault's pause and the entrypoint's depositor role, and refuse naming each field that
+moved or whose getter reverts; `verify-deployment` and `verify-inputs` make the same read. `canary --settle` does not, since a refusal there would strand burns
 already sent. The operator's ASP is its pinned API in a live run and a loopback stand-in in a rehearsal.
 
 A pool's `deployBlock` is where note discovery starts, so it must not follow any of the pool's events, and
@@ -94,7 +95,7 @@ hashes and allowlisted URLs only. A guard refusal exits 2 before any key is read
 | `verify-inputs` | none | a clean working tree (naming HEAD), frozen lockfile, the pinned Forge binary with FFI off, a forced bridge build and the pool build against their pins, L2 class ids, and both endpoints' reads by block hash |
 | `deploy-pool` (own) | pool deployer | the pinned pool, built with no key and checked against `pool-creation-codes.json` before its key reaches Forge; the test token minted to the canary owner, the postman role for the ASP key, every contract's runtime code checked against the build |
 | `asp --owner <address>…` (own) | ASP postman | the mock ASP on its loopback port: approves only the deposits of the owners given, each the canary owner or the demo owner, posts roots, serves reads only |
-| `seed [--no-register \| --recipient <address> \| --demo]` | canary owner; demo owner with `--demo` | registers and makes the canary deposit, refusing before any signature when the owner holds less of the asset than the debit; with `--no-register`, registers nothing and checks the owner's registration instead; with `--recipient`, deposits for that registered address instead; with `--demo`, registers the demo owner's keystore from its own key and gas, then deposits for it |
+| `seed [--no-register \| --recipient <address> \| --demo]` | canary owner; demo owner with `--demo` | registers and makes the canary deposit, refusing before any signature when the owner holds less of the asset than the debit, and before the deposit when the keystore holds other keys than the owner's signature derives; with `--no-register`, registers nothing and checks the owner's registration instead; with `--recipient`, deposits for that registered address instead; with `--demo`, registers the demo owner's keystore from its own key and gas, then deposits for it |
 | `deploy` | L1 deployer, L2 deployer | the bridge generation with entries paused |
 | `verify-deployment [--pool-only] [--bot] [--label <l> --min-sequence <s>]` | none | code, bindings, the deploy block's history, the factory's creation, class ids, paused entries, the checks before opening, the bot's record |
 | `bot` | bot poster, bot intake | the ASP-root poster, snapshot server and birth intake, on the file's loopback port |

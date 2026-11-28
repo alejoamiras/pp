@@ -64,6 +64,10 @@
 			"verifier": "0x2b2Dc2d979410DA2D1a2fc08982b60EBd05Fc452",
 			"codeHash": "0x4553d31b9e821dd56a5f09a658d79197d88965822e20ec22cb7f29df62af382f"
 		},
+		"ragequitVerifier": {
+			"verifier": "0x897214841D613a2F9118F18ef63A0c5bF4aEcD05",
+			"codeHash": "0x62104936399e7ede06eeb56294c555105eb4e8c81ef60f94570005821052d89b"
+		},
 		"transactRoute1x1": {
 			"verifier": "0xDE01899950397B9d5401A505b194b1B21Bf4E0e4",
 			"selector": "0xc9219a7a",

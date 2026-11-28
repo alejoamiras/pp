@@ -82,6 +82,7 @@ const expectedSchema = z
 	.strict()
 
 const routeSchema = z.object({ verifier: evmAddress, selector, codeHash: word }).strict()
+const verifierSchema = z.object({ verifier: evmAddress, codeHash: word }).strict()
 
 /** A proxy and the implementation its EIP-1967 slot names, each with the keccak256 of its runtime code. */
 const contractCodeSchema = z
@@ -102,7 +103,8 @@ const operatorSchema = z
 				aspRegistry: contractCodeSchema,
 			})
 			.strict(),
-		depositVerifier: z.object({ verifier: evmAddress, codeHash: word }).strict(),
+		depositVerifier: verifierSchema,
+		ragequitVerifier: verifierSchema,
 		transactRoute1x1: routeSchema,
 		asset: z.object({ address: evmAddress, vettingFeeBps: z.number().int().min(0).max(10_000), minDeposit: decimal }).strict(),
 		evidence: z.object({ forkBlock: z.number().int().positive(), forkBlockHash: word }).strict(),
