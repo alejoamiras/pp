@@ -145,7 +145,7 @@ from a 131,073-leaf tree) copied into the corpus.
 | `tags` | 4 | TS, Solidity, Noir (no data tag) |
 | `data` | 66 | TS, Solidity |
 | `in`, `out`, `ragequit` | 73, 69, 71 | TS, Solidity, Noir |
-| `rejections` | 23, each tagged with the languages whose types hold its input | TS, Solidity, Noir |
+| `rejections` | 30, each tagged with the languages whose types hold its input | TS, Solidity, Noir |
 | `hash1`, `hash2`, `commitment`, `aspLeaf` | 20, 19, 17, 17 | TS, Noir |
 | `leanImt` | 31: every leaf of 1-, 2-, 3-, 4-, 5- and 7-leaf trees, two of 11, the anchor paths | TS, Noir |
 | `claimKey`, `claimSalt` | 7 (one signature in three forms), 8 | TS |
@@ -173,6 +173,10 @@ by independent code (RFC 5869, WebCrypto HKDF, viem `encodeAbiParameters`); thos
 | `vectors:mutate -- --suite ts` | unit tests |
 | `vectors:mutate -- --suite sol` | forge (needs Foundry 1.7.1 on `PATH`) |
 | `vectors:nargo`, `vectors:mutate -- --suite nr` | nargo (needs `~/.aztec/versions/6.0.0`) |
+
+Each night, `bun packages/bridge-spec/vectors/fresh.ts` builds corpora from four consecutive seeds
+(`FC_SEED`, `FC_RUNS_SCALE=4`), which redraw the seeded rows and the fixed edge rows' other fields,
+and the Solidity and Noir suites must pass each one. Every seed is printed with its replay command.
 
 Regenerating is for new vectors only. If a v1 output changes, an implementation changed, and that
 is a bug or a v2.
