@@ -215,7 +215,7 @@ export const SUITES: Suite[] = [
 			"src/client/exits.property.test.ts",
 		],
 		minutes: 10,
-		expected: 21,
+		expected: 22,
 		env: { FC_RUNS_SCALE: "10" },
 	}),
 	// packages/sepolia-fork owns the cases: the bridge's L1 side against the live Sepolia pool and Aztec
