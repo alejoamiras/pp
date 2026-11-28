@@ -54,6 +54,7 @@ with warm package and toolchain caches.
 | Typecheck | `bun run typecheck:all` | 23 s |
 | Unit (every workspace, one at a time) | `bun run test:all` | 2.5 min |
 | CI-gating tests | `bun run test:ci-gating` | < 1 s |
+| Nightly suite counts (lists each bounded suite, runs none) | `bun scripts/nightly.ts --counts` | 4 s |
 | Workflow lint | `bun run lint:actions` | < 1 s |
 | Quality and Web build without the pool checkout | `bun run test:unfetched` | 3 min |
 | L1 build + hermetic tests | `forge build && forge test --no-match-contract Fork` in `contracts/bridge/evm` | 2 min |
@@ -109,8 +110,11 @@ Suites too slow for a pull request go in `SUITES` in [`scripts/nightly.ts`](scri
 (`bun run nightly`). `nightly.yml` runs it every day from `bridge-v1` when that branch exists, else
 `main`, so a lane adds its deep suite in its own branch; dispatch the workflow with a `ref` to test
 another, and with `suites` (names separated by spaces) to run only those. A suite that passes no
-test fails. A failed run keeps the real-wallet tier's reports and logs as an artifact for three
-days. The L1 fuzz and invariant suites are
+test fails, and so does one that passes any number but its `expected`. Every pull request's unit job
+runs `bun scripts/nightly.ts --counts`, which lists each bounded suite's tests without running them
+and fails at a count that differs from `expected`, naming the line to change; a bounded suite that
+cannot be listed is refused when the file loads. A failed run keeps the real-wallet tier's reports
+and logs as an artifact for three days. The L1 fuzz and invariant suites are
 `contracts/bridge/evm/scripts/nightly.sh` at that package's `nightly` Foundry profile; local-stack's
 32-minute idle case is its `test:integration:long`; the Sepolia fork suite is sepolia-fork's `run`,
 against the keyless public endpoint committed in that file; the real-wallet tier is e2e-kit's

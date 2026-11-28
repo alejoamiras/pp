@@ -5,8 +5,10 @@
  * that matches nothing exits 0 and would read as green.
  *
  *   bun run nightly [suite...]   every suite, or only the named ones
+ *   bun scripts/nightly.ts --counts   each listed suite's count against its `expected`, running no suite
  */
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
 const ROOT = join(import.meta.dir, "..")
@@ -23,6 +25,11 @@ export interface Suite {
 	passed: (output: string) => number
 	/** The exact count the suite must pass; a skipped or deleted test fails it. */
 	expected?: number
+	/**
+	 * How a pull request reads that count without running the suite: a command run in `cwd` with `env`,
+	 * and the count its standard output shows. Every bounded suite has one.
+	 */
+	list?: { argv: string[]; count: (stdout: string) => number }
 }
 
 /** Sums forge's per-contract "Suite result: ok. N passed;" lines. */
@@ -62,6 +69,7 @@ export function boundedSuite(s: {
 	expected: number
 	env?: Record<string, string>
 	count?: (output: string) => number
+	list?: Suite["list"]
 }): Suite {
 	return {
 		name: s.name,
@@ -70,11 +78,40 @@ export function boundedSuite(s: {
 		env: s.env,
 		passed: s.count ?? vitestPassed,
 		expected: s.expected,
+		list: s.list ?? vitestList(s),
 	}
+}
+
+/** Reads `vitest list --json`'s array; anything else lists nothing. */
+export const vitestListed = (stdout: string): number => {
+	try {
+		const tests: unknown = JSON.parse(stdout.slice(stdout.indexOf("[")))
+		return Array.isArray(tests) ? tests.length : 0
+	} catch {
+		return 0
+	}
+}
+
+/**
+ * `vitest list` over the files of a suite run as `bun run test <file>...` in a package whose test script is
+ * `bun --bun vitest run`, so it collects what the run collects; under the suite's env, a test `runIf` drops
+ * is not listed. Any other suite is refused: it names its own `list`.
+ */
+function vitestList(s: { name: string; cwd: string; argv: string[]; count?: unknown }): NonNullable<Suite["list"]> {
+	const [bun, run, test, ...files] = s.argv
+	const shaped =
+		s.count === undefined && `${bun} ${run} ${test}` === "bun run test" && files.length > 0 && files.every((f) => !f.startsWith("-"))
+	const script = () => JSON.parse(readFileSync(join(ROOT, s.cwd, "package.json"), "utf8")).scripts?.test
+	if (!shaped || script() !== "bun --bun vitest run")
+		throw new Error(`${s.name}: a bounded suite needs a pull-request listing; give it \`list\``)
+	return { argv: ["bun", "--bun", "vitest", "list", ...files, "--json"], count: vitestListed }
 }
 
 /** Reads `vectors/fresh.ts`'s closing line. */
 const freshPassed = (output: string): number => Number(/^fresh vectors: (\d+) tests passed/m.exec(output)?.[1] ?? 0)
+
+/** Reads `vectors/fresh.ts --list`'s one line. */
+const freshListed = (stdout: string): number => Number(/^fresh vectors: (\d+) tests listed/m.exec(stdout)?.[1] ?? 0)
 
 /** Reads the fork runner's closing line, printed only once each named Forge case has passed. */
 export const sepoliaForkPassed = (output: string): number => Number(/^sepolia-fork: (\d+) fork cases passed/m.exec(output)?.[1] ?? 0)
@@ -160,6 +197,7 @@ export const SUITES: Suite[] = [
 		expected: 136,
 		env: { FC_RUNS_SCALE: "4" },
 		count: freshPassed,
+		list: { argv: ["bun", "packages/bridge-spec/vectors/fresh.ts", "--list"], count: freshListed },
 	}),
 	// The bridge client's model test and properties. The model test's coverage floor runs at the pull-request seed only.
 	boundedSuite({
@@ -214,6 +252,50 @@ export function verdict(suite: Suite, status: number | null, output: string): st
 	return undefined
 }
 
+/** The 1-based line of `expected:` inside the named suite's entry of this file's source. */
+export function expectedLine(source: string, name: string): number | undefined {
+	const lines = source.split("\n")
+	const start = lines.findIndex((l) => l.trim() === `name: "${name}",`)
+	if (start < 0) return undefined
+	for (let i = start + 1; i < lines.length && !/^\s*name: "/.test(lines[i] ?? ""); i++)
+		if (/^\s*expected: \d+,$/.test(lines[i] ?? "")) return i + 1
+	return undefined
+}
+
+/** Why a suite's listed count fails its `expected`, naming the line to change, or undefined when they agree. */
+export function countVerdict(suite: Suite, listed: number, source: string): string | undefined {
+	if (listed === suite.expected) return undefined
+	const line = expectedLine(source, suite.name)
+	const at = line === undefined ? "its `expected` in scripts/nightly.ts" : `scripts/nightly.ts:${line}`
+	if (listed === 0) return `${suite.name}: its listing showed no test; ${at} pins ${suite.expected}`
+	return `${suite.name}: ${listed} tests listed, expected ${suite.expected}; set \`expected: ${listed},\` at ${at}`
+}
+
+/** Lists every suite that has a listing and checks its count; prints the suites it cannot list. */
+function checkCounts(): number {
+	const source = readFileSync(import.meta.path, "utf8")
+	const failures: string[] = []
+	for (const suite of SUITES) {
+		if (suite.list === undefined) {
+			console.log(`- ${suite.name}: not listed here`)
+			continue
+		}
+		const [cmd = "", ...args] = suite.list.argv
+		const r = spawnSync(cmd, args, {
+			cwd: join(ROOT, suite.cwd),
+			env: { ...process.env, ...suite.env },
+			encoding: "utf8",
+			timeout: 120_000,
+			maxBuffer: 64 * 1024 * 1024,
+		})
+		if (r.status !== 0) process.stderr.write(`${suite.name}: \`${suite.list.argv.join(" ")}\` exited ${r.status}\n${r.stderr}`)
+		const failure = countVerdict(suite, r.status === 0 ? suite.list.count(r.stdout) : 0, source)
+		console.log(failure === undefined ? `✔ ${suite.name}: ${suite.expected} tests listed` : `✖ ${failure}`)
+		if (failure !== undefined) failures.push(failure)
+	}
+	return failures.length > 0 ? 1 : 0
+}
+
 /** Runs a command with its output streamed through and kept. */
 function run(command: string[], cwd: string, env: Record<string, string> = {}): Promise<{ status: number | null; output: string }> {
 	return new Promise((resolve) => {
@@ -238,6 +320,14 @@ async function runSuite(suite: Suite): Promise<string | undefined> {
 	}
 	const { status, output } = await run(suite.command, suite.cwd, suite.env)
 	return verdict(suite, status, output)
+}
+
+if (import.meta.main && process.argv[2] === "--counts") {
+	if (process.argv.length > 3) {
+		console.error("usage: bun scripts/nightly.ts --counts")
+		process.exit(2)
+	}
+	process.exit(checkCounts())
 }
 
 if (import.meta.main) {

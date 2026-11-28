@@ -5,26 +5,13 @@
  *
  * Usage: [FC_SEED=<non-negative integer>] [FC_RUNS_SCALE=<seeds, default 1>] bun packages/bridge-spec/vectors/fresh.ts
  * (forge on PATH, lib/ installed). The seeds are FC_SEED, FC_SEED + 1, …; each is printed with its own replay.
+ * `--list` prints how many tests those seeds' runs must pass, building each corpus but running neither suite.
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildCorpus } from "./corpus"
-import { type Outcome, PKG, SUITES, verifyControl } from "./mutate"
+import { byName, FORGE_TESTS, PKG, SUITES, verifyControl } from "./mutate"
 import { noirTestNames } from "./render-nr"
-
-/** The forge suite's tests by full name; one added to the contract shows up as unexpected until listed here. */
-const FORGE_TESTS = [
-	"test_counts()",
-	"test_tags()",
-	"test_data()",
-	"test_in()",
-	"test_out()",
-	"test_ragequit()",
-	"test_rejections()",
-	"testFuzz_dataDecodesToItsTagAndSecretHash(uint256)",
-	"testFuzz_amountInRangeEncodes(uint256)",
-	"testFuzz_amountAboveRangeReverts(uint256)",
-].map((t) => `test/BridgeMessageV1.t.sol:BridgeMessageV1Test:${t}`)
 
 function seedFromEnv(): number {
 	const raw = process.env.FC_SEED
@@ -32,21 +19,6 @@ function seedFromEnv(): number {
 	const n = /^\d+$/.test(raw) ? Number(raw) : Number.NaN
 	if (!Number.isSafeInteger(n)) throw new Error(`FC_SEED must be a non-negative integer, got ${raw}`)
 	return n
-}
-
-/** The run must hold exactly the expected names, each once, each passed. */
-function byName(lang: string, outcome: Outcome, expected: readonly string[]): string[] {
-	const ran = outcome.raw.map((t) => t.name).sort()
-	const want = [...expected].sort()
-	const problems = outcome.raw
-		.filter((t) => t.status !== "passed")
-		.map((t) => `${lang}: ${t.name} ${t.status}\n${t.message.slice(0, 2000)}`)
-	if (ran.join("\n") !== want.join("\n")) {
-		const missing = want.filter((n) => !ran.includes(n))
-		const unexpected = ran.filter((n) => !want.includes(n))
-		problems.push(`${lang}: ran ${ran.length} tests, expected ${want.length}; missing [${missing}], unexpected [${unexpected}]`)
-	}
-	return problems
 }
 
 /** `FC_RUNS_SCALE` consecutive seeds from `FC_SEED`, each a corpus of its own. */
@@ -87,8 +59,17 @@ async function checkSeed(seed: number): Promise<{ passed: number; problems: stri
 	}
 }
 
+/** How many tests a full run of these seeds requires to pass, with neither forge nor nargo run. */
+async function list(seeds: readonly number[]): Promise<number> {
+	let total = 0
+	for (const seed of seeds) total += FORGE_TESTS.length + (await buildCorpus(noirTestNames, seed)).noirTests.length
+	console.log(`fresh vectors: ${total} tests listed (seeds ${seeds.join(", ")})`)
+	return 0
+}
+
 async function main(): Promise<number> {
 	const seeds = seedsFromEnv()
+	if (process.argv.includes("--list")) return list(seeds)
 	const failed: number[] = []
 	let passed = 0
 	for (const [k, seed] of seeds.entries()) {
