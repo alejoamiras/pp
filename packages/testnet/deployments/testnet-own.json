@@ -46,5 +46,14 @@
 		"aspApiUrl": "http://127.0.0.1:48602",
 		"accessRouter": "0x4004b8BB7dC48257153e2cd6Cc44e4D9dDa8DD3f",
 		"relay": "0x336a187960879EFB99d00CABb46208CF2Be486dF"
+	},
+	"bridge": {
+		"factory": "0xbb63a3f1597b61ca5fa8f2c4a3ea9d1b53e9c57d",
+		"portal": "0xeb490adff9e2a65c3c9c2db0320f27362c9e4a95",
+		"hub": "0x24b67800241ca8b9a88dfd65726f0dd6f91fa18d4193192a6f728754c7d1cbe5",
+		"token": "0x1a32df4016bc15b9d2be9862da33e023412660d71b76471e3a17b89a2048f30c",
+		"registry": "0x098f741eb33939a75b1cf62cb38ca21fae19317b5d3fdf0a69e62f001b156623",
+		"deployBlock": "12227181",
+		"factoryTx": "0x15c79f7a88365584f50b2c6fbb5195602b41b6084a017389d81a01989d4f7599"
 	}
 }
