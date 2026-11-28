@@ -41,6 +41,8 @@ export type Fired = {
 	lost: number
 	alreadyImported: number
 	nullReceipts: number
+	/** Null receipts answered, by the nonce of the entry that answered them. */
+	nullReceiptsAt: Record<number, number>
 	staleCounts: number
 	/** Stale counts answered, by the nonce of the entry that answered them. */
 	staleCountsAt: Record<number, number>
@@ -72,6 +74,7 @@ const zero = (): Fired => ({
 	lost: 0,
 	alreadyImported: 0,
 	nullReceipts: 0,
+	nullReceiptsAt: {},
 	staleCounts: 0,
 	staleCountsAt: {},
 	revertedEstimates: 0,
@@ -190,6 +193,7 @@ class Fronts {
 		const [first] = call.params ?? []
 		if (call.method === "eth_getTransactionReceipt" && first === sent.hash && age < s.receiptMs) {
 			this.fired.nullReceipts++
+			this.fired.nullReceiptsAt[s.nonce] = (this.fired.nullReceiptsAt[s.nonce] ?? 0) + 1
 			return answer(call, { result: null })
 		}
 		if (age >= s.nonceMs) return undefined

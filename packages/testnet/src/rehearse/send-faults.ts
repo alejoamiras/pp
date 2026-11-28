@@ -10,17 +10,17 @@
  * nonces after its last though the count reads stale there, with its code checked by `deploy-pool` and
  * again by `verify-deployment --pool-only`.
  */
-import { readdirSync, readFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { killGroup } from "@pp/run-isolation/process"
-import { endGroup, groupAlive } from "@pp/run-isolation/process-group"
+import { endGroup, groupAlive, startTime } from "@pp/run-isolation/process-group"
 import { type Address, type Hex, isAddressEqual, keccak256, numberToHex, parseEther, parseTransaction } from "viem"
 import { keyFilePath, loadKeys } from "../keyfile"
 import { RUN_KEYS } from "../keys"
 import { type FaultFronts, type Faults, type Fired, startFaultFronts } from "./fault-fronts"
 import { type Ctx, type OnFork, onFork, scratchFile } from "./fork"
 import { childWith, runCli, startBareCli } from "./runner"
-import { assertNoKeyIn, must, promote } from "./scratch"
+import { assertNoKeyIn, filesUnder, must, promote } from "./scratch"
 
 /** The nonce the negative case refuses past the budget, so three creations land before it. */
 const REFUSED = 3
@@ -54,6 +54,15 @@ const everyFault = (sender: Address): Faults => ({
 	],
 	readError: 12,
 })
+
+/** Each stale entry answered at least one null receipt and one stale count of its own. */
+function assertEachStaleFired(f: Fired, armed: Faults): void {
+	const off = (armed.stale ?? [])
+		.map((s) => ({ nonce: s.nonce, receipts: f.nullReceiptsAt[s.nonce] ?? 0, counts: f.staleCountsAt[s.nonce] ?? 0 }))
+		.filter((s) => s.receipts === 0 || s.counts === 0)
+		.map((s) => `nonce ${s.nonce}: ${s.receipts} null receipts, ${s.counts} stale counts`)
+	if (off.length) throw new Error(`stale entries that did not fire:\n  ${off.join("\n  ")}`)
+}
 
 /** Each fault fired as armed: a fault that never fired would pass a rehearsal that proved nothing. */
 function assertFired(f: Fired, armed: Partial<Record<keyof Fired, (n: number) => boolean>>): void {
@@ -90,11 +99,6 @@ async function stopsPastBudget(c: Ctx, fronts: FaultFronts, f: OnFork, sender: A
 	return { landed: REFUSED, nonce: REFUSED, hash }
 }
 
-const filesUnder = (dir: string): string[] =>
-	readdirSync(dir, { withFileTypes: true, recursive: true })
-		.filter((e) => e.isFile())
-		.map((e) => join(e.parentPath, e.name))
-
 const until = async (done: () => Promise<boolean>, ms: number, what: string, everyMs = 200): Promise<void> => {
 	for (const deadline = Date.now() + ms; !(await done()); await Bun.sleep(everyMs))
 		if (Date.now() > deadline) throw new Error(`${what} within ${ms / 1000} s`)
@@ -126,10 +130,15 @@ async function forgeEndsWithTheCli(c: Ctx, f: OnFork, sender: Address): Promise<
 	const forge = cli.child.pid === undefined ? undefined : childWith(cli.child.pid, "DeployE2ELocal.s.sol")
 	if (cli.hasExited() || forge === undefined)
 		throw new Error(`deploy-pool ran no forge script to kill under (${cli.exitReason() ?? "running"})`)
-	f.cleanup.push(() => (groupAlive(forge) ? endGroup(forge, 1_000).then(() => {}) : Promise.resolve()))
+	// forge's number names a stranger once its group has ended, or once another process holds it.
+	const started = startTime(forge)
+	let ended = false
+	const ours = () => !ended && (startTime(forge) === started || (startTime(forge) === undefined && groupAlive(forge)))
+	f.cleanup.push(() => (ours() ? endGroup(forge, 1_000).then(() => {}) : Promise.resolve()))
 	process.kill(cli.child.pid as number, "SIGKILL")
 	const killedAt = Date.now()
 	await until(async () => !groupAlive(forge), FORGE_EXIT_MS, "forge did not end by itself after the CLI was killed")
+	ended = true
 	const forgeExitMs = Date.now() - killedAt
 	await f.fork.rpc("evm_mine", [])
 	await Bun.sleep(2_000)
@@ -208,7 +217,8 @@ function assertHandoff(runDir: string, fired: Fired, sent: number): void {
 
 /** `deploy-pool` through every fault: each fires, and every send of the deployer lands once and succeeds. */
 async function landsOnce(c: Ctx, fronts: FaultFronts, f: OnFork, sender: Address): Promise<{ transactions: number; fired: Fired }> {
-	fronts.arm(everyFault(sender))
+	const faults = everyFault(sender)
+	fronts.arm(faults)
 	promote(c, await must(c, "deploy-pool", [c.file]), "pool-deployed")
 	const fired = { ...fronts.fired() }
 	fronts.arm(undefined)
@@ -222,6 +232,7 @@ async function landsOnce(c: Ctx, fronts: FaultFronts, f: OnFork, sender: Address
 		revertedEstimates: one,
 		readErrors: one,
 	})
+	assertEachStaleFired(fired, faults)
 	const runDir = join(c.dir, "runs", "own-rehearse-fork", "deploy-pool")
 	const hashes = onePerNonce(join(runDir, "send-path.jsonl"))
 	const sent = Number(await f.fork.rpc<Hex>("eth_getTransactionCount", [sender, "latest"]))
