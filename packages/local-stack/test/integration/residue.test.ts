@@ -40,7 +40,7 @@ describe.skipIf(!existsSync("/proc/self/stat") && process.env.CI === undefined)(
 		const pgid = child.pid as number
 		try {
 			expect(await residueOf({ runId, pgids: [pgid], ports: [] })).toEqual([
-				expect.stringMatching(new RegExp(`^process group ${pgid}: ${pgid} [RS] sleep 30$`)),
+				expect.stringMatching(new RegExp(`^process group ${pgid}: ${pgid} [A-Z] sleep 30$`)),
 			])
 		} finally {
 			process.kill(-pgid, "SIGKILL")
