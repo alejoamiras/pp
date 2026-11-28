@@ -2157,6 +2157,101 @@
 				"birthSecret": "0x0000000000000000000000000000000000000000000000000000000000000001"
 			},
 			"error": "AmountOutOfRange"
+		},
+		{
+			"name": "data_secret_hash_max",
+			"fn": "bridgeData",
+			"langs": [
+				"ts",
+				"sol"
+			],
+			"args": {
+				"secretHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			},
+			"error": "SecretHashOutOfRange"
+		},
+		{
+			"name": "in_nullifier_max",
+			"fn": "bridgeContent",
+			"langs": [
+				"ts",
+				"sol"
+			],
+			"args": {
+				"nullifier": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+				"changeCommitment": "0x0000000000000000000000000000000000000000000000000000000000000001",
+				"amount": "0x0000000000000000000000000000000000000000000000000000000000000001"
+			},
+			"error": "FieldOutOfRange"
+		},
+		{
+			"name": "in_change_max",
+			"fn": "bridgeContent",
+			"langs": [
+				"ts",
+				"sol"
+			],
+			"args": {
+				"nullifier": "0x0000000000000000000000000000000000000000000000000000000000000001",
+				"changeCommitment": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+				"amount": "0x0000000000000000000000000000000000000000000000000000000000000001"
+			},
+			"error": "FieldOutOfRange"
+		},
+		{
+			"name": "in_amount_max",
+			"fn": "bridgeContent",
+			"langs": [
+				"ts",
+				"sol"
+			],
+			"args": {
+				"nullifier": "0x0000000000000000000000000000000000000000000000000000000000000001",
+				"changeCommitment": "0x0000000000000000000000000000000000000000000000000000000000000001",
+				"amount": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			},
+			"error": "AmountOutOfRange"
+		},
+		{
+			"name": "out_amount_max",
+			"fn": "exitContent",
+			"langs": [
+				"ts",
+				"sol"
+			],
+			"args": {
+				"payee": "0x00000000000000000000000000000000000000000000000000000000000044a4",
+				"amount": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			},
+			"error": "AmountOutOfRange"
+		},
+		{
+			"name": "rq_amount_max",
+			"fn": "ragequitContent",
+			"langs": [
+				"ts",
+				"sol"
+			],
+			"args": {
+				"payee": "0x00000000000000000000000000000000000000000000000000000000000044a4",
+				"amount": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+				"label": "0x0000000000000000000000000000000000000000000000000000000000000001"
+			},
+			"error": "AmountOutOfRange"
+		},
+		{
+			"name": "rq_label_max",
+			"fn": "ragequitContent",
+			"langs": [
+				"ts",
+				"sol"
+			],
+			"args": {
+				"payee": "0x00000000000000000000000000000000000000000000000000000000000044a4",
+				"amount": "0x0000000000000000000000000000000000000000000000000000000000000001",
+				"label": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			},
+			"error": "LabelOutOfRange"
 		}
 	],
 	"hash1": [
@@ -3622,7 +3717,7 @@
 		"in": 73,
 		"out": 69,
 		"ragequit": 71,
-		"rejections": 23,
+		"rejections": 30,
 		"hash1": 20,
 		"hash2": 19,
 		"commitment": 17,

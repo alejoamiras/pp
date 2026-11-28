@@ -22,6 +22,7 @@ const TS_SOL: readonly Lang[] = ["ts", "sol"]
 const TS_NR: readonly Lang[] = ["ts", "nr"]
 
 const ONE = w(1n)
+const WORD_MAX = w(2n ** 256n - 1n)
 const PAYEE = w(0x44a4n)
 const siblings = (...head: bigint[]) => [...head, ...Array<bigint>(MAX_DEPTH - head.length).fill(0n)].map(w)
 
@@ -102,4 +103,18 @@ export const REJECTIONS: readonly Rejection[] = [
 		args: { token: ONE, owner: ONE, amount: w(U128_MAX + 1n), birthSecret: ONE },
 		error: "AmountOutOfRange",
 	},
+	// The 32-byte word's maximum, which Solidity's uint256 and bytes32 can hold; appended so no Noir test is renumbered.
+	{ name: "data_secret_hash_max", fn: "bridgeData", langs: TS_SOL, args: { secretHash: WORD_MAX }, error: "SecretHashOutOfRange" },
+	{ name: "in_nullifier_max", fn: "bridgeContent", langs: TS_SOL, args: { ...content, nullifier: WORD_MAX }, error: "FieldOutOfRange" },
+	{
+		name: "in_change_max",
+		fn: "bridgeContent",
+		langs: TS_SOL,
+		args: { ...content, changeCommitment: WORD_MAX },
+		error: "FieldOutOfRange",
+	},
+	{ name: "in_amount_max", fn: "bridgeContent", langs: TS_SOL, args: { ...content, amount: WORD_MAX }, error: "AmountOutOfRange" },
+	{ name: "out_amount_max", fn: "exitContent", langs: TS_SOL, args: { ...exit, amount: WORD_MAX }, error: "AmountOutOfRange" },
+	{ name: "rq_amount_max", fn: "ragequitContent", langs: TS_SOL, args: { ...rq, amount: WORD_MAX }, error: "AmountOutOfRange" },
+	{ name: "rq_label_max", fn: "ragequitContent", langs: TS_SOL, args: { ...rq, label: WORD_MAX }, error: "LabelOutOfRange" },
 ]

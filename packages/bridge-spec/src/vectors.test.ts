@@ -31,7 +31,7 @@ const FLOORS: Record<string, number> = {
 	in: 73,
 	out: 69,
 	ragequit: 71,
-	rejections: 23,
+	rejections: 30,
 	hash1: 20,
 	hash2: 19,
 	commitment: 17,
