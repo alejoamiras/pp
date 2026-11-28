@@ -1,8 +1,9 @@
 /**
  * The operator's limits on its ASP API, kept by the proxy for a pool that is not ours: at most one
  * upstream request per exact URL per five minutes (the public key, per hour), whatever its outcome,
- * every caller in a window sharing its one request, and the leaves asked again only once the root
- * differs from the one they were asked under. Per server process, in memory only.
+ * every caller in a window sharing its one request, and the leaves kept past their window only while
+ * the last root accepted from a well-formed 200 is the one they were fetched under. Per server process,
+ * in memory only.
  */
 import type { AspKind, Forwarded } from "./proxy"
 
