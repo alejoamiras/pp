@@ -431,13 +431,17 @@ type TransportLike = (args: never) => { request: Request }
 /**
  * Wraps a viem transport over the read endpoint so its `eth_sendRawTransaction` takes `path` instead, and
  * a sender's head transaction count is never below one past its last admitted send: a lagging backend
- * would otherwise have viem sign the next transaction at a nonce already used. It is generic over the
- * transport's type, so a caller on another viem copy wraps its own.
+ * would otherwise have viem sign the next transaction at a nonce already used. `eth_fillTransaction`,
+ * which viem 2.45 asks first and whose nonce it would take unfloored, is answered as not found (-32601),
+ * so viem falls back to the count. It is generic over the transport's type, so a caller on another viem
+ * copy wraps its own.
  */
 export function sendThrough<T extends TransportLike>(transport: T, path: SendPath): T {
 	return ((args: never) => {
 		const t = transport(args)
 		const request: Request = (r, o) => {
+			if (r.method === "eth_fillTransaction")
+				return Promise.reject(Object.assign(new Error("eth_fillTransaction is not served through the send path"), { code: -32601 }))
 			if (r.method === "eth_getTransactionCount") return t.request(r, o).then((n) => path.floorCount(r.params, n))
 			if (r.method !== "eth_sendRawTransaction") return t.request(r, o)
 			const raw = Array.isArray(r.params) ? r.params[0] : undefined

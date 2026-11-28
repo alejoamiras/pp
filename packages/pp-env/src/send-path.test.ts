@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test"
-import { createWalletClient, type Hex, http, keccak256 } from "viem"
+import { createWalletClient, type Hex, http, keccak256, parseTransaction } from "viem"
 import { type Handler, SENDER, STRANGER, type StubAnswer, signed, stub } from "./send-path.fixtures.ts"
 import { checkEnvelope, classifySend, SendPath, type SendPathError, type SendPathOptions, sendThrough } from "./send-path.ts"
 
@@ -318,6 +318,36 @@ describe("a viem wallet sending through the path", () => {
 		const count = (tag: string): Promise<unknown> =>
 			wallet.request({ method: "eth_getTransactionCount", params: [SENDER.address, tag] } as never)
 		expect([await count("pending"), await count("latest"), await count("0x10")]).toEqual(["0x9", "0x9", "0x8"])
+		p.close()
+	})
+
+	it("signs its next transaction past its last send though the endpoint would fill in that send's nonce", async () => {
+		send.set((m, p) => (m === "eth_sendRawTransaction" ? { result: keccak256(p[0] as Hex) } : { result: null }))
+		const block = { number: "0x10", hash: `0x${"1".repeat(64)}`, timestamp: "0x1", baseFeePerGas: "0x1", transactions: [] }
+		const filled = { nonce: "0x11", gas: "0x5208", maxFeePerGas: "0x2", maxPriorityFeePerGas: "0x1", type: "0x2", chainId: "0xaa36a7" }
+		const reads: Record<string, unknown> = {
+			eth_chainId: "0xaa36a7",
+			eth_getTransactionCount: "0x11",
+			eth_estimateGas: "0x5208",
+			eth_maxPriorityFeePerGas: "0x1",
+			eth_getBlockByNumber: block,
+			eth_fillTransaction: { raw: "0x", tx: { ...filled, from: SENDER.address, to: STRANGER.address, value: "0x1", input: "0x" } },
+		}
+		read.set((m) => ({ result: reads[m] ?? null }))
+		const p = path()
+		await p.send(await signed(17))
+		const chain = {
+			id: 11155111,
+			name: "sepolia",
+			nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+			rpcUrls: { default: { http: [read.url] } },
+		}
+		const wallet = createWalletClient({ account: SENDER, chain, transport: sendThrough(http(read.url), p) })
+		await wallet.sendTransaction({ to: STRANGER.address, value: 1n })
+		expect([
+			send.sends().map((raw) => parseTransaction(raw as Hex).nonce),
+			read.calls.some((c) => c.method === "eth_fillTransaction"),
+		]).toEqual([[17, 18], false])
 		p.close()
 	})
 })
