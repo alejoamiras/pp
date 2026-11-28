@@ -113,6 +113,23 @@ it("keeps a redirect refused when cancelling its body fails", async () => {
 	expect(calls).toBe(1)
 })
 
+it("reads a relative URL, as a page may pass, against the page", async () => {
+	const fetched: string[] = []
+	vi.stubGlobal("location", { href: "http://127.0.0.1:9/app/" })
+	vi.stubGlobal("fetch", async (url: string) => {
+		fetched.push(url)
+		return url.endsWith("/big") ? new Response(new Uint8Array(17 * MiB)) : Response.json({ publicKey: "0x18" })
+	})
+	onTestFinished(() => {
+		vi.unstubAllGlobals()
+	})
+	const client = pinnedOriginHttpClient()
+	expect(await client.get("/asp/public-key")).toEqual({ publicKey: "0x18" })
+	// A refusal names the page's origin.
+	await expect(client.get("/asp/big")).rejects.toThrow(/^http:\/\/127\.0\.0\.1:9 answered more than/)
+	expect(fetched).toEqual(["/asp/public-key", "/asp/big"])
+})
+
 it("rejects a body it cannot serialise instead of throwing", async () => {
 	await expect(pinnedOriginHttpClient().post("http://127.0.0.1:9/", { amount: 1n })).rejects.toBeInstanceOf(TypeError)
 })
