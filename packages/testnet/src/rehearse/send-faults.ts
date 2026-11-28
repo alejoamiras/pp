@@ -4,7 +4,8 @@
  * From snapshots after `fund`, two negative cases first. The send front refuses one nonce past the send
  * budget, and `deploy-pool` must stop naming that send's hash, its nonce and how many transactions landed
  * before it. Then `deploy-pool` is killed outright mid-deploy: forge, whose only route to the chain was the
- * relay inside it, must end by itself with nothing more landed. Then every fault once in a deploy that must
+ * relay inside it, must end by itself, and every transaction the pool deployer landed must be in the dead
+ * command's send log. Then every fault once in a deploy that must
  * land each transaction exactly once, one hash per nonce in its send log, the sends after forge's at the
  * nonces after its last though the count reads stale there, with its code checked by `deploy-pool` and
  * again by `verify-deployment --pool-only`.
@@ -13,7 +14,7 @@ import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { killGroup } from "@pp/run-isolation/process"
 import { endGroup, groupAlive } from "@pp/run-isolation/process-group"
-import { type Address, type Hex, numberToHex, parseEther } from "viem"
+import { type Address, type Hex, isAddressEqual, numberToHex, parseEther } from "viem"
 import { keyFilePath, loadKeys } from "../keyfile"
 import { RUN_KEYS } from "../keys"
 import { type FaultFronts, type Faults, type Fired, startFaultFronts } from "./fault-fronts"
@@ -37,7 +38,7 @@ export type SendFaultsResult = {
 	transactions: number
 	fired: Fired
 	stopped: { landed: number; nonce: number; hash: Hex }
-	killed: { landed: number; forgeExitMs: number }
+	killed: { landed: number; logged: number; forgeExitMs: number }
 }
 
 const everyFault = (sender: Address): Faults => ({
@@ -99,11 +100,24 @@ const until = async (done: () => Promise<boolean>, ms: number, what: string, eve
 		if (Date.now() > deadline) throw new Error(`${what} within ${ms / 1000} s`)
 }
 
+/** The hashes of `sender`'s transactions in the fork's blocks after `from`. */
+async function landedSince(f: OnFork, from: bigint, sender: Address): Promise<Hex[]> {
+	const head = BigInt(await f.fork.rpc<Hex>("eth_blockNumber", []))
+	const out: Hex[] = []
+	for (let n = from + 1n; n <= head; n++) {
+		const block = await f.fork.rpc<{ transactions: { from: Address; hash: Hex }[] }>("eth_getBlockByNumber", [numberToHex(n), true])
+		for (const t of block.transactions) if (isAddressEqual(t.from, sender)) out.push(t.hash)
+	}
+	return out
+}
+
 /**
  * `deploy-pool` killed outright once forge has landed {@link KILL_AFTER} transactions: forge must end by
- * itself, and no transaction may land after the kill settles.
+ * itself, and every transaction `sender` landed, the kill settled, must have its hash in the dead
+ * command's send log, which takes each attempt before its bytes leave.
  */
 async function forgeEndsWithTheCli(c: Ctx, f: OnFork, sender: Address): Promise<SendFaultsResult["killed"]> {
+	const from = BigInt(await f.fork.rpc<Hex>("eth_blockNumber", []))
 	const logFile = join(c.dir, "deploy-pool-killed.log")
 	const cli = startBareCli("deploy-pool", [c.file, ...c.modeArgs], { ...c.env, PP_TESTNET_RUN_ROOT: join(c.dir, "runs-killed") }, logFile)
 	f.cleanup.push(() => killGroup(cli).then(() => {}))
@@ -115,20 +129,26 @@ async function forgeEndsWithTheCli(c: Ctx, f: OnFork, sender: Address): Promise<
 	f.cleanup.push(() => (groupAlive(forge) ? endGroup(forge, 1_000).then(() => {}) : Promise.resolve()))
 	process.kill(cli.child.pid as number, "SIGKILL")
 	const killedAt = Date.now()
-	// A send already forwarded when the CLI died lands at once on the fork; only later ones count.
-	await Bun.sleep(1_000)
-	const landed = await count()
 	await until(async () => !groupAlive(forge), FORGE_EXIT_MS, "forge did not end by itself after the CLI was killed")
 	const forgeExitMs = Date.now() - killedAt
 	await f.fork.rpc("evm_mine", [])
 	await Bun.sleep(2_000)
-	const after = await count()
 	c.outputs.push(readFileSync(logFile, "utf8"))
-	if (after !== landed) throw new Error(`${after - landed} transactions landed after the CLI was killed (${landed} before)`)
-	c.log(
-		`[send-faults] CLI killed mid-deploy: forge ended by itself after ${(forgeExitMs / 1000).toFixed(1)} s, ${landed} landed, none after`,
+	const landed = await landedSince(f, from, sender)
+	const sendLog = filesUnder(join(c.dir, "runs-killed")).find((p) => p.endsWith("send-path.jsonl"))
+	const logged = new Set(
+		(sendLog ? readFileSync(sendLog, "utf8") : "")
+			.split("\n")
+			.filter(Boolean)
+			.map((l) => (JSON.parse(l) as { hash: Hex }).hash),
 	)
-	return { landed, forgeExitMs }
+	const unlogged = landed.filter((h) => !logged.has(h))
+	if (landed.length < KILL_AFTER || unlogged.length)
+		throw new Error(`${landed.length} transactions landed, ${unlogged.length} of them not in the send log: ${unlogged.join(", ")}`)
+	c.log(
+		`[send-faults] CLI killed mid-deploy: forge ended by itself after ${(forgeExitMs / 1000).toFixed(1)} s; ${landed.length} landed, each in the send log (${logged.size} hashes)`,
+	)
+	return { landed: landed.length, logged: logged.size, forgeExitMs }
 }
 
 /** No output, log, send log or forge file of any deploy holds a value of the keys the runs loaded. */
