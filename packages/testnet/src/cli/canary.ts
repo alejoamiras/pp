@@ -18,11 +18,11 @@ import { settleListed } from "../canary/settle"
 import { liveSpendIo } from "../checked-transfer"
 import { GuardError, type Mode, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
+import { checkOperator } from "../operator"
 import { loopback } from "../network"
 import { CanaryError, CanaryReport, outcomeOf } from "../report"
 import { journalTo } from "@pp/pp-env/send-log"
 import { cliArgs, report as emit, guarded, loadDeployment, logLine, main, runDir, sendLogPath } from "./common"
-import { assertOwnTarget } from "./context"
 import { l1Wallet } from "./wallet"
 
 type State = { burns: Burn[]; settled: Set<string> }
@@ -53,7 +53,7 @@ function exitContext(
 async function canary(file: string, mode: Mode, a: Extract<CanaryArgs, { kind: "run" }>, r: CanaryReport, s: State): Promise<void> {
 	const g = await guarded(file, mode, SECTIONS, true)
 	const { d } = g
-	assertOwnTarget(d)
+	await checkOperator(g.l1, d)
 	const shield = d.expected.amounts.shield ?? DEFAULT_SHIELD
 	if (shield < 1n || shield > d.expected.amounts.bridge)
 		throw new GuardError("amounts", `amounts.shield ${shield} must lie in [1, amounts.bridge]`)
@@ -84,8 +84,8 @@ async function canary(file: string, mode: Mode, a: Extract<CanaryArgs, { kind: "
 }
 
 async function settle(file: string, mode: Mode, r: CanaryReport, s: State): Promise<void> {
+	// No operator re-read: a settle only finishes burns already sent, which a refusal would strand.
 	const g = await guarded(file, mode, SECTIONS, true)
-	assertOwnTarget(g.d)
 	const key = readKeys(RUN_KEYS["canary-settle"], mode, { env: process.env }, l1AddressOf).CANARY_SENDER_KEY as Hex
 	const sender = l1Wallet(g.d, key, "canary sender", g.d.expected.canarySender, journalTo(sendLogPath(g.d, "canary", mode)))
 	await settleListed(exitContext(g, mode, sender, r, s))

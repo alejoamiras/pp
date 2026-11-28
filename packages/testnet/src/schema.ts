@@ -4,7 +4,7 @@
  * `pool` and `bridge` are promoted from a keyed run's candidate.
  */
 import z from "zod"
-import { isPinned, LOCAL, loopback, SEPOLIA } from "./network.ts"
+import { isLoopbackUrl, isPinned, LOCAL, loopback, SEPOLIA } from "./network.ts"
 
 export type { PinnedKind } from "./network.ts"
 export { isPinned, PINNED_URLS } from "./network.ts"
@@ -82,12 +82,29 @@ const expectedSchema = z
 	.strict()
 
 const routeSchema = z.object({ verifier: evmAddress, selector, codeHash: word }).strict()
+const verifierSchema = z.object({ verifier: evmAddress, codeHash: word }).strict()
 
+/** A proxy and the implementation its EIP-1967 slot names, each with the keccak256 of its runtime code. */
+const contractCodeSchema = z
+	.object({ proxy: evmAddress, proxyCodeHash: word, implementation: evmAddress, implementationCodeHash: word })
+	.strict()
+
+/**
+ * An operator's pool as read at `evidence`, where the fork rehearsal ran: what every signing command
+ * re-reads before it signs, so a moved proxy, a new implementation or a rerouted verifier stops the run.
+ */
 const operatorSchema = z
 	.object({
-		implementation: evmAddress,
-		implementationCodeHash: word,
-		depositRoute: routeSchema,
+		code: z
+			.object({
+				vault: contractCodeSchema,
+				entrypoint: contractCodeSchema,
+				keystore: contractCodeSchema,
+				aspRegistry: contractCodeSchema,
+			})
+			.strict(),
+		depositVerifier: verifierSchema,
+		ragequitVerifier: verifierSchema,
 		transactRoute1x1: routeSchema,
 		asset: z.object({ address: evmAddress, vettingFeeBps: z.number().int().min(0).max(10_000), minDeposit: decimal }).strict(),
 		evidence: z.object({ forkBlock: z.number().int().positive(), forkBlockHash: word }).strict(),
@@ -145,16 +162,43 @@ export const deploymentSchema = z
 	.superRefine((d, ctx) => {
 		const issue = (path: (string | number)[], message: string) => ctx.addIssue({ code: "custom", path, message })
 		if (d.target === "own") ownIssues(d, issue)
-		else if (d.pool && !isPinned("aspApi", d.pool.aspApiUrl))
-			issue(["pool", "aspApiUrl"], `not this target's ASP URL: ${d.pool.aspApiUrl}`)
+		else operatorIssues(d, issue)
 	})
 
 type Draft = {
 	bundle: string
-	operator?: unknown
+	operator?: { code: Record<PoolContract, { proxy: string }>; asset: { address: string } } | undefined
 	network: { l1ChainId: number; aspPort?: number | undefined }
 	expected?: { aspPostman?: string | undefined; poolDeployer?: string | undefined } | undefined
-	pool?: { aspApiUrl: string; accessRouter?: string | undefined; relay?: string | undefined } | undefined
+	pool?:
+		| ({ aspApiUrl: string; accessRouter?: string | undefined; relay?: string | undefined; asset: string } & Record<PoolField, string>)
+		| undefined
+}
+
+type PoolContract = "vault" | "entrypoint" | "keystore" | "aspRegistry"
+type PoolField = "poolVault" | "entrypoint" | "keystore" | "aspRegistry"
+const POOL_FIELD_OF: Record<PoolContract, PoolField> = {
+	vault: "poolVault",
+	entrypoint: "entrypoint",
+	keystore: "keystore",
+	aspRegistry: "aspRegistry",
+}
+const sameHex = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
+/**
+ * An operator's pool is reached at the operator's API, or at a loopback stand-in in a rehearsal (live
+ * runs pin it in `assertTransport`), and its `operator` block names the pool section's own contracts.
+ */
+function operatorIssues(d: Draft, issue: (path: (string | number)[], message: string) => void): void {
+	if (d.network.aspPort !== undefined) issue(["network", "aspPort"], "an operator's pool runs no mock ASP of ours")
+	if (d.pool && !isPinned("aspApi", d.pool.aspApiUrl) && !isLoopbackUrl(d.pool.aspApiUrl))
+		issue(["pool", "aspApiUrl"], `not this target's ASP URL: ${d.pool.aspApiUrl}`)
+	if (!d.pool || !d.operator) return
+	for (const [contract, field] of Object.entries(POOL_FIELD_OF) as [PoolContract, PoolField][])
+		if (!sameHex(d.operator.code[contract].proxy, d.pool[field]))
+			issue(["operator", "code", contract, "proxy"], `${d.operator.code[contract].proxy}, the pool section names ${d.pool[field]}`)
+	if (!sameHex(d.operator.asset.address, d.pool.asset))
+		issue(["operator", "asset", "address"], `${d.operator.asset.address}, the pool section names ${d.pool.asset}`)
 }
 
 function ownIssues(d: Draft, issue: (path: (string | number)[], message: string) => void): void {

@@ -17,7 +17,10 @@ export {
 	POOL_CONTRACTS,
 	type PoolCode,
 	type PoolContract,
+	ROUTER_LOCATION,
 	readPoolCode,
+	routeOf,
+	routeSlot,
 } from "./code.ts"
 
 export const SEPOLIA_CHAIN_ID = 11_155_111

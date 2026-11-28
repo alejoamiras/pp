@@ -54,11 +54,16 @@ export function loadDeployment(path: string): TestnetDeployment {
 	return parseDeployment(JSON.parse(readFileSync(path, "utf8")))
 }
 
-/** Clients over the file's endpoints; L1 reads outlast a lagging backend at the public chain's polling interval. */
+/**
+ * Clients over the file's endpoints; L1 reads outlast a lagging backend at the public chain's polling
+ * interval. CCIP-read is off: a contract the operator controls could otherwise answer a read with an
+ * `OffchainLookup` revert and have this process fetch a URL of its choosing.
+ */
 export function clientsOf(d: TestnetDeployment) {
 	const l1 = createPublicClient({
 		transport: l1Read(d.network.l1Rpc),
 		pollingInterval: PUBLIC_CHAIN_TIMING.pollingIntervalMs,
+		ccipRead: false,
 	}) as PublicClient
 	return { l1, node: () => createAztecNodeClient(d.network.aztecNode) }
 }

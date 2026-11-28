@@ -8,7 +8,7 @@ import { l1AddressOf } from "../accounts"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import { SEPOLIA } from "../network"
-import { assertOwnTarget } from "./context"
+import { assertOwnPool } from "./context"
 import { cliArgs, guarded, logLine, main, report, sendLogPath } from "./common"
 import { sendRpcOf } from "./wallet"
 
@@ -28,7 +28,7 @@ await main(async () => {
 	const { file, mode, values } = cliArgs(process.argv.slice(2), { owner: { type: "string", multiple: true } })
 	if (mode.kind === "rehearse") throw new GuardError("argv", "the local stack brings its own ASP; asp runs live or on a Sepolia fork")
 	const { d } = await guarded(file, mode, ["expected", "pool"], false)
-	assertOwnTarget(d)
+	assertOwnPool(d)
 	const owners = ownersOf(values.owner ?? [], d.expected)
 	const { accessRouter, aspRegistry, poolVault, entrypoint, deployBlock } = d.pool
 	if (!accessRouter) throw new GuardError("file", "the pool section names no access router")

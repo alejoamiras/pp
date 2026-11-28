@@ -23,3 +23,9 @@ export const isPinned = (kind: PinnedKind, url: string): boolean => (PINNED_URLS
 
 /** The loopback URL of a service this host runs on `port`, such as the own pool's mock ASP or the bot's snapshot server. */
 export const loopback = (port: number): string => `http://127.0.0.1:${port}`
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
+
+/** Whether `u` is a plain-http URL on this host, where only a rehearsal's own services listen. */
+export const isLoopbackUrl = (u: string): boolean =>
+	URL.canParse(u) && new URL(u).protocol === "http:" && LOOPBACK_HOSTS.has(new URL(u).hostname)

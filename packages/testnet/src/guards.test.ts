@@ -79,6 +79,32 @@ describe("the deployment file", () => {
 		).toBe(loopback(own.network.aspPort as number))
 	})
 
+	it("takes an operator block that names its pool's own contracts, and the operator's ASP or a loopback stand-in", () => {
+		const pool1 = committed.find(([f]) => f === "testnet-pool1.json")?.[1]
+		const other = `0x${"12".repeat(20)}`
+		const withCode = (vault: string) => ({
+			...pool1.operator,
+			code: { ...pool1.operator.code, vault: { ...pool1.operator.code.vault, proxy: vault } },
+		})
+		expect(() => parseDeployment({ ...pool1, operator: withCode(other) })).toThrow(/operator\.code\.vault\.proxy/)
+		expect(() =>
+			parseDeployment({ ...pool1, operator: { ...pool1.operator, asset: { ...pool1.operator.asset, address: other } } }),
+		).toThrow(/operator\.asset\.address/)
+		expect(() => parseDeployment({ ...pool1, network: { ...pool1.network, aspPort: 48602 } })).toThrow(/aspPort/)
+		expect(() => parseDeployment({ ...pool1, pool: { ...pool1.pool, aspApiUrl: "https://asp.example" } })).toThrow(/aspApiUrl/)
+		const standIn = parseDeployment({ ...pool1, pool: { ...pool1.pool, aspApiUrl: loopback(9000) } })
+		expect(() => assertTransport(standIn, LIVE, true)).toThrow(/operator's pinned ASP API/)
+		const fork = { kind: "rehearse-fork", url: "http://127.0.0.1:9545" } as const
+		const onFork = (aspApiUrl: string) =>
+			parseDeployment({
+				...pool1,
+				network: { ...pool1.network, l1Rpc: fork.url, l1SendRpc: fork.url },
+				pool: { ...pool1.pool, aspApiUrl },
+			})
+		expect(() => assertTransport(onFork(loopback(9000)), fork, false)).not.toThrow()
+		expect(() => assertTransport(onFork(pool1.pool.aspApiUrl), fork, false)).toThrow(/loopback stand-in/)
+	})
+
 	it("projects a stack manifest without the factory's transaction once pool and bridge exist, and the bot once expected names it", () => {
 		expect(() => toStackManifest(configuredTarget(own))).toThrow(/no pool, bridge sections/)
 		const word = `0x${"11".repeat(32)}` as Hex
