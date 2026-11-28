@@ -131,8 +131,11 @@ The same steps serve the operator's poolId 1 from a `pool1` deployment file. Onl
   operator set for automated clients:
   - each ASP request goes out at most once every 5 minutes (the public key once an hour), whatever
     its answer, and every tab shares that answer;
-  - once their 5 minutes are up, the leaves are asked for again only if the root has changed, or if
-    the last leaves or root request failed; asking for them refreshes the root first;
+  - once their 5 minutes are up, the leaves are asked for again only if the root has changed since
+    they were fetched (a root answer that differs only in its spelling or its other fields is the
+    same root), or if the last leaves request failed or went out while the root request was failing;
+    asking for them refreshes the root first, and a root request that fails keeps the leaves already
+    held;
   - note events are never asked of it; the page reads them from Sepolia;
   - the limits are kept per `serve` process: a restart starts them over.
 - So a deposit shows as approved only once `serve` has fetched a new root and then the leaves under it:
