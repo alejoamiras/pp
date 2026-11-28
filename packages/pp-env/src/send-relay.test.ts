@@ -52,6 +52,22 @@ async function call(method: string, params: unknown[], url = relay.url) {
 }
 const admitAll = () =>
 	send.set((m, p) => (m === "eth_sendRawTransaction" ? { result: keccak256(p[0] as `0x${string}`) } : { result: null }))
+/**
+ * Starts `r.stop()` while holding the registry's lock, which keeps it waiting on its port row's release
+ * for `ms`, and counts every request of any method the send endpoint gets from the moment stop() begins.
+ */
+async function requestsWhileStopping(r: SendRelay, ms: number): Promise<number> {
+	let stopping: Promise<void> | undefined
+	let during = -1
+	await withFileLock(`${join(dir, "ports.md")}.lock`, { staleMs: 15_000, waitMs: 1_000 }, async () => {
+		const before = send.calls.length
+		stopping = r.stop()
+		await Bun.sleep(ms)
+		during = send.calls.length - before
+	})
+	await stopping
+	return during
+}
 
 describe("the send relay", () => {
 	it("sends only eth_sendRawTransaction to the send endpoint, from a loopback port it registered", async () => {
@@ -190,20 +206,31 @@ describe("the send relay", () => {
 		// The second refusal starts a 200 ms backoff; stop() lands inside it.
 		while (send.sends().length < 2) await Bun.sleep(10)
 		await Bun.sleep(30)
-		let stopping: Promise<void> | undefined
-		let after = -1
-		// Holding the registry's lock keeps stop() waiting on its port row's release.
-		await withFileLock(`${join(dir, "ports.md")}.lock`, { staleMs: 15_000, waitMs: 1_000 }, async () => {
-			const before = send.sends().length
-			stopping = r.stop()
-			await Bun.sleep(1_000)
-			after = send.sends().length - before
-		})
-		await stopping
+		expect(await requestsWhileStopping(r, 1_000)).toBe(0)
 		await sending
-		expect(after).toBe(0)
 		admitAll()
 		expect(await path.send(await signed(41))).toBe(keccak256(await signed(41)))
+		path.close()
+	})
+
+	it("pushes an admitted send the read endpoint never shows no more once stop() begins, the port release held up", async () => {
+		admitAll()
+		read.set(() => ({ result: null }))
+		const path = new SendPath({
+			readUrl: read.url,
+			sendUrl: send.url,
+			chainId: 11155111,
+			senders: [SENDER.address],
+			visibilityMs: 100,
+			visibilityPollMs: 10,
+		})
+		const r = await startSendRelay({ path, owner: "send-relay-test-5" })
+		const raw = await signed(50)
+		expect((await call("eth_sendRawTransaction", [raw], r.url)).result).toBe(keccak256(raw))
+		// Unseen on the read endpoint, the same bytes go again every 100 ms; stop() begins after the first re-push.
+		while (send.sends().length < 2) await Bun.sleep(5)
+		expect(await requestsWhileStopping(r, 600)).toBe(0)
+		expect(await path.visible(keccak256(raw))).toBeUndefined()
 		path.close()
 	})
 })
