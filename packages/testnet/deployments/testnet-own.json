@@ -35,5 +35,16 @@
 			"note": "100000000",
 			"bridge": "100000000"
 		}
+	},
+	"pool": {
+		"poolVault": "0xa15d2CbA5b917d1b93000F466e697C98A7b289b6",
+		"entrypoint": "0x0966eF7BB777dFA5158A8B5D359daf39aCBE0471",
+		"aspRegistry": "0xC1E221BfBEf467A7BEa5f96BE5E6FF1a4C8B9146",
+		"keystore": "0xcD420390188746C8f99D54306d57F3CcF6877723",
+		"asset": "0x01ECb3fC7e1E7eaFb80D9602119171664F888A4c",
+		"deployBlock": "12227015",
+		"aspApiUrl": "http://127.0.0.1:48602",
+		"accessRouter": "0x4004b8BB7dC48257153e2cd6Cc44e4D9dDa8DD3f",
+		"relay": "0x336a187960879EFB99d00CABb46208CF2Be486dF"
 	}
 }
