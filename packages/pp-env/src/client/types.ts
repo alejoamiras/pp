@@ -43,6 +43,12 @@ export type SpendRequest = { processor: Address; data: Hex; asset: Address; amou
 export interface PoolUser {
 	address: Address
 	registerKeystore(): Promise<void>
+	/**
+	 * Signs and sends nothing: the keystore already holds this user's registration, its nullifying key
+	 * hash and its viewing key, both as this user's secret-derivation signature derives them.
+	 * @throws Error naming the registration missing or the key that differs
+	 */
+	checkKeystore(): Promise<void>
 	deposit(p: { asset: Address; value: bigint }): Promise<{ label: bigint; commitment: bigint }>
 	/** Scans the chain for this user's notes, spends and change. */
 	sync(): Promise<void>

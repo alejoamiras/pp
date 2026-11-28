@@ -115,8 +115,9 @@ async function wireSession(
 	const hashService = await PoseidonHashService.create()
 	const merkleService = new MerkleService({ hashService })
 	const noteComputationService = new NoteComputationService({ hashService, cryptoService })
+	const interactors = contracts(config, wallet, merkleService)
 	const session = createEvmPoolSession({
-		...contracts(config, wallet, merkleService),
+		...interactors,
 		chainId: config.chainId,
 		ownerAddress: wallet.account.address,
 		noteManager,
@@ -129,7 +130,7 @@ async function wireSession(
 		merkleService,
 		relayerInteractor: noRelayer(),
 	})
-	return { session, noteManager }
+	return { session, noteManager, keystore: interactors.keystoreInteractor }
 }
 
 function pickInput(noteManager: NoteManager, asset: Address, input: bigint | undefined): Note {
@@ -209,13 +210,23 @@ export async function openPoolUser(live: ClientConfig, o: { wallet: LocalWallet;
 		{ signature, signerAddress: owner, addressHash: keccak256(owner), revocableKeyIndex: "0x0" },
 		{ cryptoService },
 	)
-	const { session, noteManager } = await wireSession(config, wallet, keystoreManager, cryptoService, prover)
+	const { session, noteManager, keystore } = await wireSession(config, wallet, keystoreManager, cryptoService, prover)
 	const spend = spender(config, owner, signature, prover)
 	const user: PoolUser = {
 		address: owner,
 		async registerKeystore() {
 			const receipts = await session.registerKeystore()
 			if (receipts.some((r) => !r.status)) throw new Error("keystore registration reverted")
+		},
+		async checkKeystore() {
+			// The prepare step derives the nullifying key hash and reads whether both halves are set; it signs nothing.
+			const prepared = await session.prepareRegisterKeystore()
+			if (!prepared.alreadyRegistered) throw new Error(`the keystore holds no complete registration for ${owner}`)
+			const [nullifying, viewing] = await Promise.all([keystore.getNullifyingKeyHash(owner), keystore.getViewingKey(owner)])
+			if (BigInt(nullifying) !== BigInt(prepared.nullifyingKeyHash))
+				throw new Error(`${owner} is registered under another nullifying key than its signature derives`)
+			if (BigInt(viewing) !== BigInt(keystoreManager.getViewingKeyPair().publicKey))
+				throw new Error(`${owner} is registered under another viewing key than its signature derives`)
 		},
 		async deposit({ asset, value }) {
 			const prepared = await session.prepareDeposit({ tokenId: asset, value: toHex(value) as SdkHex })
