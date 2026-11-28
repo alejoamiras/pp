@@ -14,10 +14,14 @@ import { journalTo } from "@pp/pp-env/send-log"
 import { assertSendChain, cliArgs, clientsOf, loadDeployment, main, report, sendLogPath } from "./common"
 import { l1Wallet } from "./wallet"
 
-/** The file's endpoint, then, live, every other pinned L1 URL: a backend may not have seen the pending transaction. */
+/**
+ * The file's endpoint, then, live, every other pinned L1 URL, with redirects refused: a backend may not
+ * have seen the pending transaction.
+ */
 function readersOf(d: TestnetDeployment, l1: TxReader, live: boolean): TxReader[] {
 	const others = live ? PINNED_URLS.l1Rpc.filter((u) => u !== d.network.l1Rpc) : []
-	return [l1, ...others.map((url) => createPublicClient({ transport: http(url) }) as TxReader)]
+	const read = (url: string) => http(url, { fetchOptions: { redirect: "error" } })
+	return [l1, ...others.map((url) => createPublicClient({ transport: read(url) }) as TxReader)]
 }
 
 await main(async () => {
