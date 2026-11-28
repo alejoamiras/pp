@@ -492,13 +492,16 @@ describe("pauseEntries", () => {
 				}),
 			})
 
-		it("names an underpriced replacement as an occupied nonce", async () => {
-			const { l1, guardian } = chainOf()
-			;(guardian as { sendRawTransaction: unknown }).sendRawTransaction = async () => {
-				throw conflict("-32003 replacement transaction underpriced")
-			}
-			await expect(pauseEntries(target(l1), guardian, FAST)).rejects.toMatchObject({ code: "PAUSE_NONCE_OCCUPIED", nonce: 5 })
-		})
+		it.each(["-32003 replacement transaction underpriced", "-32000 replacement underpriced"])(
+			"names %s as an occupied nonce",
+			async (words) => {
+				const { l1, guardian } = chainOf()
+				;(guardian as { sendRawTransaction: unknown }).sendRawTransaction = async () => {
+					throw conflict(words)
+				}
+				await expect(pauseEntries(target(l1), guardian, FAST)).rejects.toMatchObject({ code: "PAUSE_NONCE_OCCUPIED", nonce: 5 })
+			},
+		)
 
 		it("takes nonce too low as the nonce taken, and finds its own mined pause", async () => {
 			const { c, l1, guardian } = chainOf()

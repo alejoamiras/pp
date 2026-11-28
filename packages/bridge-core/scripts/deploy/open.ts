@@ -426,7 +426,7 @@ async function sendPause(
 		// geth's and anvil's answers to a transaction they already hold.
 		if (/already known|transaction already imported/i.test(text)) return sent
 		if (/nonce too low/i.test(text)) return { ...sent, taken: true }
-		if (/replacement transaction underpriced|replacement fee too low/i.test(text))
+		if (/replacement (?:transaction )?underpriced|replacement fee too low/i.test(text))
 			throw new PauseError(
 				"PAUSE_NONCE_OCCUPIED",
 				signed.nonce,
