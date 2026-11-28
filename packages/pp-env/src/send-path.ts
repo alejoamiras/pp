@@ -26,7 +26,9 @@
  * An endpoint knows a transaction when it answers `eth_getTransactionByHash` with HTTP 200 and that hash.
  * After an admission the read endpoint must show the hash within `visibilityMs`; each time it does not,
  * the same bytes go to the send endpoint again, until an answer other than an admission or a refusal.
- * Every attempt and answer goes to `journal`. Both endpoints are fetched with redirects refused.
+ * Every attempt goes to `journal` with its hash and nonce before its bytes can leave, and its answer
+ * after, so the log holds every send that could have reached an endpoint; an attempt the journal does
+ * not take is never sent. Both endpoints are fetched with redirects refused.
  */
 import { type Address, type Hex, isAddressEqual, keccak256, parseTransaction, recoverTransactionAddress } from "viem"
 
@@ -281,6 +283,7 @@ export class SendPath {
 
 	private async attempt(raw: Hex, tx: SentTx, n: number, timeoutMs: number, stop?: AbortSignal): Promise<Outcome> {
 		const body = JSON.stringify({ jsonrpc: "2.0", id: n, method: "eth_sendRawTransaction", params: [raw] })
+		this.note(tx, "send", `attempt ${n}: sending`)
 		let out: Outcome
 		try {
 			const { status, text } = await postJson(this.o.sendUrl, body, timeoutMs, stop)
@@ -313,7 +316,12 @@ export class SendPath {
 
 	private admitted(raw: Hex, tx: SentTx, stop?: AbortSignal): Hex {
 		this.sent.set(tx.hash, tx)
-		if (!this.watches.has(tx.hash)) this.watches.set(tx.hash, this.watch(raw, tx, stop))
+		if (this.watches.has(tx.hash)) return tx.hash
+		// A watch whose journal fails ends unseen rather than rejecting where nobody may await it.
+		this.watches.set(
+			tx.hash,
+			this.watch(raw, tx, stop).catch(() => undefined),
+		)
 		return tx.hash
 	}
 

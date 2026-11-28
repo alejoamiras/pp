@@ -312,6 +312,33 @@ describe("a send", () => {
 		expect(send.sends()).toEqual([raw])
 	})
 
+	it("logs each attempt's hash and nonce before its bytes leave, re-pushes included, and sends nothing it cannot log", async () => {
+		const raw = await signed(19)
+		const entries: { hash: Hex; nonce: number; event: string }[] = []
+		const seen: string[][] = []
+		const answers: StubAnswer[] = [{ status: 429 }]
+		send.set((m) => {
+			if (m !== "eth_sendRawTransaction") return { result: null }
+			seen.push(entries.filter((e) => e.event.endsWith(": sending")).map((e) => e.event))
+			return answers.shift() ?? { result: keccak256(raw) }
+		})
+		read.set((m, p) => (m === "eth_getTransactionByHash" && send.sends().length >= 3 ? { result: { hash: p[0] } } : { result: null }))
+		const p = path({ visibilityMs: 50, visibilityPollMs: 10, journal: (e) => entries.push(e) })
+		expect(await p.visible(await p.send(raw))).toBeGreaterThanOrEqual(50)
+		p.close()
+		const sending = ["attempt 1: sending", "attempt 2: sending", "attempt 101: sending"]
+		expect(seen).toEqual([sending.slice(0, 1), sending.slice(0, 2), sending])
+		expect(entries.every((e) => e.hash === keccak256(raw) && e.nonce === 19)).toBe(true)
+
+		const unlogged = path({
+			journal: () => {
+				throw new Error("disk full")
+			},
+		})
+		await expect(unlogged.send(await signed(20))).rejects.toThrow("disk full")
+		expect(send.sends()).toEqual([raw, raw, raw])
+	})
+
 	it("goes again as the same bytes when the read endpoint does not show it in time", async () => {
 		const raw = await signed(7)
 		send.set((m) => (m === "eth_sendRawTransaction" ? { result: keccak256(raw) } : { result: null }))
