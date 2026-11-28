@@ -57,7 +57,8 @@ export type SendRelay = {
 	/** Every send the path did not admit, in order. */
 	failures(): readonly SendPathError[]
 	/**
-	 * Closes the listener, ends the watches and sends of a path the relay made, and drops the port row. Idempotent.
+	 * Ends the sends and watches the relay started before it awaits anything, then closes the listener and
+	 * a path it made, and drops the port row. Idempotent.
 	 * @throws Error when the registry did not drop the row; the row's liveness reaping still frees it
 	 */
 	stop(): Promise<void>
@@ -82,6 +83,8 @@ class Relay {
 	progressAt = Date.now()
 
 	readonly path: SendPath
+	/** Aborted first when the relay stops: the sends and watches it started forward nothing more, on a path that may outlive it. */
+	readonly stopping = new AbortController()
 	private readonly freshMs: number
 	private readonly readBudgetMs: number
 
@@ -129,7 +132,7 @@ class Relay {
 		const raw = Array.isArray(c.params) ? c.params[0] : undefined
 		if (typeof raw !== "string") return gaveUp(c.id, "refused: no raw transaction")
 		try {
-			return reply(c.id, { result: await this.path.send(raw as Hex) })
+			return reply(c.id, { result: await this.path.send(raw as Hex, this.stopping.signal) })
 		} catch (e) {
 			if (!(e instanceof SendPathError)) return gaveUp(c.id, `send failed: ${(e as Error).message}`)
 			this.failures.push(e)
@@ -239,6 +242,7 @@ export async function startSendRelay(o: SendRelayOptions): Promise<SendRelay> {
 		async stop() {
 			if (stopped) return
 			stopped = true
+			relay.stopping.abort()
 			if (owned) path.close()
 			await server.stop(true)
 			if (!(await release())) throw new Error(`the port registry did not drop the send relay's row for port ${port}`)

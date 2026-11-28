@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { withFileLock } from "@pp/run-isolation/lock"
 import { keccak256 } from "viem"
 import { SendPath } from "./send-path.ts"
 import { SENDER, STRANGER, signed, stub } from "./send-path.fixtures.ts"
@@ -171,6 +172,38 @@ describe("the send relay", () => {
 		})
 		await expect(path.send(other)).rejects.toThrow(/would reuse nonce 30/)
 		expect(await path.send(await signed(31))).toBe(keccak256(await signed(31)))
+		path.close()
+	})
+	it("forwards nothing more from a send backing off after a 429 once stop() begins, the port release held up, and leaves the caller's path open", async () => {
+		read.set(() => ({ result: null }))
+		send.set((m) => (m === "eth_sendRawTransaction" ? { status: 429 } : { result: null }))
+		const path = new SendPath({
+			readUrl: read.url,
+			sendUrl: send.url,
+			chainId: 11155111,
+			senders: [SENDER.address],
+			delayMs: 100,
+			budgetMs: 10_000,
+		})
+		const r = await startSendRelay({ path, owner: "send-relay-test-4" })
+		const sending = call("eth_sendRawTransaction", [await signed(40)], r.url).catch(() => undefined)
+		// The second refusal starts a 200 ms backoff; stop() lands inside it.
+		while (send.sends().length < 2) await Bun.sleep(10)
+		await Bun.sleep(30)
+		let stopping: Promise<void> | undefined
+		let after = -1
+		// Holding the registry's lock keeps stop() waiting on its port row's release.
+		await withFileLock(`${join(dir, "ports.md")}.lock`, { staleMs: 15_000, waitMs: 1_000 }, async () => {
+			const before = send.sends().length
+			stopping = r.stop()
+			await Bun.sleep(1_000)
+			after = send.sends().length - before
+		})
+		await stopping
+		await sending
+		expect(after).toBe(0)
+		admitAll()
+		expect(await path.send(await signed(41))).toBe(keccak256(await signed(41)))
 		path.close()
 	})
 })

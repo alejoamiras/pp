@@ -200,12 +200,29 @@ export async function checkEnvelope(raw: Hex, chainId: number, senders: readonly
 	return { hash, nonce, sender }
 }
 
-export async function postJson(url: string, body: string, timeoutMs: number): Promise<{ status: number; text: string }> {
-	const res = await fetch(url, { method: "POST", headers: JSON_HEADERS, body, redirect: "error", signal: AbortSignal.timeout(timeoutMs) })
+export async function postJson(
+	url: string,
+	body: string,
+	timeoutMs: number,
+	stop?: AbortSignal,
+): Promise<{ status: number; text: string }> {
+	const timeout = AbortSignal.timeout(timeoutMs)
+	const signal = stop ? AbortSignal.any([timeout, stop]) : timeout
+	const res = await fetch(url, { method: "POST", headers: JSON_HEADERS, body, redirect: "error", signal })
 	return { status: res.status, text: await res.text() }
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, Math.max(0, ms)))
+/** A wait that `stop` cuts short. */
+const pause = (ms: number, stop?: AbortSignal) =>
+	new Promise<void>((resolve) => {
+		const t = setTimeout(done, Math.max(0, ms))
+		function done() {
+			clearTimeout(t)
+			stop?.removeEventListener("abort", done)
+			resolve()
+		}
+		stop?.addEventListener("abort", done, { once: true })
+	})
 const short = (event: string) => event.replace(LONG_HEX, (h) => `${h.slice(0, 10)}…(${(h.length - 2) / 2} bytes)`).slice(0, MAX_DETAIL)
 /** Whether an `eth_getTransactionByHash` answer names `hash`: anything else is no proof. */
 const names = (status: number, text: string, hash: Hex) => {
@@ -262,11 +279,11 @@ export class SendPath {
 		this.o.journal({ at: new Date().toISOString(), hash: tx.hash, nonce: tx.nonce, endpoint, event: short(event) })
 	}
 
-	private async attempt(raw: Hex, tx: SentTx, n: number, timeoutMs: number): Promise<Outcome> {
+	private async attempt(raw: Hex, tx: SentTx, n: number, timeoutMs: number, stop?: AbortSignal): Promise<Outcome> {
 		const body = JSON.stringify({ jsonrpc: "2.0", id: n, method: "eth_sendRawTransaction", params: [raw] })
 		let out: Outcome
 		try {
-			const { status, text } = await postJson(this.o.sendUrl, body, timeoutMs)
+			const { status, text } = await postJson(this.o.sendUrl, body, timeoutMs, stop)
 			out = classifySend(status, text, tx.hash)
 		} catch (e) {
 			out = classifyThrown(e)
@@ -294,28 +311,28 @@ export class SendPath {
 		return false
 	}
 
-	private admitted(raw: Hex, tx: SentTx): Hex {
+	private admitted(raw: Hex, tx: SentTx, stop?: AbortSignal): Hex {
 		this.sent.set(tx.hash, tx)
-		if (!this.watches.has(tx.hash)) this.watches.set(tx.hash, this.watch(raw, tx))
+		if (!this.watches.has(tx.hash)) this.watches.set(tx.hash, this.watch(raw, tx, stop))
 		return tx.hash
 	}
 
 	/** What one outcome ends in: the hash, an error, or undefined when the same bytes go again. */
-	private async settle(raw: Hex, tx: SentTx, out: Outcome): Promise<Hex | SendPathError | undefined> {
+	private async settle(raw: Hex, tx: SentTx, out: Outcome, stop?: AbortSignal): Promise<Hex | SendPathError | undefined> {
 		switch (out.kind) {
 			case "admitted":
 			case "known":
-				return this.admitted(raw, tx)
+				return this.admitted(raw, tx, stop)
 			case "other-hash":
 				return new SendPathError("other-hash", `the send endpoint answered ${out.got} for ${tx.hash}`, tx)
 			case "final": {
-				if (await this.known(tx)) return this.admitted(raw, tx)
+				if (await this.known(tx)) return this.admitted(raw, tx, stop)
 				const final = new SendPathError("final", `${tx.hash} (nonce ${tx.nonce}) was refused: ${out.detail}`, tx, out)
 				this.finals.set(tx.hash, final)
 				return final
 			}
 			case "conflict":
-				if (await this.known(tx)) return this.admitted(raw, tx)
+				if (await this.known(tx)) return this.admitted(raw, tx, stop)
 				return new SendPathError("conflict", `${tx.hash} lost nonce ${tx.nonce} to another transaction`, tx, undefined, out.detail)
 			default:
 				return undefined
@@ -351,45 +368,50 @@ export class SendPath {
 	}
 
 	/**
-	 * Sends `raw` under the rules above and resolves to its local hash once it is admitted.
+	 * Sends `raw` under the rules above and resolves to its local hash once it is admitted. Once `stop`
+	 * aborts, this send and the visibility watch it started forward nothing more, as if the path had
+	 * closed for them alone; bytes already under way keep the signal of the send that started them.
 	 * @throws SendPathError naming the hash and nonce of a send that was not admitted
 	 */
-	async send(raw: Hex): Promise<Hex> {
+	async send(raw: Hex, stop?: AbortSignal): Promise<Hex> {
 		const tx = await checkEnvelope(raw, this.o.chainId, this.o.senders)
 		this.claim(tx)
 		const under = this.inflight.get(tx.hash)
 		if (under) return under
-		const run = this.attempts(raw, tx).finally(() => this.inflight.delete(tx.hash))
+		const run = this.attempts(raw, tx, stop).finally(() => this.inflight.delete(tx.hash))
 		this.inflight.set(tx.hash, run)
 		return run
 	}
 
-	/** Why no further attempt of `tx` may leave: a final answer it got, or the path closed. */
-	private ended(tx: SentTx): SendPathError | undefined {
+	/** Why no further attempt of `tx` may leave: a final answer it got, the path closed, or its sender stopped. */
+	private ended(tx: SentTx, stop?: AbortSignal): SendPathError | undefined {
 		const final = this.finals.get(tx.hash)
 		if (final) return final
 		if (this.closed) return new SendPathError("closed", `${tx.hash} (nonce ${tx.nonce}) was not admitted: the send path closed`, tx)
+		if (stop?.aborted) return new SendPathError("closed", `${tx.hash} (nonce ${tx.nonce}) was not admitted: its sender stopped`, tx)
 		return undefined
 	}
 
-	private async attempts(raw: Hex, tx: SentTx): Promise<Hex> {
+	private async attempts(raw: Hex, tx: SentTx, stop?: AbortSignal): Promise<Hex> {
 		const deadline = Date.now() + this.o.budgetMs
 		// What the last attempt gets of the budget at least; a shorter one could not be answered.
 		const reserve = Math.min(1_000, this.o.budgetMs / 10)
 		let first: string | undefined
 		for (let n = 1; ; n++) {
-			const ended = this.ended(tx)
+			const ended = this.ended(tx, stop)
 			if (ended) throw ended
-			const out = await this.attempt(raw, tx, n, Math.min(this.o.attemptTimeoutMs, Math.max(1, deadline - Date.now())))
-			const end = await this.settle(raw, tx, out)
+			const out = await this.attempt(raw, tx, n, Math.min(this.o.attemptTimeoutMs, Math.max(1, deadline - Date.now())), stop)
+			const end = await this.settle(raw, tx, out, stop)
 			if (typeof end === "string") return end
 			if (end) throw end
 			first ??= "detail" in out ? out.detail : out.kind
 			const wait = Math.min(this.o.delayMs * 2 ** (n - 1), 4_000, deadline - Date.now() - reserve)
 			if (wait < 0) break
-			await sleep(wait)
+			await pause(wait, stop)
 		}
-		if (await this.known(tx)) return this.admitted(raw, tx)
+		const ended = this.ended(tx, stop)
+		if (ended) throw ended
+		if (await this.known(tx)) return this.admitted(raw, tx, stop)
 		throw new SendPathError(
 			"budget",
 			`${tx.hash} (nonce ${tx.nonce}) was not admitted within ${this.o.budgetMs} ms`,
@@ -410,21 +432,22 @@ export class SendPath {
 	}
 
 	/** Resolves to the ms from admission until the read endpoint showed the hash, or undefined if it never did. */
-	private async watch(raw: Hex, tx: SentTx): Promise<number | undefined> {
+	private async watch(raw: Hex, tx: SentTx, stop?: AbortSignal): Promise<number | undefined> {
 		const start = Date.now()
 		let pushedAt = start
 		let pushes = 0
-		while (!this.closed) {
+		const halted = () => this.closed || stop?.aborted === true
+		while (!halted()) {
 			if (await this.visibleOnRead(tx)) {
 				this.note(tx, "read", `visible after ${Date.now() - start} ms`)
 				return Date.now() - start
 			}
-			if (this.closed) break
+			if (halted()) break
 			if (Date.now() - pushedAt >= this.o.visibilityMs) {
 				if (pushes === this.o.rePushes) break
 				pushes++
 				pushedAt = Date.now()
-				const out = await this.attempt(raw, tx, 100 + pushes, LOOKUP_TIMEOUT_MS)
+				const out = await this.attempt(raw, tx, 100 + pushes, LOOKUP_TIMEOUT_MS, stop)
 				if (!["admitted", "known", "refused", "ambiguous"].includes(out.kind)) {
 					this.note(tx, "read", `watch ended: a re-push was answered ${out.kind}`)
 					return undefined
@@ -432,7 +455,7 @@ export class SendPath {
 			}
 			await idle(this.o.visibilityPollMs)
 		}
-		this.note(tx, "read", this.closed ? "watch closed" : `not visible after ${pushes} re-pushes`)
+		this.note(tx, "read", halted() ? "watch closed" : `not visible after ${pushes} re-pushes`)
 		return undefined
 	}
 
