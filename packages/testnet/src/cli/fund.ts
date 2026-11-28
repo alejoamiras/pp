@@ -6,39 +6,18 @@
 // included, and whether the plan fits FUNDING_LIMITS (at most 0.8 ETH spent, at least 1.0 ETH kept). A
 // live run refuses a plan that does not, before reading its key, and checks the deployer's live balance
 // against them again before each send. A fork run funds fresh keys from the fork's own ETH, so the limits
-// only show in its quote. Each top-up carries the gas limit and fee caps it was checked at.
+// only show in its quote. Each top-up carries the gas limit and fee caps it was checked at, and the nonce
+// the snapshot gives it, so a transaction that lands after the snapshot makes it fail rather than repeat.
 import { journalTo } from "@pp/pp-env/send-log"
 import { type Address, createPublicClient, formatEther, type PublicClient } from "viem"
 import { l1AddressOf } from "../accounts"
-import {
-	assertTopUp,
-	assertWithinLimits,
-	fundingPlan,
-	limitBreach,
-	type Plan,
-	type Recipient,
-	recipientsOf,
-	type SnapshotCounts,
-	staleSnapshot,
-} from "../funding"
+import { fundingPlan, limitBreach, type Recipient, recipientsOf, type SnapshotCounts, staleSnapshot } from "../funding"
 import { GuardError, readKeys } from "../guards"
 import { RUN_KEYS } from "../keys"
 import type { TestnetDeployment } from "../schema"
 import { cliArgs, guarded, main, report, sendLogPath } from "./common"
+import { sendTopUps } from "./top-ups"
 import { l1Read, l1Sender, sendRpcOf } from "./wallet"
-
-/** A top-up the send endpoint took must show on the read endpoint by then, or the run stops. */
-const VISIBLE_WITHIN_MS = 60_000
-const sleep = (ms: number) => new Promise<undefined>((r) => setTimeout(() => r(undefined), ms).unref())
-
-type Run = {
-	l1: PublicClient
-	sender: ReturnType<typeof l1Sender>
-	deployer: Address
-	/** The deployer's balance when the plan was made; `undefined` skips the live limits. */
-	limitsFrom: bigint | undefined
-	fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
-}
 
 /**
  * Every balance the plan needs and the deployer's count, at one block, then the deployer's pending count
@@ -59,39 +38,6 @@ async function readState(d: TestnetDeployment, l1: PublicClient, deployer: Addre
 	)
 	const counts: SnapshotCounts = { block, atSnapshot, pendingRead: pendingRead as number, pendingSend: pendingSend as number }
 	return { fees, deployerBalance, balances: balances as bigint[], counts }
-}
-
-/** Sends the plan's top-ups one at a time, each shown on the read endpoint and landed before the next. */
-async function sendTopUps(plan: Plan, r: Run): Promise<void> {
-	const { wallet, path } = r.sender
-	let sent = 0n
-	for (const s of plan.sends) {
-		const roles = s.roles.join(" ")
-		if (s.amount === 0n) {
-			report("funded", { roles, address: s.address, balanceBefore: s.balance, sent: 0n })
-			continue
-		}
-		if (r.limitsFrom !== undefined) {
-			const now = await r.l1.getBalance({ address: r.deployer })
-			assertWithinLimits({ start: r.limitsFrom, now, sent, amount: s.amount, gasCost: s.transferGas * r.fees.maxFeePerGas })
-		}
-		const hash = await wallet.sendTransaction({ to: s.address, value: s.amount, chain: wallet.chain, gas: s.transferGas, ...r.fees })
-		sent += s.amount
-		const accepted = Date.now()
-		const visibleMs = await Promise.race([path.visible(hash), sleep(VISIBLE_WITHIN_MS)])
-		if (visibleMs === undefined)
-			throw new Error(`the top-up ${hash} to ${s.address} did not show on the read endpoint within ${VISIBLE_WITHIN_MS / 1000} s`)
-		assertTopUp(await r.l1.waitForTransactionReceipt({ hash, timeout: 600_000 }), hash, r.deployer)
-		report("funded", {
-			roles,
-			address: s.address,
-			balanceBefore: s.balance,
-			sent: s.amount,
-			txHash: hash,
-			visibleS: (visibleMs / 1000).toFixed(1),
-			receiptS: ((Date.now() - accepted) / 1000).toFixed(1),
-		})
-	}
 }
 
 await main(async () => {
@@ -137,7 +83,8 @@ await main(async () => {
 	const sender = l1Sender(d, L1_DEPLOYER_KEY as `0x${string}`, "L1 deployer", deployer, journalTo(sendLogPath(d, "fund", mode)))
 	try {
 		const caps = { maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas }
-		await sendTopUps(plan, { l1, sender, deployer, limitsFrom: live ? deployerBalance : undefined, fees: caps })
+		const limitsFrom = live ? deployerBalance : undefined
+		await sendTopUps(plan, { l1, sender, deployer, limitsFrom, fees: caps, nonce: counts.atSnapshot })
 	} finally {
 		sender.path.close()
 	}

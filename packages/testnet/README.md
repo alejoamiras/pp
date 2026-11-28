@@ -53,7 +53,9 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
   Every balance is read at one block, and the deployer's count there must equal its pending count on
   both endpoints, so a top-up that landed after that block, or is still pending, is never planned
   again; otherwise the run is refused, to be run again. Each top-up carries the gas limit and fee caps
-  it was checked at, so it cannot cost more than the check allowed.
+  it was checked at, so it cannot cost more than the check allowed, and the nonce its place in the
+  plan gives it from the snapshot count, so a transaction that lands after the snapshot makes it fail
+  at the send rather than pay twice.
 - The budgets are Prague gas, which the rehearsals check, times live Sepolia's measured cost over Prague
   for the role's kind of transaction: 7.67 for creations, 5.01 for fresh storage. Sepolia's fork since
   2026-10-06 reprices state creation, which a rehearsal on anvil 1.7.1 cannot show; a role still short
