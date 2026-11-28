@@ -1,16 +1,25 @@
 import { spawnSync } from "node:child_process"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { expect, test } from "bun:test"
 import { REAL_WALLET_TESTS } from "../../packages/e2e-kit/real-wallet/count-reporter"
+import { FORK_CASES } from "../../packages/sepolia-fork/src/forge"
 import {
 	boundedSuite,
+	countVerdict,
+	expectedLine,
 	expectedPassed,
 	forgePassed,
 	SEPOLIA_FORK_ENDPOINT,
 	SUITES,
 	sepoliaForkPassed,
 	verdict,
+	vitestListed,
 	vitestPassed,
 } from "../nightly"
+
+const ROOT = join(import.meta.dir, "..", "..")
+const SOURCE = readFileSync(join(ROOT, "scripts", "nightly.ts"), "utf8")
 
 const forgeSuite = SUITES[0]
 
@@ -35,7 +44,8 @@ test("suite names are unique", () => {
 })
 
 test("a bounded suite keeps the caller's seed, prints it again on failure, and passes only at its count", () => {
-	const suite = boundedSuite({ name: "probe", cwd: ".", argv: ["bash", "-c", "exit 3"], minutes: 1, expected: 2 })
+	const list = { argv: ["true"], count: () => 2 }
+	const suite = boundedSuite({ name: "probe", cwd: ".", argv: ["bash", "-c", "exit 3"], minutes: 1, expected: 2, list })
 	const run = spawnSync(suite.command[0] as string, suite.command.slice(1), {
 		env: { ...process.env, FC_SEED: "42", SHELLOPTS: "errexit" },
 		encoding: "utf8",
@@ -107,4 +117,68 @@ test("the real-wallet suite counts only its reporter's one line, at the reporter
 	expect(count("real-wallet: 5/5 passed as expected\nreal-wallet: 5/5 passed as expected\n")).toBe(0)
 	expect(count("real-wallet: 5/6 passed as expected\n")).toBe(0)
 	expect(count("other: 5/5 passed as expected\n")).toBe(0)
+})
+
+test("every bounded suite has a pull-request listing, and one the check cannot derive is refused", () => {
+	const bounded = SUITES.filter((s) => s.command[0] === "bash" && s.command[1] === "-c")
+	expect(bounded.map((s) => s.name)).toEqual([
+		"label-paths-properties",
+		"bridge-spec-properties",
+		"bridge-spec-fresh-vectors",
+		"bridge-client-model",
+	])
+	for (const s of bounded) expect(s.list, s.name).toBeDefined()
+	const refused =
+		(argv: string[], cwd = "packages/bridge-core") =>
+		() =>
+			boundedSuite({ name: "probe", cwd, argv, minutes: 1, expected: 1 })
+	expect(refused(["bash", "-c", "true"])).toThrow("probe: a bounded suite needs a pull-request listing")
+	expect(refused(["bun", "run", "test"])).toThrow("needs a pull-request listing")
+	expect(refused(["bun", "run", "test", "--coverage"])).toThrow("needs a pull-request listing")
+	expect(refused(["bun", "run", "test", "src/x.test.ts"], "."), "the root's test script is not vitest").toThrow(
+		"needs a pull-request listing",
+	)
+	expect(refused(["bun", "run", "test", "src/x.test.ts"])().list?.argv).toEqual([
+		"bun",
+		"--bun",
+		"vitest",
+		"list",
+		"src/x.test.ts",
+		"--json",
+	])
+})
+
+test("a listing counts only vitest's JSON array", () => {
+	expect(vitestListed('[{"name":"a","file":"f"},{"name":"b","file":"f"}]\n')).toBe(2)
+	expect(vitestListed("(!) a warning\n[]")).toBe(0)
+	expect(vitestListed("a 2 passed\n")).toBe(0)
+	expect(vitestListed('{"name":"a"}')).toBe(0)
+})
+
+test("a count that differs from `expected` names the suite and the line that pins it", () => {
+	const suite = SUITES.find((s) => s.name === "bridge-client-model")
+	if (!suite?.expected) throw new Error("bridge-client-model has no expected count")
+	const line = expectedLine(SOURCE, suite.name) ?? 0
+	expect(SOURCE.split("\n")[line - 1]?.trim()).toBe(`expected: ${suite.expected},`)
+	expect(countVerdict(suite, suite.expected, SOURCE)).toBeUndefined()
+	expect(countVerdict(suite, suite.expected + 1, SOURCE)).toBe(
+		`bridge-client-model: ${suite.expected + 1} tests listed, expected ${suite.expected}; set \`expected: ${suite.expected + 1},\` at scripts/nightly.ts:${line}`,
+	)
+	expect(countVerdict(suite, 0, SOURCE)).toBe(
+		`bridge-client-model: its listing showed no test; scripts/nightly.ts:${line} pins ${suite.expected}`,
+	)
+	for (const s of SUITES.filter((s) => s.list)) expect(expectedLine(SOURCE, s.name), s.name).toBeGreaterThan(0)
+})
+
+test("the unit-test workflow checks the counts on every pull request", () => {
+	const unit = Bun.YAML.parse(readFileSync(join(ROOT, ".github/workflows/_unit-tests.yml"), "utf8")).jobs["unit-tests"]
+	expect(unit.if).toBeUndefined()
+	expect(unit.steps.map((step: { run?: string }) => step.run)).toContain("bun scripts/nightly.ts --counts")
+	const quality = Bun.YAML.parse(readFileSync(join(ROOT, ".github/workflows/pr-quick.yml"), "utf8")).jobs
+	expect(quality["unit-tests"]).toMatchObject({ uses: "./.github/workflows/_unit-tests.yml" })
+	expect(quality["unit-tests"].if).toBeUndefined()
+})
+
+test("the sepolia-fork suite expects exactly its runner's named cases", () => {
+	expect(SUITES.find((s) => s.name === "sepolia-fork")?.expected).toBe(FORK_CASES.length)
 })

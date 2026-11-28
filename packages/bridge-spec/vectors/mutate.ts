@@ -227,6 +227,38 @@ function nargoSuite(): Suite {
 
 export const SUITES = { ts: vitestSuite, sol: forgeSuite, nr: nargoSuite } satisfies Record<Lang, () => Suite>
 
+/**
+ * The forge suite's tests by full name. The `sol` mutation run holds the contract to this list on every
+ * pull request that reaches it, and `fresh.ts` holds each nightly corpus to it.
+ */
+export const FORGE_TESTS = [
+	"test_counts()",
+	"test_tags()",
+	"test_data()",
+	"test_in()",
+	"test_out()",
+	"test_ragequit()",
+	"test_rejections()",
+	"testFuzz_dataDecodesToItsTagAndSecretHash(uint256)",
+	"testFuzz_amountInRangeEncodes(uint256)",
+	"testFuzz_amountAboveRangeReverts(uint256)",
+].map((t) => `test/BridgeMessageV1.t.sol:BridgeMessageV1Test:${t}`)
+
+/** The run must hold exactly the expected names, each once, each passed. */
+export function byName(lang: string, outcome: Outcome, expected: readonly string[]): string[] {
+	const ran = outcome.raw.map((t) => t.name).sort()
+	const want = [...expected].sort()
+	const problems = outcome.raw
+		.filter((t) => t.status !== "passed")
+		.map((t) => `${lang}: ${t.name} ${t.status}\n${t.message.slice(0, 2000)}`)
+	if (ran.join("\n") !== want.join("\n")) {
+		const missing = want.filter((n) => !ran.includes(n))
+		const unexpected = ran.filter((n) => !want.includes(n))
+		problems.push(`${lang}: ran ${ran.length} tests, expected ${want.length}; missing [${missing}], unexpected [${unexpected}]`)
+	}
+	return problems
+}
+
 /** Runner, test and required-section failures of a run on unchanged vectors. */
 export function verifyControl(suite: Suite, outcome: Outcome): string[] {
 	if (outcome.error) return [`control: ${outcome.error}`]
@@ -271,6 +303,7 @@ function main(): number {
 		copyFileSync(VECTORS, control)
 		const controlOutcome = suite.run(control, runDir)
 		const problems = verifyControl(suite, controlOutcome)
+		if (problems.length === 0 && suite.lang === "sol") problems.push(...byName("sol", controlOutcome, FORGE_TESTS))
 		if (problems.length === 0) {
 			const vectors = JSON.parse(readFileSync(VECTORS, "utf8")) as Record<string, Row[]>
 			const mutations = mutate(vectors, suite)

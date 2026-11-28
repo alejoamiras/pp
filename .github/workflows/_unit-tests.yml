@@ -45,3 +45,8 @@ jobs:
       # these workflows' filters and aggregators; without this step they would never run on a PR.
       - name: CI-gating tests
         run: bun run test:ci-gating
+
+      # Each bounded nightly suite's `expected` against the tests its files define now, running none of
+      # them. On every pull request: a test added to one of those files would otherwise fail only the nightly.
+      - name: Nightly suite counts
+        run: bun scripts/nightly.ts --counts
