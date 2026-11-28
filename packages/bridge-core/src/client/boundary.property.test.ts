@@ -94,10 +94,12 @@ const marker = fc
 	.map((hex): Marker => ({ ident: `Zq9${hex}`, hex, dec: BigInt(`0x${hex}`).toString(), value: BigInt(`0x${hex}`) }))
 const leaksOf = (m: Marker) => [m.ident, m.hex, m.dec]
 
-// Names are allowed through when identifier-shaped, so they never carry the marker. The longest valid one
-// pins the 64-character limit from below; the forged 65-character one pins it from above.
+// Names are allowed through when identifier-shaped and not a hex run, so they never carry the marker. The
+// longest valid one pins the 64-character limit from below; the forged 65-character one pins it from above.
 const longest = fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]{63}$/)
-const name = fc.oneof(fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]{0,20}$/), longest).filter((n) => !n.startsWith("Zq9"))
+const name = fc
+	.oneof(fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]{0,20}$/), longest)
+	.filter((n) => !n.startsWith("Zq9") && !/^[0-9a-f]{16,}$/i.test(n))
 const OVERLONG = `A${"b".repeat(64)}`
 const hash = fc.stringMatching(/^[0-9a-f]{64}$/).map((h) => `0x${h}` as Hash)
 const validDetail = fc.record(
@@ -313,4 +315,11 @@ describe("error boundary properties (whatever a lower layer throws)", () => {
 		},
 		any.testTimeout,
 	)
+
+	it("keeps a name of 15 hex digits as the source and refuses one of 16, from the name field or the class", () => {
+		const [short, long] = ["abcdef012345678", "abcdef0123456789"]
+		const viaName = (n: string) => translate(Object.assign(new Error("x"), { name: n })).source
+		const viaClass = (n: string) => translate(new { [n]: class extends Error {} }[n]("x")).source
+		expect([viaName(short), viaName(long), viaClass(short), viaClass(long)]).toEqual([short, undefined, short, undefined])
+	})
 })

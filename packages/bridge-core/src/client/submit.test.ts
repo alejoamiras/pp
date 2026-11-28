@@ -510,4 +510,21 @@ describe("submit: stale proofs", () => {
 		await expect(submit(t.ctx, t.spend, t.chain.wallet(), t.session, { onReprove })).resolves.toMatchObject({ amount: 70n })
 		expect(onReprove.mock.calls).toEqual([["STATE_ROOT_STALE"]])
 	})
+
+	it("reports a re-proof the prover could not make by the name the pool SDK sets, with zero sends", async () => {
+		const t = await setup()
+		t.pool.assertFresh.mockRejectedValueOnce(new PoolClientError("ASP_ROOT_STALE", "x"))
+		// The SDK's error as a minified bundle holds it: another class name, the same `name`.
+		class XE extends Error {
+			constructor() {
+				super("x")
+				this.name = "ProofGenerationFailed"
+			}
+		}
+		vi.mocked(t.ctx.reprove).mockRejectedValueOnce(new XE())
+		const failed = submit(t.ctx, t.spend, t.chain.wallet(), t.session)
+		await expect(failed).rejects.toMatchObject({ code: "RPC_FAILED", source: "ProofGenerationFailed" })
+		expect(t.ctx.reprove).toHaveBeenCalledTimes(1)
+		expect(t.chain.writeContract).not.toHaveBeenCalled()
+	})
 })
