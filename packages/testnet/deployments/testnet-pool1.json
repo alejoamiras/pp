@@ -1,0 +1,91 @@
+{
+	"description": "The operator's poolId 1 (its app's V8) on Sepolia, with ceremony keys and USDC. The operator section was read at the finalized block it names; every signing command re-reads it.",
+	"network": {
+		"l1ChainId": 11155111,
+		"rollup": "0x1f435a7f2da358caf887a470faeee7d5d5f4efba",
+		"l1Registry": "0xa0bfb1b494fb49041e5c6e8c2c1be09cd171c6ba",
+		"inbox": "0x7cdc32dd7d008870a95f1837ffd7229ef676ef8a",
+		"outbox": "0xa5a0f7a7bdaf280964a1922a68c83462e5f6e15b",
+		"rollupVersion": 679261766,
+		"fpc": "0x2d8fff82a3b0c15d0a89169e7d8d043e079ab94d52031f1de1e4972ebad169d3",
+		"l1Rpc": "https://sepolia.gateway.tenderly.co",
+		"l1SendRpc": "https://ethereum-sepolia-rpc.publicnode.com",
+		"aztecNode": "https://aztec-testnet.drpc.org",
+		"botPort": 48603
+	},
+	"target": "pool1",
+	"bundle": "ceremony",
+	"expected": {
+		"guardian": "0xAD1127652b10042b5558818D6e362f54b4A4C518",
+		"lifetimeCap": "1000000000000",
+		"l1Deployer": "0x7473c0B7E59440401ec33A0b2b9263C98D92e270",
+		"l2Deployer": "0x2662ecea7b47c6b7e05fd33ba6b572ed2d613fee8e24d99bae15a341a740e365",
+		"botPoster": "0x1924ff866e94ef8e308b409f180fd3e644113ffe2b86d18ff446cb093e5c9635",
+		"canaryOwner": "0x32f984A9561635dAb2AD48881FDd8E4782Da82D5",
+		"canarySender": "0x44c39e28726C19b19770065Cc0E70CD63930cEbB",
+		"demoOwner": "0x73546C799c99b7A0A46f1a6184b1a8274636A5eC",
+		"demoSender": "0xB30F9E7f9F33F89f5833084E5429559ed52b01A8",
+		"birthIntake": "0x2a8bf62bfd30dbe6a42a302e51d0d45bc3578d885001c3c30f1a7bc321b8ecce",
+		"tokenClassId": "0x1e897c194970e0f495ca5e73956992f131fc38243e3f5b74812a99b9e86d397f",
+		"amounts": {
+			"debit": "1010000",
+			"note": "1000000",
+			"bridge": "1000000"
+		}
+	},
+	"operator": {
+		"code": {
+			"vault": {
+				"proxy": "0x4DECEef285a24CA05999870887C895042731D7cB",
+				"proxyCodeHash": "0x734d250afdad5c1a4a510abb21380a2ec435c89ffc73e805a8a8d74c5cee7568",
+				"implementation": "0x1B36d629066635AF8d87B03844f19414fda02b5e",
+				"implementationCodeHash": "0xfc2dc22bb4f07879395ed2a955a07df68109a905e54c8a0081de27268d5762b1"
+			},
+			"entrypoint": {
+				"proxy": "0x3191ED61Bc961667f368600caf147F08CffA2559",
+				"proxyCodeHash": "0x734d250afdad5c1a4a510abb21380a2ec435c89ffc73e805a8a8d74c5cee7568",
+				"implementation": "0x06332DD1411624c2909A8A30F0fa5612e70F71c7",
+				"implementationCodeHash": "0x4a7ac1ae8f7bb64a26e6ea0b8c11cb3de3a691ae3a170bc71b4b75dab9aa3b9f"
+			},
+			"keystore": {
+				"proxy": "0x5b8883a2F8339560d8ebFeaabf93Ce4e7056c4cA",
+				"proxyCodeHash": "0x734d250afdad5c1a4a510abb21380a2ec435c89ffc73e805a8a8d74c5cee7568",
+				"implementation": "0x8d09ec4b814Fd6ce41062D0ae5a68E5B9F11Ad82",
+				"implementationCodeHash": "0x1895cafe8e1e9a28be4a159da4edfac294a65d1762e2595220c56f0071e84a8d"
+			},
+			"aspRegistry": {
+				"proxy": "0x836aCbf56832FD11492E4a4ba1BA40F6e361df66",
+				"proxyCodeHash": "0x734d250afdad5c1a4a510abb21380a2ec435c89ffc73e805a8a8d74c5cee7568",
+				"implementation": "0xE00B278036beA76f1948E9B28834b5cA2F9CE5ED",
+				"implementationCodeHash": "0xf4069ac59f82c91598773ef96dcc457e35533e0173475fdceb17c1974ad147ec"
+			}
+		},
+		"depositVerifier": {
+			"verifier": "0x2b2Dc2d979410DA2D1a2fc08982b60EBd05Fc452",
+			"codeHash": "0x4553d31b9e821dd56a5f09a658d79197d88965822e20ec22cb7f29df62af382f"
+		},
+		"transactRoute1x1": {
+			"verifier": "0xDE01899950397B9d5401A505b194b1B21Bf4E0e4",
+			"selector": "0xc9219a7a",
+			"codeHash": "0x2440fb60a451ef891e6ef079441ad855c61b2888a12d77e448315fe747147c49"
+		},
+		"asset": {
+			"address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+			"vettingFeeBps": 100,
+			"minDeposit": "1"
+		},
+		"evidence": {
+			"forkBlock": 12228161,
+			"forkBlockHash": "0x4c5cf0af5d29858e5d0dee6a2be25985782d26c04b21d33018a84a9e0df7ab11"
+		}
+	},
+	"pool": {
+		"poolVault": "0x4DECEef285a24CA05999870887C895042731D7cB",
+		"entrypoint": "0x3191ED61Bc961667f368600caf147F08CffA2559",
+		"aspRegistry": "0x836aCbf56832FD11492E4a4ba1BA40F6e361df66",
+		"keystore": "0x5b8883a2F8339560d8ebFeaabf93Ce4e7056c4cA",
+		"asset": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+		"deployBlock": "10956341",
+		"aspApiUrl": "https://api-dev.0xbow.io"
+	}
+}
