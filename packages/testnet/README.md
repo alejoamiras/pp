@@ -50,6 +50,10 @@ All keys live in `~/.config/pp/testnet.env`, outside every repository: directory
   not before it reads its key, and checks the deployer's live balance against them again before each
   send, counting what it already sent, so a top-up repeated after a wrong "not landed" verdict is
   refused. A fork run funds fresh keys from the fork's own ETH, so the limits only show in its quote.
+  Every balance is read at one block, and the deployer's count there must equal its pending count on
+  both endpoints, so a top-up that landed after that block, or is still pending, is never planned
+  again; otherwise the run is refused, to be run again. Each top-up carries the gas limit and fee caps
+  it was checked at, so it cannot cost more than the check allowed.
 - The budgets are Prague gas, which the rehearsals check, times live Sepolia's measured cost over Prague
   for the role's kind of transaction: 7.67 for creations, 5.01 for fresh storage. Sepolia's fork since
   2026-10-06 reprices state creation, which a rehearsal on anvil 1.7.1 cannot show; a role still short

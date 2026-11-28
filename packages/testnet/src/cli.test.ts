@@ -43,6 +43,7 @@ const leaks = (out: string, values: readonly string[]) =>
 // asset config at a vetting fee of 1.5%; anything else errors. `seen` records every method asked.
 let server: Server
 let rpc: string
+// An answer is a value, or a function of the call's params.
 const answers: Record<string, unknown> = {}
 const seen: string[] = []
 const ASSETS = toFunctionSelector("assets(address)")
@@ -56,6 +57,7 @@ beforeAll(async () => {
 		eth_chainId: "0xaa36a7",
 		eth_blockNumber: "0x10",
 		eth_getBalance: "0x56bc75e2d63100000",
+		eth_getTransactionCount: "0x0",
 		eth_estimateGas: "0x5208",
 		eth_maxPriorityFeePerGas: "0x3b9aca00",
 		eth_gasPrice: "0x77359400",
@@ -73,7 +75,13 @@ beforeAll(async () => {
 		req.on("end", () => {
 			const { id, method, params } = JSON.parse(body) as { id: number; method: string; params?: [{ data?: string }] }
 			seen.push(method)
-			const result = method === "eth_call" && params?.[0].data?.startsWith(ASSETS) ? ASSET_CONFIG : answers[method]
+			const answer = answers[method]
+			const result =
+				method === "eth_call" && params?.[0].data?.startsWith(ASSETS)
+					? ASSET_CONFIG
+					: typeof answer === "function"
+						? (answer as (p: unknown) => unknown)(params)
+						: answer
 			res.setHeader("content-type", "application/json")
 			res.end(
 				JSON.stringify(
@@ -267,6 +275,20 @@ describe("every key-reading CLI on a fork", () => {
 		)
 		for (const [name, r] of results as [string, Run][])
 			expect([name, r.code, /refused: fork: .*Geth/.test(r.out)]).toEqual([name, 2, true])
+	}, 60_000)
+
+	it("fund refuses a plan whose snapshot block misses a top-up that landed after it, before reading a key", async () => {
+		const home = scratchHome()
+		answers.eth_getTransactionCount = (p: unknown) => ((p as unknown[])[1] === "pending" ? "0x1" : "0x0")
+		onTestFinished(() => {
+			answers.eth_getTransactionCount = "0x0"
+		})
+		const r = await cli("fund", [deploymentFile(home, { pool: false }), "--rehearse-fork", rpc], home)
+		expect([r.code, /refused: funds: .* at block 16 but 1 pending .*run again/.test(r.out), /keys/.test(r.out)]).toEqual([
+			2,
+			true,
+			false,
+		])
 	}, 60_000)
 
 	it("fund --quote reads no key: it answers with no key file at all", async () => {

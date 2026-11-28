@@ -2,7 +2,17 @@ import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import type { Address, Hex } from "viem"
 import { describe, expect, it } from "vitest"
-import { assertTopUp, assertWithinLimits, FEE_FLOOR_WEI, FUNDING_GAS, fundingPlan, liveGasOf, needOf, recipientsOf } from "./funding"
+import {
+	assertTopUp,
+	assertWithinLimits,
+	FEE_FLOOR_WEI,
+	FUNDING_GAS,
+	fundingPlan,
+	liveGasOf,
+	needOf,
+	recipientsOf,
+	staleSnapshot,
+} from "./funding"
 import { parseDeployment } from "./schema"
 
 const a = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address
@@ -76,6 +86,17 @@ describe("a top-up within the owner's limits", () => {
 		// The whole plan, before any send: today's quote passes, fresh keys' full budgets do not.
 		expect(at({ now: 1.873, amount: 0.722886 })).not.toThrow()
 		expect(at({ now: 1.873, amount: 0.849196 })).toThrow(/over its 0.8 ETH limit/)
+	})
+})
+
+describe("a plan's snapshot block", () => {
+	it.each([
+		["holds every transaction both endpoints know", 5, 5, 5, false],
+		["misses a top-up that landed after it", 5, 6, 6, true],
+		["misses one still pending on the send endpoint", 5, 5, 6, true],
+	])("%s", (_, atSnapshot, pendingRead, pendingSend, refused) => {
+		const why = staleSnapshot({ block: 100n, atSnapshot, pendingRead, pendingSend })
+		expect(why === undefined ? "planned" : why).toMatch(refused ? /at block 100 .*run again$/ : /^planned$/)
 	})
 })
 

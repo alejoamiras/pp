@@ -145,6 +145,21 @@ export function assertWithinLimits(o: SpendCheck): void {
 	if (breach) throw new GuardError("funds", breach)
 }
 
+/** The deployer's transaction count at the block a plan's balances were read at, and pending on each endpoint. */
+export type SnapshotCounts = { block: bigint; atSnapshot: number; pendingRead: number; pendingSend: number }
+
+/**
+ * Why balances read at `block` must not be planned from, or undefined when they may: that block must hold
+ * every transaction of the deployer's either endpoint knows, landed or pending, so its count there equals
+ * the higher pending count. Otherwise a top-up that landed after the block, or is still pending, is
+ * planned again. Endpoints that both lag leave the next send at a spent nonce, which fails at the send.
+ */
+export function staleSnapshot(c: SnapshotCounts): string | undefined {
+	const pending = Math.max(c.pendingRead, c.pendingSend)
+	if (c.atSnapshot === pending) return undefined
+	return `the deployer's count is ${c.atSnapshot} at block ${c.block} but ${c.pendingRead} pending on the read endpoint and ${c.pendingSend} on the send endpoint, so the balances read at that block may miss a transaction of its; run again`
+}
+
 /**
  * The mined top-up is the one sent, from the deployer, and succeeded. viem's receipt wait returns a
  * replacement's receipt when one is mined in the sent transaction's place.
