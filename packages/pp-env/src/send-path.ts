@@ -33,7 +33,12 @@
 import { type Address, type Hex, isAddressEqual, keccak256, parseTransaction, recoverTransactionAddress } from "viem"
 
 const KNOWN = /^\s*(?:already known|transaction already imported)\s*$/i
-const CONFLICT = /\bnonce too low\b|\breplacement (?:transaction )?underpriced\b/i
+/**
+ * The words, matched whole and in any case, that make an answer a conflict: the send lost its nonce to
+ * another transaction. A client that reads a conflict's `data` must take every one of them.
+ */
+export const CONFLICT_WORDS = ["nonce too low", "replacement transaction underpriced", "replacement underpriced"] as const
+const CONFLICT = new RegExp(CONFLICT_WORDS.map((w) => `\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).join("|"), "i")
 /** Codes alloy-json-rpc 2.0.1 retries whatever the message, and those it retries with a message part. */
 const RETRIED_CODES = new Set([429, -32005, 1008, -32055])
 const RETRIED_WITH: ReadonlyMap<number, string> = new Map([
